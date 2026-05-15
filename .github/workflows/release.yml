@@ -30,7 +30,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Derle ve GitHub'a yükle
-        run: npm run build
+      - name: Derle ve GitHub Release oluştur
+        run: npm run build:release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

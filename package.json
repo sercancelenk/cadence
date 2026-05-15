@@ -12,7 +12,8 @@
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "build:web": "vite build",
     "build": "vite build && electron-builder",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:release": "vite build && electron-builder --publish always"
   },
   "dependencies": {
     "electron-updater": "^6.8.3",

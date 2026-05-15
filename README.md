@@ -114,9 +114,20 @@ Bu repoda `.github/workflows/release.yml` tanımlıdır:
 - **`workflow_dispatch`** ile **Actions** ekranından **elle çalıştırma** da mümkündür (push gerekmez).
 - Sürüm numarası **`0.2.<GitHub run number>`** olarak ayarlanır (her koşu benzersiz).
 - `scripts/patch-publish.mjs` ile `build.publish.owner` = `github.repository_owner` yapılır.
-- `electron-builder` uygun yapılandırmada **GitHub Release** oluşturur (repo **public** ise `GITHUB_TOKEN` yeterli; private için ayrı PAT gerekebilir).
+- CI’da **`npm run build:release`** (`electron-builder --publish always`) çalışır; böylece etiket olmadan da **GitHub Release** ve `.dmg` yüklenir. Yerelde sadece paket üretmek için `npm run build` yeterlidir (GitHub’a yüklemez).
+- `electron-builder` + `GH_TOKEN` ile GitHub’a yüklenir (repo **public** ise `GITHUB_TOKEN` yeterli; private için ayrı PAT gerekebilir).
 
 Kontrol için `.github/workflows/ci.yml` ile PR/push’ta `tsc` + `vite build` koşar.
+
+---
+
+## Sorun giderme: Actions yeşil ama Releases boş
+
+**Sık neden:** `electron-builder` varsayılan olarak GitHub’a yüklemeyi çoğunlukla yalnızca **git etiketi** varken yapar; CI’da etiket olmayınca derleme **başarılı** görünür fakat **Release oluşmaz**.
+
+**Çözüm:** Bu repoda CI artık `npm run build:release` kullanır; bu komut `electron-builder --publish always` ile her koşuda GitHub Release + varlıkları yükler. Güncel `main`’i push edip Release workflow’unu yeniden çalıştır.
+
+Ayrıca kontrol et: **Settings → Actions → General → Workflow permissions** = **Read and write**.
 
 ---
 
