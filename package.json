@@ -50,7 +50,7 @@
         "provider": "github",
         "owner": "YOUR_GITHUB_USERNAME",
         "repo": "leeadman",
-        "draft": false
+        "releaseType": "release"
       }
     ],
     "mac": {
