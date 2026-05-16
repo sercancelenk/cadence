@@ -32,8 +32,22 @@ const TeamMePage = lazy(() => import('./views/People').then((m) => ({ default: m
 const TeamLeaderPage = lazy(() => import('./views/People').then((m) => ({ default: m.TeamLeaderPage })));
 
 /** Electron .app / loadFile() uses the `file:` protocol where BrowserRouter renders blank; HashRouter is required there. */
-const HistoryRouter =
-  typeof window !== 'undefined' && window.location.protocol === 'file:' ? HashRouter : BrowserRouter;
+const isFileProtocol =
+  typeof window !== 'undefined' && window.location.protocol === 'file:';
+const HistoryRouter = isFileProtocol ? HashRouter : BrowserRouter;
+/**
+ * On GitHub Pages the app is served from `/leeadman/`. Without a basename the
+ * React Router would push `/login` etc. directly under the domain root and the
+ * browser would 404 on hard refreshes / SW takeovers. Vite already exposes the
+ * configured `base` via `import.meta.env.BASE_URL`, so we just trim the
+ * trailing slash for React Router. Electron's HashRouter ignores basename.
+ */
+const routerBasename = (() => {
+  if (isFileProtocol) return undefined;
+  const raw = import.meta.env.BASE_URL || '/';
+  const trimmed = raw.replace(/\/+$/, '');
+  return trimmed || '/';
+})();
 
 function BootLoading({ label }: { label: string }) {
   return (
@@ -77,7 +91,7 @@ function MobileStartRedirect({ children }: { children: ReactElement }) {
 
 export default function App() {
   return (
-    <HistoryRouter>
+    <HistoryRouter basename={routerBasename}>
       <ThemeProvider>
         <AccountProvider>
           <Suspense fallback={<BootLoading label="Loading…" />}>

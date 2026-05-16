@@ -3,11 +3,13 @@
  * registration in the Electron host (where it is unnecessary and `file://`
  * scope is incompatible with the SW API).
  *
- * Re-registers on every page load so a newly deployed build can install its
- * fresh SW. When a new SW is in `installing` state we immediately ask it to
- * skip waiting so the next navigation gets the latest code. Users never see
- * a "refresh to update" banner — updates are silent and applied on the next
- * navigation.
+ * Update strategy: when a new SW is detected we ask it to skipWaiting so it
+ * activates immediately, but we deliberately DO NOT call `location.reload()`
+ * on `controllerchange`. Reloading mid-session breaks any client-side route
+ * the SPA is currently on (e.g. /leeadman/login pushed via React Router) —
+ * the browser would do a real fetch of that URL and, depending on the host,
+ * return 404 from the static host. The new SW will start serving on the next
+ * real navigation; that's enough for "silent" updates without losing state.
  */
 
 function shouldRegister(): boolean {
@@ -44,12 +46,5 @@ export function registerServiceWorker(): void {
       .catch((err) => {
         console.warn('[leeadman] service worker registration failed:', err);
       });
-
-    let refreshing = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (refreshing) return;
-      refreshing = true;
-      window.location.reload();
-    });
   });
 }

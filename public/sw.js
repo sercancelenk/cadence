@@ -12,7 +12,7 @@
  * does (main.tsx checks LEEADMAN_PWA flag + presence of `serviceWorker` API).
  */
 
-const CACHE_VERSION = 'v3-mobile';
+const CACHE_VERSION = 'v4-basename';
 const CACHE_NAME = `leeadman-${CACHE_VERSION}`;
 
 const APP_SHELL = [
