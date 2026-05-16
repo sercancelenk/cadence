@@ -1,9 +1,11 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
-import { IcDownload, IcLock, IcMoon, IcRefresh, IcSun, IcTrash, IcUpload, IcWifi } from '../components/icons';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { IcDownload, IcLock, IcMoon, IcRefresh, IcSparkles, IcSun, IcTrash, IcUpload, IcWifi } from '../components/icons';
 import { Button } from '../components/ui/Button';
 import { useAppData } from '../AppDataContext';
 import { useSession } from '../AuthContext';
-import type { AppData } from '../model';
+import { askAI, AIError, defaultModel } from '../lib/ai';
+import type { AIProvider, AppData } from '../model';
+import { AI_PROVIDER_OPTIONS } from '../model';
 import { useTheme } from '../ThemeContext';
 
 export function Settings() {
@@ -210,6 +212,8 @@ export function Settings() {
       </section>
 
       <SyncSection />
+
+      <AISettingsSection />
 
       <section className="card">
         <h2 className="card__title">Reminders</h2>
@@ -666,5 +670,200 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Bring-your-own-key AI settings. The key lives in AppData (encrypted at rest
+ * in Electron, plaintext in PWA localStorage — we say so explicitly). All API
+ * calls run from the renderer; we never proxy through any of our own servers.
+ */
+function AISettingsSection() {
+  const { data, updateAISettings } = useAppData();
+  const ai = data.aiSettings;
+  const [provider, setProvider] = useState<AIProvider | ''>(ai?.provider ?? '');
+  const [apiKey, setApiKey] = useState(ai?.apiKey ?? '');
+  const [model, setModel] = useState(ai?.model ?? '');
+  const [showKey, setShowKey] = useState(false);
+  const [savedAt, setSavedAt] = useState<string>('');
+  const [testStatus, setTestStatus] = useState<{ kind: 'idle' | 'running' | 'ok' | 'error'; message?: string }>({
+    kind: 'idle',
+  });
+
+  // Re-sync local state when the underlying AppData changes (e.g. after replaceAll on import).
+  useEffect(() => {
+    setProvider(ai?.provider ?? '');
+    setApiKey(ai?.apiKey ?? '');
+    setModel(ai?.model ?? '');
+  }, [ai?.provider, ai?.apiKey, ai?.model]);
+
+  const placeholderModel = useMemo(() => (provider ? defaultModel(provider) : ''), [provider]);
+  const dirty =
+    (ai?.provider ?? '') !== provider ||
+    (ai?.apiKey ?? '') !== apiKey.trim() ||
+    (ai?.model ?? '') !== model.trim();
+  const canSave = !!provider && apiKey.trim().length >= 8;
+
+  const save = () => {
+    updateAISettings({
+      provider: (provider || undefined) as AIProvider | undefined,
+      apiKey: apiKey.trim(),
+      model: model.trim(),
+    });
+    setSavedAt(new Date().toLocaleTimeString());
+    setTestStatus({ kind: 'idle' });
+  };
+
+  const remove = () => {
+    if (!window.confirm('Remove the stored API key from this device?')) return;
+    updateAISettings({ provider: undefined, apiKey: '', model: '', systemPrompt: '' });
+    setProvider('');
+    setApiKey('');
+    setModel('');
+    setSavedAt('');
+    setTestStatus({ kind: 'idle' });
+  };
+
+  const test = async () => {
+    if (!provider || apiKey.trim().length < 8) return;
+    setTestStatus({ kind: 'running' });
+    try {
+      const reply = await askAI({
+        settings: {
+          provider: provider as AIProvider,
+          apiKey: apiKey.trim(),
+          model: model.trim(),
+        },
+        messages: [
+          {
+            role: 'user',
+            content: 'Reply with the single word "ok" so I can confirm the connection works.',
+          },
+        ],
+        maxOutputTokens: 32,
+      });
+      setTestStatus({
+        kind: 'ok',
+        message: `Connection works. Provider answered: "${reply.replace(/\s+/g, ' ').slice(0, 80)}"`,
+      });
+    } catch (err) {
+      const message = err instanceof AIError ? err.message : (err as Error)?.message ?? String(err);
+      setTestStatus({ kind: 'error', message });
+    }
+  };
+
+  const isDesktop = typeof window !== 'undefined' && !!window.leeadman;
+
+  return (
+    <section className="card">
+      <h2 className="card__title">
+        <IcSparkles size={17} /> AI Assistant
+      </h2>
+      <p className="muted">
+        Each task gets an "Ask AI" button when you connect a provider here. The assistant uses your API key to suggest
+        next steps for whatever you're working on. We never proxy these requests — they go straight from this device
+        to the provider you choose.
+      </p>
+      <p className="muted small">
+        {isDesktop
+          ? 'Desktop build: your API key is stored inside the encrypted data file (AES-256-GCM, derived from your account password).'
+          : 'Web build: your API key is stored in this browser only (localStorage, not encrypted). Use a low-budget key with usage limits.'}
+      </p>
+
+      <label className="field">
+        <span>Provider</span>
+        <select
+          className="input"
+          value={provider}
+          onChange={(e) => setProvider(e.target.value as AIProvider | '')}
+        >
+          <option value="">— Disabled —</option>
+          {AI_PROVIDER_OPTIONS.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="field">
+        <span>API key</span>
+        <div className="row" style={{ gap: 6 }}>
+          <input
+            className="input"
+            type={showKey ? 'text' : 'password'}
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="sk-…   /   AIza…"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <Button type="button" variant="ghost" onClick={() => setShowKey((v) => !v)}>
+            {showKey ? 'Hide' : 'Show'}
+          </Button>
+        </div>
+      </label>
+
+      <label className="field">
+        <span>Model {placeholderModel ? <em className="muted">(default: {placeholderModel})</em> : null}</span>
+        <input
+          className="input"
+          autoComplete="off"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder={placeholderModel || 'Choose a provider first'}
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+        />
+      </label>
+
+      <div className="row" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+        <Button type="button" variant="primary" disabled={!canSave || !dirty} onClick={save}>
+          Save
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          icon={<IcRefresh size={16} />}
+          disabled={!canSave || testStatus.kind === 'running'}
+          onClick={test}
+        >
+          {testStatus.kind === 'running' ? 'Testing…' : 'Test connection'}
+        </Button>
+        {ai?.apiKey ? (
+          <Button type="button" variant="ghost" icon={<IcTrash size={16} />} onClick={remove}>
+            Remove key
+          </Button>
+        ) : null}
+        {savedAt ? <span className="muted small">Saved at {savedAt}</span> : null}
+      </div>
+
+      {testStatus.kind === 'ok' && testStatus.message ? (
+        <p className="muted small" style={{ marginTop: 8, color: 'var(--ok, #6cf38d)' }}>
+          {testStatus.message}
+        </p>
+      ) : null}
+      {testStatus.kind === 'error' && testStatus.message ? (
+        <pre
+          className="pre"
+          style={{
+            marginTop: 8,
+            padding: 8,
+            borderRadius: 8,
+            background: 'rgba(255,99,99,0.12)',
+            color: '#ff8d8d',
+            whiteSpace: 'pre-wrap',
+            maxHeight: 160,
+            overflow: 'auto',
+          }}
+        >
+          {testStatus.message}
+        </pre>
+      ) : null}
+    </section>
   );
 }

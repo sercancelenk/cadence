@@ -1145,7 +1145,7 @@ app.whenReady().then(() => {
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' data: https://fonts.gstatic.com",
       "img-src 'self' data: blob:",
-      "connect-src 'self' https://api.github.com https://github.com",
+      "connect-src 'self' https://api.github.com https://github.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
       "object-src 'none'",
       "base-uri 'self'",
       "frame-ancestors 'none'",

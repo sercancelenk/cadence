@@ -116,6 +116,24 @@ export interface TodoItem {
 
 export const DATA_VERSION = 3 as const;
 
+export type AIProvider = 'anthropic' | 'openai' | 'gemini';
+
+export const AI_PROVIDER_OPTIONS: { value: AIProvider; label: string; defaultModel: string }[] = [
+  { value: 'anthropic', label: 'Anthropic Claude', defaultModel: 'claude-3-5-sonnet-latest' },
+  { value: 'openai', label: 'OpenAI ChatGPT', defaultModel: 'gpt-4o-mini' },
+  { value: 'gemini', label: 'Google Gemini', defaultModel: 'gemini-1.5-flash' },
+];
+
+export interface AISettings {
+  provider?: AIProvider;
+  /** API key supplied by the user. Stored alongside other AppData (encrypted on disk in Electron). */
+  apiKey?: string;
+  /** Model identifier; falls back to the provider default when empty. */
+  model?: string;
+  /** Optional override for system prompt. */
+  systemPrompt?: string;
+}
+
 export interface AppData {
   version: typeof DATA_VERSION;
   teams: Team[];
@@ -129,6 +147,8 @@ export interface AppData {
   /** Personal to-do lists (team independent). */
   todoGroups: TodoGroup[];
   todoItems: TodoItem[];
+  /** Optional AI assistant settings (BYO API key). */
+  aiSettings?: AISettings;
 }
 
 export function nowIso(): string {
@@ -513,6 +533,7 @@ export function normalizeData(raw: unknown): AppData {
     lastTeamId: lastTeamId && teams.some((x) => x.id === lastTeamId) ? lastTeamId : teams[0]?.id,
     todoGroups,
     todoItems,
+    aiSettings: parseAISettings(o.aiSettings),
   };
 
   data = ensureTeamsHaveSelf(data);
@@ -520,6 +541,21 @@ export function normalizeData(raw: unknown): AppData {
   data = ensureProfile(data);
 
   return patchDataToV3(data);
+}
+
+function parseAISettings(raw: unknown): AISettings | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const providers: AIProvider[] = ['anthropic', 'openai', 'gemini'];
+  const provider =
+    typeof o.provider === 'string' && providers.includes(o.provider as AIProvider)
+      ? (o.provider as AIProvider)
+      : undefined;
+  const apiKey = typeof o.apiKey === 'string' && o.apiKey.trim() ? o.apiKey.trim() : undefined;
+  const model = typeof o.model === 'string' && o.model.trim() ? o.model.trim() : undefined;
+  const systemPrompt = typeof o.systemPrompt === 'string' ? o.systemPrompt : undefined;
+  if (!provider && !apiKey && !model && !systemPrompt) return undefined;
+  return { provider, apiKey, model, systemPrompt };
 }
 
 function ensureProfile(data: AppData): AppData {

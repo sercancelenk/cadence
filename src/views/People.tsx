@@ -1,8 +1,11 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { IcArrowRight, IcCheck, IcPencil, IcPlus, IcSave, IcTrash, IcUndo, IcX } from '../components/icons';
+import { IcArrowRight, IcCheck, IcPencil, IcPlus, IcSave, IcSparkles, IcTrash, IcUndo, IcX } from '../components/icons';
+import { AIAssistantDialog } from '../components/AIAssistantDialog';
+import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { Button } from '../components/ui/Button';
 import { MarkdownEditor, MarkdownView } from '../components/ui/MarkdownEditor';
+import { isAIConfigured } from '../lib/ai';
 import { useAppData } from '../AppDataContext';
 import { distinctCategoriesForTeam, SUGGESTED_CATEGORIES } from '../lib/categories';
 import { fromLocalDatetimeValue, formatShort, isPast, toLocalDatetimeValue } from '../lib/datetime';
@@ -546,6 +549,9 @@ function KindSection({
   const [draftDueAt, setDraftDueAt] = useState('');
   const [draftGoalStatus, setDraftGoalStatus] = useState<GoalStatus>('planned');
   const [draftFeedbackKind, setDraftFeedbackKind] = useState<FeedbackKind>('coaching');
+  const [aiTarget, setAiTarget] = useState<Item | null>(null);
+  const { data } = useAppData();
+  const aiEnabled = isAIConfigured(data.aiSettings);
   const listId = `cat-${teamId}-${kind}`;
 
   return (
@@ -600,6 +606,19 @@ function KindSection({
               placeholder="Describe your goal in detail…"
               value={draftTitle}
               onChange={(e) => setDraftTitle(e.target.value)}
+            />
+          </label>
+        ) : kind === 'task' ? (
+          <label className="field" style={{ marginTop: 0 }}>
+            <span>Task</span>
+            <AutoResizeTextarea
+              className="textarea textarea--task-title"
+              minRows={2}
+              maxRows={8}
+              placeholder="What needs to be done? Shift+Enter for a new line."
+              value={draftTitle}
+              onChange={setDraftTitle}
+              ariaLabel="Task title"
             />
           </label>
         ) : (
@@ -714,6 +733,18 @@ function KindSection({
                   >
                     {openId === it.id ? 'Close' : 'Edit'}
                   </Button>
+                  {aiEnabled && (it.kind === 'task' || it.kind === 'goal') ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      icon={<IcSparkles size={16} />}
+                      title="Ask AI for recommendations"
+                      onClick={() => setAiTarget(it)}
+                    >
+                      Ask AI
+                    </Button>
+                  ) : null}
                   {it.kind === 'task' || it.kind === 'goal' ? (
                     <Button
                       type="button"
@@ -734,11 +765,22 @@ function KindSection({
               {openId === it.id ? (
                 <div className="editor">
                   <label className="field">
-                    <span>{it.kind === 'goal' ? 'Goal description' : 'Title'}</span>
+                    <span>{it.kind === 'goal' ? 'Goal description' : it.kind === 'task' ? 'Task' : 'Title'}</span>
                     {it.kind === 'goal' ? (
                       <textarea
                         className="textarea textarea--goal-title"
                         rows={5}
+                        defaultValue={it.title}
+                        key={`t-${it.id}-${it.updatedAt}`}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          if (v && v !== it.title) onUpdate(it.id, { title: v });
+                        }}
+                      />
+                    ) : it.kind === 'task' ? (
+                      <textarea
+                        className="textarea textarea--task-title"
+                        rows={2}
                         defaultValue={it.title}
                         key={`t-${it.id}-${it.updatedAt}`}
                         onBlur={(e) => {
@@ -894,6 +936,21 @@ function KindSection({
           ))}
         </ul>
       )}
+      <AIAssistantDialog
+        open={!!aiTarget}
+        onClose={() => setAiTarget(null)}
+        task={{ title: aiTarget?.title ?? '', body: aiTarget?.body }}
+        onAppendToBody={
+          aiTarget
+            ? (markdown) => {
+                const t = aiTarget;
+                const next = `${t.body ? `${t.body}\n\n` : ''}---\n**AI suggestions**\n\n${markdown}`;
+                onUpdate(t.id, { body: next });
+                setAiTarget(null);
+              }
+            : undefined
+        }
+      />
     </section>
   );
 }

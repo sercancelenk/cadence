@@ -9,11 +9,15 @@ import {
   IcLayoutGrid,
   IcListTodo,
   IcPlus,
+  IcSparkles,
   IcStar,
   IcTrash,
 } from '../components/icons';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
+import { AIAssistantDialog } from '../components/AIAssistantDialog';
+import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
+import { isAIConfigured } from '../lib/ai';
 import { formatDateShort, formatTimeOnly, fromLocalDatetimeValue, isPast, toLocalDatetimeValue } from '../lib/datetime';
 import type { TodoGroup, TodoItem } from '../model';
 
@@ -69,6 +73,8 @@ type TodoTaskRowProps = {
   group: TodoGroup;
   groups: TodoGroup[];
   compact: boolean;
+  aiEnabled: boolean;
+  onAskAI: (item: TodoItem) => void;
   onPatch: (id: string, patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt'>>) => void;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
@@ -124,7 +130,17 @@ function quickPresets(): { key: string; label: string; getDate: () => Date }[] {
   ];
 }
 
-function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove }: TodoTaskRowProps) {
+function TodoTaskRow({
+  item,
+  group,
+  groups,
+  compact,
+  aiEnabled,
+  onAskAI,
+  onPatch,
+  onToggle,
+  onRemove,
+}: TodoTaskRowProps) {
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(item.title);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -158,23 +174,29 @@ function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove
       <div className="todos-row__mid">
         <div className="todos-row__topline">
           {editing ? (
-            <input
-              className="todos-row__title-input"
+            <AutoResizeTextarea
+              className="todos-row__title-input todos-row__title-input--multi"
               value={draftTitle}
               autoFocus
-              onChange={(e) => setDraftTitle(e.target.value)}
-              onBlur={() => {
+              minRows={1}
+              maxRows={6}
+              ariaLabel="Edit task"
+              onChange={setDraftTitle}
+              onSubmit={() => {
                 const t = draftTitle.trim();
                 if (t && t !== item.title) onPatch(item.id, { title: t });
                 else setDraftTitle(item.title);
                 setEditing(false);
               }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                if (e.key === 'Escape') {
-                  setDraftTitle(item.title);
-                  setEditing(false);
-                }
+              onCancel={() => {
+                setDraftTitle(item.title);
+                setEditing(false);
+              }}
+              onBlur={() => {
+                const t = draftTitle.trim();
+                if (t && t !== item.title) onPatch(item.id, { title: t });
+                else setDraftTitle(item.title);
+                setEditing(false);
               }}
             />
           ) : (
@@ -288,6 +310,16 @@ function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove
                 </option>
               ))}
             </select>
+            {aiEnabled ? (
+              <button
+                type="button"
+                className="todos-row__ai-btn"
+                title="Ask AI for recommendations"
+                onClick={() => onAskAI(item)}
+              >
+                <IcSparkles size={15} />
+              </button>
+            ) : null}
             <button type="button" className="todos-row__icon-btn" title="Delete" onClick={() => onRemove(item.id)}>
               <IcTrash size={16} />
             </button>
@@ -326,7 +358,9 @@ export function TodosPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [dragGroupId, setDragGroupId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [aiTask, setAiTask] = useState<TodoItem | null>(null);
 
+  const aiEnabled = isAIConfigured(data.aiSettings);
   const allGroupsSorted = useMemo(() => sortGroups(data.todoGroups), [data.todoGroups]);
 
   const visibleGroups = useMemo(
@@ -650,6 +684,8 @@ export function TodosPage() {
                         group={groupById.get(it.groupId) ?? g}
                         groups={allGroupsSorted}
                         compact={compact}
+                        aiEnabled={aiEnabled}
+                        onAskAI={setAiTask}
                         onPatch={(id, patch) => updateTodoItem(id, patch)}
                         onToggle={toggleTodoItem}
                         onRemove={removeTodoItem}
@@ -662,6 +698,8 @@ export function TodosPage() {
                         group={groupById.get(it.groupId) ?? g}
                         groups={allGroupsSorted}
                         compact={compact}
+                        aiEnabled={aiEnabled}
+                        onAskAI={setAiTask}
                         onPatch={(id, patch) => updateTodoItem(id, patch)}
                         onToggle={toggleTodoItem}
                         onRemove={removeTodoItem}
@@ -672,7 +710,7 @@ export function TodosPage() {
 
                 {addingGroupId === g.id ? (
                   <form
-                    className="todos-add-inline"
+                    className="todos-add-inline todos-add-inline--multi"
                     onSubmit={(e: FormEvent) => {
                       e.preventDefault();
                       if (!draft.trim()) {
@@ -684,22 +722,34 @@ export function TodosPage() {
                       setAddingGroupId(null);
                     }}
                   >
-                    <input
-                      className="todos-add-inline__input"
-                      placeholder="Task name"
+                    <AutoResizeTextarea
+                      className="todos-add-inline__input todos-add-inline__textarea"
+                      placeholder="Task — Enter to add, Shift+Enter for a new line"
                       value={draft}
                       autoFocus
-                      onChange={(e) => setDraftByGroup((prev) => ({ ...prev, [g.id]: e.target.value }))}
-                      onBlur={() => {
-                        if (!draft.trim()) setAddingGroupId(null);
+                      minRows={1}
+                      maxRows={8}
+                      ariaLabel="New task"
+                      onChange={(v) => setDraftByGroup((prev) => ({ ...prev, [g.id]: v }))}
+                      onSubmit={() => {
+                        if (!draft.trim()) {
+                          setAddingGroupId(null);
+                          return;
+                        }
+                        addTodoItem(g.id, draft.trim());
+                        setDraftByGroup((prev) => ({ ...prev, [g.id]: '' }));
+                        setAddingGroupId(null);
                       }}
+                      onCancel={() => setAddingGroupId(null)}
                     />
-                    <button type="submit" className="todos-add-inline__submit">
-                      Add
-                    </button>
-                    <button type="button" className="todos-add-inline__cancel" onClick={() => setAddingGroupId(null)}>
-                      Cancel
-                    </button>
+                    <div className="todos-add-inline__actions">
+                      <button type="submit" className="todos-add-inline__submit">
+                        Add
+                      </button>
+                      <button type="button" className="todos-add-inline__cancel" onClick={() => setAddingGroupId(null)}>
+                        Cancel
+                      </button>
+                    </div>
                   </form>
                 ) : (
                   <button type="button" className="todos-add-task" onClick={() => setAddingGroupId(g.id)}>
@@ -771,6 +821,12 @@ export function TodosPage() {
           </button>
         )}
       </section>
+
+      <AIAssistantDialog
+        open={!!aiTask}
+        onClose={() => setAiTask(null)}
+        task={{ title: aiTask?.title ?? '' }}
+      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { v4 as uuid } from 'uuid';
 import type {
+  AISettings,
   AppData,
   FeedbackKind,
   GoalStatus,
@@ -364,6 +365,36 @@ export function updateUserProfile(
       avatarDataUrl: avatar,
     },
   };
+}
+
+export function updateAISettings(
+  data: AppData,
+  patch: Partial<AISettings>,
+): AppData {
+  const current: AISettings = data.aiSettings ?? {};
+  const next: AISettings = {
+    provider: patch.provider !== undefined ? patch.provider || undefined : current.provider,
+    apiKey:
+      patch.apiKey !== undefined
+        ? patch.apiKey.trim()
+          ? patch.apiKey.trim()
+          : undefined
+        : current.apiKey,
+    model:
+      patch.model !== undefined
+        ? patch.model.trim()
+          ? patch.model.trim()
+          : undefined
+        : current.model,
+    systemPrompt:
+      patch.systemPrompt !== undefined
+        ? patch.systemPrompt.trim()
+          ? patch.systemPrompt
+          : undefined
+        : current.systemPrompt,
+  };
+  const isEmpty = !next.provider && !next.apiKey && !next.model && !next.systemPrompt;
+  return { ...data, aiSettings: isEmpty ? undefined : next };
 }
 
 export function toggleFavoriteTeam(data: AppData, teamId: string): AppData {

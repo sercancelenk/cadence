@@ -362,3 +362,18 @@ export function IcWifi(p: IconProps) {
   );
 }
 
+export function IcSparkles(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path
+        d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"
+        strokeWidth={sw}
+        strokeLinejoin="round"
+      />
+      <path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z" strokeWidth={sw} strokeLinejoin="round" />
+      <path d="M5 16l.6 1.6L7.2 18l-1.6.6L5 20l-.6-1.4L3 18l1.4-.4L5 16z" strokeWidth={sw} strokeLinejoin="round" />
+    </svg>
+  );
+}
+

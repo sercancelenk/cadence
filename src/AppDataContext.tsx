@@ -32,10 +32,11 @@ import {
   updatePerson as updatePersonFn,
   updateTeam as updateTeamFn,
   updateTodoGroup as updateTodoGroupFn,
+  updateAISettings as updateAISettingsFn,
   updateTodoItem as updateTodoItemFn,
   updateUserProfile as updateUserProfileFn,
 } from './actions';
-import type { AppData, Item, ItemKind, Person, Team, TodoGroup, TodoItem, UserProfile } from './model';
+import type { AISettings, AppData, Item, ItemKind, Person, Team, TodoGroup, TodoItem, UserProfile } from './model';
 import { normalizeData } from './model';
 
 type Api = {
@@ -54,6 +55,7 @@ type Api = {
     patch: Partial<Pick<UserProfile, 'displayName' | 'jobTitle' | 'department' | 'phone' | 'bio' | 'avatarDataUrl'>>,
   ) => void;
   toggleFavoriteTeam: (teamId: string) => void;
+  updateAISettings: (patch: Partial<AISettings>) => void;
   addItem: (
     personId: string,
     kind: ItemKind,
@@ -263,6 +265,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       removePerson: (id) => update((x) => removePersonFn(x, id)),
       updateUserProfile: (patch) => update((x) => updateUserProfileFn(x, patch)),
       toggleFavoriteTeam: (teamId) => update((x) => toggleFavoriteTeamFn(x, teamId)),
+      updateAISettings: (patch) => update((x) => updateAISettingsFn(x, patch)),
       addItem: (personId, kind, fields) => update((x) => addItemFn(x, personId, kind, fields ?? {})),
       updateItem: (id, patch) => update((x) => updateItemFn(x, id, patch)),
       toggleItemDone: (id) => update((x) => toggleItemDoneFn(x, id)),
