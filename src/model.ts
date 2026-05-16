@@ -41,6 +41,8 @@ export interface UserProfile {
   phone?: string;
   /** Short bio / about. */
   bio?: string;
+  /** Optional avatar as a data: URL (PNG/JPEG/WebP). Stored alongside profile data. */
+  avatarDataUrl?: string;
 }
 
 export interface Person {
@@ -530,6 +532,10 @@ function ensureProfile(data: AppData): AppData {
     ...t,
     status: t.status && ['active', 'paused', 'archived'].includes(t.status) ? t.status : 'active',
   }));
+  const avatar =
+    typeof raw.avatarDataUrl === 'string' && raw.avatarDataUrl.startsWith('data:')
+      ? raw.avatarDataUrl
+      : undefined;
   const profile: UserProfile = {
     displayName: raw.displayName?.trim() ? raw.displayName.trim() : 'Me',
     favoriteTeamIds: fav,
@@ -537,6 +543,7 @@ function ensureProfile(data: AppData): AppData {
     department: raw.department?.trim() || undefined,
     phone: raw.phone?.trim() || undefined,
     bio: raw.bio?.trim() || undefined,
+    avatarDataUrl: avatar,
   };
   return { ...data, profile, teams };
 }

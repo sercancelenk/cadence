@@ -16,4 +16,9 @@ contextBridge.exposeInMainWorld('leeadman', {
   accountLogin: (payload) => ipcRenderer.invoke('account:login', payload),
   accountLogout: () => ipcRenderer.invoke('account:logout'),
   accountHasLegacyData: () => ipcRenderer.invoke('account:hasLegacyData'),
+  accountChangePassword: (payload) => ipcRenderer.invoke('account:changePassword', payload),
+  syncStatus: () => ipcRenderer.invoke('sync:status'),
+  syncEnable: () => ipcRenderer.invoke('sync:enable'),
+  syncDisable: () => ipcRenderer.invoke('sync:disable'),
+  syncRotateToken: () => ipcRenderer.invoke('sync:rotateToken'),
 });

@@ -27,6 +27,8 @@ const {
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const os = require('os');
 
 // ---------- Single instance ----------------------------------------------------
 
@@ -102,6 +104,275 @@ function writeJsonSafe(filePath, payload) {
 function hashWithSalt(value, saltHex) {
   const salt = Buffer.from(saltHex, 'hex');
   return crypto.scryptSync(String(value), salt, 64);
+}
+
+/**
+ * Derive a 32-byte AES-256 key from the user's password.
+ * `encSalt` is a hex string stored per-user in `accounts.json`.
+ */
+function deriveDataKey(password, encSaltHex) {
+  const salt = Buffer.from(encSaltHex, 'hex');
+  return crypto.scryptSync(String(password), salt, 32);
+}
+
+/**
+ * In-memory map: userId -> 32-byte AES key. Held only for the duration of the
+ * Electron process; cleared on logout / password change. Never persisted.
+ */
+const dataKeys = new Map();
+
+const DATA_FILE_MAGIC = 'LDMN1';
+
+/** Returns true when the buffer/string starts with our encrypted-file magic. */
+function isEncryptedFile(text) {
+  if (typeof text !== 'string') return false;
+  const t = text.trimStart();
+  if (!t.startsWith('{')) return false;
+  try {
+    const o = JSON.parse(t);
+    return o && o.magic === DATA_FILE_MAGIC && typeof o.iv === 'string' && typeof o.ct === 'string';
+  } catch {
+    return false;
+  }
+}
+
+/** AES-256-GCM encrypt → returns the on-disk JSON envelope as a string. */
+function encryptPayload(plainText, key) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return JSON.stringify({
+    magic: DATA_FILE_MAGIC,
+    v: 1,
+    alg: 'AES-256-GCM',
+    iv: iv.toString('base64'),
+    tag: tag.toString('base64'),
+    ct: ct.toString('base64'),
+  });
+}
+
+/** AES-256-GCM decrypt → returns the original UTF-8 string or null on auth failure. */
+function decryptPayload(envelope, key) {
+  try {
+    const o = JSON.parse(envelope);
+    if (!o || o.magic !== DATA_FILE_MAGIC) return null;
+    const iv = Buffer.from(o.iv, 'base64');
+    const tag = Buffer.from(o.tag, 'base64');
+    const ct = Buffer.from(o.ct, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
+    return pt.toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+/** Reads + decrypts the user's data file. Plaintext (legacy) files are upgraded on next save. */
+function readUserData(userId) {
+  const file = dataPathForUser(userId);
+  if (!fs.existsSync(file)) return null;
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    console.error('[leeadman] failed to read user data', err);
+    return null;
+  }
+  const key = dataKeys.get(userId);
+  if (isEncryptedFile(text)) {
+    if (!key) {
+      console.warn('[leeadman] data file is encrypted but no key in memory for', userId);
+      return null;
+    }
+    const plain = decryptPayload(text, key);
+    if (plain == null) return null;
+    try {
+      return JSON.parse(plain);
+    } catch {
+      return null;
+    }
+  }
+  // Legacy plaintext fallback.
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** Encrypts (when a key is available) and writes the user's data file atomically. */
+function writeUserData(userId, payload) {
+  const file = dataPathForUser(userId);
+  const json = JSON.stringify(payload);
+  const key = dataKeys.get(userId);
+  const out = key ? encryptPayload(json, key) : json;
+  return writeJsonText(file, out);
+}
+
+function writeJsonText(filePath, text) {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const tmp = `${filePath}.tmp`;
+    fs.writeFileSync(tmp, text, 'utf8');
+    fs.renameSync(tmp, filePath);
+    return true;
+  } catch (err) {
+    console.error('[leeadman] failed to write', filePath, err);
+    return false;
+  }
+}
+
+// ---------- LAN sync server ---------------------------------------------------
+//
+// Optional, opt-in HTTP server that exposes the *currently signed-in* user's
+// data to other devices on the same Wi-Fi network. Authentication is a
+// bearer token that lives in `sync.json`; rotating it invalidates pairings.
+//
+// Endpoints:
+//   GET  /v1/snapshot   → JSON `{ data, ts }` for the active session.
+//   POST /v1/snapshot   → replaces the active user's data with the request body.
+//   OPTIONS *           → CORS preflight reply.
+//
+// All responses set Access-Control-Allow-Origin: * so the PWA can call into
+// the desktop from a different origin.
+
+const SYNC_FILENAME = 'sync.json';
+const SYNC_DEFAULT_PORT = 9787;
+
+function syncConfigPath() {
+  return path.join(app.getPath('userData'), SYNC_FILENAME);
+}
+
+function readSyncConfig() {
+  return readJsonSafe(syncConfigPath(), { enabled: false });
+}
+
+function writeSyncConfig(cfg) {
+  writeJsonSafe(syncConfigPath(), cfg);
+}
+
+let syncServer = null;
+let syncBoundPort = null;
+
+function localIPv4Addresses() {
+  const out = [];
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const ifc of ifaces[name] ?? []) {
+      if (!ifc.internal && ifc.family === 'IPv4') out.push(ifc.address);
+    }
+  }
+  return out;
+}
+
+function applyCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+}
+
+function startSyncServer(port = SYNC_DEFAULT_PORT) {
+  return new Promise((resolve, reject) => {
+    if (syncServer) {
+      resolve({ ok: true, port: syncBoundPort });
+      return;
+    }
+    const cfg = readSyncConfig();
+    if (!cfg.enabled || !cfg.token) {
+      resolve({ ok: false, error: 'Sync is not enabled.' });
+      return;
+    }
+    const server = http.createServer((req, res) => {
+      applyCors(res);
+      if (req.method === 'OPTIONS') {
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
+      const auth = req.headers['authorization'] || '';
+      const expected = `Bearer ${cfg.token}`;
+      if (auth !== expected) {
+        res.statusCode = 401;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'unauthorised' }));
+        return;
+      }
+      const uid = readSessionUserId();
+      if (!uid) {
+        res.statusCode = 503;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'no active session on host' }));
+        return;
+      }
+
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      if (url.pathname === '/v1/snapshot' && req.method === 'GET') {
+        const data = readUserData(uid);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ ok: true, ts: new Date().toISOString(), data }));
+        return;
+      }
+
+      if (url.pathname === '/v1/snapshot' && req.method === 'POST') {
+        const chunks = [];
+        let total = 0;
+        req.on('data', (c) => {
+          total += c.length;
+          if (total > 25 * 1024 * 1024) {
+            req.destroy();
+            return;
+          }
+          chunks.push(c);
+        });
+        req.on('end', () => {
+          try {
+            const body = Buffer.concat(chunks).toString('utf8');
+            const parsed = JSON.parse(body);
+            const payload = parsed && typeof parsed === 'object' && parsed.data ? parsed.data : parsed;
+            const okWrite = writeUserData(uid, payload);
+            res.statusCode = okWrite ? 200 : 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: okWrite }));
+          } catch (err) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+          }
+        });
+        return;
+      }
+
+      res.statusCode = 404;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'not found' }));
+    });
+
+    server.on('error', (err) => {
+      console.error('[leeadman] sync server error', err);
+      reject(err);
+    });
+    server.listen(port, '0.0.0.0', () => {
+      syncServer = server;
+      syncBoundPort = server.address().port;
+      resolve({ ok: true, port: syncBoundPort });
+    });
+  });
+}
+
+function stopSyncServer() {
+  return new Promise((resolve) => {
+    if (!syncServer) {
+      resolve({ ok: true });
+      return;
+    }
+    const s = syncServer;
+    syncServer = null;
+    syncBoundPort = null;
+    s.close(() => resolve({ ok: true }));
+  });
 }
 
 function readAuth() {
@@ -340,13 +611,13 @@ function setupAutoUpdater() {
 ipcMain.handle('data:load', () => {
   const uid = readSessionUserId();
   if (!uid) return null;
-  return readJsonSafe(dataPathForUser(uid), null);
+  return readUserData(uid);
 });
 
 ipcMain.handle('data:save', (_evt, payload) => {
   const uid = readSessionUserId();
   if (!uid) return false;
-  return writeJsonSafe(dataPathForUser(uid), payload);
+  return writeUserData(uid, payload);
 });
 
 ipcMain.handle('app:showNotification', (_evt, { title, body } = {}) => {
@@ -454,23 +725,33 @@ ipcMain.handle('account:register', (_evt, { email, password, migrateLegacy, disp
   const id = crypto.randomUUID();
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = hashWithSalt(password, salt).toString('hex');
+  const encSalt = crypto.randomBytes(16).toString('hex');
   accounts.users.push({
     id,
     email: em,
     salt,
     hash,
+    encSalt,
     createdAt: new Date().toISOString(),
     displayName: typeof displayName === 'string' && displayName.trim() ? displayName.trim() : undefined,
   });
   writeAccounts(accounts);
   writeSession(id);
+  dataKeys.set(id, deriveDataKey(password, encSalt));
 
   const userPath = dataPathForUser(id);
   if (migrateLegacy === true) {
     try {
       const leg = legacyDataPath();
       if (fs.existsSync(leg) && !fs.existsSync(userPath)) {
-        fs.copyFileSync(leg, userPath);
+        // Read legacy plaintext, immediately rewrite encrypted under the new key.
+        const legacyText = fs.readFileSync(leg, 'utf8');
+        try {
+          const obj = JSON.parse(legacyText);
+          writeUserData(id, obj);
+        } catch {
+          fs.copyFileSync(leg, userPath);
+        }
       }
     } catch (e) {
       return {
@@ -501,6 +782,29 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
     if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
       return { ok: false, error: 'Incorrect email or password.' };
     }
+    // Backfill encSalt + encrypt-on-first-save for accounts created before encryption support.
+    let mutated = false;
+    if (typeof u.encSalt !== 'string' || !u.encSalt) {
+      u.encSalt = crypto.randomBytes(16).toString('hex');
+      mutated = true;
+    }
+    if (mutated) writeAccounts(accounts);
+    dataKeys.set(u.id, deriveDataKey(password, u.encSalt));
+
+    // If the data file is currently plaintext (legacy), upgrade it transparently now.
+    const file = dataPathForUser(u.id);
+    if (fs.existsSync(file)) {
+      const text = fs.readFileSync(file, 'utf8');
+      if (!isEncryptedFile(text)) {
+        try {
+          const obj = JSON.parse(text);
+          writeUserData(u.id, obj);
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+
     writeSession(u.id);
     return {
       ok: true,
@@ -512,7 +816,91 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
 });
 
 ipcMain.handle('account:logout', () => {
+  const uid = readSessionUserId();
+  if (uid) dataKeys.delete(uid);
   clearSession();
+  return { ok: true };
+});
+
+/**
+ * Verify the current password and rotate the user's password (and on-disk
+ * encryption key). The data file is decrypted with the old key, then
+ * re-encrypted under the new key in a single atomic swap.
+ */
+ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  if (typeof oldPassword !== 'string' || typeof newPassword !== 'string') {
+    return { ok: false, error: 'Both passwords are required.' };
+  }
+  if (newPassword.length < 8) {
+    return { ok: false, error: 'New password must be at least 8 characters.' };
+  }
+  if (oldPassword === newPassword) {
+    return { ok: false, error: 'New password must be different from the current one.' };
+  }
+
+  const accounts = readAccounts();
+  const u = accounts.users.find((x) => x.id === uid);
+  if (!u || typeof u.salt !== 'string' || typeof u.hash !== 'string') {
+    return { ok: false, error: 'Account not found.' };
+  }
+
+  try {
+    const got = hashWithSalt(oldPassword, u.salt);
+    const exp = Buffer.from(u.hash, 'hex');
+    if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
+      return { ok: false, error: 'Current password is incorrect.' };
+    }
+  } catch {
+    return { ok: false, error: 'Current password is incorrect.' };
+  }
+
+  // Decrypt with current key (or read plaintext) before rotating keys.
+  const file = dataPathForUser(uid);
+  let plaintextPayload = null;
+  if (fs.existsSync(file)) {
+    const text = fs.readFileSync(file, 'utf8');
+    if (isEncryptedFile(text)) {
+      const currentKey = dataKeys.get(uid);
+      if (!currentKey) {
+        return { ok: false, error: 'Session expired. Please sign in again.' };
+      }
+      const plain = decryptPayload(text, currentKey);
+      if (plain == null) {
+        return { ok: false, error: 'Could not decrypt your data with the current password.' };
+      }
+      try {
+        plaintextPayload = JSON.parse(plain);
+      } catch {
+        return { ok: false, error: 'Existing data file is corrupt.' };
+      }
+    } else {
+      try {
+        plaintextPayload = JSON.parse(text);
+      } catch {
+        plaintextPayload = null;
+      }
+    }
+  }
+
+  // Generate fresh password hash + encryption salt → derive new key.
+  const newSalt = crypto.randomBytes(16).toString('hex');
+  const newHash = hashWithSalt(newPassword, newSalt).toString('hex');
+  const newEncSalt = crypto.randomBytes(16).toString('hex');
+  const newKey = deriveDataKey(newPassword, newEncSalt);
+
+  u.salt = newSalt;
+  u.hash = newHash;
+  u.encSalt = newEncSalt;
+  u.passwordChangedAt = new Date().toISOString();
+  writeAccounts(accounts);
+
+  dataKeys.set(uid, newKey);
+  if (plaintextPayload != null) {
+    writeUserData(uid, plaintextPayload);
+  }
+
   return { ok: true };
 });
 
@@ -522,6 +910,57 @@ ipcMain.handle('account:hasLegacyData', () => {
   } catch {
     return { has: false };
   }
+});
+
+// ---------- IPC: sync ---------------------------------------------------------
+
+ipcMain.handle('sync:status', () => {
+  const cfg = readSyncConfig();
+  return {
+    enabled: !!cfg.enabled,
+    running: !!syncServer,
+    port: syncBoundPort,
+    token: cfg.token ?? null,
+    ips: localIPv4Addresses(),
+  };
+});
+
+ipcMain.handle('sync:enable', async () => {
+  let cfg = readSyncConfig();
+  if (!cfg.token) cfg.token = crypto.randomBytes(24).toString('base64url');
+  cfg.enabled = true;
+  writeSyncConfig(cfg);
+  try {
+    const r = await startSyncServer(SYNC_DEFAULT_PORT);
+    if (!r.ok) return { ok: false, error: r.error ?? 'Could not start server.' };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+  return {
+    ok: true,
+    token: cfg.token,
+    port: syncBoundPort,
+    ips: localIPv4Addresses(),
+  };
+});
+
+ipcMain.handle('sync:disable', async () => {
+  const cfg = readSyncConfig();
+  cfg.enabled = false;
+  writeSyncConfig(cfg);
+  await stopSyncServer();
+  return { ok: true };
+});
+
+ipcMain.handle('sync:rotateToken', async () => {
+  const cfg = readSyncConfig();
+  cfg.token = crypto.randomBytes(24).toString('base64url');
+  writeSyncConfig(cfg);
+  if (syncServer) {
+    await stopSyncServer();
+    if (cfg.enabled) await startSyncServer(SYNC_DEFAULT_PORT);
+  }
+  return { ok: true, token: cfg.token };
 });
 
 // ---------- App lifecycle ------------------------------------------------------
@@ -560,9 +999,21 @@ app.whenReady().then(() => {
   createWindow();
   setupAutoUpdater();
 
+  // Resume LAN sync if the user enabled it previously.
+  const sCfg = readSyncConfig();
+  if (sCfg.enabled && sCfg.token) {
+    startSyncServer(SYNC_DEFAULT_PORT).catch((err) => {
+      console.error('[leeadman] sync auto-start failed', err);
+    });
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('before-quit', () => {
+  void stopSyncServer();
 });
 
 app.on('window-all-closed', () => {

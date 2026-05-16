@@ -23,6 +23,10 @@ type Ctx = {
     migrateLegacy?: boolean;
   }) => Promise<{ ok: boolean; error?: string; warn?: string }>;
   logout: () => Promise<void>;
+  changePassword: (opts: {
+    oldPassword: string;
+    newPassword: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
   hasElectronAccounts: boolean;
   hasLegacyData: boolean;
   refreshLegacyHint: () => Promise<void>;
@@ -187,6 +191,33 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const changePassword = useCallback(
+    async ({ oldPassword, newPassword }: { oldPassword: string; newPassword: string }) => {
+      if (typeof newPassword !== 'string' || newPassword.length < 8) {
+        return { ok: false as const, error: 'New password must be at least 8 characters.' };
+      }
+      if (oldPassword === newPassword) {
+        return { ok: false as const, error: 'New password must be different from the current one.' };
+      }
+      if (window.leeadman?.accountChangePassword) {
+        const r = await window.leeadman.accountChangePassword({ oldPassword, newPassword });
+        return r?.ok ? { ok: true as const } : { ok: false as const, error: r?.error ?? 'Could not change password.' };
+      }
+      // Browser dev fallback: verify against stored PBKDF2 hash, then rotate.
+      if (!user) return { ok: false as const, error: 'Not signed in.' };
+      const { users } = await readDevAccounts();
+      const u = users.find((x) => x.id === user.id);
+      if (!u) return { ok: false as const, error: 'Account not found.' };
+      const ok = await pbkdf2VerifyPassword(oldPassword, u.saltB64, u.hashB64);
+      if (!ok) return { ok: false as const, error: 'Current password is incorrect.' };
+      const { saltB64, hashB64 } = await pbkdf2HashPassword(newPassword);
+      const next: StoredUser = { ...u, saltB64, hashB64 };
+      writeDevAccounts(users.map((x) => (x.id === u.id ? next : x)));
+      return { ok: true as const };
+    },
+    [user],
+  );
+
   const v = useMemo(
     () => ({
       user,
@@ -195,11 +226,12 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       login,
       register,
       logout,
+      changePassword,
       hasElectronAccounts: electron,
       hasLegacyData,
       refreshLegacyHint,
     }),
-    [user, loading, refresh, login, register, logout, electron, hasLegacyData, refreshLegacyHint],
+    [user, loading, refresh, login, register, logout, changePassword, electron, hasLegacyData, refreshLegacyHint],
   );
 
   return <AccountCtx.Provider value={v}>{children}</AccountCtx.Provider>;

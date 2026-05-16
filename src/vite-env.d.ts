@@ -32,6 +32,26 @@ declare global {
       accountLogin: (payload: { email: string; password: string }) => Promise<{ ok: boolean; user?: AccountUser; error?: string }>;
       accountLogout: () => Promise<{ ok: boolean }>;
       accountHasLegacyData: () => Promise<{ has: boolean }>;
+      accountChangePassword: (payload: {
+        oldPassword: string;
+        newPassword: string;
+      }) => Promise<{ ok: boolean; error?: string }>;
+      syncStatus: () => Promise<{
+        enabled: boolean;
+        running: boolean;
+        port: number | null;
+        token: string | null;
+        ips: string[];
+      }>;
+      syncEnable: () => Promise<{
+        ok: boolean;
+        token?: string;
+        port?: number | null;
+        ips?: string[];
+        error?: string;
+      }>;
+      syncDisable: () => Promise<{ ok: boolean }>;
+      syncRotateToken: () => Promise<{ ok: boolean; token?: string }>;
     };
   }
 }

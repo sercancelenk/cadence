@@ -343,9 +343,15 @@ export function removeItem(data: AppData, id: string): AppData {
 
 export function updateUserProfile(
   data: AppData,
-  patch: Partial<Pick<UserProfile, 'displayName' | 'jobTitle' | 'department' | 'phone' | 'bio'>>,
+  patch: Partial<Pick<UserProfile, 'displayName' | 'jobTitle' | 'department' | 'phone' | 'bio' | 'avatarDataUrl'>>,
 ): AppData {
   const p = data.profile ?? { displayName: 'Me', favoriteTeamIds: [] };
+  const avatar =
+    patch.avatarDataUrl !== undefined
+      ? patch.avatarDataUrl && patch.avatarDataUrl.startsWith('data:')
+        ? patch.avatarDataUrl
+        : undefined
+      : p.avatarDataUrl;
   return {
     ...data,
     profile: {
@@ -355,6 +361,7 @@ export function updateUserProfile(
       department: patch.department !== undefined ? patch.department.trim() || undefined : p.department,
       phone: patch.phone !== undefined ? patch.phone.trim() || undefined : p.phone,
       bio: patch.bio !== undefined ? patch.bio.trim() || undefined : p.bio,
+      avatarDataUrl: avatar,
     },
   };
 }
@@ -409,6 +416,71 @@ export function removeTodoGroup(data: AppData, groupId: string): AppData {
   if (todoGroups.length === 0) return data;
   const todoItems = data.todoItems.map((x) => (x.groupId === groupId ? { ...x, groupId: fallback } : x));
   return { ...data, todoGroups, todoItems };
+}
+
+/**
+ * Reorder `groupId` so it sits immediately before `beforeGroupId` (or at the
+ * end when `beforeGroupId` is `null`). Pinned/archived buckets are kept as
+ * separate visibility groups: when the source and target are in the same
+ * bucket we only re-number that bucket; when they differ we move the source
+ * into the destination bucket (e.g. dropping a pinned list below an unpinned
+ * one will unpin it). This is the action used by the drag-and-drop reorder.
+ */
+export function reorderTodoGroup(
+  data: AppData,
+  groupId: string,
+  beforeGroupId: string | null,
+): AppData {
+  const target = data.todoGroups.find((g) => g.id === groupId);
+  if (!target) return data;
+  if (beforeGroupId === groupId) return data;
+
+  const before = beforeGroupId ? data.todoGroups.find((g) => g.id === beforeGroupId) : null;
+  const destPinned = before ? !!before.pinned : false;
+  const destArchived = before ? !!before.archived : !!target.archived;
+
+  const willTogglePin = !!target.pinned !== destPinned;
+  const willToggleArchive = !!target.archived !== destArchived;
+
+  const peers = data.todoGroups
+    .filter((g) => !!g.pinned === destPinned && !!g.archived === destArchived && g.id !== groupId)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+
+  const insertAt = before ? peers.findIndex((p) => p.id === before.id) : peers.length;
+  const ordered: TodoGroup[] = [
+    ...peers.slice(0, Math.max(0, insertAt)),
+    {
+      ...target,
+      pinned: willTogglePin ? (destPinned ? true : undefined) : target.pinned,
+      archived: willToggleArchive ? (destArchived ? true : undefined) : target.archived,
+    },
+    ...peers.slice(Math.max(0, insertAt)),
+  ];
+
+  // Build a fresh sortOrder for this bucket; offset within full list keeps
+  // pinned-on-top ordering stable relative to unpinned items.
+  const offset = destPinned ? 0 : 1_000_000;
+  const archiveOffset = destArchived ? 2_000_000 : 0;
+  const updates = new Map<string, number>();
+  ordered.forEach((g, idx) => {
+    updates.set(g.id, offset + archiveOffset + idx);
+  });
+
+  return {
+    ...data,
+    todoGroups: data.todoGroups.map((g) => {
+      if (g.id === target.id) {
+        return {
+          ...g,
+          pinned: willTogglePin ? (destPinned ? true : undefined) : g.pinned,
+          archived: willToggleArchive ? (destArchived ? true : undefined) : g.archived,
+          sortOrder: updates.get(g.id) ?? g.sortOrder,
+        };
+      }
+      const next = updates.get(g.id);
+      return next !== undefined ? { ...g, sortOrder: next } : g;
+    }),
+  };
 }
 
 /**

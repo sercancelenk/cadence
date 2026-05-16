@@ -1,6 +1,7 @@
 import { NavLink, useMatch } from 'react-router-dom';
 import {
   IcCalendar,
+  IcChartBar,
   IcFolder,
   IcHome,
   IcLayoutGrid,
@@ -62,6 +63,12 @@ export function AppSidebar({ collapsed }: Props) {
               <IcCalendar size={18} />
             </span>
             {!collapsed ? <span>Agenda</span> : null}
+          </NavLink>
+          <NavLink to="/analytics" className={linkCls} title="Analytics">
+            <span className="app-sidebar__ic">
+              <IcChartBar size={18} />
+            </span>
+            {!collapsed ? <span>Analytics</span> : null}
           </NavLink>
         </div>
 

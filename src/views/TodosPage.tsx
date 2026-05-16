@@ -5,6 +5,7 @@ import {
   IcCheck,
   IcChevronDown,
   IcClock,
+  IcGrip,
   IcLayoutGrid,
   IcListTodo,
   IcPlus,
@@ -73,13 +74,70 @@ type TodoTaskRowProps = {
   onRemove: (id: string) => void;
 };
 
+/**
+ * A few common quick-schedule presets relative to "now". The labels are short
+ * so they fit in the inline toolbar without wrapping.
+ */
+function quickPresets(): { key: string; label: string; getDate: () => Date }[] {
+  return [
+    {
+      key: 'today',
+      label: 'Today 5pm',
+      getDate: () => {
+        const d = new Date();
+        d.setHours(17, 0, 0, 0);
+        return d;
+      },
+    },
+    {
+      key: 'tomorrow',
+      label: 'Tomorrow 9am',
+      getDate: () => {
+        const d = new Date();
+        d.setDate(d.getDate() + 1);
+        d.setHours(9, 0, 0, 0);
+        return d;
+      },
+    },
+    {
+      key: 'in-3h',
+      label: '+3h',
+      getDate: () => {
+        const d = new Date();
+        d.setMinutes(0, 0, 0);
+        d.setHours(d.getHours() + 3);
+        return d;
+      },
+    },
+    {
+      key: 'next-mon',
+      label: 'Next Mon 9am',
+      getDate: () => {
+        const d = new Date();
+        const day = d.getDay();
+        const offset = ((1 + 7 - day) % 7) || 7;
+        d.setDate(d.getDate() + offset);
+        d.setHours(9, 0, 0, 0);
+        return d;
+      },
+    },
+  ];
+}
+
 function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove }: TodoTaskRowProps) {
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(item.title);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const dueLabel = item.dueAt ? formatTimeOnly(item.dueAt) : '';
   const dueDateShort = formatDateShort(item.dueAt);
   const overdue = item.dueAt && isPast(item.dueAt) && !item.done;
+  const presets = useMemo(() => quickPresets(), []);
+
+  const applyPreset = (when: Date) => {
+    onPatch(item.id, { dueAt: when.toISOString() });
+    setScheduleOpen(false);
+  };
 
   return (
     <li
@@ -156,23 +214,68 @@ function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove
                 </span>
               </>
             ) : (
-              <span className="todos-row__meta-placeholder">Set due date</span>
+              <span className="todos-row__meta-placeholder">Not scheduled</span>
             )}
           </div>
           <div className="todos-row__toolbar">
-            <label className="todos-row__date-lbl">
-              <span className="sr-only">Due date</span>
-              <input
-                type="datetime-local"
-                className="todos-row__date"
-                defaultValue={toLocalDatetimeValue(item.dueAt)}
-                key={`due-${item.id}-${item.updatedAt}`}
-                onBlur={(e) => {
-                  const v = fromLocalDatetimeValue(e.target.value);
-                  onPatch(item.id, { dueAt: v });
-                }}
-              />
-            </label>
+            <div className="todos-row__sched">
+              <button
+                type="button"
+                className={`todos-row__sched-btn${item.dueAt ? ' todos-row__sched-btn--set' : ''}`}
+                aria-haspopup="true"
+                aria-expanded={scheduleOpen}
+                title={item.dueAt ? 'Reschedule' : 'Schedule'}
+                onClick={() => setScheduleOpen((o) => !o)}
+              >
+                <IcCalendar size={14} />
+                <span>{item.dueAt ? 'Reschedule' : 'Schedule'}</span>
+              </button>
+              {scheduleOpen ? (
+                <div
+                  className="todos-row__sched-pop"
+                  role="dialog"
+                  onMouseLeave={() => setScheduleOpen(false)}
+                >
+                  <div className="todos-row__sched-presets">
+                    {presets.map((p) => (
+                      <button
+                        type="button"
+                        key={p.key}
+                        className="todos-row__sched-preset"
+                        onClick={() => applyPreset(p.getDate())}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="todos-row__sched-custom">
+                    <span className="muted small">Custom date &amp; time</span>
+                    <input
+                      type="datetime-local"
+                      className="todos-row__date"
+                      defaultValue={toLocalDatetimeValue(item.dueAt)}
+                      key={`due-${item.id}-${item.updatedAt}`}
+                      onChange={(e) => {
+                        const v = fromLocalDatetimeValue(e.target.value);
+                        onPatch(item.id, { dueAt: v });
+                      }}
+                    />
+                  </label>
+                  {item.dueAt ? (
+                    <button
+                      type="button"
+                      className="todos-row__sched-clear"
+                      onClick={() => {
+                        onPatch(item.id, { dueAt: undefined });
+                        setScheduleOpen(false);
+                      }}
+                    >
+                      Clear schedule
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             <select
               className="todos-row__move"
               value={item.groupId}
@@ -208,6 +311,7 @@ export function TodosPage() {
     removeTodoItem,
     updateTodoGroup,
     moveTodoGroup,
+    reorderTodoGroup,
     clearCompletedInGroup,
     markAllCompleteInGroup,
   } = useAppData();
@@ -220,6 +324,8 @@ export function TodosPage() {
   const [sectionsHydrated, setSectionsHydrated] = useState(false);
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  const [dragGroupId, setDragGroupId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
   const allGroupsSorted = useMemo(() => sortGroups(data.todoGroups), [data.todoGroups]);
 
@@ -302,17 +408,24 @@ export function TodosPage() {
       <header className="page-head todos-route__head">
         <div className="todos-route__head-main">
           <h1>Today</h1>
-          <p className="muted">Your personal tasks, organised by lists.</p>
+          <p className="muted">
+            Your personal tasks, organised by lists. Drag the
+            <span className="todos-route__head-grip" aria-hidden> <IcGrip size={14} /> </span>
+            handle to reorder lists.
+          </p>
         </div>
-        <button
-          type="button"
-          className="todos-route__display-btn todos-route__display-btn--icon-only"
-          title={compact ? 'Comfortable view' : 'Compact view'}
-          aria-label={compact ? 'Comfortable view' : 'Compact view'}
-          onClick={() => setCompact((c) => !c)}
-        >
-          {compact ? <IcListTodo size={17} /> : <IcLayoutGrid size={17} />}
-        </button>
+        <div className="todos-route__head-actions">
+          <button
+            type="button"
+            className="todos-route__display-btn"
+            title={compact ? 'Switch to comfortable spacing' : 'Switch to compact spacing'}
+            aria-pressed={compact}
+            onClick={() => setCompact((c) => !c)}
+          >
+            {compact ? <IcLayoutGrid size={16} /> : <IcListTodo size={16} />}
+            <span>{compact ? 'Comfortable' : 'Compact'}</span>
+          </button>
+        </div>
       </header>
 
       <section className="card todos-toolbar">
@@ -350,14 +463,54 @@ export function TodosPage() {
         const canMoveUp = myIdx > 0;
         const canMoveDown = myIdx >= 0 && myIdx < peers.length - 1;
 
+        const isDragSrc = dragGroupId === g.id;
+        const isDropTgt = dropTargetId === g.id && dragGroupId !== null && dragGroupId !== g.id;
+
         return (
           <section
             key={g.id}
             className={`card todos-section${g.pinned ? ' todos-section--pinned' : ''}${
               g.archived ? ' todos-section--archived' : ''
-            }`}
+            }${isDragSrc ? ' todos-section--dragging' : ''}${isDropTgt ? ' todos-section--drop-target' : ''}`}
+            onDragOver={(e) => {
+              if (!dragGroupId || dragGroupId === g.id) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              if (dropTargetId !== g.id) setDropTargetId(g.id);
+            }}
+            onDragLeave={(e) => {
+              if (!(e.currentTarget as Node).contains(e.relatedTarget as Node)) {
+                if (dropTargetId === g.id) setDropTargetId(null);
+              }
+            }}
+            onDrop={(e) => {
+              if (!dragGroupId || dragGroupId === g.id) return;
+              e.preventDefault();
+              reorderTodoGroup(dragGroupId, g.id);
+              setDragGroupId(null);
+              setDropTargetId(null);
+            }}
           >
             <div className="todos-section__head">
+              <button
+                type="button"
+                className="todos-section__grip"
+                draggable
+                aria-label={`Drag ${g.name} to reorder`}
+                title="Drag to reorder"
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/x-todo-group', g.id);
+                  setDragGroupId(g.id);
+                }}
+                onDragEnd={() => {
+                  setDragGroupId(null);
+                  setDropTargetId(null);
+                }}
+                onClick={(e) => e.preventDefault()}
+              >
+                <IcGrip size={16} />
+              </button>
               <button
                 type="button"
                 className={`todos-section__toggle${sectionOpen ? '' : ' todos-section__toggle--collapsed'}`}
@@ -561,6 +714,29 @@ export function TodosPage() {
           </section>
         );
       })}
+
+      {dragGroupId ? (
+        <div
+          className={`todos-drop-tail${dropTargetId === '__end__' ? ' todos-drop-tail--active' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (dropTargetId !== '__end__') setDropTargetId('__end__');
+          }}
+          onDragLeave={() => {
+            if (dropTargetId === '__end__') setDropTargetId(null);
+          }}
+          onDrop={(e) => {
+            if (!dragGroupId) return;
+            e.preventDefault();
+            reorderTodoGroup(dragGroupId, null);
+            setDragGroupId(null);
+            setDropTargetId(null);
+          }}
+        >
+          Drop here to move to the end
+        </div>
+      ) : null}
 
       <section className="card todos-route__foot">
         {newListOpen ? (

@@ -18,6 +18,7 @@ import {
   clearCompletedInGroup as clearCompletedInGroupFn,
   markAllCompleteInGroup as markAllCompleteInGroupFn,
   moveTodoGroup as moveTodoGroupFn,
+  reorderTodoGroup as reorderTodoGroupFn,
   removeItem as removeItemFn,
   removePerson as removePersonFn,
   removeTeam as removeTeamFn,
@@ -49,7 +50,9 @@ type Api = {
   addPerson: (teamId: string, name: string, title?: string) => void;
   updatePerson: (id: string, patch: Partial<Pick<Person, 'name' | 'title' | 'scratchpad' | 'agenda'>>) => void;
   removePerson: (id: string) => void;
-  updateUserProfile: (patch: Partial<Pick<UserProfile, 'displayName' | 'jobTitle' | 'department' | 'phone' | 'bio'>>) => void;
+  updateUserProfile: (
+    patch: Partial<Pick<UserProfile, 'displayName' | 'jobTitle' | 'department' | 'phone' | 'bio' | 'avatarDataUrl'>>,
+  ) => void;
   toggleFavoriteTeam: (teamId: string) => void;
   addItem: (
     personId: string,
@@ -88,6 +91,7 @@ type Api = {
     patch: Partial<Pick<TodoGroup, 'name' | 'sortOrder' | 'pinned' | 'archived'>>,
   ) => void;
   moveTodoGroup: (groupId: string, direction: 'up' | 'down') => void;
+  reorderTodoGroup: (groupId: string, beforeGroupId: string | null) => void;
   clearCompletedInGroup: (groupId: string) => void;
   markAllCompleteInGroup: (groupId: string) => void;
   removeTodoGroup: (groupId: string) => void;
@@ -233,6 +237,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       addTodoGroup: (name) => update((x) => addTodoGroupFn(x, name)),
       updateTodoGroup: (groupId, patch) => update((x) => updateTodoGroupFn(x, groupId, patch)),
       moveTodoGroup: (groupId, direction) => update((x) => moveTodoGroupFn(x, groupId, direction)),
+      reorderTodoGroup: (groupId, beforeGroupId) =>
+        update((x) => reorderTodoGroupFn(x, groupId, beforeGroupId)),
       clearCompletedInGroup: (groupId) => update((x) => clearCompletedInGroupFn(x, groupId)),
       markAllCompleteInGroup: (groupId) => update((x) => markAllCompleteInGroupFn(x, groupId)),
       removeTodoGroup: (groupId) => update((x) => removeTodoGroupFn(x, groupId)),

@@ -15,6 +15,8 @@ function breadcrumbFromPath(data: AppData, pathname: string): string {
   if (pathname === PATH_HOME) return 'Home';
   if (pathname === PATH_TEAMS) return 'Teams';
   if (pathname === '/todos') return 'To-dos';
+  if (pathname === '/agenda') return 'Agenda';
+  if (pathname === '/analytics') return 'Analytics';
   if (pathname === '/profile') return 'Profile';
   if (pathname === '/settings') return 'Settings';
   const tm = pathname.match(/^\/teams\/([^/]+)/);
@@ -162,9 +164,18 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
         </button>
         <details className="profile-menu">
           <summary className="profile-menu__trigger">
-            <span className="profile-avatar" title={profile.displayName}>
-              {initials}
-            </span>
+            {profile.avatarDataUrl ? (
+              <img
+                src={profile.avatarDataUrl}
+                alt=""
+                className="profile-avatar profile-avatar--image"
+                title={profile.displayName}
+              />
+            ) : (
+              <span className="profile-avatar" title={profile.displayName}>
+                {initials}
+              </span>
+            )}
           </summary>
           <div className="profile-menu__panel">
             <div className="profile-menu__head">{profile.displayName}</div>

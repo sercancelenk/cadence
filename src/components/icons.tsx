@@ -325,3 +325,40 @@ export function IcRefresh(p: IconProps) {
   );
 }
 
+export function IcGrip(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <circle cx="9" cy="6" r="1.4" strokeWidth={sw} />
+      <circle cx="15" cy="6" r="1.4" strokeWidth={sw} />
+      <circle cx="9" cy="12" r="1.4" strokeWidth={sw} />
+      <circle cx="15" cy="12" r="1.4" strokeWidth={sw} />
+      <circle cx="9" cy="18" r="1.4" strokeWidth={sw} />
+      <circle cx="15" cy="18" r="1.4" strokeWidth={sw} />
+    </svg>
+  );
+}
+
+export function IcChartBar(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path d="M4 21V10M10 21V4M16 21v-7M22 21H2" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function IcWifi(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path
+        d="M2 8.5a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8.5 15.5a6 6 0 0 1 7 0"
+        strokeWidth={sw}
+        strokeLinecap="round"
+      />
+      <circle cx="12" cy="19" r="1.3" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+

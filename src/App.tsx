@@ -17,6 +17,7 @@ import { Settings } from './views/Settings';
 import { TeamDashboard } from './views/TeamDashboard';
 import { TodosPage } from './views/TodosPage';
 import { AgendaPage } from './views/AgendaPage';
+import { AnalyticsPage } from './views/AnalyticsPage';
 import { CommandPalette } from './components/CommandPalette';
 import './app.css';
 
@@ -110,6 +111,7 @@ function AppRoutes() {
         <Route path={PATH_TEAMS.replace(/^\//, '')} element={<HomeTeams />} />
         <Route path="todos" element={<TodosPage />} />
         <Route path="agenda" element={<AgendaPage />} />
+        <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="profile" element={<ProfilePage />} />
         <Route path="settings" element={<Settings />} />
           <Route path="teams/:teamId" element={<TeamLayout />}>
