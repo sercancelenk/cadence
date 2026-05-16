@@ -12,28 +12,28 @@ import { useTheme } from '../ThemeContext';
 import type { AppData, TeamStatus } from '../model';
 
 function breadcrumbFromPath(data: AppData, pathname: string): string {
-  if (pathname === PATH_HOME) return 'Ana sayfa';
-  if (pathname === PATH_TEAMS) return 'Ekipler';
-  if (pathname === '/todos') return 'Yapılacaklar';
-  if (pathname === '/profile') return 'Profil';
-  if (pathname === '/settings') return 'Ayarlar';
+  if (pathname === PATH_HOME) return 'Home';
+  if (pathname === PATH_TEAMS) return 'Teams';
+  if (pathname === '/todos') return 'To-dos';
+  if (pathname === '/profile') return 'Profile';
+  if (pathname === '/settings') return 'Settings';
   const tm = pathname.match(/^\/teams\/([^/]+)/);
   if (!tm) return 'Leeadman';
   const id = tm[1];
   const base = `/teams/${id}`;
   const t = data.teams.find((x) => x.id === id);
-  const tn = t?.name ?? 'Ekip';
-  if (pathname === base) return `${tn} · Özet`;
-  if (pathname.startsWith(`${base}/me`)) return `${tn} · Kendim`;
-  if (pathname.startsWith(`${base}/leader`)) return `${tn} · Liderim`;
+  const tn = t?.name ?? 'Team';
+  if (pathname === base) return `${tn} · Overview`;
+  if (pathname.startsWith(`${base}/me`)) return `${tn} · Me`;
+  if (pathname.startsWith(`${base}/leader`)) return `${tn} · My leader`;
   if (pathname.startsWith(`${base}/people/`)) {
     const rest = pathname.slice(`${base}/people/`.length);
     if (rest && !rest.includes('/')) {
       const person = data.people.find((p) => p.id === rest);
-      return `${tn} · ${person?.name ?? 'Kişi'}`;
+      return `${tn} · ${person?.name ?? 'Person'}`;
     }
   }
-  if (pathname === `${base}/people`) return `${tn} · Ekip üyeleri`;
+  if (pathname === `${base}/people`) return `${tn} · Members`;
   return tn;
 }
 
@@ -48,7 +48,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
   const { user, logout } = useAccount();
   const { theme, toggle } = useTheme();
   const { pinEnabled, lockSession } = useSession();
-  const profile = data.profile ?? { displayName: 'Ben', favoriteTeamIds: [] };
+  const profile = data.profile ?? { displayName: 'Me', favoriteTeamIds: [] };
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
 
@@ -75,7 +75,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
           type="button"
           className="icon-btn topbar__menu-btn"
           aria-expanded={!navCollapsed}
-          aria-label="Kenar çubuğunu aç veya daralt"
+          aria-label="Toggle sidebar"
           onClick={onToggleNav}
         >
           <IcMenu size={20} />
@@ -100,7 +100,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
                 <span className="team-switcher__caret" aria-hidden />
               </>
             ) : (
-              <span className="team-switcher__placeholder">Ekip seç</span>
+              <span className="team-switcher__placeholder">Select a team</span>
             )}
           </button>
           {teamMenuOpen ? (
@@ -123,7 +123,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
                   <button
                     type="button"
                     className={`fav-star${favSet.has(t.id) ? ' fav-star--on' : ''}`}
-                    title={favSet.has(t.id) ? 'Favoriden çıkar' : 'Favoriye ekle'}
+                    title={favSet.has(t.id) ? 'Remove from favourites' : 'Add to favourites'}
                     onClick={(e) => {
                       e.stopPropagation();
                       toggleFavoriteTeam(t.id);
@@ -135,7 +135,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
               ))}
               <Link to={PATH_TEAMS} className="team-switcher__foot" onClick={() => setTeamMenuOpen(false)}>
                 <IcArrowRight size={14} />
-                Ekip yönetimi
+                Manage teams
               </Link>
             </div>
           ) : null}
@@ -145,7 +145,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
             className="select select--compact topbar__status"
             value={currentTeam.status ?? 'active'}
             onChange={(e) => updateTeam(currentTeam.id, { status: e.target.value as TeamStatus })}
-            aria-label="Ekip durumu"
+            aria-label="Team status"
           >
             {TEAM_STATUS_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -157,7 +157,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
       </div>
 
       <div className="topbar__right">
-        <button type="button" className="icon-btn" title={theme === 'dark' ? 'Açık tema' : 'Koyu tema'} onClick={toggle}>
+        <button type="button" className="icon-btn" title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={toggle}>
           {theme === 'dark' ? <IcSun size={20} /> : <IcMoon size={20} />}
         </button>
         <details className="profile-menu">
@@ -171,11 +171,11 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
             {user?.email ? <div className="muted small profile-menu__email">{user.email}</div> : null}
             <NavLink to="/profile" className="profile-menu__link">
               <IcUser size={16} />
-              Profil
+              Profile
             </NavLink>
             <NavLink to="/settings" className="profile-menu__link">
               <IcSettings size={16} />
-              Tüm ayarlar
+              All settings
             </NavLink>
             <button
               type="button"
@@ -186,12 +186,12 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
               }}
             >
               <IcLogOut size={16} />
-              Çıkış yap
+              Sign out
             </button>
             {pinEnabled ? (
               <button type="button" className="profile-menu__link profile-menu__link--muted" onClick={() => lockSession()}>
                 <IcLock size={16} />
-                Oturumu kilitle (PIN)
+                Lock session (PIN)
               </button>
             ) : null}
           </div>

@@ -49,7 +49,7 @@ export function TeamDashboard() {
   const team = teamId ? data.teams.find((t) => t.id === teamId) : undefined;
   const self = teamId ? getSelfPerson(data, teamId) : undefined;
   const allInTeam = useMemo(
-    () => [...data.people].filter((p) => p.teamId === teamId).sort((a, b) => a.name.localeCompare(b.name, 'tr')),
+    () => [...data.people].filter((p) => p.teamId === teamId).sort((a, b) => a.name.localeCompare(b.name)),
     [data.people, teamId],
   );
 
@@ -79,34 +79,34 @@ export function TeamDashboard() {
     <div className="page">
       <header className="page-head">
         <h1>{team.name}</h1>
-        <p className="muted">Bu ekibin özeti: görevler, hedefler ve hatırlatıcılar.</p>
+        <p className="muted">Team overview: tasks, goals and reminders at a glance.</p>
       </header>
 
-      <div className="dash-stat-grid" aria-label="Ekip özeti">
+      <div className="dash-stat-grid" aria-label="Team overview">
         <article className="dash-stat dash-stat--violet">
           <div className="dash-stat__value">{tasks.length}</div>
-          <div className="dash-stat__label">Açık görev</div>
+          <div className="dash-stat__label">Open tasks</div>
           <DashSpark d="M0 22 L18 18 L36 24 L54 12 L72 16 L90 6 L108 14 L120 8" />
         </article>
         <article className="dash-stat dash-stat--blue">
           <div className="dash-stat__value">{goals.length}</div>
-          <div className="dash-stat__label">Aktif hedef</div>
+          <div className="dash-stat__label">Active goals</div>
           <DashSpark d="M0 14 L20 22 L40 10 L60 18 L80 8 L100 20 L120 12" />
         </article>
         <article className="dash-stat dash-stat--amber">
           <div className="dash-stat__value">{reminders.length}</div>
-          <div className="dash-stat__label">Hatırlatıcı (7 gün)</div>
+          <div className="dash-stat__label">Reminders (7 days)</div>
           <DashSpark d="M0 20 L24 8 L48 22 L72 14 L96 24 L120 16" />
         </article>
         <article className="dash-stat dash-stat--rose">
           <div className="dash-stat__value">{allInTeam.length}</div>
-          <div className="dash-stat__label">Ekip üyesi</div>
+          <div className="dash-stat__label">Team members</div>
           <DashSpark d="M0 26 L22 20 L44 28 L66 12 L88 18 L110 10 L120 14" />
         </article>
       </div>
 
       <section className="card">
-        <h2 className="card__title">Hızlı ekle</h2>
+        <h2 className="card__title">Quick add</h2>
         <form
           className="row"
           onSubmit={(e) => {
@@ -120,14 +120,14 @@ export function TeamDashboard() {
         >
           <input
             className="input input--grow"
-            placeholder="Başlık (ör. 1:1 notu, takip maddesi…)"
+            placeholder="Title (e.g. 1:1 note, follow-up…)"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
           <input
             className="input"
             style={{ minWidth: 140 }}
-            placeholder="Kategori (isteğe bağlı)"
+            placeholder="Category (optional)"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
             list={`dash-cat-${teamId}`}
@@ -141,28 +141,28 @@ export function TeamDashboard() {
             {allInTeam.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
-                {isSelfPerson(p) ? ' (sen)' : ''}
-                {isLeaderPerson(p) ? ' (lider)' : ''}
+                {isSelfPerson(p) ? ' (you)' : ''}
+                {isLeaderPerson(p) ? ' (leader)' : ''}
               </option>
             ))}
           </select>
           <select className="select" value={kind} onChange={(e) => setKind(e.target.value as ItemKind)}>
-            <option value="task">Görev</option>
-            <option value="note">Not</option>
-            <option value="goal">Hedef</option>
-            <option value="document">Doküman</option>
+            <option value="task">Task</option>
+            <option value="note">Note</option>
+            <option value="goal">Goal</option>
+            <option value="document">Document</option>
           </select>
           <Button type="submit" variant="primary" icon={<IcPlus size={18} />}>
-            Ekle
+            Add
           </Button>
         </form>
       </section>
 
       <div className="grid-2">
         <section className="card">
-          <h2 className="card__title">Açık görevler</h2>
+          <h2 className="card__title">Open tasks</h2>
           {tasks.length === 0 ? (
-            <p className="muted">Bu ekipte açık görev yok.</p>
+            <p className="muted">No open tasks in this team.</p>
           ) : (
             <ul className="list">
               {tasks.slice(0, 12).map((it) => (
@@ -170,8 +170,8 @@ export function TeamDashboard() {
                   <div>
                     <div className="list__title">{it.title}</div>
                     <div className="muted small">
-                      {personName(data, it.personId)} · {it.dueAt ? `Bitiş: ${formatShort(it.dueAt)}` : 'Bitiş yok'}
-                      {it.dueAt && isPast(it.dueAt) ? ' · gecikmiş' : ''}
+                      {personName(data, it.personId)} · {it.dueAt ? `Due: ${formatShort(it.dueAt)}` : 'No due date'}
+                      {it.dueAt && isPast(it.dueAt) ? ' · overdue' : ''}
                       {it.category ? ` · ${it.category}` : ''}
                     </div>
                   </div>
@@ -179,15 +179,15 @@ export function TeamDashboard() {
                     <Link
                       className="btn btn--primary btn--icon"
                       to={personLink(data, teamId, it.personId)}
-                      title="Kişi alanına git"
-                      aria-label="Kişi alanına git"
+                      title="Open person workspace"
+                      aria-label="Open person workspace"
                     >
                       <span className="btn__icon">
                         <IcArrowRight size={17} />
                       </span>
                     </Link>
                     <Button type="button" variant="secondary" size="sm" icon={<IcCheck size={16} />} onClick={() => toggleItemDone(it.id)}>
-                      Tamam
+                      Done
                     </Button>
                   </div>
                 </li>
@@ -197,9 +197,9 @@ export function TeamDashboard() {
         </section>
 
         <section className="card">
-          <h2 className="card__title">Aktif hedefler</h2>
+          <h2 className="card__title">Active goals</h2>
           {goals.length === 0 ? (
-            <p className="muted">Aktif hedef yok.</p>
+            <p className="muted">No active goals.</p>
           ) : (
             <ul className="list">
               {goals.slice(0, 10).map((it) => (
@@ -212,7 +212,7 @@ export function TeamDashboard() {
                     </div>
                   </div>
                   <Button type="button" variant="secondary" size="sm" icon={<IcCheck size={16} />} onClick={() => toggleItemDone(it.id)}>
-                    Tamamlandı
+                    Complete
                   </Button>
                 </li>
               ))}
@@ -222,9 +222,9 @@ export function TeamDashboard() {
       </div>
 
       <section className="card">
-        <h2 className="card__title">Yaklaşan hatırlatıcılar (7 gün)</h2>
+        <h2 className="card__title">Upcoming reminders (7 days)</h2>
         {reminders.length === 0 ? (
-          <p className="muted">Bu aralıkta hatırlatıcı yok.</p>
+          <p className="muted">No reminders in this window.</p>
         ) : (
           <ul className="list">
             {reminders.map((it) => {
@@ -240,7 +240,7 @@ export function TeamDashboard() {
                       {it.category ? ` · ${it.category}` : ''}
                     </div>
                   </div>
-                  <Link className="btn btn--ghost btn--icon" to={to} title="Kişi alanına git" aria-label="Kişi alanına git">
+                  <Link className="btn btn--ghost btn--icon" to={to} title="Open person workspace" aria-label="Open person workspace">
                     <span className="btn__icon">
                       <IcArrowRight size={17} />
                     </span>
@@ -256,7 +256,7 @@ export function TeamDashboard() {
 }
 
 function personName(data: { people: { id: string; name: string }[] }, id: string) {
-  return data.people.find((p) => p.id === id)?.name ?? 'Bilinmiyor';
+  return data.people.find((p) => p.id === id)?.name ?? 'Unknown';
 }
 
 function personLink(data: { people: Person[] }, teamId: string, personId: string): string {

@@ -48,39 +48,39 @@ export function People() {
   return (
     <div className="page">
       <header className="page-head">
-        <h1>Ekip üyeleri · {team.name}</h1>
-        <p className="muted">Her kişinin alanında görevler, hedefler, yapılandırılmış notlar ve ayrı bir serbest not alanı vardır.</p>
+        <h1>Team members · {team.name}</h1>
+        <p className="muted">Each person has their own workspace with tasks, goals, structured notes and a free-form scratchpad.</p>
       </header>
 
       <section className="card">
-        <h2 className="card__title">Kendim</h2>
-        <p className="muted small">Bu ekipte senin alanın; diğer ekiplerde de ayrı bir &quot;Kendim&quot; kaydın otomatik oluşturulur.</p>
+        <h2 className="card__title">Me</h2>
+        <p className="muted small">Your personal workspace in this team. A separate &quot;Me&quot; record is created automatically for every team.</p>
         {self ? (
           <Link
             className="btn btn--primary btn--icon"
             to={teamMe(teamId)}
-            title="Kendim alanına git"
-            aria-label="Kendim alanına git"
+            title="Open Me workspace"
+            aria-label="Open Me workspace"
           >
             <span className="btn__icon">
               <IcArrowRight size={17} />
             </span>
           </Link>
         ) : (
-          <p className="muted">Kendi kaydı bulunamadı (veri onarımı gerekir).</p>
+          <p className="muted">The Me record could not be found (data repair required).</p>
         )}
       </section>
 
       <section className="card">
-        <h2 className="card__title">Liderim</h2>
+        <h2 className="card__title">My leader</h2>
         <p className="muted small">
-          Üst liderinle ilgili hedefler, geri bildirimler ve notlar burada tutulur (ekip üyelerinden ayrı bir alan). Kendi serüvenini de kategorilerle işaretleyebilirsin.
+          A dedicated space for your manager: goals, feedback, talking points and notes. Keep it separate from team members and tag entries with categories.
         </p>
         <Link
           className="btn btn--primary btn--icon"
           to={teamLeader(teamId)}
-          title="Liderim alanına git"
-          aria-label="Liderim alanına git"
+          title="Open My leader workspace"
+          aria-label="Open My leader workspace"
         >
           <span className="btn__icon">
             <IcArrowRight size={17} />
@@ -89,7 +89,7 @@ export function People() {
       </section>
 
       <section className="card">
-        <h2 className="card__title">Kişi ekle</h2>
+        <h2 className="card__title">Add person</h2>
         <form
           className="row"
           onSubmit={(e: FormEvent) => {
@@ -100,33 +100,33 @@ export function People() {
             setTitle('');
           }}
         >
-          <input className="input" placeholder="Ad" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className="input" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <input
             className="input input--grow"
-            placeholder="Rol (isteğe bağlı)"
+            placeholder="Role (optional)"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
           <Button type="submit" variant="primary" icon={<IcPlus size={18} />}>
-            Ekle
+            Add
           </Button>
         </form>
       </section>
 
       <section className="card">
-        <h2 className="card__title">Kişiler</h2>
+        <h2 className="card__title">People</h2>
         {members.length === 0 ? (
-          <p className="muted">Henüz ekip üyesi yok.</p>
+          <p className="muted">No team members yet.</p>
         ) : (
           <div className="tiles">
             {members.map((p) => (
               <div key={p.id} className="tile">
                 <Link to={`${teamPeoplePath(teamId)}/${p.id}`} className="tile__link">
                   <div className="tile__name">{p.name}</div>
-                  {p.title ? <div className="muted small">{p.title}</div> : <div className="muted small">Alan aç</div>}
+                  {p.title ? <div className="muted small">{p.title}</div> : <div className="muted small">Open workspace</div>}
                 </Link>
                 <Button type="button" variant="danger" size="sm" icon={<IcTrash size={16} />} onClick={() => removePerson(p.id)}>
-                  Sil
+                  Remove
                 </Button>
               </div>
             ))}
@@ -179,8 +179,8 @@ export function PersonWorkspace({ personId }: { personId: string }) {
   if (!teamId) {
     return (
       <div className="page">
-        <p className="muted">Ekip bağlamı yok.</p>
-        <Link to={PATH_TEAMS}>Ekipler</Link>
+        <p className="muted">No team context.</p>
+        <Link to={PATH_TEAMS}>Back to Teams</Link>
       </div>
     );
   }
@@ -188,8 +188,8 @@ export function PersonWorkspace({ personId }: { personId: string }) {
   if (!person) {
     return (
       <div className="page">
-        <p>Kişi bulunamadı.</p>
-        <Link to={teamPeoplePath(teamId)}>Ekip listesine dön</Link>
+        <p>Person not found.</p>
+        <Link to={teamPeoplePath(teamId)}>Back to team members</Link>
       </div>
     );
   }
@@ -205,20 +205,20 @@ export function PersonWorkspace({ personId }: { personId: string }) {
             <h1>{person.name}</h1>
             <p className="muted">
               {isLeader
-                ? 'Üst liderinle ilişki: beklentiler, hedefler, görüşme notları ve serüven kayıtlarını burada topla.'
+                ? 'Your relationship with your manager: expectations, goals, talking points and initiative tracking — all in one place.'
                 : isSelf
-                  ? 'Bu ekipteki kişisel liderlik alanın: görevler, notlar, hedefler ve linkler. İsteğe bağlı kategori ile serüvenini ayırabilirsin.'
-                  : 'Bu kişiyle ilgili tüm takip içeriğini tek yerde tut.'}
+                  ? 'Your personal leadership space for this team: tasks, notes, goals and links. Use optional categories to separate initiatives.'
+                  : 'Keep every follow-up about this person in one place.'}
             </p>
           </div>
           <Link className="btn btn--ghost" to={teamPeoplePath(teamId)}>
-            Ekip listesi
+            Team members
           </Link>
         </div>
       </header>
 
       <section className="card">
-        <h2 className="card__title">Profil</h2>
+        <h2 className="card__title">Profile</h2>
         <form
           className="row"
           onSubmit={(e) => {
@@ -231,49 +231,49 @@ export function PersonWorkspace({ personId }: { personId: string }) {
             });
           }}
         >
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="İsim" />
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
           <input
             className="input input--grow"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Rol / not"
+            placeholder="Role / note"
           />
           <Button type="submit" variant="primary" icon={<IcSave size={18} />}>
-            Kaydet
+            Save
           </Button>
         </form>
         {isSelf ? (
           <p className="muted small" style={{ marginTop: 8 }}>
-            &quot;Kendim&quot; etiketini bu ekip için özelleştirebilirsin.
+            You can rename the &quot;Me&quot; label for this team.
           </p>
         ) : isLeader ? (
           <p className="muted small" style={{ marginTop: 8 }}>
-            &quot;Liderim&quot; adını gerçek isimle değiştirebilirsin; kayıtlar aynı alanda kalır.
+            You can replace &quot;My leader&quot; with your manager&apos;s real name; entries stay attached to the same workspace.
           </p>
         ) : null}
       </section>
 
       <section className="card">
-        <h2 className="card__title">Not alanı</h2>
+        <h2 className="card__title">Scratchpad</h2>
         <p className="muted small">
-          Serbest metin: 1:1 taslakları, akış notları, paylaşılacak düşünceler. Kaydet ile profil ile birlikte yazılır.
+          Free-form notes: 1:1 drafts, stream-of-thought, talking points. Saved alongside the profile.
         </p>
         <textarea
           className="textarea"
           rows={8}
-          placeholder="Buraya yaz…"
+          placeholder="Write here…"
           value={scratchpad}
           onChange={(e) => setScratchpad(e.target.value)}
         />
         <div className="row" style={{ marginTop: 10 }}>
           <Button type="button" variant="secondary" icon={<IcSave size={17} />} onClick={() => person && updatePerson(person.id, { scratchpad })}>
-            Notu kaydet
+            Save note
           </Button>
         </div>
       </section>
 
       <KindSection
-        title="Görevler"
+        title="Tasks"
         kind="task"
         categoryHints={categoryHints}
         teamId={teamId}
@@ -286,7 +286,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
         onRemove={removeItem}
       />
       <KindSection
-        title="Hedefler"
+        title="Goals"
         kind="goal"
         categoryHints={categoryHints}
         teamId={teamId}
@@ -299,7 +299,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
         onRemove={removeItem}
       />
       <KindSection
-        title="Notlar (yapılandırılmış)"
+        title="Notes (structured)"
         kind="note"
         categoryHints={categoryHints}
         teamId={teamId}
@@ -312,7 +312,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
         onRemove={removeItem}
       />
       <KindSection
-        title="Dokümanlar"
+        title="Documents"
         kind="document"
         categoryHints={categoryHints}
         teamId={teamId}
@@ -383,7 +383,7 @@ function KindSection({
           if (!draftTitle.trim() && kind !== 'document') return;
           if (kind === 'document' && !draftTitle.trim() && !draftUrl.trim()) return;
           if (kind === 'document') {
-            onAdd({ title: draftTitle.trim() || 'Doküman', url: draftUrl.trim(), category: draftCategory.trim() || undefined });
+            onAdd({ title: draftTitle.trim() || 'Document', url: draftUrl.trim(), category: draftCategory.trim() || undefined });
           } else if (kind === 'goal') {
             onAdd({
               title: draftTitle.trim(),
@@ -405,11 +405,11 @@ function KindSection({
       >
         {kind === 'goal' ? (
           <label className="field" style={{ marginTop: 0 }}>
-            <span>Hedef (geniş metin)</span>
+            <span>Goal (long form)</span>
             <textarea
               className="textarea textarea--goal-title"
               rows={4}
-              placeholder="Hedefini ayrıntılı yaz…"
+              placeholder="Describe your goal in detail…"
               value={draftTitle}
               onChange={(e) => setDraftTitle(e.target.value)}
             />
@@ -417,7 +417,7 @@ function KindSection({
         ) : (
           <input
             className="input input--grow"
-            placeholder={kind === 'document' ? 'Başlık (isteğe bağlı)' : 'Başlık'}
+            placeholder={kind === 'document' ? 'Title (optional)' : 'Title'}
             value={draftTitle}
             onChange={(e) => setDraftTitle(e.target.value)}
           />
@@ -426,7 +426,7 @@ function KindSection({
           <input
             className="input"
             style={{ minWidth: 130 }}
-            placeholder="Kategori (isteğe bağlı)"
+            placeholder="Category (optional)"
             value={draftCategory}
             onChange={(e) => setDraftCategory(e.target.value)}
             list={listId}
@@ -439,15 +439,15 @@ function KindSection({
           {kind === 'goal' ? (
             <>
               <label className="field" style={{ minWidth: 200 }}>
-                <span className="small">Başlangıç</span>
+                <span className="small">Start</span>
                 <input type="datetime-local" className="input" value={draftStartAt} onChange={(e) => setDraftStartAt(e.target.value)} />
               </label>
               <label className="field" style={{ minWidth: 200 }}>
-                <span className="small">Bitiş (deadline)</span>
+                <span className="small">Deadline</span>
                 <input type="datetime-local" className="input" value={draftDueAt} onChange={(e) => setDraftDueAt(e.target.value)} />
               </label>
               <label className="field" style={{ minWidth: 160 }}>
-                <span className="small">Durum</span>
+                <span className="small">Status</span>
                 <select className="select" value={draftGoalStatus} onChange={(e) => setDraftGoalStatus(e.target.value as GoalStatus)}>
                   {GOAL_STATUS_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
@@ -462,13 +462,13 @@ function KindSection({
             <input className="input input--grow" placeholder="https://…" value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)} />
           ) : null}
           <Button type="submit" variant="primary" icon={<IcPlus size={18} />}>
-            Ekle
+            Add
           </Button>
         </div>
       </form>
 
       {list.length === 0 ? (
-        <p className="muted">Kayıt yok.</p>
+        <p className="muted">No items yet.</p>
       ) : (
         <ul className="list">
           {list.map((it) => (
@@ -483,16 +483,16 @@ function KindSection({
                     ) : (
                       it.title
                     )}{' '}
-                    {it.done ? <span className="pill pill--ok">tamam</span> : null}
+                    {it.done ? <span className="pill pill--ok">done</span> : null}
                     {it.kind === 'goal' ? <span className="pill">{goalStatusLabel(it.goalStatus)}</span> : null}
                   </div>
                   <div className="muted small">
                     {kindLabel(it.kind)}
                     {it.category ? ` · ${it.category}` : ''}
-                    {it.kind === 'goal' && it.startAt ? ` · başlangıç ${formatShort(it.startAt)}` : ''}
-                    {it.dueAt ? ` · bitiş ${formatShort(it.dueAt)}` : ''}
-                    {it.dueAt && isPast(it.dueAt) && !it.done ? ' · gecikmiş' : ''}
-                    {it.remindAt ? ` · hatırlat ${formatShort(it.remindAt)}` : ''}
+                    {it.kind === 'goal' && it.startAt ? ` · start ${formatShort(it.startAt)}` : ''}
+                    {it.dueAt ? ` · due ${formatShort(it.dueAt)}` : ''}
+                    {it.dueAt && isPast(it.dueAt) && !it.done ? ' · overdue' : ''}
+                    {it.remindAt ? ` · reminder ${formatShort(it.remindAt)}` : ''}
                   </div>
                 </div>
                 <div className="row">
@@ -503,7 +503,7 @@ function KindSection({
                     icon={openId === it.id ? <IcX size={16} /> : <IcPencil size={16} />}
                     onClick={() => setOpenId(openId === it.id ? null : it.id)}
                   >
-                    {openId === it.id ? 'Kapat' : 'Düzenle'}
+                    {openId === it.id ? 'Close' : 'Edit'}
                   </Button>
                   {it.kind === 'task' || it.kind === 'goal' ? (
                     <Button
@@ -513,11 +513,11 @@ function KindSection({
                       icon={it.done ? <IcUndo size={16} /> : <IcCheck size={16} />}
                       onClick={() => onToggle(it.id)}
                     >
-                      {it.done ? 'Aç' : 'Tamam'}
+                      {it.done ? 'Reopen' : 'Done'}
                     </Button>
                   ) : null}
                   <Button type="button" variant="danger" size="sm" icon={<IcTrash size={16} />} onClick={() => onRemove(it.id)}>
-                    Sil
+                    Delete
                   </Button>
                 </div>
               </div>
@@ -525,7 +525,7 @@ function KindSection({
               {openId === it.id ? (
                 <div className="editor">
                   <label className="field">
-                    <span>{it.kind === 'goal' ? 'Hedef metni' : 'Başlık'}</span>
+                    <span>{it.kind === 'goal' ? 'Goal description' : 'Title'}</span>
                     {it.kind === 'goal' ? (
                       <textarea
                         className="textarea textarea--goal-title"
@@ -551,7 +551,7 @@ function KindSection({
                   </label>
                   {it.kind === 'document' ? (
                     <label className="field">
-                      <span>Adres</span>
+                      <span>URL</span>
                       <input
                         className="input"
                         defaultValue={it.url ?? ''}
@@ -564,7 +564,7 @@ function KindSection({
                     </label>
                   ) : null}
                   <label className="field">
-                    <span>Kategori (isteğe bağlı)</span>
+                    <span>Category (optional)</span>
                     <input
                       className="input"
                       defaultValue={it.category ?? ''}
@@ -583,7 +583,7 @@ function KindSection({
                   </label>
                   {it.kind === 'goal' ? (
                     <label className="field">
-                      <span>Durum</span>
+                      <span>Status</span>
                       <select
                         className="select"
                         defaultValue={it.goalStatus ?? 'planned'}
@@ -599,7 +599,7 @@ function KindSection({
                     </label>
                   ) : null}
                   <label className="field">
-                    <span>İçerik</span>
+                    <span>Content</span>
                     <textarea
                       className="textarea"
                       defaultValue={it.body}
@@ -613,7 +613,7 @@ function KindSection({
                   </label>
                   {it.kind === 'goal' ? (
                     <label className="field">
-                      <span>Başlangıç</span>
+                      <span>Start</span>
                       <input
                         type="datetime-local"
                         className="input"
@@ -625,7 +625,7 @@ function KindSection({
                   ) : null}
                   {it.kind === 'task' || it.kind === 'goal' ? (
                     <label className="field">
-                      <span>{it.kind === 'goal' ? 'Bitiş (deadline)' : 'Bitiş zamanı'}</span>
+                      <span>{it.kind === 'goal' ? 'Deadline' : 'Due'}</span>
                       <input
                         type="datetime-local"
                         className="input"
@@ -636,7 +636,7 @@ function KindSection({
                     </label>
                   ) : null}
                   <label className="field">
-                    <span>Hatırlatıcı (masaüstü bildirimi)</span>
+                    <span>Reminder (desktop notification)</span>
                     <input
                       type="datetime-local"
                       className="input"

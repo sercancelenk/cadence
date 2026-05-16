@@ -21,7 +21,7 @@ export function LoginPage() {
   if (loading) {
     return (
       <div className="boot">
-        <div className="boot__card">Yükleniyor…</div>
+        <div className="boot__card">Loading…</div>
       </div>
     );
   }
@@ -29,8 +29,8 @@ export function LoginPage() {
   return (
     <div className="auth-screen">
       <div className="auth-card auth-card--wide">
-        <h1 className="auth-card__title">Giriş yap</h1>
-        <p className="muted">Verilerin bu cihazda, hesabına bağlı dosyada saklanır.</p>
+        <h1 className="auth-card__title">Sign in</h1>
+        <p className="muted">Your data is stored locally on this device, in a file tied to your account.</p>
         <form
           className="auth-form"
           onSubmit={async (e: FormEvent) => {
@@ -38,15 +38,15 @@ export function LoginPage() {
             setErr('');
             const r = await login(email, password);
             if (r.ok) navigate(from, { replace: true });
-            else setErr(r.error ?? 'Giriş başarısız.');
+            else setErr(r.error ?? 'Sign-in failed.');
           }}
         >
           <label className="field">
-            <span>E-posta</span>
+            <span>Email</span>
             <input className="input" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </label>
           <label className="field">
-            <span>Parola</span>
+            <span>Password</span>
             <input
               className="input"
               type="password"
@@ -58,11 +58,11 @@ export function LoginPage() {
           </label>
           {err ? <p className="auth-err">{err}</p> : null}
           <Button type="submit" variant="primary" className="auth-form__submit" icon={<IcLogIn size={18} />}>
-            Giriş
+            Sign in
           </Button>
         </form>
         <p className="muted small" style={{ marginTop: 16 }}>
-          Hesabın yok mu? <Link to="/register">Kayıt ol</Link>
+          Don&apos;t have an account? <Link to="/register">Create one</Link>
         </p>
       </div>
     </div>

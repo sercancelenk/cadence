@@ -15,7 +15,7 @@ export function HomeTeams() {
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState('');
 
-  const profile = data.profile ?? { displayName: 'Ben', favoriteTeamIds: [] };
+  const profile = data.profile ?? { displayName: 'Me', favoriteTeamIds: [] };
   const favSet = useMemo(() => new Set(profile.favoriteTeamIds), [profile.favoriteTeamIds]);
 
   const cards = useMemo(() => {
@@ -39,12 +39,12 @@ export function HomeTeams() {
   return (
     <div className="page">
       <header className="page-head">
-        <h1>Ekipler</h1>
-        <p className="muted">Her ekipte bir &quot;Kendim&quot; alanın ve ekip üyelerinin kişi sayfaları vardır. Ek ekip ekleyerek farklı takımları ayırabilirsin.</p>
+        <h1>Teams</h1>
+        <p className="muted">Each team has a private &quot;Me&quot; workspace and individual pages for every member. Add more teams to separate different groups of work.</p>
       </header>
 
       <section className="card">
-        <h2 className="card__title">Yeni ekip</h2>
+        <h2 className="card__title">New team</h2>
         <form
           className="row"
           onSubmit={(e: FormEvent) => {
@@ -54,17 +54,17 @@ export function HomeTeams() {
             setName('');
           }}
         >
-          <input className="input input--grow" placeholder="Ekip adı" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className="input input--grow" placeholder="Team name" value={name} onChange={(e) => setName(e.target.value)} />
           <Button type="submit" variant="primary" icon={<IcPlus size={18} />}>
-            Ekip oluştur
+            Create team
           </Button>
         </form>
       </section>
 
       <section className="card">
-        <h2 className="card__title">Tüm ekipler</h2>
+        <h2 className="card__title">All teams</h2>
         {cards.length === 0 ? (
-          <p className="muted">Ekip yok.</p>
+          <p className="muted">No teams yet.</p>
         ) : (
           <ul className="list">
             {cards.map(({ team, members, openTasks }) => (
@@ -81,10 +81,10 @@ export function HomeTeams() {
                     >
                       <input className="input input--grow" value={renameVal} onChange={(e) => setRenameVal(e.target.value)} autoFocus />
                       <Button type="submit" variant="primary" size="sm" icon={<IcSave size={16} />}>
-                        Kaydet
+                        Save
                       </Button>
                       <Button type="button" variant="ghost" size="sm" onClick={() => setRenameId(null)}>
-                        Vazgeç
+                        Cancel
                       </Button>
                     </form>
                   ) : (
@@ -97,7 +97,7 @@ export function HomeTeams() {
                         <span className="pill">{teamStatusLabel(team.status)}</span>
                       </div>
                       <div className="muted small">
-                        {members.length} üye · {openTasks} açık görev
+                        {members.length} {members.length === 1 ? 'member' : 'members'} · {openTasks} open {openTasks === 1 ? 'task' : 'tasks'}
                       </div>
                     </>
                   )}
@@ -108,7 +108,7 @@ export function HomeTeams() {
                       className="select select--compact"
                       value={team.status ?? 'active'}
                       onChange={(e) => updateTeam(team.id, { status: e.target.value as TeamStatus })}
-                      aria-label={`${team.name} durumu`}
+                      aria-label={`${team.name} status`}
                     >
                       {TEAM_STATUS_OPTIONS.map((o) => (
                         <option key={o.value} value={o.value}>
@@ -119,7 +119,7 @@ export function HomeTeams() {
                     <button
                       type="button"
                       className={`fav-star${favSet.has(team.id) ? ' fav-star--on' : ''}`}
-                      title={favSet.has(team.id) ? 'Favoriden çıkar' : 'Favoriye ekle'}
+                      title={favSet.has(team.id) ? 'Remove from favourites' : 'Add to favourites'}
                       onClick={() => toggleFavoriteTeam(team.id)}
                     >
                       <IcStar size={18} />
@@ -127,8 +127,8 @@ export function HomeTeams() {
                     <Link
                       className="btn btn--primary btn--icon"
                       to={teamBase(team.id)}
-                      title="Ekip özetine git"
-                      aria-label="Ekip özetine git"
+                      title="Open team overview"
+                      aria-label="Open team overview"
                     >
                       <span className="btn__icon">
                         <IcArrowRight size={17} />
@@ -144,7 +144,7 @@ export function HomeTeams() {
                         setRenameVal(team.name);
                       }}
                     >
-                      Adlandır
+                      Rename
                     </Button>
                     <Button
                       type="button"
@@ -152,15 +152,15 @@ export function HomeTeams() {
                       size="sm"
                       icon={<IcTrash size={16} />}
                       disabled={data.teams.length <= 1}
-                      title={data.teams.length <= 1 ? 'Son ekip silinemez' : undefined}
+                      title={data.teams.length <= 1 ? 'You must keep at least one team' : undefined}
                       onClick={() => {
                         if (data.teams.length <= 1) return;
-                        if (window.confirm(`"${team.name}" ekibini ve içindeki tüm kişi/kayıtları silmek istediğine emin misin?`)) {
+                        if (window.confirm(`Delete "${team.name}" and all its people and records? This cannot be undone.`)) {
                           removeTeam(team.id);
                         }
                       }}
                     >
-                      Sil
+                      Delete
                     </Button>
                   </div>
                 )}
@@ -172,7 +172,7 @@ export function HomeTeams() {
 
       {data.lastTeamId && data.teams.some((t) => t.id === data.lastTeamId) ? (
         <p className="muted small">
-          Son ekip:{' '}
+          Last team:{' '}
           <Link to={teamBase(data.lastTeamId!)}>{data.teams.find((t) => t.id === data.lastTeamId)?.name}</Link>
         </p>
       ) : null}

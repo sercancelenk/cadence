@@ -1333,7 +1333,7 @@ code {
   margin-top: 0;
 }
 
-/* —— Yapılacaklar (Ekipler ile aynı page-head + card ritmi) —— */
+/* —— To-dos (shares page-head and card rhythm with Teams) —— */
 .sr-only {
   position: absolute;
   width: 1px;

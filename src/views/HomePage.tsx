@@ -10,7 +10,7 @@ import { teamBase } from '../lib/teamPaths';
 export function HomePage() {
   const { user } = useAccount();
   const { data } = useAppData();
-  const profile = data.profile ?? { displayName: 'Ben' };
+  const profile = data.profile ?? { displayName: 'Me' };
   const teamsSorted = useMemo(() => sortedTeams(data), [data]);
   const lastTeam = data.lastTeamId ? data.teams.find((t) => t.id === data.lastTeamId) : undefined;
   const openTasksAll = useMemo(
@@ -28,11 +28,11 @@ export function HomePage() {
           <span className="home-page__logo" aria-hidden />
           <div>
             <h1 className="home-page__title">Leeadman</h1>
-            <p className="home-page__tagline">Liderlik çalışma alanı — ekipler, kişisel yapılacaklar ve 1:1 takip.</p>
+            <p className="home-page__tagline">A local-first leadership workspace — teams, personal to-dos and 1:1 follow-ups.</p>
           </div>
         </div>
         <p className="home-page__welcome muted">
-          Merhaba, <strong className="home-page__name">{profile.displayName}</strong>
+          Hello, <strong className="home-page__name">{profile.displayName}</strong>
           {user?.email ? (
             <>
               {' '}
@@ -45,30 +45,30 @@ export function HomePage() {
       <div className="home-page__stats">
         <div className="home-page__stat">
           <span className="home-page__stat-value">{data.teams.length}</span>
-          <span className="home-page__stat-label">Ekip</span>
+          <span className="home-page__stat-label">Teams</span>
         </div>
         <div className="home-page__stat">
           <span className="home-page__stat-value">{openTasksAll}</span>
-          <span className="home-page__stat-label">Açık görev</span>
+          <span className="home-page__stat-label">Open tasks</span>
         </div>
         <div className="home-page__stat">
           <span className="home-page__stat-value">{openTodos}</span>
-          <span className="home-page__stat-label">Yapılacak</span>
+          <span className="home-page__stat-label">To-dos</span>
         </div>
         <div className="home-page__stat">
           <span className="home-page__stat-value">{peopleCount}</span>
-          <span className="home-page__stat-label">Kişi kaydı</span>
+          <span className="home-page__stat-label">People</span>
         </div>
       </div>
 
-      <h2 className="home-page__section-title">Hızlı giriş</h2>
+      <h2 className="home-page__section-title">Quick access</h2>
       <div className="home-page__tiles">
         <Link className="home-tile" to={PATH_TEAMS}>
           <span className="home-tile__ic">
             <IcFolder size={22} />
           </span>
-          <span className="home-tile__title">Ekipler</span>
-          <span className="home-tile__desc">Takımlarını yönet, üyeler ve görevler.</span>
+          <span className="home-tile__title">Teams</span>
+          <span className="home-tile__desc">Manage your teams, members and tasks.</span>
           <span className="home-tile__arrow" aria-hidden>
             <IcArrowRight size={18} />
           </span>
@@ -78,8 +78,8 @@ export function HomePage() {
           <span className="home-tile__ic">
             <IcListTodo size={22} />
           </span>
-          <span className="home-tile__title">Yapılacaklar</span>
-          <span className="home-tile__desc">Kişisel listeler; ekipten bağımsız.</span>
+          <span className="home-tile__title">To-dos</span>
+          <span className="home-tile__desc">Personal lists, independent from any team.</span>
           <span className="home-tile__arrow" aria-hidden>
             <IcArrowRight size={18} />
           </span>
@@ -90,8 +90,8 @@ export function HomePage() {
             <span className="home-tile__ic">
               <IcLayoutGrid size={22} />
             </span>
-            <span className="home-tile__title">Son ekip</span>
-            <span className="home-tile__desc">{lastTeam.name} · özete git</span>
+            <span className="home-tile__title">Last team</span>
+            <span className="home-tile__desc">{lastTeam.name} · open overview</span>
             <span className="home-tile__arrow" aria-hidden>
               <IcArrowRight size={18} />
             </span>
@@ -101,8 +101,8 @@ export function HomePage() {
             <span className="home-tile__ic">
               <IcLayoutGrid size={22} />
             </span>
-            <span className="home-tile__title">İlk ekibin</span>
-            <span className="home-tile__desc">{teamsSorted[0].name} · özete git</span>
+            <span className="home-tile__title">Your first team</span>
+            <span className="home-tile__desc">{teamsSorted[0].name} · open overview</span>
             <span className="home-tile__arrow" aria-hidden>
               <IcArrowRight size={18} />
             </span>
@@ -113,8 +113,8 @@ export function HomePage() {
           <span className="home-tile__ic">
             <IcUser size={22} />
           </span>
-          <span className="home-tile__title">Profil</span>
-          <span className="home-tile__desc">Görünen ad ve tercihler.</span>
+          <span className="home-tile__title">Profile</span>
+          <span className="home-tile__desc">Display name and personal details.</span>
           <span className="home-tile__arrow" aria-hidden>
             <IcArrowRight size={18} />
           </span>
@@ -124,8 +124,8 @@ export function HomePage() {
           <span className="home-tile__ic">
             <IcSettings size={22} />
           </span>
-          <span className="home-tile__title">Ayarlar</span>
-          <span className="home-tile__desc">Tema, PIN, yedek ve sürüm.</span>
+          <span className="home-tile__title">Settings</span>
+          <span className="home-tile__desc">Theme, PIN lock, backup and version.</span>
           <span className="home-tile__arrow" aria-hidden>
             <IcArrowRight size={18} />
           </span>
@@ -134,7 +134,7 @@ export function HomePage() {
 
       {teamsSorted.length > 0 ? (
         <>
-          <h2 className="home-page__section-title">Ekiplerin</h2>
+          <h2 className="home-page__section-title">Your teams</h2>
           <ul className="home-page__team-chips">
             {teamsSorted.slice(0, 6).map((t) => {
               const n = data.people.filter((p) => p.teamId === t.id).length;
@@ -143,7 +143,7 @@ export function HomePage() {
                   <Link className="home-team-chip" to={teamBase(t.id)}>
                     <span className={`team-dot team-dot--${t.status ?? 'active'}`} aria-hidden />
                     <span className="home-team-chip__name">{t.name}</span>
-                    <span className="home-team-chip__meta muted small">{n} üye</span>
+                    <span className="home-team-chip__meta muted small">{n} {n === 1 ? 'member' : 'members'}</span>
                   </Link>
                 </li>
               );
@@ -151,13 +151,13 @@ export function HomePage() {
           </ul>
           {teamsSorted.length > 6 ? (
             <p className="muted small home-page__more">
-              +{teamsSorted.length - 6} ekip daha — <Link to={PATH_TEAMS}>tümünü gör</Link>
+              +{teamsSorted.length - 6} more — <Link to={PATH_TEAMS}>view all</Link>
             </p>
           ) : null}
         </>
       ) : (
         <p className="muted home-page__hint">
-          Henüz ekip yok. <Link to={PATH_TEAMS}>Ekipler</Link> sayfasından ilk ekibini oluşturabilirsin.
+          No teams yet. Create your first team from the <Link to={PATH_TEAMS}>Teams</Link> page.
         </p>
       )}
     </div>

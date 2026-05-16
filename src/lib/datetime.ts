@@ -21,15 +21,23 @@ export function formatShort(iso?: string): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' });
+  return d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
-/** Sadece saat (ör. 07:30) — yapılacaklar meta satırı için */
+/** Time only (e.g. 07:30) — used in todo meta rows. */
 export function formatTimeOnly(iso?: string): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Short date (e.g. Mar 12) — used in todo meta rows. */
+export function formatDateShort(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
 
 /** Yerel takvim günü (bugün mü) */

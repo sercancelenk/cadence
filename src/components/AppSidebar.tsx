@@ -15,53 +15,53 @@ export function AppSidebar({ collapsed }: Props) {
   const team = teamId ? data.teams.find((t) => t.id === teamId) : undefined;
 
   return (
-    <aside className="app-sidebar" aria-label="Ana menü">
+    <aside className="app-sidebar" aria-label="Main navigation">
       <div className="app-sidebar__brand">
         <span className="app-sidebar__logo" aria-hidden />
         {!collapsed ? (
           <div className="app-sidebar__brand-text">
             <span className="app-sidebar__title">Leeadman</span>
-            <span className="app-sidebar__subtitle">Liderlik çalışma alanı</span>
+            <span className="app-sidebar__subtitle">Leadership workspace</span>
           </div>
         ) : null}
       </div>
 
       <nav className="app-sidebar__nav">
         <div className="app-sidebar__section">
-          {!collapsed ? <div className="app-sidebar__section-label">Uygulama</div> : null}
-          <NavLink to={PATH_HOME} end className={linkCls} title="Ana sayfa">
+          {!collapsed ? <div className="app-sidebar__section-label">App</div> : null}
+          <NavLink to={PATH_HOME} end className={linkCls} title="Home">
             <span className="app-sidebar__ic">
               <IcHome size={18} />
             </span>
-            {!collapsed ? <span>Ana sayfa</span> : null}
+            {!collapsed ? <span>Home</span> : null}
           </NavLink>
-          <NavLink to={PATH_TEAMS} end className={linkCls} title="Ekipler">
+          <NavLink to={PATH_TEAMS} end className={linkCls} title="Teams">
             <span className="app-sidebar__ic">
               <IcFolder size={18} />
             </span>
-            {!collapsed ? <span>Ekipler</span> : null}
+            {!collapsed ? <span>Teams</span> : null}
           </NavLink>
-          <NavLink to="/todos" className={linkCls} title="Yapılacaklar">
+          <NavLink to="/todos" className={linkCls} title="To-dos">
             <span className="app-sidebar__ic">
               <IcListTodo size={18} />
             </span>
-            {!collapsed ? <span>Yapılacaklar</span> : null}
+            {!collapsed ? <span>To-dos</span> : null}
           </NavLink>
         </div>
 
         <div className="app-sidebar__section">
-          {!collapsed ? <div className="app-sidebar__section-label">Hesap</div> : null}
-          <NavLink to="/profile" className={linkCls} title="Profil">
+          {!collapsed ? <div className="app-sidebar__section-label">Account</div> : null}
+          <NavLink to="/profile" className={linkCls} title="Profile">
             <span className="app-sidebar__ic">
               <IcUser size={18} />
             </span>
-            {!collapsed ? <span>Profil</span> : null}
+            {!collapsed ? <span>Profile</span> : null}
           </NavLink>
-          <NavLink to="/settings" className={linkCls} title="Ayarlar">
+          <NavLink to="/settings" className={linkCls} title="Settings">
             <span className="app-sidebar__ic">
               <IcSettings size={18} />
             </span>
-            {!collapsed ? <span>Ayarlar</span> : null}
+            {!collapsed ? <span>Settings</span> : null}
           </NavLink>
         </div>
 
@@ -69,32 +69,32 @@ export function AppSidebar({ collapsed }: Props) {
           <div className="app-sidebar__section app-sidebar__section--team">
             {!collapsed ? (
               <div className="app-sidebar__section-label">
-                Ekip <span className="app-sidebar__team-name">{team.name}</span>
+                Team <span className="app-sidebar__team-name">{team.name}</span>
               </div>
             ) : null}
-            <NavLink to={teamBase(teamId)} end className={linkCls} title="Özet">
+            <NavLink to={teamBase(teamId)} end className={linkCls} title="Overview">
               <span className="app-sidebar__ic">
                 <IcLayoutGrid size={18} />
               </span>
-              {!collapsed ? <span>Özet</span> : null}
+              {!collapsed ? <span>Overview</span> : null}
             </NavLink>
-            <NavLink to={teamMe(teamId)} className={linkCls} title="Kendim">
+            <NavLink to={teamMe(teamId)} className={linkCls} title="Me">
               <span className="app-sidebar__ic">
                 <IcUser size={18} />
               </span>
-              {!collapsed ? <span>Kendim</span> : null}
+              {!collapsed ? <span>Me</span> : null}
             </NavLink>
-            <NavLink to={teamLeader(teamId)} className={linkCls} title="Liderim">
+            <NavLink to={teamLeader(teamId)} className={linkCls} title="My leader">
               <span className="app-sidebar__ic">
                 <IcTarget size={18} />
               </span>
-              {!collapsed ? <span>Liderim</span> : null}
+              {!collapsed ? <span>My leader</span> : null}
             </NavLink>
-            <NavLink to={teamPeopleRoute(teamId)} className={linkCls} title="Ekip üyeleri">
+            <NavLink to={teamPeopleRoute(teamId)} className={linkCls} title="Team members">
               <span className="app-sidebar__ic">
                 <IcUsers size={18} />
               </span>
-              {!collapsed ? <span>Ekip üyeleri</span> : null}
+              {!collapsed ? <span>Members</span> : null}
             </NavLink>
           </div>
         ) : null}

@@ -87,13 +87,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
     setErr('');
     const ok = await unlockWithPin(pin);
     if (ok) setPin('');
-    else setErr('PIN hatalı.');
+    else setErr('Incorrect PIN.');
   };
 
   if (phase === 'loading') {
     return (
       <div className="boot">
-        <div className="boot__card">Kilit kontrol ediliyor…</div>
+        <div className="boot__card">Checking lock status…</div>
       </div>
     );
   }
@@ -103,7 +103,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <div className="auth-screen">
         <div className="auth-card">
           <h1 className="auth-card__title">Leeadman</h1>
-          <p className="muted">Bu cihazda PIN ile koruma açık. Devam etmek için PIN gir.</p>
+          <p className="muted">PIN protection is enabled on this device. Enter your PIN to continue.</p>
           <form onSubmit={submit}>
             <input
               className="input"
@@ -117,7 +117,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             />
             {err ? <p className="auth-err">{err}</p> : null}
             <Button variant="primary" className="auth-form__submit auth-unlock-submit" type="submit" icon={<IcLock size={18} />}>
-              Kilidi aç
+              Unlock
             </Button>
           </form>
         </div>

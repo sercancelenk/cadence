@@ -54,7 +54,22 @@
       }
     ],
     "mac": {
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": {
+        "teamId": "ME5ER9CA9Q"
+      }
+    },
+    "dmg": {
+      "writeUpdateInfo": true,
+      "sign": false
     }
   }
 }

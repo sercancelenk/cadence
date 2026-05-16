@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import { IcCalendar, IcCheck, IcChevronDown, IcClock, IcLayoutGrid, IcListTodo, IcPlus, IcTrash } from '../components/icons';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
-import { formatTimeOnly, fromLocalDatetimeValue, isPast, toLocalDatetimeValue } from '../lib/datetime';
+import { formatDateShort, formatTimeOnly, fromLocalDatetimeValue, isPast, toLocalDatetimeValue } from '../lib/datetime';
 import type { TodoGroup, TodoItem } from '../model';
 
 function hashHue(seed: string): number {
@@ -45,9 +45,7 @@ function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove
   const [draftTitle, setDraftTitle] = useState(item.title);
 
   const dueLabel = item.dueAt ? formatTimeOnly(item.dueAt) : '';
-  const dueDateShort = item.dueAt
-    ? new Date(item.dueAt).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })
-    : '';
+  const dueDateShort = formatDateShort(item.dueAt);
   const overdue = item.dueAt && isPast(item.dueAt) && !item.done;
 
   return (
@@ -60,7 +58,7 @@ function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove
         className={`todos-row__check${item.done ? ' todos-row__check--on' : ''}`}
         aria-checked={item.done}
         role="checkbox"
-        title={item.done ? 'Geri al' : 'Tamamlandı işaretle'}
+        title={item.done ? 'Undo' : 'Mark complete'}
         onClick={() => onToggle(item.id)}
       >
         {item.done ? <IcCheck size={14} strokeWidth={2.5} /> : null}
@@ -113,24 +111,24 @@ function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove
           <div className="todos-row__meta">
             {item.dueAt ? (
               <>
-                <span className={`todos-row__meta-ic${overdue ? ' todos-row__meta-ic--warn' : ''}`} title="Bitiş">
+                <span className={`todos-row__meta-ic${overdue ? ' todos-row__meta-ic--warn' : ''}`} title="Due">
                   <IcCalendar size={14} />
                 </span>
                 <span className={overdue ? 'todos-row__meta-warn' : undefined}>
                   {dueDateShort}
                   {dueLabel ? ` · ${dueLabel}` : ''}
                 </span>
-                <span className="todos-row__meta-ic todos-row__meta-ic--muted" title="Zaman">
+                <span className="todos-row__meta-ic todos-row__meta-ic--muted" title="Time">
                   <IcClock size={14} />
                 </span>
               </>
             ) : (
-              <span className="todos-row__meta-placeholder">Tarih ekle</span>
+              <span className="todos-row__meta-placeholder">Set due date</span>
             )}
           </div>
           <div className="todos-row__toolbar">
             <label className="todos-row__date-lbl">
-              <span className="sr-only">Bitiş tarihi</span>
+              <span className="sr-only">Due date</span>
               <input
                 type="datetime-local"
                 className="todos-row__date"
@@ -146,7 +144,7 @@ function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove
               className="todos-row__move"
               value={item.groupId}
               onChange={(e) => onPatch(item.id, { groupId: e.target.value })}
-              aria-label="Liste taşı"
+              aria-label="Move to list"
             >
               {groups.map((gr) => (
                 <option key={gr.id} value={gr.id}>
@@ -154,7 +152,7 @@ function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove
                 </option>
               ))}
             </select>
-            <button type="button" className="todos-row__icon-btn" title="Sil" onClick={() => onRemove(item.id)}>
+            <button type="button" className="todos-row__icon-btn" title="Delete" onClick={() => onRemove(item.id)}>
               <IcTrash size={16} />
             </button>
           </div>
@@ -238,14 +236,14 @@ export function TodosPage() {
     <div className="page todos-route">
       <header className="page-head todos-route__head">
         <div className="todos-route__head-main">
-          <h1>Bugün</h1>
-          <p className="muted">Kişisel görevlerin; listelere göre düzenlenir.</p>
+          <h1>Today</h1>
+          <p className="muted">Your personal tasks, organised by lists.</p>
         </div>
         <button
           type="button"
           className="todos-route__display-btn todos-route__display-btn--icon-only"
-          title={compact ? 'Rahat görünüm' : 'Sıkı görünüm'}
-          aria-label={compact ? 'Rahat görünüm' : 'Sıkı görünüm'}
+          title={compact ? 'Comfortable view' : 'Compact view'}
+          aria-label={compact ? 'Comfortable view' : 'Compact view'}
           onClick={() => setCompact((c) => !c)}
         >
           {compact ? <IcListTodo size={17} /> : <IcLayoutGrid size={17} />}
@@ -265,9 +263,9 @@ export function TodosPage() {
               <button
                 type="button"
                 className={`todos-section__toggle${sectionOpen ? '' : ' todos-section__toggle--collapsed'}`}
-                title={sectionOpen ? 'Listeyi daralt' : 'Listeyi genişlet'}
+                title={sectionOpen ? 'Collapse list' : 'Expand list'}
                 aria-expanded={sectionOpen}
-                aria-label={sectionOpen ? 'Listeyi daralt' : 'Listeyi genişlet'}
+                aria-label={sectionOpen ? 'Collapse list' : 'Expand list'}
                 onClick={() =>
                   setSectionOpenMap((prev) => ({
                     ...prev,
@@ -281,7 +279,7 @@ export function TodosPage() {
                 className="todos-section__title"
                 defaultValue={g.name}
                 key={`gn-${g.id}-${g.name}`}
-                aria-label="Liste adı"
+                aria-label="List name"
                 onBlur={(e) => {
                   const v = e.target.value.trim();
                   if (v && v !== g.name) updateTodoGroup(g.id, { name: v });
@@ -289,7 +287,7 @@ export function TodosPage() {
               />
               {data.todoGroups.length > 1 ? (
                 <details className="todos-section__menu">
-                  <summary className="todos-section__menu-btn" aria-label="Liste seçenekleri">
+                  <summary className="todos-section__menu-btn" aria-label="List options">
                     <span aria-hidden>⋯</span>
                   </summary>
                   <div className="todos-section__menu-panel">
@@ -297,12 +295,12 @@ export function TodosPage() {
                       type="button"
                       className="todos-section__menu-item todos-section__menu-item--danger"
                       onClick={() => {
-                        if (window.confirm(`“${g.name}” listesini kaldırmak istiyor musun? Görevler başka listeye taşınır.`)) {
+                        if (window.confirm(`Delete the “${g.name}” list? Its tasks will be moved to another list.`)) {
                           removeTodoGroup(g.id);
                         }
                       }}
                     >
-                      Listeyi sil
+                      Delete list
                     </button>
                   </div>
                 </details>
@@ -312,7 +310,7 @@ export function TodosPage() {
             {sectionOpen ? (
               <>
                 {active.length === 0 && done.length === 0 ? (
-                  <p className="todos-section__empty">Bu listede görev yok.</p>
+                  <p className="todos-section__empty">No tasks in this list.</p>
                 ) : (
                   <ul className="todos-list">
                     {active.map((it) => (
@@ -358,7 +356,7 @@ export function TodosPage() {
                   >
                     <input
                       className="todos-add-inline__input"
-                      placeholder="Görev adı"
+                      placeholder="Task name"
                       value={draft}
                       autoFocus
                       onChange={(e) => setDraftByGroup((prev) => ({ ...prev, [g.id]: e.target.value }))}
@@ -367,16 +365,16 @@ export function TodosPage() {
                       }}
                     />
                     <button type="submit" className="todos-add-inline__submit">
-                      Ekle
+                      Add
                     </button>
                     <button type="button" className="todos-add-inline__cancel" onClick={() => setAddingGroupId(null)}>
-                      Vazgeç
+                      Cancel
                     </button>
                   </form>
                 ) : (
                   <button type="button" className="todos-add-task" onClick={() => setAddingGroupId(g.id)}>
                     <IcPlus size={18} className="todos-add-task__plus" strokeWidth={2.5} />
-                    Görev ekle
+                    Add task
                   </button>
                 )}
               </>
@@ -399,22 +397,22 @@ export function TodosPage() {
           >
             <input
               className="todos-new-list__input"
-              placeholder="Yeni liste adı"
+              placeholder="New list name"
               value={newGroupName}
               autoFocus
               onChange={(e) => setNewGroupName(e.target.value)}
             />
             <button type="submit" className="todos-new-list__ok">
-              Oluştur
+              Create
             </button>
             <button type="button" className="todos-new-list__cancel" onClick={() => setNewListOpen(false)}>
-              İptal
+              Cancel
             </button>
           </form>
         ) : (
           <button type="button" className="todos-add-list" onClick={() => setNewListOpen(true)}>
             <IcPlus size={17} className="todos-add-list__plus" strokeWidth={2.5} />
-            Liste ekle
+            Add list
           </button>
         )}
       </section>

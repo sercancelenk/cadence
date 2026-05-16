@@ -123,13 +123,13 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           setUser(r.user);
           return { ok: true as const };
         }
-        return { ok: false as const, error: r?.error ?? 'Giriş başarısız.' };
+        return { ok: false as const, error: r?.error ?? 'Sign-in failed.' };
       }
       const { users } = await readDevAccounts();
       const u = users.find((x) => x.email === em);
-      if (!u) return { ok: false as const, error: 'E-posta veya parola hatalı.' };
+      if (!u) return { ok: false as const, error: 'Incorrect email or password.' };
       const ok = await pbkdf2VerifyPassword(password, u.saltB64, u.hashB64);
-      if (!ok) return { ok: false as const, error: 'E-posta veya parola hatalı.' };
+      if (!ok) return { ok: false as const, error: 'Incorrect email or password.' };
       writeDevSession(u.id);
       setUser({ id: u.id, email: u.email, displayName: u.displayName });
       return { ok: true as const };
@@ -141,8 +141,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     async (opts: { email: string; password: string; displayName: string; migrateLegacy?: boolean }) => {
       const em = opts.email.trim().toLowerCase();
       const displayName = opts.displayName.trim();
-      if (opts.password.length < 8) return { ok: false as const, error: 'Parola en az 8 karakter olmalı.' };
-      if (!em.includes('@')) return { ok: false as const, error: 'Geçerli bir e-posta gir.' };
+      if (opts.password.length < 8) return { ok: false as const, error: 'Password must be at least 8 characters.' };
+      if (!em.includes('@')) return { ok: false as const, error: 'Please enter a valid email.' };
 
       if (window.leeadman?.accountRegister) {
         const r = await window.leeadman.accountRegister({
@@ -155,11 +155,11 @@ export function AccountProvider({ children }: { children: ReactNode }) {
           setUser(r.user);
           return { ok: true as const, warn: r.warn };
         }
-        return { ok: false as const, error: r?.error ?? 'Kayıt başarısız.' };
+        return { ok: false as const, error: r?.error ?? 'Sign-up failed.' };
       }
 
       const { users } = await readDevAccounts();
-      if (users.some((u) => u.email === em)) return { ok: false as const, error: 'Bu e-posta ile zaten kayıt var.' };
+      if (users.some((u) => u.email === em)) return { ok: false as const, error: 'An account already exists for this email.' };
       const { saltB64, hashB64 } = await pbkdf2HashPassword(opts.password);
       const id = crypto.randomUUID();
       const row: StoredUser = {

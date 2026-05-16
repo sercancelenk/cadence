@@ -7,7 +7,7 @@ import { useAppData } from '../AppDataContext';
 export function ProfilePage() {
   const { user } = useAccount();
   const { data, updateUserProfile } = useAppData();
-  const profile = data.profile ?? { displayName: 'Ben', favoriteTeamIds: [] };
+  const profile = data.profile ?? { displayName: 'Me', favoriteTeamIds: [] };
 
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [jobTitle, setJobTitle] = useState(profile.jobTitle ?? '');
@@ -31,21 +31,21 @@ export function ProfilePage() {
   return (
     <div className="page">
       <header className="page-head">
-        <h1>Profil</h1>
-        <p className="muted">Hesap ve kişisel bilgilerin. Ekip verilerinden ayrı tutulur.</p>
+        <h1>Profile</h1>
+        <p className="muted">Your account and personal details. Kept separate from team data.</p>
       </header>
 
       <section className="card">
-        <h2 className="card__title">Hesap</h2>
+        <h2 className="card__title">Account</h2>
         <div className="field">
-          <span>E-posta</span>
-          <input className="input" readOnly value={user?.email ?? ''} title="Hesap e-postası değiştirilemez" />
+          <span>Email</span>
+          <input className="input" readOnly value={user?.email ?? ''} title="Account email cannot be changed" />
         </div>
-        <p className="muted small">E-posta kayıt sırasında belirlenir; şu an uygulama içinden değiştirilemez.</p>
+        <p className="muted small">Your email is set at sign-up and cannot be changed in-app yet.</p>
       </section>
 
       <section className="card">
-        <h2 className="card__title">Kişisel bilgiler</h2>
+        <h2 className="card__title">Personal details</h2>
         <form
           className="profile-form"
           onSubmit={(e: FormEvent) => {
@@ -54,36 +54,36 @@ export function ProfilePage() {
           }}
         >
           <label className="field">
-            <span>Görünen ad</span>
+            <span>Display name</span>
             <input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
           </label>
           <label className="field">
-            <span>İş ünvanı</span>
-            <input className="input" placeholder="Örn. Engineering Manager" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+            <span>Job title</span>
+            <input className="input" placeholder="e.g. Engineering Manager" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
           </label>
           <label className="field">
-            <span>Departman / ekip</span>
-            <input className="input" placeholder="Örn. Platform" value={department} onChange={(e) => setDepartment(e.target.value)} />
+            <span>Department / team</span>
+            <input className="input" placeholder="e.g. Platform" value={department} onChange={(e) => setDepartment(e.target.value)} />
           </label>
           <label className="field">
-            <span>Telefon</span>
-            <input className="input" type="tel" placeholder="+90 …" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <span>Phone</span>
+            <input className="input" type="tel" placeholder="+1 …" value={phone} onChange={(e) => setPhone(e.target.value)} />
           </label>
           <label className="field">
-            <span>Hakkında</span>
+            <span>About</span>
             <textarea
               className="textarea"
               rows={5}
-              placeholder="Kısa tanıtım, odak alanların, notların…"
+              placeholder="Short bio, focus areas, personal notes…"
               value={bio}
               onChange={(e) => setBio(e.target.value)}
             />
           </label>
           <div className="row" style={{ marginTop: 12 }}>
             <Button type="submit" variant="primary" icon={<IcSave size={18} />}>
-              Kaydet
+              Save
             </Button>
-            {saved ? <span className="muted small">Kaydedildi.</span> : null}
+            {saved ? <span className="muted small">Saved.</span> : null}
           </div>
         </form>
       </section>

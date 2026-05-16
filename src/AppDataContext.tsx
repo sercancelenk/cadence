@@ -134,8 +134,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       let seeded = false;
       if (seed?.trim()) {
         sessionStorage.removeItem('leeadman-profile-seed');
-        const p = next.profile?.displayName ?? 'Ben';
-        if (p === 'Ben' || !next.profile?.displayName?.trim()) {
+        const p = next.profile?.displayName ?? 'Me';
+        if (p === 'Me' || p === 'Ben' || !next.profile?.displayName?.trim()) {
           merged = updateUserProfileFn(next, { displayName: seed.trim() });
           seeded = true;
         }
@@ -249,9 +249,9 @@ export function useReminderWatcher() {
         if (!it) continue;
         const person = data.people.find((p) => p.id === it.personId);
         const team = person ? data.teams.find((x) => x.id === person.teamId) : undefined;
-        const label = [team?.name, person?.name].filter(Boolean).join(' · ') || 'Kayıt';
-        const title = it.kind === 'task' ? 'Görev hatırlatıcısı' : 'Hatırlatıcı';
-        const body = `${label}: ${it.title || '(başlıksız)'}`;
+        const label = [team?.name, person?.name].filter(Boolean).join(' · ') || 'Item';
+        const title = it.kind === 'task' ? 'Task reminder' : 'Reminder';
+        const body = `${label}: ${it.title || '(untitled)'}`;
 
         if ('Notification' in window && Notification.permission === 'granted') {
           // eslint-disable-next-line no-new

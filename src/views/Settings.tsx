@@ -32,7 +32,7 @@ export function Settings() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `leeadman-yedek-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `leeadman-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -40,13 +40,13 @@ export function Settings() {
   return (
     <div className="page">
       <header className="page-head">
-        <h1>Ayarlar</h1>
-        <p className="muted">Veri bu bilgisayarda kalır; yedek için dışa aktar.</p>
+        <h1>Settings</h1>
+        <p className="muted">Your data lives on this computer. Export a backup to keep it elsewhere.</p>
       </header>
 
       <section className="card">
-        <h2 className="card__title">Görünüm</h2>
-        <p className="muted small">Üst çubuktaki tema düğmesiyle de değiştirebilirsin.</p>
+        <h2 className="card__title">Appearance</h2>
+        <p className="muted small">You can also toggle the theme from the top bar.</p>
         <div className="row">
           <Button
             type="button"
@@ -54,7 +54,7 @@ export function Settings() {
             icon={<IcMoon size={17} />}
             onClick={() => setTheme('dark')}
           >
-            Koyu
+            Dark
           </Button>
           <Button
             type="button"
@@ -62,17 +62,17 @@ export function Settings() {
             icon={<IcSun size={17} />}
             onClick={() => setTheme('light')}
           >
-            Açık
+            Light
           </Button>
         </div>
       </section>
 
       <section className="card">
-        <h2 className="card__title">PIN ile koruma</h2>
+        <h2 className="card__title">PIN protection</h2>
         <p className="muted">
-          Veri dosyası diskte düz metin kalır; PIN yalnızca uygulama açılışında yanlış ellere karşı basit bir engeldir. Güçlü gizlilik için disk şifreleme (FileVault vb.) düşün.
+          Your data file stays in plain text on disk; a PIN is only a basic barrier at app launch. For strong privacy use disk encryption (e.g. FileVault on macOS, BitLocker on Windows).
         </p>
-        <p className="muted small">Durum: {pinEnabled ? 'Açık' : 'Kapalı'}</p>
+        <p className="muted small">Status: {pinEnabled ? 'Enabled' : 'Disabled'}</p>
         {!pinEnabled ? (
           <form
             className="row"
@@ -80,7 +80,7 @@ export function Settings() {
             onSubmit={async (e: FormEvent) => {
               e.preventDefault();
               if (newPin.length < 4 || newPin !== newPin2) {
-                window.alert('PIN en az 4 karakter ve iki alan aynı olmalı.');
+                window.alert('PIN must be at least 4 characters and both fields must match.');
                 return;
               }
               const r = await window.leeadman?.authSetPin?.({ pin: newPin });
@@ -88,16 +88,16 @@ export function Settings() {
                 setNewPin('');
                 setNewPin2('');
                 await refreshSession();
-                window.alert('PIN kaydedildi. Uygulamayı yeniden açınca sorulacak.');
+                window.alert('PIN saved. You will be prompted on next launch.');
               } else {
-                window.alert(r?.error ?? 'Kaydedilemedi');
+                window.alert(r?.error ?? 'Could not save PIN.');
               }
             }}
           >
-            <input className="input" type="password" placeholder="Yeni PIN" value={newPin} onChange={(e) => setNewPin(e.target.value)} />
-            <input className="input" type="password" placeholder="PIN tekrar" value={newPin2} onChange={(e) => setNewPin2(e.target.value)} />
+            <input className="input" type="password" placeholder="New PIN" value={newPin} onChange={(e) => setNewPin(e.target.value)} />
+            <input className="input" type="password" placeholder="Confirm PIN" value={newPin2} onChange={(e) => setNewPin2(e.target.value)} />
             <Button type="submit" variant="primary" icon={<IcLock size={17} />}>
-              PIN oluştur
+              Create PIN
             </Button>
           </form>
         ) : (
@@ -110,40 +110,37 @@ export function Settings() {
               if (r?.ok) {
                 setClearPin('');
                 await refreshSession();
-                window.alert('PIN kaldırıldı.');
+                window.alert('PIN removed.');
               } else {
-                window.alert(r?.error ?? 'PIN hatalı');
+                window.alert(r?.error ?? 'Incorrect PIN.');
               }
             }}
           >
             <input
               className="input"
               type="password"
-              placeholder="Mevcut PIN (kaldırmak için)"
+              placeholder="Current PIN (to remove)"
               value={clearPin}
               onChange={(e) => setClearPin(e.target.value)}
             />
             <Button type="submit" variant="danger" icon={<IcTrash size={17} />}>
-              PIN korumasını kaldır
+              Remove PIN protection
             </Button>
           </form>
         )}
       </section>
 
       <section className="card">
-        <h2 className="card__title">Uygulama sürümü</h2>
+        <h2 className="card__title">Application version</h2>
         <p>
-          Kurulu sürüm: <strong>{appVersion || '—'}</strong> · Veri şeması: v{data.version}
+          Installed version: <strong>{appVersion || '—'}</strong> · Data schema: v{data.version}
         </p>
       </section>
 
       <section className="card">
-        <h2 className="card__title">Otomatik güncelleme (GitHub Releases)</h2>
+        <h2 className="card__title">Auto updates (GitHub Releases)</h2>
         <p className="muted">
-          Paketlenmiş uygulama açıldığında GitHub&apos;taki yayınlardan yeni sürüm kontrol edilir. Çalışması için{' '}
-          <code>package.json</code> içindeki <code>repository</code> ve <code>build.publish</code> alanlarında{' '}
-          <code>YOUR_GITHUB_USERNAME</code> yerine kendi GitHub kullanıcı veya organizasyon adını yaz; sürümleri{' '}
-          <code>npm run build</code> ile üretip GitHub Release olarak yüklemen gerekir (ör. <code>electron-builder</code> çıktıları).
+          When the packaged app launches, it checks GitHub Releases for a newer version. The repository owner is configured automatically by the release workflow.
         </p>
         <div className="row" style={{ marginTop: 12 }}>
           <Button
@@ -153,33 +150,33 @@ export function Settings() {
             onClick={async () => {
               const r = await window.leeadman?.checkForUpdates?.();
               if (!r?.ok && r?.reason === 'dev') {
-                window.alert('Geliştirme modunda paket güncellemesi yok; üretim .app/.exe kullan.');
+                window.alert('Update checks are disabled in development mode. Run the packaged app to receive updates.');
               } else if (r?.ok) {
-                window.alert('Güncelleme kontrolü başlatıldı. Varsa bildirim gösterilir.');
+                window.alert('Update check started. You will be notified if a new version is available.');
               } else {
-                window.alert(`Kontrol başarısız: ${r?.error ?? 'bilinmiyor'}`);
+                window.alert(`Update check failed: ${r?.error ?? 'unknown error'}`);
               }
             }}
           >
-            Şimdi güncelleme kontrol et
+            Check for updates
           </Button>
         </div>
       </section>
 
       <section className="card">
-        <h2 className="card__title">Veri konumu (Electron)</h2>
-        {path ? <pre className="pre">{path}</pre> : <p className="muted">Tarayıcı önizlemesinde Electron klasörü yok; veri localStorage&apos;da.</p>}
-        <p className="muted small">Dosya adı: leeadman-data.json</p>
+        <h2 className="card__title">Data location (Electron)</h2>
+        {path ? <pre className="pre">{path}</pre> : <p className="muted">No Electron data path available; in the browser preview, data lives in localStorage.</p>}
+        <p className="muted small">File name pattern: leeadman-data-&lt;userId&gt;.json</p>
       </section>
 
       <section className="card">
-        <h2 className="card__title">Yedek</h2>
+        <h2 className="card__title">Backup</h2>
         <div className="row">
           <Button type="button" variant="primary" icon={<IcDownload size={17} />} onClick={exportJson}>
-            JSON dışa aktar
+            Export JSON
           </Button>
           <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={() => fileRef.current?.click()}>
-            JSON içe aktar
+            Import JSON
           </Button>
           <input
             ref={fileRef}
@@ -195,21 +192,21 @@ export function Settings() {
                 const parsed = JSON.parse(text) as AppData;
                 replaceAll(parsed);
               } catch {
-                window.alert('Dosya okunamadı veya geçersiz JSON.');
+                window.alert('Could not read the file or the JSON is invalid.');
               }
             }}
           />
         </div>
         <p className="muted small" style={{ marginTop: 8 }}>
-          İçe aktarma mevcut verinin üzerine yazar. Önce dışa aktararak yedek al.
+          Importing replaces your existing data. Always export a backup first.
         </p>
       </section>
 
       <section className="card">
-        <h2 className="card__title">Hatırlatıcılar</h2>
+        <h2 className="card__title">Reminders</h2>
         <p className="muted">
-          macOS bildirim izni istenir. Görev veya not satırında &quot;Hatırlatıcı&quot; alanını doldur; zaman gelince masaüstü bildirimi gösterilir (aynı hatırlatıcı
-          tekrar etmez; saati değiştirirsen yeniden tetiklenebilir).
+          The OS will request notification permission. Fill in the &quot;Reminder&quot; field on a task or note; a desktop notification will fire at the scheduled time
+          (the same reminder will not repeat — adjusting the time can re-trigger it).
         </p>
       </section>
     </div>

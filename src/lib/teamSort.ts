@@ -11,6 +11,6 @@ export function sortedTeams(data: AppData): Team[] {
     const ra = rank(a.id);
     const rb = rank(b.id);
     if (ra !== rb) return ra - rb;
-    return a.name.localeCompare(b.name, 'tr');
+    return a.name.localeCompare(b.name);
   });
 }

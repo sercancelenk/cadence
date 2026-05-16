@@ -1,6 +1,6 @@
 import { v4 as uuid } from 'uuid';
 
-/** Eski tek-ekip verisindeki sabit kendi kaydı (migration) */
+/** Legacy single-team self identifier (used during migration). */
 export const LEGACY_SELF_PERSON_ID = '__self';
 
 export type ItemKind = 'task' | 'note' | 'goal' | 'document';
@@ -8,10 +8,10 @@ export type ItemKind = 'task' | 'note' | 'goal' | 'document';
 export type GoalStatus = 'planned' | 'active' | 'completed' | 'cancelled';
 
 export const GOAL_STATUS_OPTIONS: { value: GoalStatus; label: string }[] = [
-  { value: 'planned', label: 'Planlandı' },
-  { value: 'active', label: 'Devam ediyor' },
-  { value: 'completed', label: 'Tamamlandı' },
-  { value: 'cancelled', label: 'İptal' },
+  { value: 'planned', label: 'Planned' },
+  { value: 'active', label: 'In progress' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
 
 export type TeamStatus = 'active' | 'paused' | 'archived';
@@ -20,18 +20,18 @@ export interface Team {
   id: string;
   name: string;
   createdAt: string;
-  /** Ekip çalışma durumu (UI + filtre) */
+  /** Team status (UI + filtering). */
   status?: TeamStatus;
 }
 
 export interface UserProfile {
   displayName: string;
-  /** Favori ekip id sırası (önce gelen önce) */
+  /** Ordered list of favourite team ids (first → highest priority). */
   favoriteTeamIds: string[];
   jobTitle?: string;
   department?: string;
   phone?: string;
-  /** Kısa tanıtım / not */
+  /** Short bio / about. */
   bio?: string;
 }
 
@@ -41,7 +41,7 @@ export interface Person {
   name: string;
   title?: string;
   isSelf?: boolean;
-  /** Serbest not / 1:1 taslak alanı (kişi başına) */
+  /** Free-form notes / 1:1 scratchpad (per person). */
   scratchpad?: string;
   createdAt: string;
 }
@@ -52,13 +52,13 @@ export interface Item {
   kind: ItemKind;
   title: string;
   body: string;
-  /** İsteğe bağlı: Serüven, Operasyon, vb. */
+  /** Optional free-form category (e.g. Initiative, Operations). */
   category?: string;
-  /** Hedef / görev bitişi (deadline) */
+  /** Goal / task deadline. */
   dueAt?: string;
-  /** Hedef başlangıcı */
+  /** Goal start date. */
   startAt?: string;
-  /** Yalnızca kind === 'goal' için iş durumu */
+  /** Goal workflow status; relevant only when kind === 'goal'. */
   goalStatus?: GoalStatus;
   remindAt?: string;
   done: boolean;
@@ -93,11 +93,11 @@ export interface AppData {
   people: Person[];
   items: Item[];
   notifiedReminderIds: string[];
-  /** Son seçilen ekip (UI tercihi) */
+  /** Last selected team (UI preference). */
   lastTeamId?: string;
-  /** Uygulama kullanıcı profili (lokal) */
+  /** Local user profile. */
   profile?: UserProfile;
-  /** Kişisel yapılacaklar (ekipten bağımsız) */
+  /** Personal to-do lists (team independent). */
   todoGroups: TodoGroup[];
   todoItems: TodoItem[];
 }
@@ -131,7 +131,7 @@ export function getLeaderPerson(data: Pick<AppData, 'people'>, teamId: string): 
   return data.people.find((p) => p.teamId === teamId && isLeaderPerson(p));
 }
 
-/** Ekip üyeleri: Kendim ve Liderim hariç */
+/** Team members excluding the special "Me" and "My leader" rows. */
 export function teamPeople(data: Pick<AppData, 'people'>, teamId: string): Person[] {
   return data.people.filter((p) => p.teamId === teamId && !isSelfPerson(p) && !isLeaderPerson(p));
 }
@@ -143,12 +143,12 @@ export function emptyData(): AppData {
   const leaderId = leaderPersonIdForTeam(teamId);
   return {
     version: DATA_VERSION,
-    teams: [{ id: teamId, name: 'İlk ekip', createdAt: t, status: 'active' }],
+    teams: [{ id: teamId, name: 'My first team', createdAt: t, status: 'active' }],
     people: [
       {
         id: selfId,
         teamId,
-        name: 'Kendim',
+        name: 'Me',
         isSelf: true,
         scratchpad: '',
         createdAt: t,
@@ -156,7 +156,7 @@ export function emptyData(): AppData {
       {
         id: leaderId,
         teamId,
-        name: 'Liderim',
+        name: 'My leader',
         scratchpad: '',
         createdAt: t,
       },
@@ -164,7 +164,7 @@ export function emptyData(): AppData {
     items: [],
     notifiedReminderIds: [],
     lastTeamId: teamId,
-    profile: { displayName: 'Ben', favoriteTeamIds: [] },
+    profile: { displayName: 'Me', favoriteTeamIds: [] },
     ...defaultTodoBundle(),
   };
 }
@@ -173,7 +173,7 @@ function defaultTodoBundle(): { todoGroups: TodoGroup[]; todoItems: TodoItem[] }
   const id = uuid();
   const t = nowIso();
   return {
-    todoGroups: [{ id, name: 'Genel', sortOrder: 0, createdAt: t }],
+    todoGroups: [{ id, name: 'General', sortOrder: 0, createdAt: t }],
     todoItems: [],
   };
 }
@@ -184,7 +184,7 @@ function parsePeople(raw: unknown[]): Person[] {
     .map((p) => ({
       id: typeof p.id === 'string' ? p.id : uuid(),
       teamId: typeof p.teamId === 'string' ? p.teamId : '',
-      name: typeof p.name === 'string' && p.name.trim() ? p.name : 'İsimsiz',
+      name: typeof p.name === 'string' && p.name.trim() ? p.name : 'Unnamed',
       title: typeof p.title === 'string' ? p.title : undefined,
       isSelf: !!p.isSelf || (typeof p.id === 'string' && p.id.startsWith('__self__')),
       scratchpad: typeof p.scratchpad === 'string' ? p.scratchpad : '',
@@ -201,7 +201,7 @@ function parseTeams(raw: unknown[]): Team[] {
       const status = statuses.includes(st as TeamStatus) ? (st as TeamStatus) : 'active';
       return {
         id: typeof t.id === 'string' ? t.id : uuid(),
-        name: typeof t.name === 'string' && t.name.trim() ? t.name : 'Ekip',
+        name: typeof t.name === 'string' && t.name.trim() ? t.name : 'Team',
         createdAt: typeof t.createdAt === 'string' ? t.createdAt : nowIso(),
         status,
       };
@@ -247,7 +247,7 @@ function parseTodoGroups(raw: unknown[]): TodoGroup[] {
     .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object')
     .map((g, i) => ({
       id: typeof g.id === 'string' ? g.id : uuid(),
-      name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Grup',
+      name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'List',
       sortOrder: typeof g.sortOrder === 'number' ? g.sortOrder : i,
       createdAt: typeof g.createdAt === 'string' ? g.createdAt : nowIso(),
     }));
@@ -268,7 +268,7 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
     }));
 }
 
-/** v1 -> v2: tek implicit ekip, her kişiye teamId, __self -> __self__{team} */
+/** v1 -> v2 migration: single implicit team, assign teamId to every person, __self -> __self__{team}. */
 function migrateV1ToV2(o: Record<string, unknown>): AppData {
   const t = nowIso();
   const teamId = uuid();
@@ -283,7 +283,7 @@ function migrateV1ToV2(o: Record<string, unknown>): AppData {
       return {
         id,
         teamId,
-        name: typeof p.name === 'string' && p.name.trim() ? p.name : 'İsimsiz',
+        name: typeof p.name === 'string' && p.name.trim() ? p.name : 'Unnamed',
         title: typeof p.title === 'string' ? p.title : undefined,
         isSelf,
         scratchpad: '',
@@ -295,7 +295,7 @@ function migrateV1ToV2(o: Record<string, unknown>): AppData {
     people.unshift({
       id: newSelfId,
       teamId,
-      name: 'Kendim',
+      name: 'Me',
       isSelf: true,
       scratchpad: '',
       createdAt: t,
@@ -314,7 +314,7 @@ function migrateV1ToV2(o: Record<string, unknown>): AppData {
     ensureTeamsHaveLeader(
       ensureTeamsHaveSelf({
         version: DATA_VERSION,
-        teams: [{ id: teamId, name: 'Varsayılan ekip', createdAt: t, status: 'active' }],
+        teams: [{ id: teamId, name: 'Default team', createdAt: t, status: 'active' }],
         people,
         items,
         notifiedReminderIds: [...notified].filter((x): x is string => typeof x === 'string'),
@@ -336,7 +336,7 @@ function ensureTeamsHaveSelf(data: AppData): AppData {
       additions.push({
         id: selfPersonIdForTeam(team.id),
         teamId: team.id,
-        name: 'Kendim',
+        name: 'Me',
         isSelf: true,
         scratchpad: '',
         createdAt: t,
@@ -348,13 +348,13 @@ function ensureTeamsHaveSelf(data: AppData): AppData {
     people = [...people, ...additions];
   }
 
-  /** teamId eksik kişileri ilk ekibe bağla (veya ekip oluştur) */
+  /** Attach orphaned people (missing teamId) to the first available team. */
   const missingTeam = people.filter((p) => !p.teamId || !teams.some((x) => x.id === p.teamId));
   if (missingTeam.length) {
     let fallbackTeamId = teams[0]?.id;
     if (!fallbackTeamId) {
       fallbackTeamId = uuid();
-      teams = [...teams, { id: fallbackTeamId, name: 'Ekip', createdAt: t, status: 'active' as TeamStatus }];
+      teams = [...teams, { id: fallbackTeamId, name: 'Team', createdAt: t, status: 'active' as TeamStatus }];
     }
     people = people.map((p) =>
       !p.teamId || !teams.some((x) => x.id === p.teamId) ? { ...p, teamId: fallbackTeamId! } : p,
@@ -375,7 +375,7 @@ function ensureTeamsHaveLeader(data: AppData): AppData {
       additions.push({
         id: lid,
         teamId: team.id,
-        name: 'Liderim',
+        name: 'My leader',
         scratchpad: '',
         createdAt: t,
       });
@@ -453,7 +453,7 @@ export function normalizeData(raw: unknown): AppData {
 
   if (teams.length === 0) {
     const tid = uuid();
-    teams = [{ id: tid, name: 'İlk ekip', createdAt: nowIso(), status: 'active' }];
+    teams = [{ id: tid, name: 'My first team', createdAt: nowIso(), status: 'active' }];
     people = people.map((p) => ({ ...p, teamId: p.teamId || tid }));
   }
 
@@ -477,7 +477,7 @@ export function normalizeData(raw: unknown): AppData {
 
 function ensureProfile(data: AppData): AppData {
   const raw = data.profile ?? {
-    displayName: 'Ben',
+    displayName: 'Me',
     favoriteTeamIds: [],
   };
   const fav = (raw.favoriteTeamIds ?? []).filter((id) => data.teams.some((t) => t.id === id));
@@ -486,7 +486,7 @@ function ensureProfile(data: AppData): AppData {
     status: t.status && ['active', 'paused', 'archived'].includes(t.status) ? t.status : 'active',
   }));
   const profile: UserProfile = {
-    displayName: raw.displayName?.trim() ? raw.displayName.trim() : 'Ben',
+    displayName: raw.displayName?.trim() ? raw.displayName.trim() : 'Me',
     favoriteTeamIds: fav,
     jobTitle: raw.jobTitle?.trim() || undefined,
     department: raw.department?.trim() || undefined,

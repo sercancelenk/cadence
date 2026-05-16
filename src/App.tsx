@@ -17,7 +17,7 @@ import { TeamDashboard } from './views/TeamDashboard';
 import { TodosPage } from './views/TodosPage';
 import './app.css';
 
-/** Electron .app / loadFile() → `file:`; BrowserRouter burada boş ekran yapar, HashRouter gerekir. */
+/** Electron .app / loadFile() uses the `file:` protocol where BrowserRouter renders blank; HashRouter is required there. */
 const HistoryRouter =
   typeof window !== 'undefined' && window.location.protocol === 'file:' ? HashRouter : BrowserRouter;
 
@@ -32,7 +32,7 @@ function BootLoading({ label }: { label: string }) {
 function ProtectedShell() {
   const { user, loading } = useAccount();
   const location = useLocation();
-  if (loading) return <BootLoading label="Oturum yükleniyor…" />;
+  if (loading) return <BootLoading label="Loading session…" />;
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
   return (
     <AppDataProvider key={user.id}>
@@ -66,7 +66,7 @@ function Boot() {
   if (!ready) {
     return (
       <div className="boot">
-        <div className="boot__card">Veri yükleniyor…</div>
+        <div className="boot__card">Loading data…</div>
       </div>
     );
   }

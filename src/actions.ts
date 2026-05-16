@@ -7,11 +7,11 @@ export function addTeam(data: AppData, name: string): AppData {
   const teamId = uuid();
   const selfId = selfPersonIdForTeam(teamId);
   const leaderId = leaderPersonIdForTeam(teamId);
-  const team: Team = { id: teamId, name: name.trim() || 'Yeni ekip', createdAt: t, status: 'active' };
+  const team: Team = { id: teamId, name: name.trim() || 'New team', createdAt: t, status: 'active' };
   const self: Person = {
     id: selfId,
     teamId,
-    name: 'Kendim',
+    name: 'Me',
     isSelf: true,
     scratchpad: '',
     createdAt: t,
@@ -19,7 +19,7 @@ export function addTeam(data: AppData, name: string): AppData {
   const leader: Person = {
     id: leaderId,
     teamId,
-    name: 'Liderim',
+    name: 'My leader',
     scratchpad: '',
     createdAt: t,
   };
@@ -60,7 +60,7 @@ export function removeTeam(data: AppData, teamId: string): AppData {
         ...data.profile,
         favoriteTeamIds: data.profile.favoriteTeamIds.filter((id) => id !== teamId),
       }
-    : { displayName: 'Ben', favoriteTeamIds: [] };
+    : { displayName: 'Me', favoriteTeamIds: [] };
   return {
     ...data,
     teams,
@@ -81,7 +81,7 @@ export function addPerson(data: AppData, teamId: string, name: string, title?: s
   const p: Person = {
     id: uuid(),
     teamId,
-    name: name.trim() || 'İsimsiz',
+    name: name.trim() || 'Unnamed',
     title: title?.trim() || undefined,
     scratchpad: '',
     createdAt: t,
@@ -176,15 +176,15 @@ export function addItem(
 function defaultTitle(kind: ItemKind): string {
   switch (kind) {
     case 'task':
-      return 'Yeni görev';
+      return 'New task';
     case 'note':
-      return 'Yeni not';
+      return 'New note';
     case 'goal':
-      return 'Yeni hedef';
+      return 'New goal';
     case 'document':
-      return 'Yeni doküman';
+      return 'New document';
     default:
-      return 'Yeni kayıt';
+      return 'New item';
   }
 }
 
@@ -276,7 +276,7 @@ export function updateUserProfile(
   data: AppData,
   patch: Partial<Pick<UserProfile, 'displayName' | 'jobTitle' | 'department' | 'phone' | 'bio'>>,
 ): AppData {
-  const p = data.profile ?? { displayName: 'Ben', favoriteTeamIds: [] };
+  const p = data.profile ?? { displayName: 'Me', favoriteTeamIds: [] };
   return {
     ...data,
     profile: {
@@ -292,7 +292,7 @@ export function updateUserProfile(
 
 export function toggleFavoriteTeam(data: AppData, teamId: string): AppData {
   if (!data.teams.some((t) => t.id === teamId)) return data;
-  const p = data.profile ?? { displayName: 'Ben', favoriteTeamIds: [] };
+  const p = data.profile ?? { displayName: 'Me', favoriteTeamIds: [] };
   const fav = p.favoriteTeamIds.filter((id) => data.teams.some((t) => t.id === id));
   const has = fav.includes(teamId);
   const next = has ? fav.filter((x) => x !== teamId) : [teamId, ...fav.filter((x) => x !== teamId)];
@@ -304,7 +304,7 @@ export function addTodoGroup(data: AppData, name: string): AppData {
   const maxOrder = Math.max(0, ...data.todoGroups.map((g) => g.sortOrder));
   const g: TodoGroup = {
     id: uuid(),
-    name: name.trim() || 'Yeni grup',
+    name: name.trim() || 'New list',
     sortOrder: maxOrder + 1,
     createdAt: t,
   };
@@ -343,7 +343,7 @@ export function addTodoItem(data: AppData, groupId: string, title: string): AppD
   const item: TodoItem = {
     id: uuid(),
     groupId: gid,
-    title: title.trim() || 'Yapılacak',
+    title: title.trim() || 'Untitled task',
     done: false,
     createdAt: t,
     updatedAt: t,
