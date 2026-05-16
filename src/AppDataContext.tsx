@@ -149,6 +149,35 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<AppData | null>(null);
   const [ready, setReady] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The most recent payload pending a debounced save, kept so we can flush it
+  // synchronously on tab close / unmount.
+  const pendingSave = useRef<AppData | null>(null);
+
+  const flushPendingSave = useCallback(() => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    const uid = userIdRef.current;
+    const next = pendingSave.current;
+    if (uid && next) {
+      pendingSave.current = null;
+      void persist(uid, next);
+    }
+  }, []);
+
+  // Best-effort: flush before the browser/Electron tab actually goes away so
+  // the user never loses the last 400ms of typing on an abrupt close.
+  useEffect(() => {
+    const onPageHide = () => flushPendingSave();
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onPageHide);
+      flushPendingSave();
+    };
+  }, [flushPendingSave]);
 
   useEffect(() => {
     if (!userId) {
@@ -185,9 +214,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const scheduleSave = useCallback((next: AppData) => {
     const uid = userIdRef.current;
     if (!uid) return;
+    pendingSave.current = next;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      void persist(uid, next);
+      saveTimer.current = null;
+      const payload = pendingSave.current;
+      pendingSave.current = null;
+      if (payload) void persist(uid, payload);
     }, SAVE_DEBOUNCE_MS);
   }, []);
 
@@ -280,18 +313,26 @@ function advanceReminder(iso: string, repeat: 'daily' | 'weekly' | 'monthly'): s
 export function useReminderWatcher() {
   const { data, update, ready } = useAppData();
   const askedPermission = useRef(false);
+  // Hold the freshest data + update fn in a ref so the timer effect itself
+  // can stay mounted across renders. Putting `data.items` etc in the effect
+  // deps means every keystroke that changes anything reachable from `data`
+  // tears down and rebuilds the 45s interval, which both leaks timer
+  // identities and causes a fresh `tick()` to run on every state change.
+  const latest = useRef({ data, update });
+  latest.current = { data, update };
 
   useEffect(() => {
     if (!ready) return;
 
     const tick = () => {
+      const { data: d, update: up } = latest.current;
       const now = Date.now();
       const dueIds: string[] = [];
-      for (const it of data.items) {
+      for (const it of d.items) {
         if (!it.remindAt || it.done) continue;
         const t = Date.parse(it.remindAt);
         if (Number.isNaN(t) || t > now) continue;
-        if (data.notifiedReminderIds.includes(it.id)) continue;
+        if (d.notifiedReminderIds.includes(it.id)) continue;
         dueIds.push(it.id);
       }
       if (dueIds.length === 0) return;
@@ -301,12 +342,16 @@ export function useReminderWatcher() {
         void Notification.requestPermission();
       }
 
+      // Index people/teams once for O(1) lookups instead of O(n) per due id.
+      const peopleById = new Map(d.people.map((p) => [p.id, p]));
+      const teamsById = new Map(d.teams.map((t) => [t.id, t]));
+
       const recurringAdvances: Record<string, string> = {};
       for (const id of dueIds) {
-        const it = data.items.find((x) => x.id === id);
+        const it = d.items.find((x) => x.id === id);
         if (!it) continue;
-        const person = data.people.find((p) => p.id === it.personId);
-        const team = person ? data.teams.find((x) => x.id === person.teamId) : undefined;
+        const person = peopleById.get(it.personId);
+        const team = person ? teamsById.get(person.teamId) : undefined;
         const label = [team?.name, person?.name].filter(Boolean).join(' · ') || 'Item';
         const title = it.kind === 'task' ? 'Task reminder' : 'Reminder';
         const body = `${label}: ${it.title || '(untitled)'}`;
@@ -327,21 +372,22 @@ export function useReminderWatcher() {
       const advanceIds = new Set(Object.keys(recurringAdvances));
       const oneShotDueIds = dueIds.filter((id) => !advanceIds.has(id));
 
-      update((d) => ({
-        ...d,
-        notifiedReminderIds: [...new Set([...d.notifiedReminderIds, ...oneShotDueIds])],
+      up((prev) => ({
+        ...prev,
+        notifiedReminderIds: [...new Set([...prev.notifiedReminderIds, ...oneShotDueIds])],
         items: advanceIds.size
-          ? d.items.map((x) =>
+          ? prev.items.map((x) =>
               recurringAdvances[x.id]
                 ? { ...x, remindAt: recurringAdvances[x.id], updatedAt: new Date().toISOString() }
                 : x,
             )
-          : d.items,
+          : prev.items,
       }));
     };
 
     tick();
     const timerId = window.setInterval(tick, 45_000);
     return () => window.clearInterval(timerId);
-  }, [data.items, data.notifiedReminderIds, data.people, data.teams, ready, update]);
+    // Only `ready` belongs in the deps. Everything else flows through `latest`.
+  }, [ready]);
 }

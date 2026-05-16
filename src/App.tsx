@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import { lazy, Suspense, type ReactElement } from 'react';
 import { BrowserRouter, HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AccountProvider, useAccount } from './AccountContext';
 import { AuthGate, AuthProvider } from './AuthContext';
@@ -7,19 +7,29 @@ import { Layout } from './components/Layout';
 import { TeamLayout } from './components/TeamLayout';
 import { ThemeProvider } from './ThemeContext';
 import { PATH_TEAMS } from './lib/routes';
-import { HomePage } from './views/HomePage';
-import { HomeTeams } from './views/HomeTeams';
-import { LoginPage } from './views/LoginPage';
-import { People, PersonRoute, TeamLeaderPage, TeamMePage } from './views/People';
-import { ProfilePage } from './views/ProfilePage';
-import { RegisterPage } from './views/RegisterPage';
-import { Settings } from './views/Settings';
-import { TeamDashboard } from './views/TeamDashboard';
-import { TodosPage } from './views/TodosPage';
-import { AgendaPage } from './views/AgendaPage';
-import { AnalyticsPage } from './views/AnalyticsPage';
 import { CommandPalette } from './components/CommandPalette';
 import './app.css';
+
+// Each route lives in its own JS chunk. The Markdown editor and `react-markdown`
+// only ship with the `People` chunk because that's the only place that needs
+// them — initial bundle drops dramatically (especially on the mobile PWA).
+const HomePage = lazy(() => import('./views/HomePage').then((m) => ({ default: m.HomePage })));
+const HomeTeams = lazy(() => import('./views/HomeTeams').then((m) => ({ default: m.HomeTeams })));
+const LoginPage = lazy(() => import('./views/LoginPage').then((m) => ({ default: m.LoginPage })));
+const RegisterPage = lazy(() => import('./views/RegisterPage').then((m) => ({ default: m.RegisterPage })));
+const TodosPage = lazy(() => import('./views/TodosPage').then((m) => ({ default: m.TodosPage })));
+const AgendaPage = lazy(() => import('./views/AgendaPage').then((m) => ({ default: m.AgendaPage })));
+const AnalyticsPage = lazy(() => import('./views/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
+const ProfilePage = lazy(() => import('./views/ProfilePage').then((m) => ({ default: m.ProfilePage })));
+const Settings = lazy(() => import('./views/Settings').then((m) => ({ default: m.Settings })));
+const TeamDashboard = lazy(() => import('./views/TeamDashboard').then((m) => ({ default: m.TeamDashboard })));
+// All four People routes share the same chunk (they import each other) — using
+// individual lazy() calls is fine: Rollup keeps them in one file and Vite
+// dedupes the dynamic import promise.
+const PeoplePage = lazy(() => import('./views/People').then((m) => ({ default: m.People })));
+const PersonRoute = lazy(() => import('./views/People').then((m) => ({ default: m.PersonRoute })));
+const TeamMePage = lazy(() => import('./views/People').then((m) => ({ default: m.TeamMePage })));
+const TeamLeaderPage = lazy(() => import('./views/People').then((m) => ({ default: m.TeamLeaderPage })));
 
 /** Electron .app / loadFile() uses the `file:` protocol where BrowserRouter renders blank; HashRouter is required there. */
 const HistoryRouter =
@@ -70,11 +80,13 @@ export default function App() {
     <HistoryRouter>
       <ThemeProvider>
         <AccountProvider>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="*" element={<ProtectedShell />} />
-          </Routes>
+          <Suspense fallback={<BootLoading label="Loading…" />}>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route path="*" element={<ProtectedShell />} />
+            </Routes>
+          </Suspense>
         </AccountProvider>
       </ThemeProvider>
     </HistoryRouter>
@@ -98,31 +110,33 @@ function AppRoutes() {
   return (
     <>
       <CommandPalette />
-      <Routes>
-      <Route element={<Layout />}>
-        <Route
-          index
-          element={
-            <MobileStartRedirect>
-              <HomePage />
-            </MobileStartRedirect>
-          }
-        />
-        <Route path={PATH_TEAMS.replace(/^\//, '')} element={<HomeTeams />} />
-        <Route path="todos" element={<TodosPage />} />
-        <Route path="agenda" element={<AgendaPage />} />
-        <Route path="analytics" element={<AnalyticsPage />} />
-        <Route path="profile" element={<ProfilePage />} />
-        <Route path="settings" element={<Settings />} />
-          <Route path="teams/:teamId" element={<TeamLayout />}>
-          <Route index element={<TeamDashboard />} />
-          <Route path="me" element={<TeamMePage />} />
-          <Route path="leader" element={<TeamLeaderPage />} />
-          <Route path="people" element={<People />} />
-          <Route path="people/:personId" element={<PersonRoute />} />
-        </Route>
-      </Route>
-      </Routes>
+      <Suspense fallback={<BootLoading label="Loading…" />}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route
+              index
+              element={
+                <MobileStartRedirect>
+                  <HomePage />
+                </MobileStartRedirect>
+              }
+            />
+            <Route path={PATH_TEAMS.replace(/^\//, '')} element={<HomeTeams />} />
+            <Route path="todos" element={<TodosPage />} />
+            <Route path="agenda" element={<AgendaPage />} />
+            <Route path="analytics" element={<AnalyticsPage />} />
+            <Route path="profile" element={<ProfilePage />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="teams/:teamId" element={<TeamLayout />}>
+              <Route index element={<TeamDashboard />} />
+              <Route path="me" element={<TeamMePage />} />
+              <Route path="leader" element={<TeamLeaderPage />} />
+              <Route path="people" element={<PeoplePage />} />
+              <Route path="people/:personId" element={<PersonRoute />} />
+            </Route>
+          </Route>
+        </Routes>
+      </Suspense>
     </>
   );
 }

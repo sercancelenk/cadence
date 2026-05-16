@@ -78,9 +78,13 @@ export function useSession(): Ctx {
 }
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { phase, unlockWithPin } = useSession();
+  const { phase, unlockWithPin, refresh } = useSession();
   const [pin, setPin] = useState('');
   const [err, setErr] = useState('');
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryPwd, setRecoveryPwd] = useState('');
+  const [recoveryErr, setRecoveryErr] = useState('');
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -88,6 +92,28 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const ok = await unlockWithPin(pin);
     if (ok) setPin('');
     else setErr('Incorrect PIN.');
+  };
+
+  const submitRecovery = async (e: FormEvent) => {
+    e.preventDefault();
+    setRecoveryErr('');
+    setRecoveryBusy(true);
+    try {
+      const r = await window.leeadman?.authResetWithAccountPassword?.({ password: recoveryPwd });
+      if (!r) {
+        setRecoveryErr('Recovery is only available in the desktop app.');
+        return;
+      }
+      if (r.ok) {
+        setRecoveryPwd('');
+        setRecovering(false);
+        await refresh();
+      } else {
+        setRecoveryErr(r.error || 'Could not reset PIN.');
+      }
+    } finally {
+      setRecoveryBusy(false);
+    }
   };
 
   if (phase === 'loading') {
@@ -103,23 +129,70 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <div className="auth-screen">
         <div className="auth-card">
           <h1 className="auth-card__title">Leeadman</h1>
-          <p className="muted">PIN protection is enabled on this device. Enter your PIN to continue.</p>
-          <form onSubmit={submit}>
-            <input
-              className="input"
-              style={{ width: '100%', marginTop: 12 }}
-              type="password"
-              inputMode="numeric"
-              autoComplete="off"
-              placeholder="PIN"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-            />
-            {err ? <p className="auth-err">{err}</p> : null}
-            <Button variant="primary" className="auth-form__submit auth-unlock-submit" type="submit" icon={<IcLock size={18} />}>
-              Unlock
-            </Button>
-          </form>
+          {!recovering ? (
+            <>
+              <p className="muted">PIN protection is enabled on this device. Enter your PIN to continue.</p>
+              <form onSubmit={submit}>
+                <input
+                  className="input"
+                  style={{ width: '100%', marginTop: 12 }}
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="PIN"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                />
+                {err ? <p className="auth-err">{err}</p> : null}
+                <Button variant="primary" className="auth-form__submit auth-unlock-submit" type="submit" icon={<IcLock size={18} />}>
+                  Unlock
+                </Button>
+              </form>
+              <button
+                type="button"
+                className="auth-link"
+                onClick={() => { setErr(''); setRecovering(true); }}
+              >
+                Forgot PIN? Reset with account password
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="muted">
+                Enter your <strong>account password</strong> to remove the PIN. Your data is already
+                encrypted with this password, so resetting the PIN doesn't grant any new access.
+              </p>
+              <form onSubmit={submitRecovery}>
+                <input
+                  className="input"
+                  style={{ width: '100%', marginTop: 12 }}
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder="Account password"
+                  value={recoveryPwd}
+                  onChange={(e) => setRecoveryPwd(e.target.value)}
+                  disabled={recoveryBusy}
+                />
+                {recoveryErr ? <p className="auth-err">{recoveryErr}</p> : null}
+                <Button
+                  variant="primary"
+                  className="auth-form__submit auth-unlock-submit"
+                  type="submit"
+                  icon={<IcLock size={18} />}
+                  disabled={recoveryBusy}
+                >
+                  {recoveryBusy ? 'Resetting…' : 'Remove PIN'}
+                </Button>
+              </form>
+              <button
+                type="button"
+                className="auth-link"
+                onClick={() => { setRecoveryErr(''); setRecovering(false); }}
+              >
+                Back to PIN entry
+              </button>
+            </>
+          )}
         </div>
       </div>
     );

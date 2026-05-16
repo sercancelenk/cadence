@@ -15,6 +15,7 @@ export function Settings() {
   const [newPin, setNewPin] = useState('');
   const [newPin2, setNewPin2] = useState('');
   const [clearPin, setClearPin] = useState('');
+  const [updaterOpen, setUpdaterOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -90,16 +91,18 @@ export function Settings() {
             style={{ marginTop: 10, flexDirection: 'column', alignItems: 'stretch' }}
             onSubmit={async (e: FormEvent) => {
               e.preventDefault();
-              if (newPin.length < 4 || newPin !== newPin2) {
+              const a = newPin.trim();
+              const b = newPin2.trim();
+              if (a.length < 4 || a !== b) {
                 window.alert('PIN must be at least 4 characters and both fields must match.');
                 return;
               }
-              const r = await window.leeadman?.authSetPin?.({ pin: newPin });
+              const r = await window.leeadman?.authSetPin?.({ pin: a });
               if (r?.ok) {
                 setNewPin('');
                 setNewPin2('');
                 await refreshSession();
-                window.alert('PIN saved. You will be prompted on next launch.');
+                window.alert('PIN saved. You will be prompted on next launch. If you ever lose it, you can reset it from the lock screen with your account password.');
               } else {
                 window.alert(r?.error ?? 'Could not save PIN.');
               }
@@ -117,7 +120,7 @@ export function Settings() {
             style={{ marginTop: 10, flexDirection: 'column', alignItems: 'stretch' }}
             onSubmit={async (e: FormEvent) => {
               e.preventDefault();
-              const r = await window.leeadman?.authClear?.({ pin: clearPin });
+              const r = await window.leeadman?.authClear?.({ pin: clearPin.trim() });
               if (r?.ok) {
                 setClearPin('');
                 await refreshSession();
@@ -151,28 +154,21 @@ export function Settings() {
       <section className="card">
         <h2 className="card__title">Auto updates (GitHub Releases)</h2>
         <p className="muted">
-          When the packaged app launches, it checks GitHub Releases for a newer version. The repository owner is configured automatically by the release workflow.
+          When the packaged app launches, it checks GitHub Releases for a newer version. You can also check on demand below — a dialog will guide you through download and restart.
         </p>
         <div className="row" style={{ marginTop: 12 }}>
           <Button
             type="button"
             variant="secondary"
             icon={<IcRefresh size={17} />}
-            onClick={async () => {
-              const r = await window.leeadman?.checkForUpdates?.();
-              if (!r?.ok && r?.reason === 'dev') {
-                window.alert('Update checks are disabled in development mode. Run the packaged app to receive updates.');
-              } else if (r?.ok) {
-                window.alert('Update check started. You will be notified if a new version is available.');
-              } else {
-                window.alert(`Update check failed: ${r?.error ?? 'unknown error'}`);
-              }
-            }}
+            onClick={() => setUpdaterOpen(true)}
           >
             Check for updates
           </Button>
         </div>
       </section>
+
+      <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
 
       <section className="card">
         <h2 className="card__title">Data location (Electron)</h2>
@@ -488,5 +484,187 @@ function SyncSection() {
         </p>
       </details>
     </section>
+  );
+}
+
+type UpdaterPhase =
+  | { kind: 'checking' }
+  | { kind: 'available'; version?: string }
+  | { kind: 'downloading'; percent: number; transferred: number; total: number }
+  | { kind: 'downloaded'; version?: string }
+  | { kind: 'not-available'; version?: string }
+  | { kind: 'dev' }
+  | { kind: 'unsupported' }
+  | { kind: 'error'; message?: string };
+
+function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [phase, setPhase] = useState<UpdaterPhase>({ kind: 'checking' });
+  const [installing, setInstalling] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const api = window.leeadman;
+    if (!api?.onUpdaterEvent || !api?.checkForUpdates) {
+      setPhase({ kind: 'unsupported' });
+      return;
+    }
+    setPhase({ kind: 'checking' });
+    setInstalling(false);
+
+    const off = api.onUpdaterEvent((e) => {
+      switch (e.status) {
+        case 'checking':
+          setPhase({ kind: 'checking' });
+          break;
+        case 'available':
+          setPhase({ kind: 'available', version: e.version });
+          break;
+        case 'downloading':
+          setPhase({
+            kind: 'downloading',
+            percent: e.percent,
+            transferred: e.transferred,
+            total: e.total,
+          });
+          break;
+        case 'downloaded':
+          setPhase({ kind: 'downloaded', version: e.version });
+          break;
+        case 'not-available':
+          setPhase({ kind: 'not-available', version: e.version });
+          break;
+        case 'error':
+          setPhase({ kind: 'error', message: e.message });
+          break;
+      }
+    });
+
+    void (async () => {
+      const r = await api.checkForUpdates?.();
+      if (r && !r.ok) {
+        if (r.reason === 'dev') setPhase({ kind: 'dev' });
+        else setPhase({ kind: 'error', message: r.error || 'Update check failed.' });
+      }
+    })();
+
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      off?.();
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const installNow = async () => {
+    setInstalling(true);
+    const r = await window.leeadman?.installUpdate?.();
+    if (!r?.ok) {
+      setInstalling(false);
+      window.alert(r?.error ?? 'Could not install the update.');
+    }
+  };
+
+  return (
+    <div className="updater-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="updater-dialog" onClick={(e) => e.stopPropagation()}>
+        <h3 className="updater-dialog__title">App update</h3>
+
+        {phase.kind === 'checking' && (
+          <p className="muted">Checking GitHub Releases for a newer version…</p>
+        )}
+
+        {phase.kind === 'available' && (
+          <>
+            <p>
+              A newer version
+              {phase.version ? <> (<strong>v{phase.version}</strong>)</> : ''} is available.
+              Downloading now…
+            </p>
+            <div className="progress" style={{ width: '100%' }}>
+              <div className="progress__bar" style={{ width: '6%' }} />
+            </div>
+          </>
+        )}
+
+        {phase.kind === 'downloading' && (
+          <>
+            <p>Downloading the update…</p>
+            <div className="progress" style={{ width: '100%' }}>
+              <div className="progress__bar" style={{ width: `${Math.max(2, Math.round(phase.percent))}%` }} />
+            </div>
+            <p className="muted small" style={{ marginTop: 8 }}>
+              {Math.round(phase.percent)}%
+              {phase.total > 0
+                ? ` · ${(phase.transferred / 1024 / 1024).toFixed(1)} / ${(phase.total / 1024 / 1024).toFixed(1)} MB`
+                : ''}
+            </p>
+          </>
+        )}
+
+        {phase.kind === 'downloaded' && (
+          <>
+            <p>
+              Update{phase.version ? <> <strong>v{phase.version}</strong></> : ''} is ready to install.
+            </p>
+            <p className="muted small">
+              The app will quit, swap in the new version, and relaunch automatically.
+            </p>
+            <div className="updater-dialog__actions">
+              <Button type="button" variant="secondary" onClick={onClose} disabled={installing}>Later</Button>
+              <Button type="button" variant="primary" onClick={installNow} disabled={installing}>
+                {installing ? 'Installing…' : 'Install & restart'}
+              </Button>
+            </div>
+          </>
+        )}
+
+        {phase.kind === 'not-available' && (
+          <>
+            <p>
+              You're on the latest version
+              {phase.version ? <> (<strong>v{phase.version}</strong>)</> : ''}.
+            </p>
+            <div className="updater-dialog__actions">
+              <Button type="button" variant="primary" onClick={onClose}>OK</Button>
+            </div>
+          </>
+        )}
+
+        {phase.kind === 'dev' && (
+          <>
+            <p>Update checks are disabled in development mode.</p>
+            <p className="muted small">
+              Run a packaged build to receive auto-updates from GitHub Releases.
+            </p>
+            <div className="updater-dialog__actions">
+              <Button type="button" variant="primary" onClick={onClose}>OK</Button>
+            </div>
+          </>
+        )}
+
+        {phase.kind === 'unsupported' && (
+          <>
+            <p>Auto-updates are only available in the packaged desktop app.</p>
+            <div className="updater-dialog__actions">
+              <Button type="button" variant="primary" onClick={onClose}>OK</Button>
+            </div>
+          </>
+        )}
+
+        {phase.kind === 'error' && (
+          <>
+            <p>Something went wrong while checking for updates.</p>
+            {phase.message ? (
+              <pre className="pre" style={{ whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto' }}>{phase.message}</pre>
+            ) : null}
+            <div className="updater-dialog__actions">
+              <Button type="button" variant="primary" onClick={onClose}>Close</Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

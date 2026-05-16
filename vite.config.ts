@@ -21,4 +21,32 @@ export default defineConfig({
     'import.meta.env.LEEADMAN_PWA': JSON.stringify(isPwa ? '1' : ''),
   },
   server: { port: 5173, strictPort: true },
+  build: {
+    target: 'es2020',
+    sourcemap: false,
+    cssCodeSplit: true,
+    // Drop noisy logs from production bundles. Errors and warnings stay so
+    // diagnostic info still surfaces in the renderer console / Sentry-style
+    // tooling later.
+    minify: 'esbuild',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          // Vendor splitting yields better long-term caching and parallel
+          // download. React + Router are cached separately from the page-
+          // specific chunks, and the Markdown stack rides with the People
+          // route only.
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('react-router')) return 'vendor-router';
+          if (id.includes('react-markdown') || id.includes('remark-') || id.includes('micromark') || id.includes('mdast-') || id.includes('unified') || id.includes('vfile') || id.includes('hast-')) return 'vendor-markdown';
+          if (id.includes('react') || id.includes('scheduler')) return 'vendor-react';
+          return 'vendor-misc';
+        },
+      },
+    },
+  },
+  esbuild: {
+    drop: process.env.NODE_ENV === 'production' ? ['debugger'] : [],
+    pure: ['console.debug'],
+  },
 });

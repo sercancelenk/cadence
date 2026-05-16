@@ -464,9 +464,45 @@ What happens at runtime:
 4. The user **quits and relaunches**; the new binary is swapped in by the
    updater on relaunch.
 
-> We use `checkForUpdatesAndNotify`, which **doesn't** call
-> `quitAndInstall()`. If you want a "Restart now" button in the UI, listen
-> to the `update-downloaded` event and invoke `quitAndInstall()` yourself.
+For the launch-time path we use `checkForUpdatesAndNotify`, which silently
+downloads and shows an OS notification — minimal noise. For the user-driven
+path (Settings → "Check for updates"), the main process bridges every
+`autoUpdater` event to the renderer:
+
+```js
+function broadcastUpdaterEvent(event) {
+  lastUpdaterEvent = event;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('updater:event', event);
+  }
+}
+autoUpdater.on('checking-for-update', () => broadcastUpdaterEvent({ status: 'checking' }));
+autoUpdater.on('update-available',     (i) => broadcastUpdaterEvent({ status: 'available', version: i?.version }));
+autoUpdater.on('download-progress',    (p) => broadcastUpdaterEvent({ status: 'downloading', percent: p?.percent, ... }));
+autoUpdater.on('update-downloaded',    (i) => broadcastUpdaterEvent({ status: 'downloaded', version: i?.version }));
+autoUpdater.on('update-not-available', (i) => broadcastUpdaterEvent({ status: 'not-available', version: i?.version }));
+autoUpdater.on('error',              (err) => broadcastUpdaterEvent({ status: 'error', message: err?.message }));
+```
+
+A dedicated IPC handler runs `quitAndInstall()` when the user clicks the
+"Install & restart" button:
+
+```js
+ipcMain.handle('app:installUpdate', () => {
+  setImmediate(() => autoUpdater.quitAndInstall());
+  return { ok: true };
+});
+```
+
+`setImmediate` matters: without it the IPC reply would race against the
+shutdown and the renderer might never see a result.
+
+The renderer subscribes via `window.leeadman.onUpdaterEvent(cb)` (returns an
+unsubscribe), drives a small state machine — `checking → available →
+downloading → downloaded` (or → `not-available` / `error`) — and renders the
+modal in [`src/views/Settings.tsx`](../src/views/Settings.tsx). When a
+launch-time check has already finished, the IPC re-broadcasts the cached
+event so the freshly opened modal lands on the right state instantly.
 
 For the auto-update to actually succeed on macOS the binary **must be signed
 and notarized**. See [the README](../README.md#macos-code-signing--notarization)

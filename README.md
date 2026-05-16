@@ -362,10 +362,17 @@ The packaged desktop app checks GitHub Releases on launch via [`electron-updater
 
 1. Reads `latest-mac.yml` from the latest release.
 2. If the published version is higher than the installed one, downloads the new build in the background.
-3. Shows an OS notification when the download is ready ("Update available — restart to install").
-4. **Quit and relaunch the app** to apply the update. The current implementation uses `checkForUpdatesAndNotify`, so it does **not** auto-install while the app is running; restart is the install trigger.
+3. Shows an OS notification when the download is ready ("Update available — restart to install"). Quit and relaunch to apply.
 
-You can also force a check from *Settings → Auto updates → Check for updates*, or from the menu bar via *Leeadman → Check for Updates…*. Development builds (`npm run dev`) short-circuit the check and surface a "disabled in development mode" alert.
+You can also force an interactive check from *Settings → Auto updates → Check for updates*. A dialog walks you through the full flow:
+
+- *Checking…* spinner.
+- If you're current: *"You're on the latest version (vX.Y.Z)."* with an OK button.
+- If a newer release exists: progress bar with percent and MB transferred.
+- When the download finishes: an *Install & restart* button — clicking it runs `quitAndInstall` so the app closes, swaps in the new binary, and relaunches without you having to manually quit. *Later* defers the install until next launch.
+- Errors are surfaced inline with the message from `electron-updater`.
+
+You can also trigger the same check from the menu bar via *Leeadman → Check for Updates…*. Development builds (`npm run dev`) short-circuit the check and the dialog shows a "disabled in development mode" notice.
 
 The PWA "updates" itself silently via the service worker — the next time the device is online and you reopen the app, the new build is fetched and applied on the following navigation. Bumping `CACHE_VERSION` in `public/sw.js` invalidates every old cache.
 

@@ -590,20 +590,79 @@ function buildMenu() {
 
 // ---------- Auto-update --------------------------------------------------------
 
-function setupAutoUpdater() {
-  if (!app.isPackaged) return;
+let updaterInstance = null;
+let lastUpdaterEvent = null;
+
+function broadcastUpdaterEvent(event) {
+  lastUpdaterEvent = event;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('updater:event', event);
+    }
+  }
+}
+
+function getAutoUpdater() {
+  if (updaterInstance) return updaterInstance;
+  if (!app.isPackaged) return null;
   try {
     const { autoUpdater } = require('electron-updater');
     autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('checking-for-update', () => {
+      broadcastUpdaterEvent({ status: 'checking' });
+    });
+    autoUpdater.on('update-available', (info) => {
+      broadcastUpdaterEvent({
+        status: 'available',
+        version: info && typeof info.version === 'string' ? info.version : undefined,
+        releaseDate: info && typeof info.releaseDate === 'string' ? info.releaseDate : undefined,
+      });
+    });
+    autoUpdater.on('update-not-available', (info) => {
+      broadcastUpdaterEvent({
+        status: 'not-available',
+        version: (info && typeof info.version === 'string' ? info.version : undefined) || app.getVersion(),
+      });
+    });
+    autoUpdater.on('download-progress', (p) => {
+      broadcastUpdaterEvent({
+        status: 'downloading',
+        percent: typeof p?.percent === 'number' ? p.percent : 0,
+        transferred: typeof p?.transferred === 'number' ? p.transferred : 0,
+        total: typeof p?.total === 'number' ? p.total : 0,
+        bytesPerSecond: typeof p?.bytesPerSecond === 'number' ? p.bytesPerSecond : 0,
+      });
+    });
+    autoUpdater.on('update-downloaded', (info) => {
+      broadcastUpdaterEvent({
+        status: 'downloaded',
+        version: info && typeof info.version === 'string' ? info.version : undefined,
+      });
+    });
     autoUpdater.on('error', (err) => {
       console.error('[leeadman] autoUpdater error', err);
+      broadcastUpdaterEvent({
+        status: 'error',
+        message: err && typeof err.message === 'string' ? err.message : String(err),
+      });
     });
-    autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-      console.error('[leeadman] autoUpdater check failed', err);
-    });
+
+    updaterInstance = autoUpdater;
+    return autoUpdater;
   } catch (err) {
     console.error('[leeadman] electron-updater unavailable', err);
+    return null;
   }
+}
+
+function setupAutoUpdater() {
+  const u = getAutoUpdater();
+  if (!u) return;
+  u.checkForUpdatesAndNotify().catch((err) => {
+    console.error('[leeadman] autoUpdater check failed', err);
+  });
 }
 
 // ---------- IPC: data ----------------------------------------------------------
@@ -630,17 +689,43 @@ ipcMain.handle('app:showNotification', (_evt, { title, body } = {}) => {
 ipcMain.handle('app:userDataPath', () => app.getPath('userData'));
 ipcMain.handle('app:getVersion', () => app.getVersion());
 
-ipcMain.handle('app:checkUpdates', () => {
+ipcMain.handle('app:checkUpdates', async () => {
   if (!app.isPackaged) return { ok: false, reason: 'dev' };
+  const u = getAutoUpdater();
+  if (!u) return { ok: false, error: 'updater unavailable' };
+
+  // If a launch-time check already discovered an update, replay the latest
+  // event so a freshly opened modal can render the right state instantly.
+  if (
+    lastUpdaterEvent &&
+    (lastUpdaterEvent.status === 'downloaded' || lastUpdaterEvent.status === 'downloading')
+  ) {
+    broadcastUpdaterEvent(lastUpdaterEvent);
+    return { ok: true };
+  }
+
   try {
-    const { autoUpdater } = require('electron-updater');
-    autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-      console.error('[leeadman] update check failed', err);
-    });
+    await u.checkForUpdates();
     return { ok: true };
   } catch (e) {
+    broadcastUpdaterEvent({ status: 'error', message: String(e) });
     return { ok: false, error: String(e) };
   }
+});
+
+ipcMain.handle('app:installUpdate', () => {
+  if (!app.isPackaged) return { ok: false, reason: 'dev' };
+  const u = getAutoUpdater();
+  if (!u) return { ok: false, error: 'updater unavailable' };
+  // Defer so this IPC can return its result before the app quits.
+  setImmediate(() => {
+    try {
+      u.quitAndInstall();
+    } catch (err) {
+      console.error('[leeadman] quitAndInstall failed', err);
+    }
+  });
+  return { ok: true };
 });
 
 // ---------- IPC: auth (PIN) ---------------------------------------------------
@@ -650,11 +735,14 @@ ipcMain.handle('auth:status', () => {
 });
 
 ipcMain.handle('auth:setPin', (_evt, { pin } = {}) => {
-  if (typeof pin !== 'string' || pin.length < 4) {
+  // Trim defensively — IME or paste sneak-ins of leading/trailing whitespace
+  // would otherwise produce a stored hash the user can never reproduce.
+  const safe = typeof pin === 'string' ? pin.trim() : '';
+  if (safe.length < 4) {
     return { ok: false, error: 'PIN must be at least 4 characters.' };
   }
   const salt = crypto.randomBytes(16).toString('hex');
-  const hash = hashWithSalt(pin, salt).toString('hex');
+  const hash = hashWithSalt(safe, salt).toString('hex');
   const ok = writeJsonSafe(authPath(), { salt, hash });
   return ok ? { ok: true } : { ok: false, error: 'Could not save PIN.' };
 });
@@ -662,13 +750,32 @@ ipcMain.handle('auth:setPin', (_evt, { pin } = {}) => {
 ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
   const d = readAuth();
   if (!d || typeof d.salt !== 'string' || typeof d.hash !== 'string') return { ok: true };
-  if (typeof pin !== 'string') return { ok: false };
+  const safe = typeof pin === 'string' ? pin.trim() : '';
+  if (!safe) return { ok: false };
   try {
-    const got = hashWithSalt(pin, d.salt);
+    const got = hashWithSalt(safe, d.salt);
     const exp = Buffer.from(d.hash, 'hex');
-    if (got.length !== exp.length) return { ok: false };
-    return { ok: crypto.timingSafeEqual(got, exp) };
-  } catch {
+    if (got.length !== exp.length) {
+      console.warn(
+        '[leeadman] auth:verify length mismatch — got', got.length, 'expected', exp.length,
+        'salt[0..6]=', d.salt.slice(0, 6), 'authPath=', authPath(),
+      );
+      return { ok: false };
+    }
+    const matched = crypto.timingSafeEqual(got, exp);
+    if (!matched) {
+      // Don't log the PIN. Log only metadata that helps diagnose stale-file or
+      // wrong-keyspace issues.
+      console.warn(
+        '[leeadman] auth:verify mismatch — pin.length=', safe.length,
+        'salt[0..6]=', d.salt.slice(0, 6),
+        'storedHash[0..8]=', d.hash.slice(0, 8),
+        'authPath=', authPath(),
+      );
+    }
+    return { ok: matched };
+  } catch (err) {
+    console.error('[leeadman] auth:verify threw', err);
     return { ok: false };
   }
 });
@@ -676,14 +783,71 @@ ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
 ipcMain.handle('auth:clear', (_evt, { pin } = {}) => {
   const d = readAuth();
   if (!d) return { ok: true };
-  if (typeof pin !== 'string') return { ok: false, error: 'PIN required.' };
+  const safe = typeof pin === 'string' ? pin.trim() : '';
+  if (!safe) return { ok: false, error: 'PIN required.' };
   try {
-    const got = hashWithSalt(pin, d.salt);
+    const got = hashWithSalt(safe, d.salt);
     const exp = Buffer.from(d.hash, 'hex');
     if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
       return { ok: false, error: 'Incorrect PIN.' };
     }
     fs.unlinkSync(authPath());
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Emergency unlock: if the user gets locked out (forgotten PIN, bug, paste
+// glitch on initial set), they can wipe the PIN by re-authenticating with
+// their account password — the same credential that owns the encryption key
+// for their data, so this doesn't grant any new capability.
+//
+// The brute-force surface here is identical to login (scrypt-hashed account
+// password). We still add a small in-memory rate limit so an unattended
+// machine doesn't let an attacker test thousands of passwords by mashing
+// "Reset PIN".
+const recoveryAttempts = { count: 0, blockedUntil: 0 };
+const RECOVERY_MAX_ATTEMPTS = 5;
+const RECOVERY_BLOCK_MS = 30_000;
+
+ipcMain.handle('auth:resetWithAccountPassword', (_evt, { password } = {}) => {
+  const now = Date.now();
+  if (recoveryAttempts.blockedUntil > now) {
+    const remainingSec = Math.ceil((recoveryAttempts.blockedUntil - now) / 1000);
+    return {
+      ok: false,
+      error: `Too many attempts. Try again in ${remainingSec}s.`,
+    };
+  }
+  if (typeof password !== 'string' || !password) {
+    return { ok: false, error: 'Account password is required.' };
+  }
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'No active account session on this device.' };
+  const accounts = readAccounts();
+  const u = accounts.users.find((x) => x.id === uid);
+  if (!u || typeof u.salt !== 'string' || typeof u.hash !== 'string') {
+    return { ok: false, error: 'Account record is missing or corrupt.' };
+  }
+  try {
+    const got = hashWithSalt(password, u.salt);
+    const exp = Buffer.from(u.hash, 'hex');
+    if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
+      recoveryAttempts.count += 1;
+      if (recoveryAttempts.count >= RECOVERY_MAX_ATTEMPTS) {
+        recoveryAttempts.blockedUntil = now + RECOVERY_BLOCK_MS;
+        recoveryAttempts.count = 0;
+      }
+      return { ok: false, error: 'Incorrect account password.' };
+    }
+    recoveryAttempts.count = 0;
+    recoveryAttempts.blockedUntil = 0;
+    if (fs.existsSync(authPath())) {
+      try { fs.unlinkSync(authPath()); } catch (err) {
+        return { ok: false, error: `Could not remove PIN file: ${String(err)}` };
+      }
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e) };

@@ -4,6 +4,14 @@ export {};
 
 type AccountUser = { id: string; email: string; displayName?: string };
 
+type UpdaterEvent =
+  | { status: 'checking' }
+  | { status: 'available'; version?: string; releaseDate?: string }
+  | { status: 'not-available'; version?: string }
+  | { status: 'downloading'; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | { status: 'downloaded'; version?: string }
+  | { status: 'error'; message?: string };
+
 interface ImportMetaEnv {
   /** "1" when the bundle is built for the PWA (GitHub Pages) target. */
   readonly LEEADMAN_PWA?: string;
@@ -18,10 +26,13 @@ declare global {
       userDataPath: () => Promise<string>;
       getAppVersion: () => Promise<string>;
       checkForUpdates: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
+      installUpdate: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
+      onUpdaterEvent: (cb: (event: UpdaterEvent) => void) => () => void;
       authStatus: () => Promise<{ enabled: boolean }>;
       authSetPin: (payload: { pin: string }) => Promise<{ ok: boolean; error?: string }>;
       authVerify: (payload: { pin: string }) => Promise<{ ok: boolean }>;
       authClear: (payload: { pin: string }) => Promise<{ ok: boolean; error?: string }>;
+      authResetWithAccountPassword: (payload: { password: string }) => Promise<{ ok: boolean; error?: string }>;
       accountSession: () => Promise<{ user: AccountUser | null }>;
       accountRegister: (payload: {
         email: string;

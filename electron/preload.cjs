@@ -7,10 +7,19 @@ contextBridge.exposeInMainWorld('leeadman', {
   userDataPath: () => ipcRenderer.invoke('app:userDataPath'),
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   checkForUpdates: () => ipcRenderer.invoke('app:checkUpdates'),
+  installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
+  onUpdaterEvent: (cb) => {
+    const listener = (_evt, payload) => {
+      try { cb(payload); } catch (err) { console.error('[leeadman] updater event handler threw', err); }
+    };
+    ipcRenderer.on('updater:event', listener);
+    return () => ipcRenderer.removeListener('updater:event', listener);
+  },
   authStatus: () => ipcRenderer.invoke('auth:status'),
   authSetPin: (payload) => ipcRenderer.invoke('auth:setPin', payload),
   authVerify: (payload) => ipcRenderer.invoke('auth:verify', payload),
   authClear: (payload) => ipcRenderer.invoke('auth:clear', payload),
+  authResetWithAccountPassword: (payload) => ipcRenderer.invoke('auth:resetWithAccountPassword', payload),
   accountSession: () => ipcRenderer.invoke('account:session'),
   accountRegister: (payload) => ipcRenderer.invoke('account:register', payload),
   accountLogin: (payload) => ipcRenderer.invoke('account:login', payload),
