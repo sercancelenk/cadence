@@ -9,7 +9,7 @@ import { useTheme } from '../ThemeContext';
 export function Settings() {
   const { data, replaceAll } = useAppData();
   const { theme, setTheme } = useTheme();
-  const { pinEnabled, refresh: refreshSession } = useSession();
+  const { pinEnabled, refresh: refreshSession, lockSession } = useSession();
   const [path, setPath] = useState<string>('');
   const [appVersion, setAppVersion] = useState<string>('');
   const [newPin, setNewPin] = useState('');
@@ -70,9 +70,20 @@ export function Settings() {
       <section className="card">
         <h2 className="card__title">PIN protection</h2>
         <p className="muted">
-          Your data file stays in plain text on disk; a PIN is only a basic barrier at app launch. For strong privacy use disk encryption (e.g. FileVault on macOS, BitLocker on Windows).
+          Adds a quick lock screen when Leeadman starts and when you choose <em>Lock now</em>. Useful when you step away from your desk so a passer-by can't open the app and read 1:1 notes.
+        </p>
+        <p className="muted small">
+          The PIN is independent of your account password. Your data file is already encrypted at rest with a key derived from the account password — the PIN is purely a UI barrier in front of the unlocked workspace.
         </p>
         <p className="muted small">Status: {pinEnabled ? 'Enabled' : 'Disabled'}</p>
+        {pinEnabled ? (
+          <div className="row" style={{ marginTop: 8 }}>
+            <Button type="button" variant="secondary" icon={<IcLock size={17} />} onClick={() => lockSession()}>
+              Lock now
+            </Button>
+            <span className="muted small">Returns you to the PIN screen without quitting the app.</span>
+          </div>
+        ) : null}
         {!pinEnabled ? (
           <form
             className="row"
