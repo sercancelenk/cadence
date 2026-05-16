@@ -413,15 +413,15 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npm run build
 
 ## Releasing
 
-Both the desktop release and the PWA deploy are **manual** — pushes to `main`
-only run the lightweight CI check. To publish, open the *Actions* tab and pick
-the workflow you want.
+Both the desktop release and the PWA deploy are **manual**, and **nothing
+runs automatically on push or pull request**. To publish, open the *Actions*
+tab and pick the workflow you want; CI runs first as a gate inside it.
 
 ### Workflows at a glance
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| [`ci.yml`](.github/workflows/ci.yml) | every PR + every push to `main` (also reusable via `workflow_call`) | `tsc --noEmit` + `npm run build:web`; the green-light gate. |
+| [`ci.yml`](.github/workflows/ci.yml) | reusable (`workflow_call`) + manual (`Run workflow`) | `tsc --noEmit` + `npm run build:web`. Invoked as the green-light gate by Release & Pages; you can also fire it on demand to sanity-check a branch. |
 | [`pages.yml`](.github/workflows/pages.yml) | manual (`Run workflow`) | Calls CI → `npm run build:pwa` → publishes to GitHub Pages. |
 | [`release.yml`](.github/workflows/release.yml) | manual (`Run workflow`) | Calls CI → bumps version to `0.2.<run_number>` → `electron-builder --publish always` → signs + notarizes the `.app` → uploads DMG/ZIP/`latest-mac.yml` to a new GitHub Release. |
 
