@@ -1,18 +1,25 @@
-# main dalına her push veya Actions’tan manuel çalıştırma: sürüm = 0.2.<run_number>, macOS paketi + GitHub Release
-# İlk kullanımdan önce repository'de Actions izinlerinin "Read and write" olduğundan emin ol.
+# Manual-only macOS release. Trigger from the Actions tab → "Run workflow"
+# when you want a new signed/notarized build. Steps:
+#   1. Reusable CI gate (typecheck + web build).
+#   2. Auto-bump version to 0.2.<run_number> (per-workflow counter).
+#   3. electron-builder signs + notarizes + publishes the GitHub Release.
+# Repo prerequisites: Settings → Actions → "Read and write" workflow
+# permissions, and the Apple secrets listed below.
 
 name: Release
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   mac:
+    needs: ci
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

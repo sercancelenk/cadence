@@ -66,6 +66,7 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
 - [Releasing](#releasing)
 - [macOS code signing & notarization](#macos-code-signing--notarization)
 - [Project structure](#project-structure)
+- [Electron deep dive](#electron-deep-dive)
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
@@ -404,20 +405,36 @@ npm install
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run build
 ```
 
+> New to Electron? Have a look at the [**Electron deep dive**](#electron-deep-dive)
+> below — it explains the main / renderer / preload split, the IPC patterns
+> we use and the build pipeline this command actually runs.
+
 ---
 
 ## Releasing
 
-A push to `main` (or a manual *Release* workflow run) triggers
-[`.github/workflows/release.yml`](.github/workflows/release.yml):
+Both the desktop release and the PWA deploy are **manual** — pushes to `main`
+only run the lightweight CI check. To publish, open the *Actions* tab and pick
+the workflow you want.
 
-1. Sets the version to `0.2.<run_number>`.
-2. Runs `vite build` → `electron-builder --publish always`.
-3. Signs `.app` with the Developer ID Application certificate.
-4. Notarizes with Apple's `notarytool`, then staples the ticket onto the `.app`.
-5. Publishes the signed/notarized DMG + ZIP to a new GitHub Release.
+### Workflows at a glance
 
-The Pages workflow ([`pages.yml`](.github/workflows/pages.yml)) runs independently on the same push and publishes the PWA.
+| Workflow | Trigger | What it does |
+|---|---|---|
+| [`ci.yml`](.github/workflows/ci.yml) | every PR + every push to `main` (also reusable via `workflow_call`) | `tsc --noEmit` + `npm run build:web`; the green-light gate. |
+| [`pages.yml`](.github/workflows/pages.yml) | manual (`Run workflow`) | Calls CI → `npm run build:pwa` → publishes to GitHub Pages. |
+| [`release.yml`](.github/workflows/release.yml) | manual (`Run workflow`) | Calls CI → bumps version to `0.2.<run_number>` → `electron-builder --publish always` → signs + notarizes the `.app` → uploads DMG/ZIP/`latest-mac.yml` to a new GitHub Release. |
+
+### Cutting a desktop release
+
+1. **Actions** tab → **Release** → **Run workflow** (on `main`).
+2. The reusable CI job runs first; if it goes red the macOS job is skipped, no DMG built, no Apple minutes burned.
+3. On green, the macOS runner signs + notarizes + publishes. Once the release shows up on GitHub, every installed Leeadman picks it up via [`electron-updater`](#auto-updates).
+
+### Updating the mobile PWA
+
+1. **Actions** tab → **Deploy PWA to GitHub Pages** → **Run workflow**.
+2. Same CI gate, then the PWA bundle is rebuilt and Pages is updated. The service worker `CACHE_VERSION` invalidation makes existing installs pull the new shell on next visit.
 
 Required repository permissions: **Settings → Actions → General → Workflow permissions = Read and write**.
 
@@ -527,6 +544,8 @@ The signed binary uses the entitlements at [`build/entitlements.mac.plist`](./bu
 │       ├── Settings.tsx            # Theme, PIN, backups, LAN sync host + client
 │       └── LoginPage.tsx / RegisterPage.tsx
 ├── public/                         # PWA static assets (manifest, sw.js, icons)
+├── docs/
+│   └── electron-guide.md           # Practical Electron tutorial walking through this codebase
 ├── build/
 │   └── entitlements.mac.plist
 ├── scripts/
@@ -540,6 +559,24 @@ The signed binary uses the entitlements at [`build/entitlements.mac.plist`](./bu
 ├── package.json
 └── README.md
 ```
+
+---
+
+## Electron deep dive
+
+If you want to go beyond "build it and ship it" and actually understand how
+the desktop side of Leeadman works under the hood, there's a dedicated guide
+that doubles as a hands-on Electron tutorial:
+
+> **[docs/electron-guide.md](docs/electron-guide.md)** — a practical Electron
+> tutorial walking through this codebase: the two-process model, the preload
+> bridge, IPC patterns, the security checklist, AES-256-GCM encryption at
+> rest, the auto-update flow, the LAN sync HTTP server, the build pipeline,
+> debugging tips and the most common pitfalls.
+
+It's written so a developer who has never touched Electron can read it
+top-to-bottom and end up confidently extending `electron/main.cjs` and
+`electron/preload.cjs`.
 
 ---
 

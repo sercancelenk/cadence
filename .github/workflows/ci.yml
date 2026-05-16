@@ -1,9 +1,14 @@
+# Triggered automatically on PRs and pushes to `main`, AND callable from
+# other workflows (Pages, Release) via `workflow_call` so they can gate
+# their work on a green CI before doing anything expensive.
+
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
 
 jobs:
   check:
