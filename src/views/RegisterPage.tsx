@@ -10,6 +10,7 @@ export function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [migrateLegacy, setMigrateLegacy] = useState(false);
   const [err, setErr] = useState('');
@@ -62,15 +63,55 @@ export function RegisterPage() {
           </label>
           <label className="field">
             <span>Email</span>
-            <input className="input" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input
+              className="input"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
           </label>
           <label className="field">
-            <span>Password (8+ characters)</span>
-            <input className="input" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <span>
+              Password (8+ characters)
+              <button
+                type="button"
+                className="auth-link auth-link--inline"
+                onClick={() => setShowPwd((v) => !v)}
+              >
+                {showPwd ? 'Hide' : 'Show'}
+              </button>
+            </span>
+            <input
+              className="input"
+              type={showPwd ? 'text' : 'password'}
+              autoComplete="new-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
           </label>
           <label className="field">
             <span>Confirm password</span>
-            <input className="input" type="password" autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} required />
+            <input
+              className="input"
+              type={showPwd ? 'text' : 'password'}
+              autoComplete="new-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              value={password2}
+              onChange={(e) => setPassword2(e.target.value)}
+              required
+            />
           </label>
           {hasLegacyData ? (
             <label className="row" style={{ gap: 8, marginTop: 4 }}>

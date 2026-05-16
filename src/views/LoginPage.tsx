@@ -12,6 +12,7 @@ export function LoginPage() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
   const [err, setErr] = useState('');
 
   if (!loading && user) {
@@ -43,14 +44,37 @@ export function LoginPage() {
         >
           <label className="field">
             <span>Email</span>
-            <input className="input" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          </label>
-          <label className="field">
-            <span>Password</span>
             <input
               className="input"
-              type="password"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </label>
+          <label className="field">
+            <span>
+              Password
+              <button
+                type="button"
+                className="auth-link auth-link--inline"
+                onClick={() => setShowPwd((v) => !v)}
+              >
+                {showPwd ? 'Hide' : 'Show'}
+              </button>
+            </span>
+            <input
+              className="input"
+              type={showPwd ? 'text' : 'password'}
               autoComplete="current-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required

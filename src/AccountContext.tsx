@@ -131,9 +131,26 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       }
       const { users } = await readDevAccounts();
       const u = users.find((x) => x.email === em);
-      if (!u) return { ok: false as const, error: 'Incorrect email or password.' };
+      if (!u) {
+        // Distinct messages help the user (and us) diagnose mobile Safari
+        // localStorage / autofill issues. Defence-in-depth doesn't apply
+        // here because every account file lives on this user's own device.
+        console.warn(
+          '[leeadman] login: no account for email',
+          em,
+          '— stored emails:',
+          users.map((x) => x.email),
+        );
+        return {
+          ok: false as const,
+          error: `No account is registered for ${em} on this device. Did you create the account in another browser, or in private/incognito mode?`,
+        };
+      }
       const ok = await pbkdf2VerifyPassword(password, u.saltB64, u.hashB64);
-      if (!ok) return { ok: false as const, error: 'Incorrect email or password.' };
+      if (!ok) {
+        console.warn('[leeadman] login: password mismatch for', em, '(stored hash length:', u.hashB64.length, ')');
+        return { ok: false as const, error: 'Incorrect password for this account.' };
+      }
       writeDevSession(u.id);
       setUser({ id: u.id, email: u.email, displayName: u.displayName });
       return { ok: true as const };
@@ -174,8 +191,27 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         hashB64,
         createdAt: new Date().toISOString(),
       };
-      writeDevAccounts([...users, row]);
-      writeDevSession(id);
+      try {
+        writeDevAccounts([...users, row]);
+        writeDevSession(id);
+      } catch (err) {
+        // localStorage can throw on iOS Safari (private mode, quota, ITP
+        // eviction). Surface this rather than silently leaving the user in
+        // an "I registered but can't log in" loop.
+        return {
+          ok: false as const,
+          error: `Could not store the new account on this device (${(err as Error)?.message ?? err}). Make sure you are not in private/incognito mode and try again.`,
+        };
+      }
+      // Sanity-check: read back what we wrote so a bug here surfaces at
+      // registration time, not three steps later when the user is locked out.
+      const verify = await readDevAccounts();
+      if (!verify.users.some((u) => u.email === em)) {
+        return {
+          ok: false as const,
+          error: 'The browser did not persist the new account (this can happen in private mode or with strict storage settings).',
+        };
+      }
       setUser({ id, email: em, displayName: displayName || undefined });
       return { ok: true as const };
     },

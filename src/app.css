@@ -500,6 +500,14 @@ code {
   text-decoration: underline;
 }
 
+.auth-link--inline {
+  margin: 0 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 :root[data-theme='light'] {
   color-scheme: light;
   --bg: #e8eaef;
