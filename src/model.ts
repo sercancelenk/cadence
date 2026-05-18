@@ -180,6 +180,8 @@ export interface AISettings {
   model?: string;
   /** Optional override for system prompt. */
   systemPrompt?: string;
+  /** Optional, remembered free-text hint for the "Extract tasks from notes" feature. */
+  extractionGuidance?: string;
 }
 
 export interface AppData {
@@ -613,8 +615,10 @@ function parseAISettings(raw: unknown): AISettings | undefined {
   const apiKey = typeof o.apiKey === 'string' && o.apiKey.trim() ? o.apiKey.trim() : undefined;
   const model = typeof o.model === 'string' && o.model.trim() ? o.model.trim() : undefined;
   const systemPrompt = typeof o.systemPrompt === 'string' ? o.systemPrompt : undefined;
-  if (!provider && !apiKey && !model && !systemPrompt) return undefined;
-  return { provider, apiKey, model, systemPrompt };
+  const extractionGuidance =
+    typeof o.extractionGuidance === 'string' ? o.extractionGuidance : undefined;
+  if (!provider && !apiKey && !model && !systemPrompt && !extractionGuidance) return undefined;
+  return { provider, apiKey, model, systemPrompt, extractionGuidance };
 }
 
 function ensureProfile(data: AppData): AppData {

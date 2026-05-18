@@ -13,12 +13,26 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # CI only needs to type-check and build the web bundle. The electron
+    # postinstall otherwise tries to download the platform-specific Electron
+    # binary (~120 MB) from GitHub Releases and intermittently fails with
+    # "RequestError: socket hang up" on Ubuntu runners. Skipping the binary
+    # is safe here because we never actually run the desktop app in CI; the
+    # Release workflow (which packages Electron) keeps the default behaviour.
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      # Harden npm against transient registry timeouts on Ubuntu runners.
+      NPM_CONFIG_FETCH_RETRIES: '5'
+      NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: '20000'
+      NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
+      NPM_CONFIG_FETCH_TIMEOUT: '600000'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-      - run: npm ci
+      - name: Install dependencies (no electron binary)
+        run: npm ci --no-audit --no-fund
       - run: npx tsc --noEmit
       - run: npm run build:web

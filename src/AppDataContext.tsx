@@ -116,7 +116,7 @@ type Api = {
   clearCompletedInGroup: (groupId: string) => void;
   markAllCompleteInGroup: (groupId: string) => void;
   removeTodoGroup: (groupId: string) => void;
-  addTodoItem: (groupId: string, title: string) => void;
+  addTodoItem: (groupId: string, title: string, extras?: { priority?: Priority; dueAt?: string }) => void;
   updateTodoItem: (
     id: string,
     patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done' | 'priority'>>,
@@ -319,7 +319,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       clearCompletedInGroup: (groupId) => update((x) => clearCompletedInGroupFn(x, groupId)),
       markAllCompleteInGroup: (groupId) => update((x) => markAllCompleteInGroupFn(x, groupId)),
       removeTodoGroup: (groupId) => update((x) => removeTodoGroupFn(x, groupId)),
-      addTodoItem: (groupId, title) => update((x) => addTodoItemFn(x, groupId, title)),
+      addTodoItem: (groupId, title, extras) => update((x) => addTodoItemFn(x, groupId, title, extras)),
       updateTodoItem: (id, patch) => update((x) => updateTodoItemFn(x, id, patch)),
       reorderTodoItem: (itemId, targetGroupId, beforeItemId) =>
         update((x) => reorderTodoItemFn(x, itemId, targetGroupId, beforeItemId)),

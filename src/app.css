@@ -3591,6 +3591,11 @@ code {
   overflow: hidden;
 }
 
+.ai-dialog--wide {
+  width: min(880px, 96vw);
+  max-height: min(820px, 94vh);
+}
+
 .ai-dialog__header {
   display: flex;
   align-items: center;
@@ -3673,6 +3678,150 @@ code {
   font-size: 13px;
   line-height: 1.4;
   white-space: pre-wrap;
+}
+
+/* ─── AI task extractor ─────────────────────────────────────────────── */
+
+.ai-extract-guidance {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-hover);
+  padding: 8px 12px;
+}
+
+.ai-extract-guidance > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.ai-extract-guidance > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-extract-guidance[open] > summary {
+  margin-bottom: 6px;
+}
+
+.ai-extract-guidance__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-extract-guidance__chev {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+  transition: transform 120ms ease;
+  width: 10px;
+}
+
+.ai-extract-guidance[open] .ai-extract-guidance__chev {
+  transform: rotate(90deg);
+}
+
+.ai-extract-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-extract-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.ai-extract-row--added {
+  opacity: 0.6;
+  background: var(--surface-hover);
+}
+
+.ai-extract-row__main {
+  min-width: 0;
+}
+
+.ai-extract-row__main .textarea {
+  width: 100%;
+  font-weight: 500;
+}
+
+.ai-extract-row__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-extract-row__meta .input {
+  min-width: 110px;
+  height: 32px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.ai-extract-row__added {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: rgba(74, 222, 128, 0.12);
+  color: #4ade80;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ai-extract-row__discard {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.ai-extract-row__discard:hover {
+  background: rgba(255, 99, 99, 0.12);
+  color: #ff8d8d;
+}
+
+@media (max-width: 640px) {
+  .ai-extract-row {
+    grid-template-columns: 1fr;
+  }
+  .ai-extract-row__meta {
+    justify-content: flex-end;
+  }
+}
+
+/* "Extract from notes" toolbar button in the Todos view. */
+.todos-toolbar__ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  margin-left: auto;
 }
 
 .ai-thread {

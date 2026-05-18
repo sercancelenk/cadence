@@ -27,7 +27,7 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
 | **Mobile** | Installable PWA (Add to Home Screen) with a slide-in drawer sidebar, full-screen content, iOS safe-area aware. Offline-capable, optimized for To-dos. |
 | **Encrypted on disk** | Workspace data is stored as an **AES-256-GCM** envelope keyed by your account password (Electron). Changing the password rotates the key transparently. |
 | **Backups & recovery** | Every save, login and app launch is snapshotted into `backups/<userId>/` (50 rolling slots). A *Settings → Backups & recovery* card lists live + legacy + per-snapshot files with task / people counts and a one-click restore. The writer refuses to overwrite an undecipherable file, so a key mismatch can never silently destroy your data. |
-| **AI Assistant (BYO key)** | Every task has an "Ask AI" button when you connect a provider in Settings. Supports **Anthropic Claude**, **OpenAI ChatGPT** and **Google Gemini**; calls go directly from your device to the provider — there's no proxy. Includes a Markdown-rendering chat dialog and an "Append answer to task" action. |
+| **AI Assistant (BYO key)** | Every task has an "Ask AI" button when you connect a provider in Settings. Supports **Anthropic Claude**, **OpenAI ChatGPT** and **Google Gemini**; calls go directly from your device to the provider — there's no proxy. Includes a Markdown chat dialog, an "Append answer to task" action and a *To-dos → Extract from notes* tool that turns a brain dump into a structured list of tasks you can drop into any list. |
 | **Profile** | Avatar upload, view-only by default with an Edit toggle, in-app **Change password** flow that verifies your current password. |
 | **Workspaces** | Multi-team, per-team Me / My-leader workspaces, per-person pages with tasks, goals, notes, **feedback** and documents. |
 | **1:1 Mode** | A dedicated meeting view per person with a persistent markdown agenda and an archive of past meetings; unchecked action items carry over. |
@@ -262,6 +262,7 @@ Every task row has an **Ask AI** button as soon as you connect a provider in *Se
 - **Test connection** button — sends a one-token round-trip so you can verify the key + model before relying on it during a real task.
 - **Follow-up turns** — keep chatting in the dialog (Enter sends, Shift+Enter for newlines). Markdown answers render with headings, lists, code blocks and tables.
 - **Append to task** — copy the assistant's answer straight into the task's notes (body) so it sticks around.
+- **Extract tasks from notes** — open *To-dos → Extract from notes* and paste a brain dump (meeting transcript, voice-memo, Slack thread, weekend wishlist). The assistant returns a structured list with one imperative task per line and a suggested priority. You edit titles inline, pick which list each task goes into, and click **Add** (per row) or **Add all** to drop them into your workspace. Nothing is added automatically — the user is always the final filter. The prompt is constrained to return strict JSON so the picker stays predictable across providers.
 - **Where the key is stored**
   - **Desktop**: inside your encrypted data file (`leeadman-data-<userId>.json`, AES-256-GCM, keyed by your account password).
   - **PWA**: in this browser's `localStorage` only (not encrypted) — use a low-budget key with usage limits.

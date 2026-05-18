@@ -16,6 +16,7 @@ import {
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import { AIAssistantDialog } from '../components/AIAssistantDialog';
+import { AITaskExtractorDialog } from '../components/AITaskExtractorDialog';
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { isAIConfigured } from '../lib/ai';
 import { formatDateShort, formatTimeOnly, fromLocalDatetimeValue, isPast, toLocalDatetimeValue } from '../lib/datetime';
@@ -505,6 +506,7 @@ export function TodosPage() {
   const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [dropItemTargetId, setDropItemTargetId] = useState<string | null>(null);
   const [aiTask, setAiTask] = useState<TodoItem | null>(null);
+  const [extractorOpen, setExtractorOpen] = useState(false);
 
   const aiEnabled = isAIConfigured(data.aiSettings);
   const allGroupsSorted = useMemo(() => sortGroups(data.todoGroups), [data.todoGroups]);
@@ -672,6 +674,17 @@ export function TodosPage() {
           />
           <span className="small">Show archived</span>
         </label>
+        {aiEnabled ? (
+          <button
+            type="button"
+            className="btn btn--ghost todos-toolbar__ai"
+            onClick={() => setExtractorOpen(true)}
+            title="Paste notes and let AI extract tasks for you"
+          >
+            <IcSparkles size={14} />
+            <span>Extract from notes</span>
+          </button>
+        ) : null}
       </section>
 
       {visibleGroups.map((g, idx) => {
@@ -1079,6 +1092,11 @@ export function TodosPage() {
         open={!!aiTask}
         onClose={() => setAiTask(null)}
         task={{ title: aiTask?.title ?? '' }}
+      />
+      <AITaskExtractorDialog
+        open={extractorOpen}
+        onClose={() => setExtractorOpen(false)}
+        defaultGroupId={visibleGroups[0]?.id}
       />
     </div>
   );

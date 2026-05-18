@@ -561,7 +561,12 @@ export function markAllCompleteInGroup(data: AppData, groupId: string): AppData 
   };
 }
 
-export function addTodoItem(data: AppData, groupId: string, title: string): AppData {
+export function addTodoItem(
+  data: AppData,
+  groupId: string,
+  title: string,
+  extras: { priority?: Priority; dueAt?: string } = {},
+): AppData {
   const gid = data.todoGroups.some((g) => g.id === groupId) ? groupId : data.todoGroups[0]?.id;
   if (!gid) return data;
   const t = nowIso();
@@ -579,6 +584,8 @@ export function addTodoItem(data: AppData, groupId: string, title: string): AppD
     sortOrder: minOrder - 1,
     createdAt: t,
     updatedAt: t,
+    ...(extras.priority ? { priority: extras.priority } : {}),
+    ...(extras.dueAt ? { dueAt: extras.dueAt } : {}),
   };
   return { ...data, todoItems: [item, ...data.todoItems] };
 }
