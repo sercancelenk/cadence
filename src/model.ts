@@ -1,4 +1,4 @@
-import { v4 as uuid } from 'uuid';
+import { uuid } from './lib/uuid';
 
 /** Legacy single-team self identifier (used during migration). */
 export const LEGACY_SELF_PERSON_ID = '__self';

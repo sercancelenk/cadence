@@ -7,7 +7,7 @@ import { askAI, AIError, defaultModel } from '../lib/ai';
 import type { AIProvider, AppData } from '../model';
 import { AI_PROVIDER_OPTIONS } from '../model';
 import { useTheme } from '../ThemeContext';
-import type { DataFileInfo, DataSources, SaveError } from '../vite-env';
+import type { CacheBreakdownEntry, CacheStats, DataFileInfo, DataSources, SaveError } from '../vite-env';
 
 export function Settings() {
   const { data, replaceAll } = useAppData();
@@ -222,6 +222,8 @@ export function Settings() {
       </section>
 
       <BackupsRecoverySection />
+
+      <StorageCacheSection />
 
       <SyncSection />
 
@@ -1110,6 +1112,220 @@ function BackupsRecoverySection() {
   );
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Storage & cache
+// ────────────────────────────────────────────────────────────────────────
+// Honest, read-only picture of what Leeadman occupies on disk plus a
+// **safe** cache-wipe button. The wipe ONLY touches Chromium-managed
+// caches (HTTP cache, V8 code cache, GPU/shader caches) — never your
+// tasks, notes, AI keys, backups or account list.
+
+function StorageCacheSection() {
+  const isElectron =
+    typeof window !== 'undefined' && !!window.leeadman?.cacheStats && !!window.leeadman?.clearChromiumCache;
+  const [stats, setStats] = useState<CacheStats | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [swStatus, setSwStatus] = useState<'idle' | 'reloading'>('idle');
+
+  const refresh = async () => {
+    if (!isElectron) return;
+    setBusy(true);
+    try {
+      const r = await window.leeadman!.cacheStats!();
+      setStats(r);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  const clearCache = async () => {
+    if (!isElectron) return;
+    if (
+      !window.confirm(
+        'Clear browser-engine caches?\n\n• HTTP cache, code cache, GPU/shader caches\n• Tasks, notes, AI keys, backups and account list are NOT affected.\n\nYou may need to wait a few seconds the next time the app fetches a page or recompiles JS.',
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await window.leeadman!.clearChromiumCache!();
+      if (r.ok) {
+        setMsg({
+          kind: 'ok',
+          text: `Cleared. Chromium caches now use ${formatBytes(r.chromiumBytes)}.`,
+        });
+        await refresh();
+      } else {
+        setMsg({ kind: 'error', text: r.error || 'Clear failed.' });
+      }
+    } catch (err) {
+      setMsg({ kind: 'error', text: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reloadPwaCache = async () => {
+    setSwStatus('reloading');
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      // A clean reload picks up the next-version service worker on its first
+      // navigation. We bypass the HTTP cache to be safe.
+      window.location.reload();
+    } catch {
+      setSwStatus('idle');
+    }
+  };
+
+  return (
+    <section className="card">
+      <h2 className="card__title">Storage &amp; cache</h2>
+      <p className="muted small" style={{ marginBottom: 12 }}>
+        How much disk Leeadman uses on this device, and a safe way to reclaim space. Your tasks, notes, AI keys and
+        backups are <strong>never</strong> touched by the cache buttons below.
+      </p>
+
+      {!isElectron ? (
+        <>
+          <p className="muted small">
+            Disk diagnostics are only available in the desktop app. The PWA stores everything in this browser&apos;s
+            local storage (tiny — a few KB at most).
+          </p>
+          <div className="row" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+            <Button
+              type="button"
+              variant="secondary"
+              icon={<IcRefresh size={16} />}
+              onClick={() => void reloadPwaCache()}
+              disabled={swStatus === 'reloading'}
+            >
+              {swStatus === 'reloading' ? 'Reloading…' : 'Reload web assets'}
+            </Button>
+          </div>
+          <p className="muted small" style={{ marginTop: 8 }}>
+            Use this if the app feels &quot;stuck&quot; on an old version. It re-registers the service worker and
+            refreshes the page; your saved data and AI key are kept.
+          </p>
+        </>
+      ) : stats && stats.ok ? (
+        <>
+          <ul className="cache-stats">
+            <CacheRow label="Encrypted data file" bytes={stats.dataFileBytes} hint="Your tasks, notes, AI key. Never touched by cache buttons." />
+            {stats.legacyBytes > 0 ? (
+              <CacheRow label="Legacy data file" bytes={stats.legacyBytes} hint="Pre-accounts era single-user file. Kept until you delete it manually." />
+            ) : null}
+            <CacheRow
+              label={`Backups · ${stats.backupsSelfCount} snapshot${stats.backupsSelfCount === 1 ? '' : 's'}`}
+              bytes={stats.backupsSelfBytes}
+              hint="Rolling 50-snapshot safety net. Auto-pruned."
+            />
+            {stats.backupsAllBytes !== stats.backupsSelfBytes ? (
+              <CacheRow
+                label="Backups (other accounts)"
+                bytes={stats.backupsAllBytes - stats.backupsSelfBytes}
+                hint="Backups for other accounts that exist on this machine."
+              />
+            ) : null}
+            <CacheRow
+              label="Browser-engine caches (Chromium)"
+              bytes={stats.chromiumBytes}
+              hint="HTTP / code / GPU / shader caches. Safe to clear; will repopulate as needed."
+              breakdown={stats.chromiumBreakdown}
+            />
+            <CacheRow label="Total userData folder" bytes={stats.totalBytes} emphasis hint={stats.userDataPath} />
+          </ul>
+
+          {msg ? (
+            <div
+              className="cache-msg"
+              role={msg.kind === 'error' ? 'alert' : 'status'}
+              data-kind={msg.kind}
+            >
+              {msg.text}
+            </div>
+          ) : null}
+
+          <div className="row" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+            <Button type="button" variant="secondary" icon={<IcRefresh size={16} />} onClick={refresh} disabled={busy}>
+              Refresh sizes
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              icon={<IcTrash size={16} />}
+              onClick={() => void clearCache()}
+              disabled={busy || stats.chromiumBytes === 0}
+              title={stats.chromiumBytes === 0 ? 'Nothing to clear' : undefined}
+            >
+              Clear browser caches
+            </Button>
+          </div>
+
+          <p className="muted small" style={{ marginTop: 10 }}>
+            Want to see the folder yourself? Use <strong>Backups &amp; recovery → Open data folder</strong> above.
+          </p>
+        </>
+      ) : stats && !stats.ok ? (
+        <p className="muted small" style={{ color: 'var(--danger)' }}>Couldn&apos;t read sizes: {stats.error}</p>
+      ) : (
+        <p className="muted small">Calculating sizes…</p>
+      )}
+    </section>
+  );
+}
+
+function CacheRow({
+  label,
+  bytes,
+  hint,
+  emphasis,
+  breakdown,
+}: {
+  label: string;
+  bytes: number;
+  hint?: string;
+  emphasis?: boolean;
+  breakdown?: CacheBreakdownEntry[];
+}) {
+  const meaningfulBreakdown = (breakdown ?? []).filter((b) => b.bytes > 0);
+  return (
+    <li className={`cache-row${emphasis ? ' cache-row--emphasis' : ''}`}>
+      <div className="cache-row__main">
+        <span className="cache-row__label">{label}</span>
+        <span className="cache-row__bytes">{formatBytes(bytes)}</span>
+      </div>
+      {hint ? <div className="cache-row__hint muted small">{hint}</div> : null}
+      {meaningfulBreakdown.length > 0 ? (
+        <details className="cache-row__details">
+          <summary className="muted small">Breakdown</summary>
+          <ul>
+            {meaningfulBreakdown.map((b) => (
+              <li key={b.label}>
+                <span>{b.label}</span>
+                <span className="muted small">{formatBytes(b.bytes)}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </li>
+  );
+}
+
 function DataSourceRow({
   info,
   label,
@@ -1180,7 +1396,8 @@ function formatBytes(bytes: number | undefined) {
   if (bytes == null) return '';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 function formatRelativeTime(iso: string | undefined) {

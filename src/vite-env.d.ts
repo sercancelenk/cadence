@@ -47,6 +47,28 @@ export type LoadResult =
 
 export type SaveError = { ok: false; reason?: string; error?: string };
 
+export type CacheBreakdownEntry = { label: string; bytes: number; files: number };
+
+export type CacheStats =
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      userDataPath: string;
+      dataFileBytes: number;
+      legacyBytes: number;
+      backupsSelfBytes: number;
+      backupsSelfCount: number;
+      backupsAllBytes: number;
+      chromiumBytes: number;
+      chromiumBreakdown: CacheBreakdownEntry[];
+      totalBytes: number;
+      totalFiles: number;
+    };
+
+export type CacheClearResult =
+  | { ok: false; error: string }
+  | { ok: true; chromiumBytes: number; chromiumBreakdown: CacheBreakdownEntry[] };
+
 interface ImportMetaEnv {
   /** "1" when the bundle is built for the PWA (GitHub Pages) target. */
   readonly LEEADMAN_PWA?: string;
@@ -62,6 +84,8 @@ declare global {
       dataPreviewSource?: (payload: { filePath: string }) => Promise<{ ok: boolean; info?: DataFileInfo; error?: string }>;
       dataRestoreFromSource?: (payload: { filePath: string }) => Promise<{ ok: boolean; restoredFrom?: string; error?: string; reason?: string }>;
       openUserDataFolder?: () => Promise<{ ok: boolean }>;
+      cacheStats?: () => Promise<CacheStats>;
+      clearChromiumCache?: () => Promise<CacheClearResult>;
       onSaveError?: (cb: (event: SaveError) => void) => () => void;
       showNotification: (opts: { title?: string; body?: string }) => Promise<boolean>;
       userDataPath: () => Promise<string>;

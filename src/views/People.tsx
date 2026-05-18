@@ -1,7 +1,10 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { IcArrowRight, IcCheck, IcPencil, IcPlus, IcSave, IcSparkles, IcTrash, IcUndo, IcX } from '../components/icons';
-import { AIAssistantDialog } from '../components/AIAssistantDialog';
+// Lazy-loaded: only fetched the first time the user clicks "Ask AI" on a note.
+const AIAssistantDialog = lazy(() =>
+  import('../components/AIAssistantDialog').then((m) => ({ default: m.AIAssistantDialog })),
+);
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { Button } from '../components/ui/Button';
 import { MarkdownEditor, MarkdownView } from '../components/ui/MarkdownEditor';
@@ -936,21 +939,21 @@ function KindSection({
           ))}
         </ul>
       )}
-      <AIAssistantDialog
-        open={!!aiTarget}
-        onClose={() => setAiTarget(null)}
-        task={{ title: aiTarget?.title ?? '', body: aiTarget?.body }}
-        onAppendToBody={
-          aiTarget
-            ? (markdown) => {
-                const t = aiTarget;
-                const next = `${t.body ? `${t.body}\n\n` : ''}---\n**AI suggestions**\n\n${markdown}`;
-                onUpdate(t.id, { body: next });
-                setAiTarget(null);
-              }
-            : undefined
-        }
-      />
+      {aiTarget ? (
+        <Suspense fallback={null}>
+          <AIAssistantDialog
+            open={!!aiTarget}
+            onClose={() => setAiTarget(null)}
+            task={{ title: aiTarget.title, body: aiTarget.body }}
+            onAppendToBody={(markdown) => {
+              const t = aiTarget;
+              const next = `${t.body ? `${t.body}\n\n` : ''}---\n**AI suggestions**\n\n${markdown}`;
+              onUpdate(t.id, { body: next });
+              setAiTarget(null);
+            }}
+          />
+        </Suspense>
+      ) : null}
     </section>
   );
 }

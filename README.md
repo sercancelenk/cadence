@@ -61,6 +61,7 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
   - [Smart to-do lists](#smart-to-do-lists)
   - [AI Assistant (BYO API key)](#ai-assistant-byo-api-key)
   - [Backups & recovery](#backups--recovery)
+  - [Storage & cache](#storage--cache)
   - [Profile & change password](#profile--change-password)
   - [LAN sync (multi-device, no cloud)](#lan-sync-multi-device-no-cloud)
 - [Mobile / PWA](#mobile--pwa)
@@ -284,6 +285,16 @@ The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts
 - **Restore** is one click. The current state is itself snapshotted as `pre-restore` first, so the operation is reversible.
 - **Auto-migrate on login** — if you log in and your per-user data file doesn't exist yet, but `leeadman-data.json` (legacy single-user) does, Leeadman imports it into your account automatically. No more "I updated and my old data is gone" surprise.
 - **Open data folder** — jumps Finder straight to `~/Library/Application Support/Leeadman/` if you want to copy a backup to iCloud / a USB stick.
+
+### Storage & cache
+
+`Settings → Storage & cache` is the honest, read-only picture of what Leeadman occupies on this device — plus a safe way to reclaim disk when the browser engine has cached a lot of HTTP responses, V8 code or GPU shaders over months of use.
+
+- **Per-bucket sizes**: encrypted data file, legacy file, your backups, backups belonging to other accounts on the same machine, Chromium-managed caches (HTTP / code / GPU / shader, with a per-folder breakdown), total `userData` size.
+- **Clear browser caches** (Electron) — wipes only Chromium-managed caches via the documented `session.clearCache()` / `clearCodeCaches()` / `clearStorageData({ storages: ['cachestorage', 'shadercache'] })` APIs. **Tasks, notes, AI keys, backups and account list are never touched.** Caches repopulate naturally; you may see a one-time slower first request or a shader recompile on next launch.
+- **Reload web assets** (PWA) — unregisters the service worker and clears the `caches` API entries on this origin, then hard-reloads. Use this if the PWA feels stuck on an older version; your localStorage (AI key, UI prefs, hashed account credentials) is preserved.
+
+This panel is purely diagnostic — you can ignore it forever and nothing degrades. The auto-prune logic already keeps backups at 50 slots and Chromium self-manages its caches; the buttons exist so you have the option, not as a maintenance chore.
 
 ### Profile & change password
 

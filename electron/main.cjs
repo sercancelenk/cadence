@@ -1029,6 +1029,137 @@ ipcMain.handle('data:openUserDataFolder', () => {
   return { ok: true };
 });
 
+// ─── Storage & cache diagnostics ─────────────────────────────────────────
+//
+// The renderer Settings → "Storage & cache" card calls these to show the
+// user how big their on-disk footprint is and (optionally) wipe Chromium's
+// internal caches (HTTP / Code / GPU / Shader). User data — the encrypted
+// AppData file, the backups folder, AI settings, account list — is NEVER
+// touched by `cache:clearChromium`.
+
+function dirSizeBytes(dirPath) {
+  let total = 0;
+  let files = 0;
+  try {
+    if (!fs.existsSync(dirPath)) return { bytes: 0, files: 0 };
+    const stack = [dirPath];
+    while (stack.length) {
+      const cur = stack.pop();
+      let entries;
+      try {
+        entries = fs.readdirSync(cur, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const e of entries) {
+        const p = path.join(cur, e.name);
+        try {
+          if (e.isDirectory()) {
+            stack.push(p);
+          } else if (e.isFile()) {
+            const st = fs.statSync(p);
+            total += st.size;
+            files += 1;
+          }
+        } catch {
+          // permission/race — skip
+        }
+      }
+    }
+  } catch {
+    // best-effort; never crash the IPC
+  }
+  return { bytes: total, files };
+}
+
+function fileSizeBytes(filePath) {
+  try {
+    const st = fs.statSync(filePath);
+    return st.isFile() ? st.size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function chromiumCacheDirs() {
+  // The exact set of Chromium-managed cache folders varies slightly across
+  // platforms and Electron versions. We enumerate the common ones and let
+  // the size calc silently skip what doesn't exist.
+  const root = app.getPath('userData');
+  return [
+    'Cache',
+    'Code Cache',
+    'GPUCache',
+    'DawnGraphiteCache',
+    'DawnWebGPUCache',
+    'ShaderCache',
+    'GrShaderCache',
+    'Service Worker',
+    'Worker',
+    'blob_storage',
+  ].map((rel) => ({ label: rel, abs: path.join(root, rel) }));
+}
+
+ipcMain.handle('cache:stats', () => {
+  try {
+    const userDataDir = app.getPath('userData');
+    const userId = readSessionUserId();
+
+    const dataFileBytes = userId ? fileSizeBytes(dataPathForUser(userId)) : 0;
+    const legacyBytes = fileSizeBytes(legacyDataPath());
+
+    const backupsRoot = path.join(userDataDir, BACKUPS_DIRNAME);
+    const backupsSelf = userId ? dirSizeBytes(path.join(backupsRoot, userId)) : { bytes: 0, files: 0 };
+    const backupsAll = dirSizeBytes(backupsRoot);
+
+    const chromiumDirs = chromiumCacheDirs();
+    const chromium = chromiumDirs.map((d) => ({ label: d.label, ...dirSizeBytes(d.abs) }));
+    const chromiumTotal = chromium.reduce((acc, x) => acc + x.bytes, 0);
+
+    const totalUserData = dirSizeBytes(userDataDir);
+
+    return {
+      ok: true,
+      userDataPath: userDataDir,
+      dataFileBytes,
+      legacyBytes,
+      backupsSelfBytes: backupsSelf.bytes,
+      backupsSelfCount: backupsSelf.files,
+      backupsAllBytes: backupsAll.bytes,
+      chromiumBytes: chromiumTotal,
+      chromiumBreakdown: chromium,
+      totalBytes: totalUserData.bytes,
+      totalFiles: totalUserData.files,
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+});
+
+ipcMain.handle('cache:clearChromium', async () => {
+  // We touch ONLY Chromium-managed caches via the documented session APIs.
+  // No fs.unlink on app data, no localStorage wipe, no cookie purge — those
+  // would silently sign the user out or destroy AI keys.
+  try {
+    const sess = session.defaultSession;
+    await sess.clearCache(); // HTTP cache
+    if (typeof sess.clearCodeCaches === 'function') {
+      await sess.clearCodeCaches({}); // V8 code cache
+    }
+    await sess.clearStorageData({
+      storages: ['cachestorage', 'shadercache'],
+      quotas: ['temporary'],
+    });
+
+    // Re-measure so the UI can show "after" sizes.
+    const after = chromiumCacheDirs().map((d) => ({ label: d.label, ...dirSizeBytes(d.abs) }));
+    const afterTotal = after.reduce((acc, x) => acc + x.bytes, 0);
+    return { ok: true, chromiumBytes: afterTotal, chromiumBreakdown: after };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+});
+
 ipcMain.handle('app:showNotification', (_evt, { title, body } = {}) => {
   if (!Notification.isSupported()) return false;
   const n = new Notification({ title: title || 'Leeadman', body: body || '' });

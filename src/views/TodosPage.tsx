@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
   IcCalendar,
@@ -15,8 +15,16 @@ import {
 } from '../components/icons';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
-import { AIAssistantDialog } from '../components/AIAssistantDialog';
-import { AITaskExtractorDialog } from '../components/AITaskExtractorDialog';
+// AI dialogs are lazy-loaded: they pull in react-markdown (~125 kB) plus
+// lib/ai.ts (~9 kB) and the vast majority of users open them only
+// occasionally. Keeping them out of the initial TodosPage chunk meaningfully
+// shrinks first-paint for everyone else.
+const AIAssistantDialog = lazy(() =>
+  import('../components/AIAssistantDialog').then((m) => ({ default: m.AIAssistantDialog })),
+);
+const AITaskExtractorDialog = lazy(() =>
+  import('../components/AITaskExtractorDialog').then((m) => ({ default: m.AITaskExtractorDialog })),
+);
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { isAIConfigured } from '../lib/ai';
 import { formatDateShort, formatTimeOnly, fromLocalDatetimeValue, isPast, toLocalDatetimeValue } from '../lib/datetime';
@@ -1088,16 +1096,24 @@ export function TodosPage() {
         )}
       </section>
 
-      <AIAssistantDialog
-        open={!!aiTask}
-        onClose={() => setAiTask(null)}
-        task={{ title: aiTask?.title ?? '' }}
-      />
-      <AITaskExtractorDialog
-        open={extractorOpen}
-        onClose={() => setExtractorOpen(false)}
-        defaultGroupId={visibleGroups[0]?.id}
-      />
+      {aiTask || extractorOpen ? (
+        <Suspense fallback={null}>
+          {aiTask ? (
+            <AIAssistantDialog
+              open={!!aiTask}
+              onClose={() => setAiTask(null)}
+              task={{ title: aiTask.title }}
+            />
+          ) : null}
+          {extractorOpen ? (
+            <AITaskExtractorDialog
+              open={extractorOpen}
+              onClose={() => setExtractorOpen(false)}
+              defaultGroupId={visibleGroups[0]?.id}
+            />
+          ) : null}
+        </Suspense>
+      ) : null}
     </div>
   );
 }

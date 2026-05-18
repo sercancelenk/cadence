@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('leeadman', {
   dataPreviewSource: (payload) => ipcRenderer.invoke('data:previewSource', payload),
   dataRestoreFromSource: (payload) => ipcRenderer.invoke('data:restoreFromSource', payload),
   openUserDataFolder: () => ipcRenderer.invoke('data:openUserDataFolder'),
+  cacheStats: () => ipcRenderer.invoke('cache:stats'),
+  clearChromiumCache: () => ipcRenderer.invoke('cache:clearChromium'),
   onSaveError: (cb) => {
     const listener = (_evt, payload) => {
       try { cb(payload); } catch (err) { console.error('[leeadman] save error handler threw', err); }

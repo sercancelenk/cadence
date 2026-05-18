@@ -46,7 +46,15 @@ export default defineConfig({
     },
   },
   esbuild: {
+    // In production we strip all `debugger` statements plus the chatty
+    // `console.log`/`console.info`/`console.debug` calls. We keep
+    // `console.warn` and `console.error` so real problems are still visible
+    // in the user's devtools console (and in Sentry-style breadcrumbs if we
+    // ever add them).
     drop: process.env.NODE_ENV === 'production' ? ['debugger'] : [],
-    pure: ['console.debug'],
+    pure:
+      process.env.NODE_ENV === 'production'
+        ? ['console.debug', 'console.log', 'console.info']
+        : ['console.debug'],
   },
 });
