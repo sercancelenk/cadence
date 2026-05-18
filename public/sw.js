@@ -12,7 +12,7 @@
  * does (main.tsx checks LEEADMAN_PWA flag + presence of `serviceWorker` API).
  */
 
-const CACHE_VERSION = 'v10-theme-polish';
+const CACHE_VERSION = 'v12-gemini-2';
 const CACHE_NAME = `leeadman-${CACHE_VERSION}`;
 
 const APP_SHELL = [

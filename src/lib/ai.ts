@@ -170,7 +170,19 @@ async function callGemini({ apiKey, model, system, messages, maxTokens, signal }
       contents,
     }),
   });
-  if (!res.ok) throw await providerError('gemini', res);
+  if (!res.ok) {
+    // Google retired the Gemini 1.x family from `v1beta` in late 2025. If the
+    // user is still pointing at one of those, return a targeted error so they
+    // know the fix is a model rename rather than something with their key.
+    if (res.status === 404 && /^gemini-1\.[05]/i.test(model)) {
+      throw new AIError(
+        `The model "${model}" is no longer served by Google's Gemini API (Gemini 1.x was retired). ` +
+          `Open Settings → AI Assistant and switch to "gemini-2.0-flash" (recommended) or any of the gemini-2.x / 2.5 models.`,
+        { status: 404, provider: 'gemini' },
+      );
+    }
+    throw await providerError('gemini', res);
+  }
   const json = (await res.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };

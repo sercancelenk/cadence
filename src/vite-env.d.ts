@@ -12,6 +12,41 @@ type UpdaterEvent =
   | { status: 'downloaded'; version?: string }
   | { status: 'error'; message?: string };
 
+export type DataFileInfo = {
+  path: string;
+  name: string;
+  bytes?: number;
+  mtime?: string;
+  encrypted?: boolean;
+  decryptable?: boolean;
+  parsedOk?: boolean;
+  counts?: {
+    teams?: number;
+    people?: number;
+    items?: number;
+    todoGroups?: number;
+    todoItems?: number;
+    lastTeamId?: string;
+    profileName?: string;
+  } | null;
+  error?: string;
+};
+
+export type DataSources = {
+  userDataPath: string;
+  uid: string | null;
+  live: DataFileInfo | null;
+  legacy: DataFileInfo | null;
+  backups: DataFileInfo[];
+  otherUsers: DataFileInfo[];
+};
+
+export type LoadResult =
+  | { ok: true; data: unknown; encrypted: boolean; reason?: string }
+  | { ok: false; reason: 'no-key' | 'bad-key' | 'parse' | 'io' | 'no-session'; encrypted?: boolean; error?: string };
+
+export type SaveError = { ok: false; reason?: string; error?: string };
+
 interface ImportMetaEnv {
   /** "1" when the bundle is built for the PWA (GitHub Pages) target. */
   readonly LEEADMAN_PWA?: string;
@@ -21,7 +56,13 @@ declare global {
   interface Window {
     leeadman?: {
       loadData: () => Promise<unknown>;
+      loadDataResult?: () => Promise<LoadResult>;
       saveData: (data: unknown) => Promise<boolean>;
+      dataListSources?: () => Promise<DataSources>;
+      dataPreviewSource?: (payload: { filePath: string }) => Promise<{ ok: boolean; info?: DataFileInfo; error?: string }>;
+      dataRestoreFromSource?: (payload: { filePath: string }) => Promise<{ ok: boolean; restoredFrom?: string; error?: string; reason?: string }>;
+      openUserDataFolder?: () => Promise<{ ok: boolean }>;
+      onSaveError?: (cb: (event: SaveError) => void) => () => void;
       showNotification: (opts: { title?: string; body?: string }) => Promise<boolean>;
       userDataPath: () => Promise<string>;
       getAppVersion: () => Promise<string>;

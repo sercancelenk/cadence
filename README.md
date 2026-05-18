@@ -23,9 +23,11 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
 
 | | |
 |---|---|
-| **Desktop** | Signed + notarized macOS DMG (Apple Silicon & Intel), auto-updates via GitHub Releases. Optional PIN lock at launch. |
+| **Desktop** | Universal signed + notarized macOS DMG (one file for Apple Silicon **and** Intel), auto-updates via GitHub Releases with an in-app download dialog. Optional PIN lock at launch. |
 | **Mobile** | Installable PWA (Add to Home Screen) with a slide-in drawer sidebar, full-screen content, iOS safe-area aware. Offline-capable, optimized for To-dos. |
 | **Encrypted on disk** | Workspace data is stored as an **AES-256-GCM** envelope keyed by your account password (Electron). Changing the password rotates the key transparently. |
+| **Backups & recovery** | Every save, login and app launch is snapshotted into `backups/<userId>/` (50 rolling slots). A *Settings → Backups & recovery* card lists live + legacy + per-snapshot files with task / people counts and a one-click restore. The writer refuses to overwrite an undecipherable file, so a key mismatch can never silently destroy your data. |
+| **AI Assistant (BYO key)** | Every task has an "Ask AI" button when you connect a provider in Settings. Supports **Anthropic Claude**, **OpenAI ChatGPT** and **Google Gemini**; calls go directly from your device to the provider — there's no proxy. Includes a Markdown-rendering chat dialog and an "Append answer to task" action. |
 | **Profile** | Avatar upload, view-only by default with an Edit toggle, in-app **Change password** flow that verifies your current password. |
 | **Workspaces** | Multi-team, per-team Me / My-leader workspaces, per-person pages with tasks, goals, notes, **feedback** and documents. |
 | **1:1 Mode** | A dedicated meeting view per person with a persistent markdown agenda and an archive of past meetings; unchecked action items carry over. |
@@ -36,8 +38,9 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
 | **⌘K Command Palette** | Fuzzy search across navigation, teams, people, items and to-dos with keyboard navigation. |
 | **Markdown everywhere** | Notes, scratchpads, item bodies and 1:1 agendas use GitHub-flavored markdown (checklists, tables, code, links). |
 | **Recurring reminders** | Daily / weekly / monthly cadence for any reminder, auto-advances after firing. |
-| **Smart to-do lists** | Drag-and-drop list reordering, pin to top, archive, mark-all-complete, clear-completed, search, count badges. |
+| **Smart to-do lists** | List + item drag-and-drop reorder, **priority levels** (Urgent / High / Normal / Low) on both lists and items with sort-by-priority, **hide / show completed**, **delete confirmation**, pin to top, archive, bulk ops, search, count badges. Task input is a multi-line auto-resizing textarea. |
 | **Quick scheduling** | Per-task presets (Today 5pm, Tomorrow 9am, +3h, Next Mon 9am) plus a custom datetime picker — no more hunting for an obvious schedule control. |
+| **Theming** | Polished light & dark modes with proper input contrast, focus rings, and accent-aware hover states everywhere. |
 
 ---
 
@@ -56,6 +59,8 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
   - [Recurring reminders](#recurring-reminders)
   - [Feedback log](#feedback-log)
   - [Smart to-do lists](#smart-to-do-lists)
+  - [AI Assistant (BYO API key)](#ai-assistant-byo-api-key)
+  - [Backups & recovery](#backups--recovery)
   - [Profile & change password](#profile--change-password)
   - [LAN sync (multi-device, no cloud)](#lan-sync-multi-device-no-cloud)
 - [Mobile / PWA](#mobile--pwa)
@@ -79,9 +84,7 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
 ### macOS desktop (signed + notarized)
 
 1. Go to the [latest release](https://github.com/sercancelenk/leeadman/releases/latest).
-2. Download the right DMG:
-   - `Leeadman-<version>-arm64.dmg` — Apple Silicon (M1/M2/M3/M4)
-   - `Leeadman-<version>-x64.dmg` — Intel Macs
+2. Download `Leeadman-<version>-universal.dmg`. This is a **universal binary** that runs natively on both **Apple Silicon** (M1/M2/M3/M4) and **Intel** Macs — one file for everyone.
 3. Open the DMG and drag `Leeadman.app` into `Applications`.
 4. Launch from Launchpad or Spotlight (⌘ + Space → "Leeadman").
 
@@ -234,15 +237,52 @@ This makes performance-review prep and growth-conversation prep trivial — open
 
 The `/todos` page scales as your lists grow:
 
-- **Drag-and-drop reorder** — grab the grip handle next to a list title and drop it anywhere; dropping a list across the pinned/unpinned line toggles its pin state automatically.
-- **Pin to top** — star a list to keep it above the rest.
-- **Archive** — hide a list without losing data; toggle "Show archived" to bring them back.
+- **Drag-and-drop reorder, lists and items** — grab the grip handle next to a list title and drop it anywhere; dropping a list across the pinned/unpinned line toggles its pin state automatically. Inside a list, drag individual items by their handle to reorder them.
+- **Priorities** — every list and every item has an optional priority chip (Urgent / High / Normal / Low). Use the **Sort** dropdown (Manual / By priority / By due date) to reshape the list on the fly without losing your manual order.
+- **Hide / show completed** — toggle at the top of the page; persists per-device so you can keep a clean active view by default.
+- **Delete confirmation** — clicking the trash icon arms the row for 3 seconds and turns into a confirm button, so a finger-slip doesn't lose a task.
+- **Multi-line task input** — task title is a proper auto-resizing textarea (Enter inserts a newline, ⌘ / Ctrl + Enter submits). Edit an existing task title the same way.
 - **Quick scheduling** — every task row has a `Schedule` chip that opens a popover with **Today 5pm**, **Tomorrow 9am**, **+3h**, **Next Mon 9am** presets, plus a custom datetime picker and a one-tap "Clear schedule" action.
-- **Compact / Comfortable toggle** — clearly labelled in the top-right (was a confusing icon-only button before).
+- **Pin to top / Archive** — star a list to keep it above the rest, or archive it (toggle "Show archived" to bring them back).
+- **Compact / Comfortable toggle** — clearly labelled in the top-right.
 - **Mark all complete** / **Clear completed** — bulk operations with confirmations.
 - **Search** — filter tasks across all lists in real time.
 - **Inline rename** — click the list title to edit.
 - **Counts** — every list shows `<open> / <total>` at a glance.
+
+### AI Assistant (BYO API key)
+
+Every task row has an **Ask AI** button as soon as you connect a provider in *Settings → AI Assistant*. The assistant takes the task title + body + your custom system prompt and returns a structured next-action plan, rendered as Markdown in a side dialog.
+
+- **Bring your own key** — pick a provider, paste your API key, optionally override the model name. There is **no proxy**; calls go from this device straight to the provider you chose. The provider sees your task title/body but not your other data.
+- **Providers supported**
+  - **Anthropic Claude** — default `claude-3-5-sonnet-latest`. Suggested: `claude-3-5-sonnet-latest`, `claude-3-5-haiku-latest`, `claude-3-opus-latest`.
+  - **OpenAI ChatGPT** — default `gpt-4o-mini`. Suggested: `gpt-4o-mini`, `gpt-4o`, `gpt-4.1-mini`.
+  - **Google Gemini** — default `gemini-2.0-flash`. Suggested: `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-pro`. *(Gemini 1.x was retired from `v1beta` in late 2025 and returns HTTP 404; the Settings UI surfaces a one-click fix.)*
+- **Test connection** button — sends a one-token round-trip so you can verify the key + model before relying on it during a real task.
+- **Follow-up turns** — keep chatting in the dialog (Enter sends, Shift+Enter for newlines). Markdown answers render with headings, lists, code blocks and tables.
+- **Append to task** — copy the assistant's answer straight into the task's notes (body) so it sticks around.
+- **Where the key is stored**
+  - **Desktop**: inside your encrypted data file (`leeadman-data-<userId>.json`, AES-256-GCM, keyed by your account password).
+  - **PWA**: in this browser's `localStorage` only (not encrypted) — use a low-budget key with usage limits.
+
+The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts).
+
+### Backups & recovery
+
+`Settings → Backups & recovery` is your safety net when something goes sideways — for example after a major version upgrade, a password rotation hiccup, or registering a fresh account by mistake.
+
+- **Auto-snapshots** — every save, every successful sign-in and every app launch copies the current `leeadman-data-<userId>.json` into `backups/<userId>/data-<label>-<timestamp>.json`. A rolling window of 50 snapshots is kept; oldest are pruned automatically.
+- **Refuse-to-overwrite guard** — the data writer refuses to overwrite an existing file when it can't decrypt it with the current session key (instead of silently destroying it). The renderer surfaces this as a red banner pointing at this page.
+- **Recovery list** — the page enumerates every candidate source on this machine:
+  - **Current data file** (live)
+  - **Legacy single-user file** (`leeadman-data.json`, from the pre-accounts era)
+  - **Automatic snapshots** (with human-readable "5m ago / 2d ago" times)
+  - **Other accounts on this machine** — orphaned `leeadman-data-<otherId>.json` files, useful when you registered twice
+- Each row shows the file size, modified time, encryption status, and a sniff of what's inside (number of teams, people, items, lists, tasks).
+- **Restore** is one click. The current state is itself snapshotted as `pre-restore` first, so the operation is reversible.
+- **Auto-migrate on login** — if you log in and your per-user data file doesn't exist yet, but `leeadman-data.json` (legacy single-user) does, Leeadman imports it into your account automatically. No more "I updated and my old data is gone" surprise.
+- **Open data folder** — jumps Finder straight to `~/Library/Application Support/Leeadman/` if you want to copy a backup to iCloud / a USB stick.
 
 ### Profile & change password
 
@@ -345,14 +385,17 @@ Standard shortcuts apply (⌘ Q, ⌘ W, ⌘ R, ⌘ F, ⌘ , …). The global **�
 - **Where data lives** (macOS): `~/Library/Application Support/Leeadman/`
   - `leeadman-accounts.json` — user list (email, salted **scrypt** password hash, per-user `encSalt`).
   - `leeadman-session.json` — id of the signed-in user.
-  - `leeadman-data-<userId>.json` — your workspace data, per account, **encrypted at rest**.
+  - `leeadman-data-<userId>.json` — your workspace data, per account, **encrypted at rest** (AI key, tasks, lists, people, notes, preferences — everything).
+  - `leeadman-data.json` — legacy single-user file from pre-accounts versions (only present if you upgraded from an old install). Auto-imported on first login.
+  - `backups/<userId>/data-<label>-<timestamp>.json` — rolling auto-snapshots (50 slots; labels include `launch`, `post-login`, `pre-save`, `pre-pwchange`, `pre-restore`).
   - `auth-lock.json` — optional PIN hash.
   - `sync.json` — LAN sync server config (token + enabled flag) when sync is on.
 - **Encryption-at-rest** (Electron): your data file is wrapped in **AES-256-GCM**. The 256-bit key is derived from your password with `scrypt(password, encSalt)` at login and lives only in main-process memory until logout. Changing your password atomically decrypts with the old key, derives a fresh `encSalt`, and re-encrypts under the new key. Legacy plaintext files from older versions are upgraded silently on the first save after login.
-- **PIN protection** is an additional launch-time UI barrier (not the encryption key). It can be enabled/disabled independently in Settings.
+- **Refuse-to-overwrite guard**: when the data writer finds an existing file it can't decrypt with the in-memory key, it refuses to write — your data stays safe and the UI surfaces a banner pointing at *Settings → Backups & recovery*.
+- **PIN protection** is an additional launch-time UI barrier (not the encryption key). It can be enabled/disabled independently in Settings. If you forget it, the lock screen has a "Forgot PIN? Reset with account password" flow (rate-limited).
 - **Mobile PWA**: data lives in the browser's `localStorage` for the Pages origin and is **not** encrypted by the app — rely on the device's keychain / disk encryption.
 - **No telemetry, no analytics.** Sync only happens when you explicitly use the LAN server (or Export/Import).
-- **Backups**: use *Settings → Backup → Export JSON* periodically. The export is the **decrypted** data so you can diff / migrate it; treat it like a sensitive file. Use *Import JSON* to restore — it replaces your current data.
+- **Backups**: see [**Backups & recovery**](#backups--recovery). For manual portable backups use *Settings → Backup → Export JSON*; the export is the **decrypted** data so you can diff / migrate it. Treat it like a sensitive file. Use *Import JSON* to restore — it replaces your current data (and snapshots the old state first).
 
 ---
 
@@ -536,19 +579,23 @@ The signed binary uses the entitlements at [`build/entitlements.mac.plist`](./bu
 │   │   ├── ErrorBoundary.tsx
 │   │   ├── Layout.tsx / TeamLayout.tsx / TopBar.tsx
 │   │   ├── icons.tsx
+│   │   ├── AIAssistantDialog.tsx   # Markdown chat dialog for the per-task AI button
 │   │   └── ui/
 │   │       ├── Button.tsx
+│   │       ├── AutoResizeTextarea.tsx  # Multi-line task input (auto-grow + submitMode)
 │   │       └── MarkdownEditor.tsx  # GFM markdown editor + viewer
-│   ├── lib/                        # Pure helpers (datetime, routes, sorting, categories…)
+│   ├── lib/
+│   │   ├── ai.ts                   # Provider-agnostic AI client (Anthropic / OpenAI / Gemini)
+│   │   └── …                       # datetime, routes, sorting, categories, etc.
 │   └── views/
 │       ├── HomePage.tsx
 │       ├── HomeTeams.tsx
-│       ├── TodosPage.tsx           # Drag-drop lists, quick-schedule presets
+│       ├── TodosPage.tsx           # Drag-drop lists + items, priorities, hide-completed, AI button
 │       ├── AgendaPage.tsx          # Today / This-week unified agenda
 │       ├── AnalyticsPage.tsx       # Local analytics dashboard (SVG charts)
 │       ├── People.tsx              # Person workspace + Timeline + 1:1 Mode tabs
 │       ├── ProfilePage.tsx         # Avatar, view/edit toggle, change-password tab
-│       ├── Settings.tsx            # Theme, PIN, backups, LAN sync host + client
+│       ├── Settings.tsx            # Theme, PIN, AI key, backups & recovery, LAN sync
 │       └── LoginPage.tsx / RegisterPage.tsx
 ├── public/                         # PWA static assets (manifest, sw.js, icons)
 ├── docs/
@@ -628,6 +675,27 @@ Passwords are not recoverable (they're stored as salted scrypt hashes locally). 
 
 </details>
 
+<details>
+<summary><strong>I forgot my PIN</strong></summary>
+
+The lock screen has a *Forgot PIN? Reset with account password* link. It asks for your account password (the one you sign in with), rate-limits attempts, and on success clears the PIN so you can set a new one. No terminal commands required.
+
+</details>
+
+<details>
+<summary><strong>I updated and my data looks empty / I see a "refusing to overwrite" banner</strong></summary>
+
+Don't panic — your data is still on disk. Open *Settings → Backups & recovery*. The page lists every candidate source: the current file, the legacy single-user file (`leeadman-data.json`), every automatic snapshot (50 rolling slots labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`), and any orphaned per-user file from a previous account UUID. Pick the one with the right item counts → **Restore**. The current state is itself snapshotted as `pre-restore` first, so the operation is reversible.
+
+</details>
+
+<details>
+<summary><strong>Gemini Test connection returns HTTP 404 with "model not found"</strong></summary>
+
+Google retired the Gemini 1.x family from the `v1beta` endpoint in late 2025. Open *Settings → AI Assistant*, click the inline **gemini-2.0-flash** suggestion (or any other current model from the list), Save, then run **Test connection** again. The current GA defaults are `gemini-2.0-flash` and `gemini-2.0-flash-lite`; `gemini-2.5-flash` / `gemini-2.5-pro` are higher quality but rate-limited on the free tier.
+
+</details>
+
 ---
 
 ## Roadmap
@@ -652,6 +720,14 @@ Passwords are not recoverable (they're stored as salted scrypt hashes locally). 
 | 1.14 | **Analytics dashboard** with SVG bar chart, per-team and per-person stats |
 | 1.15 | **LAN sync** — Electron HTTP server with token auth + pair UI in Settings |
 | 1.16 | **Mobile drawer sidebar** + iOS-safe input sizing |
+| 1.17 | **AI Assistant** with BYO API key for Claude / ChatGPT / Gemini, per-task button, Markdown chat dialog, append-to-task |
+| 1.18 | **Backups & recovery** — rolling 50-snapshot backups, refuse-to-overwrite guard, in-app recovery UI with one-click restore |
+| 1.19 | **Universal macOS DMG** — single Apple-Silicon + Intel build, simpler distribution |
+| 1.20 | **Task priorities** on lists and items + sort-by-priority / sort-by-due-date toggle |
+| 1.21 | **Item drag-reorder**, **hide / show completed**, **delete confirmation**, multi-line task textarea |
+| 1.22 | **Manual CI/CD** — Release & Pages workflows manual-only and CI-gated; automatic version bumps via `run_number` |
+| 1.23 | **Polished light & dark themes** — proper input contrast, focus rings, accent-aware hovers everywhere |
+| 1.24 | **PIN reset with account password** — in-app, rate-limited recovery so you can never lock yourself out |
 
 ### Tier 2 — next
 

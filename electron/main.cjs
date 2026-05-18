@@ -53,6 +53,14 @@ const LEGACY_DATA_FILENAME = 'leeadman-data.json';
 const ACCOUNTS_FILENAME = 'leeadman-accounts.json';
 const SESSION_FILENAME = 'leeadman-session.json';
 const AUTH_FILENAME = 'auth-lock.json';
+const BACKUPS_DIRNAME = 'backups';
+/**
+ * How many rolling on-disk snapshots to keep per user. We snapshot before
+ * every save, so 50 is roughly a few hours of heavy editing. The on-disk
+ * format is identical to the live file (encrypted envelope or plaintext),
+ * which means restore is a single file copy.
+ */
+const BACKUPS_KEEP_MAX = 50;
 
 function legacyDataPath() {
   return path.join(app.getPath('userData'), LEGACY_DATA_FILENAME);
@@ -72,6 +80,10 @@ function sessionPath() {
 
 function authPath() {
   return path.join(app.getPath('userData'), AUTH_FILENAME);
+}
+
+function backupsDirForUser(userId) {
+  return path.join(app.getPath('userData'), BACKUPS_DIRNAME, userId || '_anon');
 }
 
 // ---------- JSON utilities -----------------------------------------------------
@@ -187,46 +199,135 @@ function decryptPayload(envelope, key) {
   }
 }
 
-/** Reads + decrypts the user's data file. Plaintext (legacy) files are upgraded on next save. */
-function readUserData(userId) {
+/**
+ * Read-result discriminated union. `ok=false` distinguishes "no file" from
+ * "file exists but undecipherable", which is critical for callers that need
+ * to refuse writes instead of silently overwriting a key-mismatched file.
+ */
+function readUserDataResult(userId) {
   const file = dataPathForUser(userId);
-  if (!fs.existsSync(file)) return null;
+  if (!fs.existsSync(file)) return { ok: true, data: null, encrypted: false };
   let text;
   try {
     text = fs.readFileSync(file, 'utf8');
   } catch (err) {
     console.error('[leeadman] failed to read user data', err);
-    return null;
+    return { ok: false, reason: 'io', error: String(err) };
   }
   const key = dataKeys.get(userId);
   if (isEncryptedFile(text)) {
     if (!key) {
       console.warn('[leeadman] data file is encrypted but no key in memory for', userId);
-      return null;
+      return { ok: false, reason: 'no-key', encrypted: true };
     }
     const plain = decryptPayload(text, key);
-    if (plain == null) return null;
+    if (plain == null) {
+      console.warn('[leeadman] data file decrypt failed for', userId, '— wrong key?');
+      return { ok: false, reason: 'bad-key', encrypted: true };
+    }
     try {
-      return JSON.parse(plain);
+      return { ok: true, data: JSON.parse(plain), encrypted: true };
     } catch {
-      return null;
+      return { ok: false, reason: 'parse', encrypted: true };
     }
   }
-  // Legacy plaintext fallback.
   try {
-    return JSON.parse(text);
+    return { ok: true, data: JSON.parse(text), encrypted: false };
   } catch {
+    return { ok: false, reason: 'parse', encrypted: false };
+  }
+}
+
+/** Back-compat: returns plain object or null. New code should prefer `readUserDataResult`. */
+function readUserData(userId) {
+  const r = readUserDataResult(userId);
+  return r.ok ? r.data : null;
+}
+
+/**
+ * Snapshot the user's current on-disk data file into `backups/<userId>/` so a
+ * subsequent write can never silently destroy unreadable contents.
+ *
+ * Notes:
+ *  - We copy the raw bytes (encrypted envelope or legacy plaintext), so a
+ *    later restore is byte-identical to what was there.
+ *  - Best-effort: any I/O error is logged but never blocks the live write.
+ *  - We keep at most `BACKUPS_KEEP_MAX` files per user (FIFO), to bound disk.
+ */
+function snapshotCurrentDataFile(userId, label = 'pre-write') {
+  try {
+    const live = dataPathForUser(userId);
+    if (!fs.existsSync(live)) return null;
+    const stat = fs.statSync(live);
+    if (!stat.size) return null;
+    const dir = backupsDirForUser(userId);
+    fs.mkdirSync(dir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const name = `data-${label}-${ts}.json`;
+    const target = path.join(dir, name);
+    fs.copyFileSync(live, target);
+    pruneBackups(dir);
+    return target;
+  } catch (err) {
+    console.warn('[leeadman] snapshot failed (continuing)', err);
     return null;
   }
 }
 
-/** Encrypts (when a key is available) and writes the user's data file atomically. */
-function writeUserData(userId, payload) {
+function pruneBackups(dir) {
+  try {
+    const entries = fs
+      .readdirSync(dir)
+      .filter((n) => n.startsWith('data-') && n.endsWith('.json'))
+      .map((n) => ({ name: n, full: path.join(dir, n), mtime: fs.statSync(path.join(dir, n)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const old of entries.slice(BACKUPS_KEEP_MAX)) {
+      try { fs.unlinkSync(old.full); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    console.warn('[leeadman] prune backups failed', err);
+  }
+}
+
+/**
+ * Encrypts (when a key is available) and writes the user's data file atomically.
+ *
+ * Critical safety rules to prevent silent data loss on update / key mismatch:
+ *   1. Always snapshot the existing file first (regardless of decrypt success).
+ *   2. Refuse to write when the existing file is encrypted but we cannot
+ *      decrypt it with our current in-memory key, UNLESS the caller passed
+ *      `allowOverwriteUnreadable=true` (used by the explicit restore flow).
+ *      Without this gate, a user who lands on a key mismatch (e.g. after a
+ *      bad update) would see "empty" data, type a single character, and
+ *      irrevocably overwrite the encrypted file with that single character's
+ *      worth of state.
+ */
+function writeUserData(userId, payload, { allowOverwriteUnreadable = false } = {}) {
   const file = dataPathForUser(userId);
+
+  if (fs.existsSync(file) && !allowOverwriteUnreadable) {
+    const existing = readUserDataResult(userId);
+    if (!existing.ok && (existing.reason === 'no-key' || existing.reason === 'bad-key')) {
+      console.error(
+        '[leeadman] refusing to overwrite undecipherable data file',
+        { userId, reason: existing.reason },
+      );
+      return {
+        ok: false,
+        error:
+          'A data file already exists for this account but cannot be decrypted with the current session key. Refusing to overwrite. Use Settings → Backups & Recovery to inspect or restore your data.',
+        reason: existing.reason,
+      };
+    }
+  }
+
+  snapshotCurrentDataFile(userId, 'pre-save');
+
   const json = JSON.stringify(payload);
   const key = dataKeys.get(userId);
   const out = key ? encryptPayload(json, key) : json;
-  return writeJsonText(file, out);
+  const okWrite = writeJsonText(file, out);
+  return okWrite ? { ok: true } : { ok: false, error: 'I/O error while writing data file.' };
 }
 
 function writeJsonText(filePath, text) {
@@ -350,10 +451,10 @@ function startSyncServer(port = SYNC_DEFAULT_PORT) {
             const body = Buffer.concat(chunks).toString('utf8');
             const parsed = JSON.parse(body);
             const payload = parsed && typeof parsed === 'object' && parsed.data ? parsed.data : parsed;
-            const okWrite = writeUserData(uid, payload);
-            res.statusCode = okWrite ? 200 : 500;
+            const writeRes = writeUserData(uid, payload);
+            res.statusCode = writeRes.ok ? 200 : 500;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ ok: okWrite }));
+            res.end(JSON.stringify(writeRes));
           } catch (err) {
             res.statusCode = 400;
             res.setHeader('Content-Type', 'application/json');
@@ -694,7 +795,238 @@ ipcMain.handle('data:load', () => {
 ipcMain.handle('data:save', (_evt, payload) => {
   const uid = readSessionUserId();
   if (!uid) return false;
-  return writeUserData(uid, payload);
+  const r = writeUserData(uid, payload);
+  if (!r.ok && mainWindow) {
+    // Surface destructive-write refusals to the renderer so it can show a
+    // "Your data is locked, open Backups & Recovery" banner instead of the
+    // user noticing only after they've typed a lot of text.
+    try { mainWindow.webContents.send('data:saveError', r); } catch { /* ignore */ }
+  }
+  return r.ok;
+});
+
+/**
+ * Diagnostic load: same data as `data:load` but with metadata so the renderer
+ * can distinguish "no file yet" from "file exists, can't decrypt". The legacy
+ * `data:load` is kept for back-compat (returns null on any failure).
+ */
+ipcMain.handle('data:loadResult', () => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: true, data: null, reason: 'no-session' };
+  return readUserDataResult(uid);
+});
+
+// ---------- IPC: Backups & Recovery -----------------------------------------
+//
+// The user's data lives in `userData/leeadman-data-<userId>.json`. In the
+// past, a single-user `leeadman-data.json` (no userId) was also written. We
+// also continuously snapshot the live file into `userData/backups/<userId>/`
+// before every save, after every login, and on demand.
+//
+// These three handlers expose a tiny recovery API so a user can:
+//   1. See every candidate data source on this machine.
+//   2. Peek at its contents (encrypted ones are previewed only when the
+//      current session key happens to decrypt them).
+//   3. Replace the live data file with any chosen candidate.
+
+/**
+ * Inspect a single on-disk file and return safe metadata. Never throws.
+ */
+function inspectDataFile(filePath, uid) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const stat = fs.statSync(filePath);
+    const text = fs.readFileSync(filePath, 'utf8');
+    const encrypted = isEncryptedFile(text);
+    let decryptable = !encrypted;
+    let counts = null;
+    let parsedOk = false;
+    if (!encrypted) {
+      try {
+        const obj = JSON.parse(text);
+        parsedOk = true;
+        counts = summarizeAppData(obj);
+      } catch { /* parse fail */ }
+    } else if (uid) {
+      const key = dataKeys.get(uid);
+      if (key) {
+        const plain = decryptPayload(text, key);
+        if (plain != null) {
+          decryptable = true;
+          try {
+            const obj = JSON.parse(plain);
+            parsedOk = true;
+            counts = summarizeAppData(obj);
+          } catch { /* parse fail */ }
+        }
+      }
+    }
+    return {
+      path: filePath,
+      name: path.basename(filePath),
+      bytes: stat.size,
+      mtime: stat.mtime.toISOString(),
+      encrypted,
+      decryptable,
+      parsedOk,
+      counts,
+    };
+  } catch (err) {
+    return { path: filePath, name: path.basename(filePath), error: String(err) };
+  }
+}
+
+function summarizeAppData(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  return {
+    teams: Array.isArray(obj.teams) ? obj.teams.length : 0,
+    people: Array.isArray(obj.people) ? obj.people.length : 0,
+    items: Array.isArray(obj.items) ? obj.items.length : 0,
+    todoGroups: Array.isArray(obj.todoGroups) ? obj.todoGroups.length : 0,
+    todoItems: Array.isArray(obj.todoItems) ? obj.todoItems.length : 0,
+    lastTeamId: typeof obj.lastTeamId === 'string' ? obj.lastTeamId : undefined,
+    profileName: obj.profile && typeof obj.profile.name === 'string' ? obj.profile.name : undefined,
+  };
+}
+
+/**
+ * List candidate data sources: live, legacy, and all rolling backups for the
+ * signed-in user. Designed for a recovery UI in Settings.
+ */
+ipcMain.handle('data:listSources', () => {
+  const uid = readSessionUserId();
+  const userData = app.getPath('userData');
+  const out = {
+    userDataPath: userData,
+    uid,
+    live: null,
+    legacy: null,
+    backups: [],
+    otherUsers: [],
+  };
+
+  if (uid) {
+    out.live = inspectDataFile(dataPathForUser(uid), uid);
+    const backupsDir = backupsDirForUser(uid);
+    if (fs.existsSync(backupsDir)) {
+      try {
+        const entries = fs
+          .readdirSync(backupsDir)
+          .filter((n) => n.endsWith('.json'))
+          .map((n) => inspectDataFile(path.join(backupsDir, n), uid))
+          .filter(Boolean)
+          .sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
+        out.backups = entries;
+      } catch (err) {
+        console.warn('[leeadman] listSources backups failed', err);
+      }
+    }
+  }
+
+  out.legacy = inspectDataFile(legacyDataPath(), null);
+
+  // Surface other per-user files so an admin/user can spot orphaned data files
+  // from a previous account UUID (very common after registering twice).
+  try {
+    for (const name of fs.readdirSync(userData)) {
+      const m = name.match(/^leeadman-data-([0-9a-fA-F-]{8,})\.json$/);
+      if (!m) continue;
+      if (uid && m[1] === uid) continue;
+      const info = inspectDataFile(path.join(userData, name), m[1]);
+      if (info) out.otherUsers.push(info);
+    }
+  } catch (err) {
+    console.warn('[leeadman] listSources otherUsers failed', err);
+  }
+
+  return out;
+});
+
+/**
+ * Decrypt-and-preview a specific file by absolute path, scoped to userData/.
+ * Returns a tiny human-readable peek so the user can decide what to restore.
+ */
+ipcMain.handle('data:previewSource', (_evt, { filePath } = {}) => {
+  if (typeof filePath !== 'string' || !filePath) return { ok: false, error: 'filePath required' };
+  const userData = app.getPath('userData');
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(path.resolve(userData))) {
+    return { ok: false, error: 'Refusing to read outside userData.' };
+  }
+  const uid = readSessionUserId();
+  const info = inspectDataFile(resolved, uid);
+  if (!info) return { ok: false, error: 'File not found.' };
+  return { ok: true, info };
+});
+
+/**
+ * Replace the signed-in user's live data file with the contents of `filePath`.
+ * Always snapshots the *current* live file first so the operation is itself
+ * undoable through the backups list.
+ *
+ * Encryption rules:
+ *   - If the source is plaintext → re-encrypt under the current key.
+ *   - If the source is encrypted with the *current* key → copy bytes verbatim.
+ *   - If the source is encrypted but undecipherable here → refuse (cross-
+ *     account restore is not supported; the user would lose the data).
+ */
+ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  if (typeof filePath !== 'string' || !filePath) return { ok: false, error: 'filePath required' };
+
+  const userData = app.getPath('userData');
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(path.resolve(userData))) {
+    return { ok: false, error: 'Refusing to read outside userData.' };
+  }
+  if (!fs.existsSync(resolved)) return { ok: false, error: 'File no longer exists.' };
+
+  let text;
+  try {
+    text = fs.readFileSync(resolved, 'utf8');
+  } catch (err) {
+    return { ok: false, error: `Could not read source file: ${err.message ?? err}` };
+  }
+
+  let payload;
+  if (isEncryptedFile(text)) {
+    const key = dataKeys.get(uid);
+    if (!key) return { ok: false, error: 'Session key missing. Please sign in again and retry.' };
+    const plain = decryptPayload(text, key);
+    if (plain == null) {
+      return {
+        ok: false,
+        error: 'This backup is encrypted but cannot be decrypted with your current password. It probably belongs to a different account.',
+      };
+    }
+    try {
+      payload = JSON.parse(plain);
+    } catch (err) {
+      return { ok: false, error: `Decrypted contents are not valid JSON: ${err.message ?? err}` };
+    }
+  } else {
+    try {
+      payload = JSON.parse(text);
+    } catch (err) {
+      return { ok: false, error: `Source file is not valid JSON: ${err.message ?? err}` };
+    }
+  }
+
+  // Snapshot the existing live file under a "pre-restore" label so the user
+  // can undo the restore if they picked the wrong source.
+  snapshotCurrentDataFile(uid, 'pre-restore');
+  const w = writeUserData(uid, payload, { allowOverwriteUnreadable: true });
+  return w.ok ? { ok: true, restoredFrom: path.basename(resolved) } : w;
+});
+
+/**
+ * Open the userData folder in the OS file manager. Handy when the user wants
+ * to copy a backup off to iCloud Drive / a USB stick.
+ */
+ipcMain.handle('data:openUserDataFolder', () => {
+  shell.openPath(app.getPath('userData'));
+  return { ok: true };
 });
 
 ipcMain.handle('app:showNotification', (_evt, { title, body } = {}) => {
@@ -998,8 +1330,34 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
     if (mutated) writeAccounts(accounts);
     dataKeys.set(u.id, deriveDataKey(password, u.encSalt));
 
-    // If the data file is currently plaintext (legacy), upgrade it transparently now.
+    // Auto-migrate legacy single-user file (`leeadman-data.json`) into this
+    // account if the per-user file is missing. This is the most common cause
+    // of "I updated and my data disappeared" — the legacy file is still on
+    // disk but nobody links it to the account that was created post-update.
     const file = dataPathForUser(u.id);
+    if (!fs.existsSync(file)) {
+      const leg = legacyDataPath();
+      if (fs.existsSync(leg)) {
+        try {
+          const legacyText = fs.readFileSync(leg, 'utf8');
+          try {
+            const obj = JSON.parse(legacyText);
+            writeUserData(u.id, obj);
+            console.log('[leeadman] auto-migrated legacy data into', u.email);
+          } catch {
+            fs.copyFileSync(leg, file);
+          }
+        } catch (err) {
+          console.warn('[leeadman] legacy auto-migrate failed', err);
+        }
+      }
+    }
+
+    // Take a snapshot right after we successfully derived the key, so even
+    // a buggy in-session save can never destroy this known-good baseline.
+    snapshotCurrentDataFile(u.id, 'post-login');
+
+    // If the data file is currently plaintext (legacy in-place), upgrade it transparently now.
     if (fs.existsSync(file)) {
       const text = fs.readFileSync(file, 'utf8');
       if (!isEncryptedFile(text)) {
@@ -1103,9 +1461,14 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
   u.passwordChangedAt = new Date().toISOString();
   writeAccounts(accounts);
 
+  // Snapshot the about-to-be-rotated file under its old key first, then swap
+  // to the new key and re-encrypt. The `allowOverwriteUnreadable` flag is
+  // required because the on-disk file was encrypted under the old key (which
+  // we just decrypted manually above) and the new key cannot decrypt it.
+  snapshotCurrentDataFile(uid, 'pre-pwchange');
   dataKeys.set(uid, newKey);
   if (plaintextPayload != null) {
-    writeUserData(uid, plaintextPayload);
+    writeUserData(uid, plaintextPayload, { allowOverwriteUnreadable: true });
   }
 
   return { ok: true };
@@ -1205,6 +1568,20 @@ app.whenReady().then(() => {
   buildMenu();
   createWindow();
   setupAutoUpdater();
+
+  // Take a "known good at launch" snapshot of every per-user data file we can
+  // find. This runs before the renderer even loads, so even if a buggy save
+  // later in this session destroys live state, the user can recover.
+  try {
+    const userData = app.getPath('userData');
+    for (const name of fs.readdirSync(userData)) {
+      const m = name.match(/^leeadman-data-([0-9a-fA-F-]{8,})\.json$/);
+      if (!m) continue;
+      snapshotCurrentDataFile(m[1], 'launch');
+    }
+  } catch (err) {
+    console.warn('[leeadman] launch snapshot failed', err);
+  }
 
   // Resume LAN sync if the user enabled it previously.
   const sCfg = readSyncConfig();

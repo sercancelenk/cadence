@@ -138,10 +138,38 @@ export const DATA_VERSION = 3 as const;
 
 export type AIProvider = 'anthropic' | 'openai' | 'gemini';
 
-export const AI_PROVIDER_OPTIONS: { value: AIProvider; label: string; defaultModel: string }[] = [
-  { value: 'anthropic', label: 'Anthropic Claude', defaultModel: 'claude-3-5-sonnet-latest' },
-  { value: 'openai', label: 'OpenAI ChatGPT', defaultModel: 'gpt-4o-mini' },
-  { value: 'gemini', label: 'Google Gemini', defaultModel: 'gemini-1.5-flash' },
+export const AI_PROVIDER_OPTIONS: {
+  value: AIProvider;
+  label: string;
+  defaultModel: string;
+  /**
+   * Short list of currently-valid model names we surface in the UI so users
+   * don't have to dig through provider release notes. Keep the most useful
+   * default first — that's the one we suggest in the placeholder.
+   */
+  modelExamples: string[];
+}[] = [
+  {
+    value: 'anthropic',
+    label: 'Anthropic Claude',
+    defaultModel: 'claude-3-5-sonnet-latest',
+    modelExamples: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest'],
+  },
+  {
+    value: 'openai',
+    label: 'OpenAI ChatGPT',
+    defaultModel: 'gpt-4o-mini',
+    modelExamples: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+  },
+  {
+    value: 'gemini',
+    label: 'Google Gemini',
+    // gemini-1.5-* was retired from v1beta in late 2025; default to the
+    // current GA flash model. Users who saved the old name will see a
+    // 404 — the error message now nudges them to update.
+    defaultModel: 'gemini-2.0-flash',
+    modelExamples: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+  },
 ];
 
 export interface AISettings {

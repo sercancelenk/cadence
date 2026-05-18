@@ -56,6 +56,12 @@ type Api = {
   data: AppData;
   ready: boolean;
   replaceAll: (next: AppData) => void;
+  /**
+   * Re-fetch data from the underlying store (Electron file or localStorage)
+   * without going through the in-memory state machine. Used by the Backups &
+   * Recovery flow to refresh the UI after a restore.
+   */
+  reload: () => Promise<void>;
   update: (fn: (d: AppData) => AppData) => void;
   rememberTeam: (teamId: string) => void;
   addTeam: (name: string) => void;
@@ -266,6 +272,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [scheduleSave],
   );
 
+  const reload = useCallback(async () => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    // Cancel any pending debounced save so we don't immediately re-overwrite
+    // the file we just restored from disk.
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    pendingSave.current = null;
+    setReady(false);
+    const next = await loadInitial(uid);
+    setData(next);
+    setReady(true);
+  }, []);
+
   const api = useMemo<Api>(() => {
     const empty = normalizeData(null);
     const d = data ?? empty;
@@ -273,6 +295,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       data: d,
       ready: ready && data !== null,
       replaceAll,
+      reload,
       rememberTeam: (teamId) => update((x) => setLastTeamIdFn(x, teamId)),
       update,
       addTeam: (name) => update((x) => addTeamFn(x, name)),
@@ -305,7 +328,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       toggleTodoItem: (id) => update((x) => toggleTodoItemFn(x, id)),
       removeTodoItem: (id) => update((x) => removeTodoItemFn(x, id)),
     };
-  }, [data, ready, update, replaceAll]);
+  }, [data, ready, update, replaceAll, reload]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }

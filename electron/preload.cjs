@@ -2,7 +2,19 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('leeadman', {
   loadData: () => ipcRenderer.invoke('data:load'),
+  loadDataResult: () => ipcRenderer.invoke('data:loadResult'),
   saveData: (data) => ipcRenderer.invoke('data:save', data),
+  dataListSources: () => ipcRenderer.invoke('data:listSources'),
+  dataPreviewSource: (payload) => ipcRenderer.invoke('data:previewSource', payload),
+  dataRestoreFromSource: (payload) => ipcRenderer.invoke('data:restoreFromSource', payload),
+  openUserDataFolder: () => ipcRenderer.invoke('data:openUserDataFolder'),
+  onSaveError: (cb) => {
+    const listener = (_evt, payload) => {
+      try { cb(payload); } catch (err) { console.error('[leeadman] save error handler threw', err); }
+    };
+    ipcRenderer.on('data:saveError', listener);
+    return () => ipcRenderer.removeListener('data:saveError', listener);
+  },
   showNotification: (opts) => ipcRenderer.invoke('app:showNotification', opts),
   userDataPath: () => ipcRenderer.invoke('app:userDataPath'),
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),

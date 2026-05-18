@@ -7,6 +7,7 @@ import { askAI, AIError, defaultModel } from '../lib/ai';
 import type { AIProvider, AppData } from '../model';
 import { AI_PROVIDER_OPTIONS } from '../model';
 import { useTheme } from '../ThemeContext';
+import type { DataFileInfo, DataSources, SaveError } from '../vite-env';
 
 export function Settings() {
   const { data, replaceAll } = useAppData();
@@ -219,6 +220,8 @@ export function Settings() {
           Importing replaces your existing data. Always export a backup first.
         </p>
       </section>
+
+      <BackupsRecoverySection />
 
       <SyncSection />
 
@@ -707,6 +710,13 @@ function AISettingsSection() {
   }, [ai?.provider, ai?.apiKey, ai?.model]);
 
   const placeholderModel = useMemo(() => (provider ? defaultModel(provider) : ''), [provider]);
+  const modelExamples = useMemo(
+    () => (provider ? AI_PROVIDER_OPTIONS.find((p) => p.value === provider)?.modelExamples ?? [] : []),
+    [provider],
+  );
+  // Gemini 1.x was retired from v1beta in late 2025; surface a one-click fix
+  // for users who still have the old name saved.
+  const modelIsRetiredGemini = provider === 'gemini' && /^gemini-1\.[05]/i.test(model.trim());
   const dirty =
     (ai?.provider ?? '') !== provider ||
     (ai?.apiKey ?? '') !== apiKey.trim() ||
@@ -828,6 +838,48 @@ function AISettingsSection() {
           value={model}
           onChange={(e) => setModel(e.target.value)}
         />
+        {modelExamples.length > 0 ? (
+          <span className="muted small" style={{ marginTop: 4, display: 'block' }}>
+            Suggested: {modelExamples.map((m, i) => (
+              <span key={m}>
+                <button
+                  type="button"
+                  className="auth-link auth-link--inline"
+                  onClick={() => setModel(m)}
+                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                >
+                  {m}
+                </button>
+                {i < modelExamples.length - 1 ? ', ' : ''}
+              </span>
+            ))}
+          </span>
+        ) : null}
+        {modelIsRetiredGemini ? (
+          <span
+            className="small"
+            style={{
+              marginTop: 6,
+              display: 'block',
+              padding: '6px 10px',
+              borderRadius: 6,
+              background: 'rgba(220, 38, 38, 0.08)',
+              border: '1px solid var(--danger)',
+              color: 'var(--text)',
+            }}
+          >
+            Heads up: Gemini 1.x models were retired by Google in late 2025 and will return HTTP 404. Click{' '}
+            <button
+              type="button"
+              className="auth-link auth-link--inline"
+              onClick={() => setModel('gemini-2.0-flash')}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontWeight: 600 }}
+            >
+              gemini-2.0-flash
+            </button>{' '}
+            to switch to the current GA model.
+          </span>
+        ) : null}
       </label>
 
       <div className="row" style={{ marginTop: 12, flexWrap: 'wrap' }}>
@@ -875,4 +927,273 @@ function AISettingsSection() {
       ) : null}
     </section>
   );
+}
+
+// ---------- Backups & Recovery -----------------------------------------------
+//
+// Lists every place on disk where the user's data might still be (live file,
+// rolling backups, legacy single-user file, orphaned per-user files from a
+// previous account UUID). Lets the user preview a candidate and restore it
+// into the live file. Every restore takes a "pre-restore" snapshot of the
+// current state so the operation is itself undoable.
+
+function BackupsRecoverySection() {
+  const { reload } = useAppData();
+  const isElectron = typeof window !== 'undefined' && !!window.leeadman?.dataListSources;
+  const [sources, setSources] = useState<DataSources | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [saveError, setSaveError] = useState<SaveError | null>(null);
+
+  const refresh = async () => {
+    if (!isElectron) return;
+    setBusy(true);
+    try {
+      const r = await window.leeadman!.dataListSources!();
+      setSources(r);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+    if (!window.leeadman?.onSaveError) return;
+    const off = window.leeadman.onSaveError((e) => setSaveError(e));
+    return off;
+  }, []);
+
+  if (!isElectron) {
+    return (
+      <section className="card">
+        <h2 className="card__title">Backups &amp; recovery</h2>
+        <p className="muted">
+          This panel is only available in the desktop app. In the browser preview, your data lives in the browser&apos;s
+          local storage and is automatically cleared if you switch browsers or use private mode.
+        </p>
+      </section>
+    );
+  }
+
+  const restore = async (filePath: string, label: string) => {
+    if (!window.confirm(`Restore data from "${label}"?\n\nYour current data will be snapshotted first so you can undo this.`)) {
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await window.leeadman!.dataRestoreFromSource!({ filePath });
+      if (r.ok) {
+        setMsg({ kind: 'ok', text: `Restored from ${r.restoredFrom ?? label}. Reloading…` });
+        await reload();
+        await refresh();
+      } else {
+        setMsg({ kind: 'error', text: r.error || 'Restore failed.' });
+      }
+    } catch (err) {
+      setMsg({ kind: 'error', text: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openFolder = async () => {
+    await window.leeadman?.openUserDataFolder?.();
+  };
+
+  return (
+    <section className="card">
+      <h2 className="card__title">Backups &amp; recovery</h2>
+      <p className="muted small" style={{ marginBottom: 12 }}>
+        Leeadman snapshots your data file every time it saves, after every sign-in, and at app launch. If something looks
+        wrong (e.g. your data appeared empty after an update), you can restore from any snapshot below — your <em>current</em>
+        state is always backed up first, so this is reversible.
+      </p>
+
+      {saveError ? (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: '10px 12px',
+            border: '1px solid var(--danger)',
+            background: 'rgba(220, 38, 38, 0.08)',
+            borderRadius: 8,
+            color: 'var(--text)',
+          }}
+        >
+          <strong>Heads up:</strong> Leeadman refused to overwrite your data file because it cannot be decrypted with the
+          current session key. Your data is still on disk — pick a recent backup below and restore it.
+          <div className="muted small" style={{ marginTop: 4 }}>
+            Reason: {saveError.reason ?? 'unknown'}
+            {saveError.error ? ` — ${saveError.error}` : ''}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="row" style={{ marginBottom: 12 }}>
+        <Button type="button" variant="secondary" icon={<IcRefresh size={16} />} onClick={refresh} disabled={busy}>
+          Refresh
+        </Button>
+        <Button type="button" variant="ghost" onClick={openFolder}>
+          Open data folder
+        </Button>
+      </div>
+
+      {msg ? (
+        <p
+          className="small"
+          style={{
+            marginBottom: 12,
+            color: msg.kind === 'ok' ? 'var(--ok)' : 'var(--danger)',
+          }}
+        >
+          {msg.text}
+        </p>
+      ) : null}
+
+      {sources ? (
+        <>
+          <DataSourceRow
+            label="Current data file"
+            sub="The live file the app reads from."
+            info={sources.live}
+            onRestore={null}
+          />
+          <DataSourceRow
+            label="Legacy single-user file (leeadman-data.json)"
+            sub="From the pre-accounts version of Leeadman. Restoring imports it into your current account."
+            info={sources.legacy}
+            onRestore={(f) => restore(f, 'legacy data file')}
+          />
+
+          {sources.backups.length > 0 ? (
+            <>
+              <h3 style={{ fontSize: 14, marginTop: 18, marginBottom: 8 }}>Automatic snapshots</h3>
+              {sources.backups.map((b) => (
+                <DataSourceRow
+                  key={b.path}
+                  info={b}
+                  label={b.name}
+                  sub={`${formatBytes(b.bytes)} · ${formatRelativeTime(b.mtime)}`}
+                  onRestore={(f) => restore(f, b.name)}
+                />
+              ))}
+            </>
+          ) : (
+            <p className="muted small" style={{ marginTop: 12 }}>
+              No automatic snapshots yet. The next save will create one.
+            </p>
+          )}
+
+          {sources.otherUsers.length > 0 ? (
+            <>
+              <h3 style={{ fontSize: 14, marginTop: 18, marginBottom: 8 }}>Other accounts on this machine</h3>
+              <p className="muted small" style={{ marginBottom: 8 }}>
+                Data files that belong to a different user ID on this computer. Useful if you registered twice by mistake.
+              </p>
+              {sources.otherUsers.map((o) => (
+                <DataSourceRow
+                  key={o.path}
+                  info={o}
+                  label={o.name}
+                  sub={`${formatBytes(o.bytes)} · ${formatRelativeTime(o.mtime)}`}
+                  onRestore={(f) => restore(f, o.name)}
+                />
+              ))}
+            </>
+          ) : null}
+        </>
+      ) : (
+        <p className="muted small">Loading…</p>
+      )}
+    </section>
+  );
+}
+
+function DataSourceRow({
+  info,
+  label,
+  sub,
+  onRestore,
+}: {
+  info: DataFileInfo | null;
+  label: string;
+  sub?: string;
+  onRestore: ((filePath: string) => void) | null;
+}) {
+  if (!info) {
+    return (
+      <div className="list__row" style={{ marginBottom: 8 }}>
+        <div>
+          <div style={{ fontWeight: 600 }}>{label}</div>
+          <div className="muted small">Not present on this machine.</div>
+        </div>
+      </div>
+    );
+  }
+  const c = info.counts;
+  const dataSummary = c
+    ? [
+        c.teams ? `${c.teams} team${c.teams === 1 ? '' : 's'}` : null,
+        c.people ? `${c.people} people` : null,
+        c.items ? `${c.items} items` : null,
+        c.todoGroups ? `${c.todoGroups} lists` : null,
+        c.todoItems ? `${c.todoItems} tasks` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ') || 'empty'
+    : info.encrypted && !info.decryptable
+    ? 'encrypted (cannot decrypt with current password)'
+    : info.error
+    ? `error: ${info.error}`
+    : 'unreadable';
+
+  return (
+    <div className="list__row" style={{ marginBottom: 8 }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{label}</div>
+        {sub ? <div className="muted small">{sub}</div> : null}
+        <div className="muted small" style={{ marginTop: 4 }}>
+          {dataSummary}
+          {info.encrypted ? ' · encrypted' : ''}
+          {info.bytes != null ? ` · ${formatBytes(info.bytes)}` : ''}
+        </div>
+      </div>
+      {onRestore ? (
+        <Button
+          type="button"
+          variant="secondary"
+          icon={<IcUpload size={16} />}
+          onClick={() => onRestore(info.path)}
+          disabled={info.encrypted && !info.decryptable}
+        >
+          Restore
+        </Button>
+      ) : (
+        <span className="muted small">live</span>
+      )}
+    </div>
+  );
+}
+
+function formatBytes(bytes: number | undefined) {
+  if (bytes == null) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatRelativeTime(iso: string | undefined) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const diff = Date.now() - d.getTime();
+  const min = Math.round(diff / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.round(h / 24);
+  if (days < 14) return `${days}d ago`;
+  return d.toLocaleString();
 }
