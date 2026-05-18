@@ -99,12 +99,18 @@ export function Settings() {
                 window.alert('PIN must be at least 4 characters and both fields must match.');
                 return;
               }
+              // setPin runs a round-trip self-verify in the main process and
+              // rolls back if the stored hash cannot reproduce the same PIN.
+              // So a successful response here guarantees the lock screen will
+              // accept the same characters the user just typed.
               const r = await window.leeadman?.authSetPin?.({ pin: a });
               if (r?.ok) {
                 setNewPin('');
                 setNewPin2('');
                 await refreshSession();
-                window.alert('PIN saved. You will be prompted on next launch. If you ever lose it, you can reset it from the lock screen with your account password.');
+                window.alert(
+                  'PIN saved. You will be prompted on next launch. If you ever lose it, you can reset it from the lock screen with your account password.',
+                );
               } else {
                 window.alert(r?.error ?? 'Could not save PIN.');
               }

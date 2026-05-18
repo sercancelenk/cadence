@@ -19,7 +19,8 @@ import { AIAssistantDialog } from '../components/AIAssistantDialog';
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { isAIConfigured } from '../lib/ai';
 import { formatDateShort, formatTimeOnly, fromLocalDatetimeValue, isPast, toLocalDatetimeValue } from '../lib/datetime';
-import type { TodoGroup, TodoItem } from '../model';
+import { PRIORITY_OPTIONS, priorityRank } from '../model';
+import type { Priority, TodoGroup, TodoItem } from '../model';
 
 function hashHue(seed: string): number {
   let h = 0;
@@ -37,6 +38,8 @@ function ringStyle(groupId: string): CSSProperties {
 
 const LS_TODO_SECTIONS = 'leeadman.todos.sectionsOpen.v1';
 const LS_TODO_SHOW_ARCHIVED = 'leeadman.todos.showArchived.v1';
+const LS_TODO_HIDE_DONE = 'leeadman.todos.hideDone.v1';
+const LS_TODO_SORT_MODE = 'leeadman.todos.sortMode.v1';
 
 function todoSectionsStorageKey(userId: string) {
   return `${LS_TODO_SECTIONS}:${userId}`;
@@ -46,8 +49,45 @@ function todoShowArchivedKey(userId: string) {
   return `${LS_TODO_SHOW_ARCHIVED}:${userId}`;
 }
 
+function todoHideDoneKey(userId: string) {
+  return `${LS_TODO_HIDE_DONE}:${userId}`;
+}
+
+function todoSortModeKey(userId: string) {
+  return `${LS_TODO_SORT_MODE}:${userId}`;
+}
+
+/**
+ * Controls how items inside a list are ordered:
+ *   - 'manual'    → user-defined sortOrder (drag-and-drop)
+ *   - 'priority'  → urgent > high > normal > low, ties broken by manual order
+ *   - 'due'       → soonest due date first; undated items last
+ */
+type SortMode = 'manual' | 'priority' | 'due';
+
+const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+  { value: 'manual', label: 'Manual order' },
+  { value: 'priority', label: 'By priority' },
+  { value: 'due', label: 'By due date' },
+];
+
 function isSectionOpen(map: Record<string, boolean>, groupId: string): boolean {
   return map[groupId] !== false;
+}
+
+function priorityShort(p: Priority): string {
+  switch (p) {
+    case 'urgent':
+      return 'U';
+    case 'high':
+      return 'H';
+    case 'normal':
+      return 'N';
+    case 'low':
+      return 'L';
+    default:
+      return '';
+  }
 }
 
 /**
@@ -74,10 +114,20 @@ type TodoTaskRowProps = {
   groups: TodoGroup[];
   compact: boolean;
   aiEnabled: boolean;
+  allowDrag: boolean;
+  isDragSrc: boolean;
+  isDropTgt: boolean;
   onAskAI: (item: TodoItem) => void;
-  onPatch: (id: string, patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt'>>) => void;
+  onPatch: (
+    id: string,
+    patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'priority'>>,
+  ) => void;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
+  onDragStart: (itemId: string) => void;
+  onDragOver: (itemId: string) => void;
+  onDrop: (itemId: string) => void;
+  onDragEnd: () => void;
 };
 
 /**
@@ -136,14 +186,22 @@ function TodoTaskRow({
   groups,
   compact,
   aiEnabled,
+  allowDrag,
+  isDragSrc,
+  isDropTgt,
   onAskAI,
   onPatch,
   onToggle,
   onRemove,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
 }: TodoTaskRowProps) {
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(item.title);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const dueLabel = item.dueAt ? formatTimeOnly(item.dueAt) : '';
   const dueDateShort = formatDateShort(item.dueAt);
@@ -155,11 +213,60 @@ function TodoTaskRow({
     setScheduleOpen(false);
   };
 
+  // 3-second "click-to-confirm" delete. We auto-revert the confirm state so
+  // the trash button doesn't sit in a dangerous mode after the user navigates
+  // away mentally. Two clicks are required only when the user is hovering on
+  // the same row, which keeps the keyboard-driven flow as one mental step.
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const t = window.setTimeout(() => setConfirmDelete(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [confirmDelete]);
+
+  const handleDeleteClick = () => {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setConfirmDelete(false);
+    onRemove(item.id);
+  };
+
   return (
     <li
-      className={`todos-row${compact ? ' todos-row--compact' : ''}${item.done ? ' todos-row--done' : ''}`}
+      className={`todos-row${compact ? ' todos-row--compact' : ''}${item.done ? ' todos-row--done' : ''}${
+        item.priority ? ` todos-row--prio-${item.priority}` : ''
+      }${isDragSrc ? ' todos-row--dragging' : ''}${isDropTgt ? ' todos-row--drop-target' : ''}`}
       style={ringStyle(item.groupId)}
+      draggable={allowDrag}
+      onDragStart={(e) => {
+        if (!allowDrag) return;
+        onDragStart(item.id);
+        e.dataTransfer.effectAllowed = 'move';
+        // Some platforms (Safari) refuse to start a drag without setData.
+        try { e.dataTransfer.setData('text/plain', item.id); } catch { /* ignore */ }
+      }}
+      onDragOver={(e) => {
+        if (!allowDrag) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        onDragOver(item.id);
+      }}
+      onDrop={(e) => {
+        if (!allowDrag) return;
+        e.preventDefault();
+        onDrop(item.id);
+      }}
+      onDragEnd={() => {
+        if (!allowDrag) return;
+        onDragEnd();
+      }}
     >
+      {allowDrag ? (
+        <span className="todos-row__handle" aria-hidden title="Drag to reorder">
+          <IcGrip size={14} />
+        </span>
+      ) : null}
       <button
         type="button"
         className={`todos-row__check${item.done ? ' todos-row__check--on' : ''}`}
@@ -211,6 +318,12 @@ function TodoTaskRow({
               {item.title}
             </button>
           )}
+
+          {item.priority ? (
+            <span className={`todos-row__prio todos-row__prio--${item.priority}`} title={`Priority: ${item.priority}`}>
+              {priorityShort(item.priority)}
+            </span>
+          ) : null}
 
           <div className="todos-row__tag">
             <span className="todos-row__tag-name">{group.name}</span>
@@ -300,6 +413,22 @@ function TodoTaskRow({
             </div>
             <select
               className="todos-row__move"
+              value={item.priority ?? ''}
+              onChange={(e) =>
+                onPatch(item.id, { priority: (e.target.value || undefined) as Priority | undefined })
+              }
+              aria-label="Set priority"
+              title="Priority"
+            >
+              <option value="">No priority</option>
+              {PRIORITY_OPTIONS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="todos-row__move"
               value={item.groupId}
               onChange={(e) => onPatch(item.id, { groupId: e.target.value })}
               aria-label="Move to list"
@@ -320,8 +449,19 @@ function TodoTaskRow({
                 <IcSparkles size={15} />
               </button>
             ) : null}
-            <button type="button" className="todos-row__icon-btn" title="Delete" onClick={() => onRemove(item.id)}>
-              <IcTrash size={16} />
+            <button
+              type="button"
+              className={`todos-row__icon-btn${confirmDelete ? ' todos-row__icon-btn--confirm' : ''}`}
+              title={confirmDelete ? 'Click again to confirm delete' : 'Delete'}
+              aria-label={confirmDelete ? 'Click again to confirm delete' : 'Delete'}
+              onClick={handleDeleteClick}
+              onBlur={() => setConfirmDelete(false)}
+            >
+              {confirmDelete ? (
+                <span className="todos-row__icon-btn-label">Sure?</span>
+              ) : (
+                <IcTrash size={16} />
+              )}
             </button>
           </div>
         </div>
@@ -341,6 +481,8 @@ export function TodosPage() {
     updateTodoItem,
     toggleTodoItem,
     removeTodoItem,
+    reorderTodoItem,
+    updateTodoGroupPriority,
     updateTodoGroup,
     moveTodoGroup,
     reorderTodoGroup,
@@ -356,8 +498,12 @@ export function TodosPage() {
   const [sectionsHydrated, setSectionsHydrated] = useState(false);
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  const [hideDone, setHideDone] = useState(false);
+  const [sortMode, setSortMode] = useState<SortMode>('manual');
   const [dragGroupId, setDragGroupId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dragItemId, setDragItemId] = useState<string | null>(null);
+  const [dropItemTargetId, setDropItemTargetId] = useState<string | null>(null);
   const [aiTask, setAiTask] = useState<TodoItem | null>(null);
 
   const aiEnabled = isAIConfigured(data.aiSettings);
@@ -389,6 +535,10 @@ export function TodosPage() {
       }
       const archivedRaw = localStorage.getItem(todoShowArchivedKey(userId));
       setShowArchived(archivedRaw === '1');
+      const hideDoneRaw = localStorage.getItem(todoHideDoneKey(userId));
+      setHideDone(hideDoneRaw === '1');
+      const sortRaw = localStorage.getItem(todoSortModeKey(userId));
+      setSortMode(sortRaw === 'priority' || sortRaw === 'due' ? sortRaw : 'manual');
     } catch {
       setSectionOpenMap({});
     }
@@ -413,6 +563,16 @@ export function TodosPage() {
     }
   }, [showArchived, sectionsHydrated, userId]);
 
+  useEffect(() => {
+    if (!sectionsHydrated || !userId) return;
+    try {
+      localStorage.setItem(todoHideDoneKey(userId), hideDone ? '1' : '0');
+      localStorage.setItem(todoSortModeKey(userId), sortMode);
+    } catch {
+      /* ignore */
+    }
+  }, [hideDone, sortMode, sectionsHydrated, userId]);
+
   const itemsByGroup = useMemo(() => {
     const m = new Map<string, TodoItem[]>();
     for (const g of data.todoGroups) m.set(g.id, []);
@@ -421,16 +581,27 @@ export function TodosPage() {
       arr.push(it);
       m.set(it.groupId, arr);
     }
+    const orderOf = (x: TodoItem) => x.sortOrder ?? 0;
+    const dueOf = (x: TodoItem) => (x.dueAt ? Date.parse(x.dueAt) : Infinity);
+
     for (const arr of m.values()) {
       arr.sort((a, b) => {
-        const ad = a.dueAt ? Date.parse(a.dueAt) : Infinity;
-        const bd = b.dueAt ? Date.parse(b.dueAt) : Infinity;
-        if (ad !== bd) return ad - bd;
-        return b.updatedAt.localeCompare(a.updatedAt);
+        if (sortMode === 'priority') {
+          const dp = priorityRank(a.priority) - priorityRank(b.priority);
+          if (dp !== 0) return dp;
+          return orderOf(a) - orderOf(b);
+        }
+        if (sortMode === 'due') {
+          const dd = dueOf(a) - dueOf(b);
+          if (dd !== 0) return dd;
+          return orderOf(a) - orderOf(b);
+        }
+        // manual
+        return orderOf(a) - orderOf(b);
       });
     }
     return m;
-  }, [data.todoGroups, data.todoItems]);
+  }, [data.todoGroups, data.todoItems, sortMode]);
 
   const groupById = useMemo(() => new Map(allGroupsSorted.map((g) => [g.id, g])), [allGroupsSorted]);
 
@@ -470,6 +641,29 @@ export function TodosPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        <label className="todos-toolbar__select">
+          <span className="muted small">Sort</span>
+          <select
+            className="input"
+            value={sortMode}
+            onChange={(e) => setSortMode(e.target.value as SortMode)}
+            aria-label="Sort items by"
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="todos-toolbar__check">
+          <input
+            type="checkbox"
+            checked={hideDone}
+            onChange={(e) => setHideDone(e.target.checked)}
+          />
+          <span className="small">Hide completed</span>
+        </label>
         <label className="todos-toolbar__check">
           <input
             type="checkbox"
@@ -586,6 +780,15 @@ export function TodosPage() {
               <span className="todos-section__counts" title="Open · Completed">
                 {totalActive}
                 <span className="muted"> / {totalActive + totalDone}</span>
+                {g.priority ? (
+                  <span
+                    className={`pill todos-section__prio todos-section__prio--${g.priority}`}
+                    style={{ marginLeft: 8 }}
+                    title={`List priority: ${g.priority}`}
+                  >
+                    {g.priority}
+                  </span>
+                ) : null}
                 {g.archived ? <span className="pill" style={{ marginLeft: 8 }}>archived</span> : null}
               </span>
 
@@ -624,6 +827,28 @@ export function TodosPage() {
                   >
                     {g.archived ? 'Unarchive' : 'Archive'}
                   </button>
+                  <div className="todos-section__menu-sep" />
+                  <div className="todos-section__menu-row">
+                    <span className="muted small">List priority</span>
+                    <select
+                      className="input"
+                      value={g.priority ?? ''}
+                      onChange={(e) =>
+                        updateTodoGroupPriority(
+                          g.id,
+                          (e.target.value || undefined) as Priority | undefined,
+                        )
+                      }
+                      aria-label="List priority"
+                    >
+                      <option value="">None</option>
+                      {PRIORITY_OPTIONS.map((p) => (
+                        <option key={p.value} value={p.value}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="todos-section__menu-sep" />
                   <button
                     type="button"
@@ -671,9 +896,13 @@ export function TodosPage() {
 
             {sectionOpen ? (
               <>
-                {active.length === 0 && done.length === 0 ? (
+                {active.length === 0 && (hideDone || done.length === 0) ? (
                   <p className="todos-section__empty">
-                    {q ? 'No matching tasks in this list.' : 'No tasks in this list.'}
+                    {q
+                      ? 'No matching tasks in this list.'
+                      : hideDone && done.length > 0
+                        ? `${done.length} completed task${done.length === 1 ? '' : 's'} hidden.`
+                        : 'No tasks in this list.'}
                   </p>
                 ) : (
                   <ul className="todos-list">
@@ -685,26 +914,50 @@ export function TodosPage() {
                         groups={allGroupsSorted}
                         compact={compact}
                         aiEnabled={aiEnabled}
+                        allowDrag={sortMode === 'manual'}
+                        isDragSrc={dragItemId === it.id}
+                        isDropTgt={dropItemTargetId === it.id && dragItemId !== it.id}
                         onAskAI={setAiTask}
                         onPatch={(id, patch) => updateTodoItem(id, patch)}
                         onToggle={toggleTodoItem}
                         onRemove={removeTodoItem}
+                        onDragStart={setDragItemId}
+                        onDragOver={setDropItemTargetId}
+                        onDrop={(targetId) => {
+                          if (dragItemId && dragItemId !== targetId) {
+                            reorderTodoItem(dragItemId, g.id, targetId);
+                          }
+                          setDragItemId(null);
+                          setDropItemTargetId(null);
+                        }}
+                        onDragEnd={() => {
+                          setDragItemId(null);
+                          setDropItemTargetId(null);
+                        }}
                       />
                     ))}
-                    {done.map((it) => (
-                      <TodoTaskRow
-                        key={it.id}
-                        item={it}
-                        group={groupById.get(it.groupId) ?? g}
-                        groups={allGroupsSorted}
-                        compact={compact}
-                        aiEnabled={aiEnabled}
-                        onAskAI={setAiTask}
-                        onPatch={(id, patch) => updateTodoItem(id, patch)}
-                        onToggle={toggleTodoItem}
-                        onRemove={removeTodoItem}
-                      />
-                    ))}
+                    {!hideDone &&
+                      done.map((it) => (
+                        <TodoTaskRow
+                          key={it.id}
+                          item={it}
+                          group={groupById.get(it.groupId) ?? g}
+                          groups={allGroupsSorted}
+                          compact={compact}
+                          aiEnabled={aiEnabled}
+                          allowDrag={false}
+                          isDragSrc={false}
+                          isDropTgt={false}
+                          onAskAI={setAiTask}
+                          onPatch={(id, patch) => updateTodoItem(id, patch)}
+                          onToggle={toggleTodoItem}
+                          onRemove={removeTodoItem}
+                          onDragStart={() => {}}
+                          onDragOver={() => {}}
+                          onDrop={() => {}}
+                          onDragEnd={() => {}}
+                        />
+                      ))}
                   </ul>
                 )}
 

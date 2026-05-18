@@ -19,6 +19,8 @@ import {
   markAllCompleteInGroup as markAllCompleteInGroupFn,
   moveTodoGroup as moveTodoGroupFn,
   reorderTodoGroup as reorderTodoGroupFn,
+  reorderTodoItem as reorderTodoItemFn,
+  updateTodoGroupPriority as updateTodoGroupPriorityFn,
   removeItem as removeItemFn,
   removePerson as removePersonFn,
   removeTeam as removeTeamFn,
@@ -36,7 +38,18 @@ import {
   updateTodoItem as updateTodoItemFn,
   updateUserProfile as updateUserProfileFn,
 } from './actions';
-import type { AISettings, AppData, Item, ItemKind, Person, Team, TodoGroup, TodoItem, UserProfile } from './model';
+import type {
+  AISettings,
+  AppData,
+  Item,
+  ItemKind,
+  Person,
+  Priority,
+  Team,
+  TodoGroup,
+  TodoItem,
+  UserProfile,
+} from './model';
 import { normalizeData } from './model';
 
 type Api = {
@@ -98,7 +111,12 @@ type Api = {
   markAllCompleteInGroup: (groupId: string) => void;
   removeTodoGroup: (groupId: string) => void;
   addTodoItem: (groupId: string, title: string) => void;
-  updateTodoItem: (id: string, patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done'>>) => void;
+  updateTodoItem: (
+    id: string,
+    patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done' | 'priority'>>,
+  ) => void;
+  reorderTodoItem: (itemId: string, targetGroupId: string, beforeItemId: string | null) => void;
+  updateTodoGroupPriority: (groupId: string, priority: Priority | undefined) => void;
   toggleTodoItem: (id: string) => void;
   removeTodoItem: (id: string) => void;
 };
@@ -280,6 +298,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       removeTodoGroup: (groupId) => update((x) => removeTodoGroupFn(x, groupId)),
       addTodoItem: (groupId, title) => update((x) => addTodoItemFn(x, groupId, title)),
       updateTodoItem: (id, patch) => update((x) => updateTodoItemFn(x, id, patch)),
+      reorderTodoItem: (itemId, targetGroupId, beforeItemId) =>
+        update((x) => reorderTodoItemFn(x, itemId, targetGroupId, beforeItemId)),
+      updateTodoGroupPriority: (groupId, priority) =>
+        update((x) => updateTodoGroupPriorityFn(x, groupId, priority)),
       toggleTodoItem: (id) => update((x) => toggleTodoItemFn(x, id)),
       removeTodoItem: (id) => update((x) => removeTodoItemFn(x, id)),
     };

@@ -81,6 +81,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const { phase, unlockWithPin, refresh } = useSession();
   const [pin, setPin] = useState('');
   const [err, setErr] = useState('');
+  const [attempts, setAttempts] = useState(0);
   const [recovering, setRecovering] = useState(false);
   const [recoveryPwd, setRecoveryPwd] = useState('');
   const [recoveryErr, setRecoveryErr] = useState('');
@@ -90,8 +91,22 @@ export function AuthGate({ children }: { children: ReactNode }) {
     e.preventDefault();
     setErr('');
     const ok = await unlockWithPin(pin);
-    if (ok) setPin('');
-    else setErr('Incorrect PIN.');
+    if (ok) {
+      setPin('');
+      setAttempts(0);
+      return;
+    }
+    const next = attempts + 1;
+    setAttempts(next);
+    if (next >= 3) {
+      // After 3 failed attempts, surface recovery upfront — typing the wrong
+      // PIN three times almost always means the user has forgotten it (or hit
+      // the now-fixed normalize bug) and would otherwise be locked out.
+      setErr('Incorrect PIN. Reset it with your account password below.');
+      setRecovering(true);
+    } else {
+      setErr(`Incorrect PIN. ${3 - next} more attempt${3 - next === 1 ? '' : 's'} before recovery opens.`);
+    }
   };
 
   const submitRecovery = async (e: FormEvent) => {

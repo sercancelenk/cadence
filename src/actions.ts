@@ -7,6 +7,7 @@ import type {
   Item,
   ItemKind,
   Person,
+  Priority,
   ReminderRepeat,
   Team,
   TodoGroup,
@@ -564,11 +565,18 @@ export function addTodoItem(data: AppData, groupId: string, title: string): AppD
   const gid = data.todoGroups.some((g) => g.id === groupId) ? groupId : data.todoGroups[0]?.id;
   if (!gid) return data;
   const t = nowIso();
+  // New items go to the TOP of the list (sortOrder = min - 1). This matches
+  // how to-do apps usually behave when you "add task" — the new task is
+  // immediately visible without scrolling.
+  const minOrder = data.todoItems
+    .filter((x) => x.groupId === gid)
+    .reduce((acc, x) => Math.min(acc, x.sortOrder ?? 0), 0);
   const item: TodoItem = {
     id: uuid(),
     groupId: gid,
     title: title.trim() || 'Untitled task',
     done: false,
+    sortOrder: minOrder - 1,
     createdAt: t,
     updatedAt: t,
   };
@@ -578,7 +586,7 @@ export function addTodoItem(data: AppData, groupId: string, title: string): AppD
 export function updateTodoItem(
   data: AppData,
   id: string,
-  patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done'>>,
+  patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done' | 'priority'>>,
 ): AppData {
   return {
     ...data,
@@ -587,17 +595,84 @@ export function updateTodoItem(
       const groupId =
         patch.groupId !== undefined && data.todoGroups.some((g) => g.id === patch.groupId) ? patch.groupId : x.groupId;
       let done = x.done;
-      let updatedAt = nowIso();
+      const updatedAt = nowIso();
       if (patch.done !== undefined) done = patch.done;
+      const priority =
+        patch.priority !== undefined ? (patch.priority || undefined) : x.priority;
       return {
         ...x,
         title: patch.title !== undefined ? patch.title.trim() || x.title : x.title,
         groupId,
         dueAt: patch.dueAt !== undefined ? patch.dueAt || undefined : x.dueAt,
         done,
+        priority,
         updatedAt,
       };
     }),
+  };
+}
+
+/**
+ * Reorder an item within (or across) groups.
+ *
+ * `beforeItemId === null` puts the item at the end of `targetGroupId`.
+ * If the destination group differs, the item's `groupId` is moved too — so
+ * drag-and-drop between lists works for free.
+ */
+export function reorderTodoItem(
+  data: AppData,
+  itemId: string,
+  targetGroupId: string,
+  beforeItemId: string | null,
+): AppData {
+  const target = data.todoItems.find((x) => x.id === itemId);
+  if (!target) return data;
+  if (beforeItemId === itemId) return data;
+  if (!data.todoGroups.some((g) => g.id === targetGroupId)) return data;
+
+  const peers = data.todoItems
+    .filter((x) => x.groupId === targetGroupId && x.id !== itemId)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+  const insertAt = beforeItemId
+    ? peers.findIndex((p) => p.id === beforeItemId)
+    : peers.length;
+
+  const ordered: TodoItem[] = [
+    ...peers.slice(0, Math.max(0, insertAt)),
+    { ...target, groupId: targetGroupId, updatedAt: nowIso() },
+    ...peers.slice(Math.max(0, insertAt)),
+  ];
+
+  // Re-stamp sortOrder in 10-step increments to leave room for fine-grained
+  // future moves without rewriting every row.
+  const reordered = new Map<string, number>();
+  ordered.forEach((x, idx) => reordered.set(x.id, idx * 10));
+
+  return {
+    ...data,
+    todoItems: data.todoItems.map((x) => {
+      const nextOrder = reordered.get(x.id);
+      if (nextOrder === undefined) return x;
+      const moved = x.id === itemId;
+      return {
+        ...x,
+        groupId: moved ? targetGroupId : x.groupId,
+        sortOrder: nextOrder,
+        updatedAt: moved ? nowIso() : x.updatedAt,
+      };
+    }),
+  };
+}
+
+export function updateTodoGroupPriority(
+  data: AppData,
+  groupId: string,
+  priority: Priority | undefined,
+): AppData {
+  return {
+    ...data,
+    todoGroups: data.todoGroups.map((g) => (g.id === groupId ? { ...g, priority } : g)),
   };
 }
 

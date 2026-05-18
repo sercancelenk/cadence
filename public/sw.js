@@ -12,7 +12,7 @@
  * does (main.tsx checks LEEADMAN_PWA flag + presence of `serviceWorker` API).
  */
 
-const CACHE_VERSION = 'v7-textarea-fix';
+const CACHE_VERSION = 'v8-priority-reorder';
 const CACHE_NAME = `leeadman-${CACHE_VERSION}`;
 
 const APP_SHELL = [

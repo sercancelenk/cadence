@@ -93,6 +93,20 @@ export const REMIND_REPEAT_OPTIONS: { value: '' | ReminderRepeat; label: string 
   { value: 'monthly', label: 'Monthly' },
 ];
 
+export type Priority = 'low' | 'normal' | 'high' | 'urgent';
+
+export const PRIORITY_OPTIONS: { value: Priority; label: string; rank: number; tone: string }[] = [
+  { value: 'urgent', label: 'Urgent', rank: 0, tone: 'danger' },
+  { value: 'high', label: 'High', rank: 1, tone: 'warn' },
+  { value: 'normal', label: 'Normal', rank: 2, tone: 'info' },
+  { value: 'low', label: 'Low', rank: 3, tone: 'muted' },
+];
+
+export function priorityRank(p: Priority | undefined): number {
+  if (!p) return 2;
+  return PRIORITY_OPTIONS.find((o) => o.value === p)?.rank ?? 2;
+}
+
 export interface TodoGroup {
   id: string;
   name: string;
@@ -101,6 +115,8 @@ export interface TodoGroup {
   pinned?: boolean;
   /** Archived groups are hidden from the main view by default. */
   archived?: boolean;
+  /** Optional priority for the entire list (used for cross-list ordering). */
+  priority?: Priority;
   createdAt: string;
 }
 
@@ -110,6 +126,10 @@ export interface TodoItem {
   title: string;
   done: boolean;
   dueAt?: string;
+  /** Per-item priority (urgent / high / normal / low). */
+  priority?: Priority;
+  /** Order index within the group. Lower comes first. */
+  sortOrder?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -306,6 +326,14 @@ function parseItems(raw: unknown[]): Item[] {
     });
 }
 
+const KNOWN_PRIORITIES: Priority[] = ['low', 'normal', 'high', 'urgent'];
+
+function parsePriority(value: unknown): Priority | undefined {
+  return typeof value === 'string' && KNOWN_PRIORITIES.includes(value as Priority)
+    ? (value as Priority)
+    : undefined;
+}
+
 function parseTodoGroups(raw: unknown[]): TodoGroup[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -316,6 +344,7 @@ function parseTodoGroups(raw: unknown[]): TodoGroup[] {
       sortOrder: typeof g.sortOrder === 'number' ? g.sortOrder : i,
       pinned: g.pinned === true ? true : undefined,
       archived: g.archived === true ? true : undefined,
+      priority: parsePriority(g.priority),
       createdAt: typeof g.createdAt === 'string' ? g.createdAt : nowIso(),
     }));
 }
@@ -324,12 +353,14 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
-    .map((x) => ({
+    .map((x, i) => ({
       id: typeof x.id === 'string' ? x.id : uuid(),
       groupId: typeof x.groupId === 'string' ? x.groupId : '',
       title: typeof x.title === 'string' ? x.title : '',
       done: !!x.done,
       dueAt: typeof x.dueAt === 'string' ? x.dueAt : undefined,
+      priority: parsePriority(x.priority),
+      sortOrder: typeof x.sortOrder === 'number' ? x.sortOrder : i,
       createdAt: typeof x.createdAt === 'string' ? x.createdAt : nowIso(),
       updatedAt: typeof x.updatedAt === 'string' ? x.updatedAt : nowIso(),
     }));

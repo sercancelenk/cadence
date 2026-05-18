@@ -101,6 +101,24 @@ function writeJsonSafe(filePath, payload) {
 
 // ---------- Auth helpers -------------------------------------------------------
 
+/**
+ * Normalize PIN strings before hashing.
+ *
+ * `String.prototype.trim` only strips a fixed list of whitespace, so paste-
+ * happy users (and some IMEs) sneak in invisibles like ZWSP/NBSP/BOM that
+ * happily land in the stored hash on `setPin` but get trimmed on `verify`,
+ * producing the dreaded "saved → wrong PIN → locked out" loop. Normalize to
+ * NFC + strip every control/zero-width char everywhere so both call sites
+ * always see the same bytes for the same user-visible input.
+ */
+function normalizePin(value) {
+  if (typeof value !== 'string') return '';
+  return value
+    .normalize('NFC')
+    .replace(/[\u0000-\u001F\u007F\u00A0\u200B-\u200D\u2060\uFEFF]/g, '')
+    .trim();
+}
+
 function hashWithSalt(value, saltHex) {
   const salt = Buffer.from(saltHex, 'hex');
   return crypto.scryptSync(String(value), salt, 64);
@@ -735,22 +753,49 @@ ipcMain.handle('auth:status', () => {
 });
 
 ipcMain.handle('auth:setPin', (_evt, { pin } = {}) => {
-  // Trim defensively — IME or paste sneak-ins of leading/trailing whitespace
-  // would otherwise produce a stored hash the user can never reproduce.
-  const safe = typeof pin === 'string' ? pin.trim() : '';
+  const safe = normalizePin(pin);
   if (safe.length < 4) {
     return { ok: false, error: 'PIN must be at least 4 characters.' };
   }
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = hashWithSalt(safe, salt).toString('hex');
-  const ok = writeJsonSafe(authPath(), { salt, hash });
-  return ok ? { ok: true } : { ok: false, error: 'Could not save PIN.' };
+  const wrote = writeJsonSafe(authPath(), { salt, hash });
+  if (!wrote) return { ok: false, error: 'Could not save PIN.' };
+
+  // Self-verify: read the file back and re-hash with the exact same plaintext.
+  // If the round-trip fails for any reason (encoding, FS quirk, antivirus
+  // rewrites…) we delete the half-baked file so the user is not locked out and
+  // can try again. Better to fail loudly here than to greet them with
+  // "incorrect PIN" on the very first unlock.
+  try {
+    const round = readAuth();
+    if (!round || round.salt !== salt || round.hash !== hash) {
+      console.error('[leeadman] auth:setPin self-verify (round-trip) failed', {
+        wrote: !!wrote,
+        sameSalt: round && round.salt === salt,
+        sameHash: round && round.hash === hash,
+      });
+      try { fs.unlinkSync(authPath()); } catch (_e) { void _e; }
+      return { ok: false, error: 'PIN could not be saved reliably on this device. Please try again.' };
+    }
+    const reHash = hashWithSalt(safe, round.salt).toString('hex');
+    if (reHash !== round.hash) {
+      console.error('[leeadman] auth:setPin self-verify (re-hash) failed — keyspace mismatch');
+      try { fs.unlinkSync(authPath()); } catch (_e) { void _e; }
+      return { ok: false, error: 'PIN could not be saved reliably on this device. Please try again.' };
+    }
+  } catch (err) {
+    console.error('[leeadman] auth:setPin self-verify threw', err);
+    try { fs.unlinkSync(authPath()); } catch (_e) { void _e; }
+    return { ok: false, error: 'PIN could not be saved reliably on this device. Please try again.' };
+  }
+  return { ok: true };
 });
 
 ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
   const d = readAuth();
   if (!d || typeof d.salt !== 'string' || typeof d.hash !== 'string') return { ok: true };
-  const safe = typeof pin === 'string' ? pin.trim() : '';
+  const safe = normalizePin(pin);
   if (!safe) return { ok: false };
   try {
     const got = hashWithSalt(safe, d.salt);
@@ -764,8 +809,6 @@ ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
     }
     const matched = crypto.timingSafeEqual(got, exp);
     if (!matched) {
-      // Don't log the PIN. Log only metadata that helps diagnose stale-file or
-      // wrong-keyspace issues.
       console.warn(
         '[leeadman] auth:verify mismatch — pin.length=', safe.length,
         'salt[0..6]=', d.salt.slice(0, 6),
@@ -783,7 +826,7 @@ ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
 ipcMain.handle('auth:clear', (_evt, { pin } = {}) => {
   const d = readAuth();
   if (!d) return { ok: true };
-  const safe = typeof pin === 'string' ? pin.trim() : '';
+  const safe = normalizePin(pin);
   if (!safe) return { ok: false, error: 'PIN required.' };
   try {
     const got = hashWithSalt(safe, d.salt);
