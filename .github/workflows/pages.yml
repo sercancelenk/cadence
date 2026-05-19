@@ -1,9 +1,14 @@
-# Manual-only PWA deploy. Push to `main` no longer auto-publishes;
-# trigger from the Actions tab → "Run workflow" when you actually want
-# the mobile site updated. The job calls the reusable CI workflow
-# first and only continues when it goes green.
+# Manual-only deploy of the marketing landing + the PWA to GitHub Pages.
+# Push to `main` no longer auto-publishes; trigger from the Actions tab →
+# "Run workflow" when you actually want the public site refreshed. The job
+# calls the reusable CI workflow first and only continues when it goes
+# green.
+#
+# Site layout once published:
+#   /cadence/        → static marketing landing
+#   /cadence/app/    → the React PWA (was at /cadence/ in earlier versions)
 
-name: Deploy PWA to GitHub Pages
+name: Deploy site to GitHub Pages
 
 on:
   workflow_dispatch:
@@ -22,7 +27,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   build:
-    name: Build PWA bundle
+    name: Build landing + PWA
     needs: ci
     runs-on: ubuntu-latest
     # The PWA bundle is pure web output — we don't ship Electron to Pages,
@@ -47,16 +52,14 @@ jobs:
       - name: Install dependencies (no electron binary)
         run: npm ci --no-audit --no-fund
 
-      - name: Build PWA
-        run: npm run build:pwa
+      # Compiles the PWA into dist/app/ (vite.config picks `dist/app` when
+      # CADENCE_PWA=1) and the marketing landing into dist/ root, with
+      # shared brand assets + screenshots copied alongside. Also writes
+      # dist/app/404.html so PWA deep-link refreshes survive Pages routing.
+      - name: Assemble landing + PWA
+        run: npm run build:pages
         env:
-          LEEADMAN_BASE: /${{ github.event.repository.name }}/
-
-      # GitHub Pages serves the deploy folder as-is at /<repo>/. The user must
-      # visit that URL to land in the SPA, so a 404.html copy lets HashRouter
-      # deep-links (e.g. /<repo>/#/todos) survive a hard refresh.
-      - name: Add SPA 404 fallback
-        run: cp dist/index.html dist/404.html
+          CADENCE_BASE: /${{ github.event.repository.name }}/app/
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

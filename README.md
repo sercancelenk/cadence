@@ -1,9 +1,13 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <div align="center">
 
+<img src="public/icon.svg" alt="Cadence" width="128" height="128" />
+
 # Cadence
 
-**A local-first workspace for the rhythm of your week — people, tasks, notes, goals, feedback, 1:1s, reminders.**
+### A local-first workspace for the way you actually work.
+
+**People, tasks, notes and agenda — encrypted on your device.<br/>AI when you want it, off when you don't.**
 
 [![Release](https://github.com/sercancelenk/cadence/actions/workflows/release.yml/badge.svg)](https://github.com/sercancelenk/cadence/actions/workflows/release.yml)
 [![CI](https://github.com/sercancelenk/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/sercancelenk/cadence/actions/workflows/ci.yml)
@@ -11,13 +15,26 @@
 [![Latest release](https://img.shields.io/github/v/release/sercancelenk/cadence?display_name=tag&sort=semver)](https://github.com/sercancelenk/cadence/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 
+[**🌐 Marketing site**](https://sercancelenk.github.io/cadence/) ·
+[**🚀 Try the web app**](https://sercancelenk.github.io/cadence/app/) ·
+[**⬇️ Download for macOS**](https://github.com/sercancelenk/cadence/releases/latest)
+
 </div>
 
-> **Heads up — this project was previously called *Leeadman*.** It has been fully renamed to **Cadence**: window title, Dock, menus, manifest, on-disk file names (`cadence-data-<userId>.json`, `cadence-accounts.json`, …), localStorage keys and macOS `appId` (`com.cadence.app`) all use the new name. If you have data from a pre-rename build on the same machine, the desktop app **auto-migrates it once on first launch** (it copies `Leeadman/` → `Cadence/`, renaming the `leeadman-*` files to `cadence-*`); the legacy folder is left in place as a safety net. If you only have a JSON backup (`leeadman-backup-*.json` exported from the old build), use *Settings → Backup → Import JSON* — the importer reads the file contents, not the filename.
+---
 
-Cadence is an Electron + React desktop app that helps you run the boring, important parts of your week — 1:1 follow-ups, goal tracking, feedback logs, structured notes for every direct report, and personal to-dos — **without sending any data to a server**. Everything lives on your machine in JSON files under your user folder. No accounts in the cloud, no telemetry.
+## Why Cadence
 
-The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you can capture quick to-dos from your phone.
+A planner that doesn't ship your day to someone else's server. Four trade-offs we picked the unfashionable side on:
+
+| | |
+|---|---|
+| 🔒 **100% local-first** | Every keystroke is written to your machine, not to a server. Atomic `fsync`'ed writes, 50 rolling auto-snapshots, refuse-to-overwrite guard, in-app recovery UI. A power loss or kernel panic can't lose acknowledged data. |
+| 🛡️ **Encrypted at rest** | The desktop data file is wrapped in **AES-256-GCM** with a key derived from your account password via `scrypt`. Notes get an opt-in passphrase lockbox on top (PBKDF2-SHA-256, 200k iters → AES-256-GCM, non-extractable `CryptoKey`). |
+| 🤖 **AI is opt-in, BYO key** | Bring your own API key for **Anthropic Claude**, **OpenAI** or **Google Gemini**. Calls go directly from your device to the provider — no Cadence proxy, no telemetry. Off completely if you leave the key blank. |
+| 📖 **Open source, no upsell** | The codebase is on GitHub under MIT. No accounts in the cloud, no premium tier, no waitlist. The desktop app auto-updates straight from GitHub Releases. |
+
+> **About the name** — Cadence is the new name for the project formerly called *Leeadman*. The desktop app auto-migrates legacy data on first launch (it copies `Leeadman/` → `Cadence/`, renaming the `leeadman-*` files to `cadence-*`; the legacy folder stays as a safety net). See [Migration notes](#migration-notes-from-leeadman) at the bottom if you're coming from a pre-rename build.
 
 ---
 
@@ -31,11 +48,11 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 > The top bar carries a Bootstrap-style **global search pill** with a `⌘ K` / `Ctrl K` shortcut badge — clicking it (or pressing the shortcut) opens the command palette that fuzzy-searches across navigation targets, teams, people, items, to-dos **and notes (titles + content)**.
 
-### To-dos — drag-reorder, priorities, sort modes
+### To-dos — Kanban-shaped status, drag-reorder, priorities, sort modes
 
-![To-dos page with manual sort, hide-completed and per-list add row](docs/screenshots/todos.png)
+![To-dos page with status filter, sort modes and per-list add row](docs/screenshots/todos.png)
 
-> Drag-to-reorder lists and items by the grip handle, sort by Manual / Priority / Due date, hide completed at the top, archive lists, search across every list.
+> Each row carries a **status**: *To do · In progress · Done · Cancelled*. Filter by status (All / Open / individual states), sort by **Manual / Priority / Due date / Status (Kanban order)**, and drag rows by the grip handle to reorder manually. Completion rate excludes cancelled rows — dropping a task on purpose shouldn't drag your numbers down. The list still supports hide-closed, archive, per-list priority and cross-list search.
 
 ### Notes — resizable sidebar, sort modes, Markdown toolbar
 
@@ -49,11 +66,17 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 > One unified view of every reminder, due task and personal to-do for the next seven days, plus an *Overdue* bucket up top.
 
+### ⌘K command palette — search anything, deep-link to it
+
+![Command palette open with Navigate / Teams / People groups](docs/screenshots/palette.png)
+
+> Hit `⌘K` (or `Ctrl+K`) from anywhere to open the palette. It indexes **titles and body text** across notes, tasks, items and team scratchpads, highlights matches with contextual snippets, and Enter takes you straight to the source — no scrolling required. Locked notes are searchable by title only (their bodies stay encrypted).
+
 ### Analytics — fully local dashboard
 
 ![Analytics dashboard with stat cards, created vs completed chart and per-team performance](docs/screenshots/analytics.png)
 
-> Completion rate, a daily / weekly / monthly / yearly created-vs-completed SVG chart, per-team performance bars and a top-contributors table. Nothing leaves your device — the chart is rendered as inline SVG.
+> Completion rate, a daily / weekly / monthly / yearly created-vs-completed SVG chart, per-team performance bars and a top-contributors table. The dedicated **To-do status breakdown** section adds counts for *To do / In progress / Done / Cancelled* plus a horizontal stacked bar that visualises the proportions. Completion rate excludes cancelled. Nothing leaves your device — the chart is rendered as inline SVG.
 
 ### Settings — appearance, PIN, backups, AI, LAN sync
 
@@ -65,56 +88,64 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 ## What's in the box
 
+### For your daily ritual
+
 | | |
 |---|---|
-| **Desktop** | Universal signed + notarized macOS DMG (one file for Apple Silicon **and** Intel), auto-updates via GitHub Releases with an in-app download dialog. Optional PIN lock at launch. |
-| **Mobile** | Installable PWA (Add to Home Screen) with a slide-in drawer sidebar, full-screen content, iOS safe-area aware. Offline-capable, optimized for To-dos. |
-| **Encrypted on disk** | Workspace data is stored as an **AES-256-GCM** envelope keyed by your account password (Electron). Changing the password rotates the key transparently. |
-| **Backups & recovery** | Every save, login and app launch is snapshotted into `backups/<userId>/` (50 rolling slots). A *Settings → Backups & recovery* card lists live + legacy + per-snapshot files with task / people counts and a one-click restore. The writer refuses to overwrite an undecipherable file, so a key mismatch can never silently destroy your data. |
-| **AI Assistant (BYO key)** | Every task has an "Ask AI" button when you connect a provider in Settings. Supports **Anthropic Claude**, **OpenAI ChatGPT** and **Google Gemini**; calls go directly from your device to the provider — there's no proxy. Includes a Markdown chat dialog, an "Append answer to task" action and a *To-dos → Extract from notes* tool that turns a brain dump into a structured list of tasks you can drop into any list. |
-| **Profile** | Avatar upload, view-only by default with an Edit toggle, in-app **Change password** flow that verifies your current password. |
-| **Workspaces** | Multi-team, per-team Me / My-leader workspaces, per-person pages with tasks, goals, notes, **feedback** and documents. |
-| **1:1 Mode** | A dedicated meeting view per person with a persistent markdown agenda and an archive of past meetings; unchecked action items carry over. |
-| **Person Timeline** | Chronological feed of every item attached to a person, grouped by day, filterable by kind. Killer feature for review prep. |
-| **Agenda** | Unified Today / This-week view combining reminders + due tasks + personal to-dos, plus an "Overdue" bucket. |
-| **Analytics** | Local-only dashboard with daily / weekly / monthly / yearly created-vs-completed charts, per-team and per-person scoreboards, plus to-do completion stats. |
-| **LAN sync (no cloud)** | Opt-in tiny HTTP server inside Electron with bearer-token auth, **constant-time** token compare, **DNS-rebinding-resistant** Host header validation, **same-LAN-only CORS**, and **payload-shape validation**, so a second device on the same Wi-Fi can pull / push a snapshot — and the host also serves the PWA itself, so an iPhone can open `http://<host-ip>:9787` directly with no mixed-content warning. |
-| **Notes (encrypted at rest)** | macOS-Notes-style two-pane view with a **resizable sidebar** (drag the divider, 220–560 px), per-note pin/star, soft delete with confirm. Reading is **preview-by-default** with one click to flip into a **Markdown editor + formatting toolbar** (Bold / Italic / Strike / H1–H3 / Bullet / Numbered / Task / Link / Code / Code-block / Divider, with ⌘B/⌘I/⌘K shortcuts). The list supports five sort modes — **Last updated**, **Last opened**, **Created**, **Title** and **Manual** (drag-to-reorder within the pinned tier). Locked notes are encrypted with a **workspace master key** derived once per session via **PBKDF2-SHA-256 (200k iters) → AES-256-GCM** (non-extractable `CryptoKey`); every keystroke re-encrypts in sub-millisecond AES with a fresh IV. The passphrase is never written to disk and never stored as a string after derivation — only a tiny verifier blob is persisted, and removing the lock prompts for the passphrase **every time** to prevent accidental clicks. |
-| **Global search + ⌘K palette** | Top-bar search button (Bootstrap-style pill, with a `⌘ K` / `Ctrl K` shortcut badge) opens a global command palette: fuzzy search across navigation targets, teams, people, items, **to-dos and notes**. Locked notes are searchable by **title only** (we never decrypt bodies through the palette). Clicking a Note hit deep-links to `/notes?id=<id>` and selects that note; the URL is cleaned up immediately so reloads don't fight the user's navigation. |
-| **Markdown everywhere** | Notes, scratchpads, item bodies and 1:1 agendas use GitHub-flavored markdown (checklists, tables, code, links). |
-| **Recurring reminders** | Daily / weekly / monthly cadence for any reminder, auto-advances after firing. |
-| **Smart to-do lists** | List + item drag-and-drop reorder, **priority levels** (Urgent / High / Normal / Low) on both lists and items with sort-by-priority, **hide / show completed**, **delete confirmation**, pin to top, archive, bulk ops, search, count badges. Task input is a multi-line auto-resizing textarea. |
-| **Quick scheduling** | Per-task presets (Today 5pm, Tomorrow 9am, +3h, Next Mon 9am) plus a custom datetime picker — no more hunting for an obvious schedule control. |
-| **Theming** | Polished light & dark modes with proper input contrast, focus rings, and accent-aware hover states everywhere. |
+| 📝 **Notes** | macOS-Notes-style two-pane view, **resizable sidebar** (220–560 px), preview-by-default with a one-click flip into a Markdown editor + formatting toolbar (B / I / S / H1–H3 / lists / link / inline code / code block / divider, with `⌘B` / `⌘I` / `⌘K` shortcuts). Five sort modes plus drag-to-reorder inside the pinned tier. Optional per-note passphrase lockbox. |
+| ✅ **To-dos** | Lists grouped by project, each with its own priority (Urgent / High / Normal / Low) and per-row **status** (To do / In progress / Done / Cancelled). Sort by Manual / Priority / Due date / Status (Kanban order). Filter by status. Drag items between groups and within. Recurring reminders (daily / weekly / monthly) fire as desktop notifications. Hide / show closed, archive, search, bulk ops. |
+| 📅 **Agenda** | Unified Today / This-week / Overdue view combining reminders + due tasks + personal to-dos. Lives offline; never asks for calendar permission. |
+| 👥 **Teams + People** | Group people into teams, give each a private scratchpad and a running agenda. **1:1 mode** with a persistent markdown meeting agenda + archive of past meetings; unchecked items carry over. **Person Timeline** for review prep. |
+| 🔎 **⌘K command palette** | Global search across notes, tasks, items, people and navigation targets. Indexes **body text** (not just titles), highlights matches with contextual snippets, deep-links straight to the result. Locked notes searchable by title only. |
+| 📊 **Analytics** | Local-only dashboard: completion rate, daily / weekly / monthly / yearly created-vs-completed SVG chart, per-team performance bars, top-contributors table. |
+
+### Powered by your device
+
+| | |
+|---|---|
+| 🔒 **Encrypted at rest** | AES-256-GCM data file keyed via `scrypt(password)`. Notes get an additional PBKDF2 → AES-256-GCM lockbox with a non-extractable `CryptoKey`. |
+| 🛟 **Durable saves** | Atomic `open → write → fsync → close → rename` cycle plus directory fsync. A power loss or kernel panic leaves either the old file or the new file — never a torn one. Worst case: ≤ 400 ms of unflushed typing. |
+| 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Refuse-to-overwrite guard if the live file is undecipherable. |
+| 📡 **Optional LAN sync** | Token-protected HTTP server inside Electron (off by default) with constant-time token compare, DNS-rebinding resistance, same-LAN CORS and payload-shape validation. The host also serves the PWA itself so an iPhone can open `http://<host-ip>:9787` directly. |
+| 🚫 **No telemetry** | Zero network calls outside of (a) the auto-updater hitting GitHub Releases, and (b) the AI assistant hitting whichever provider you configured. Nothing else dials home. |
+
+### AI when you want it
+
+| | |
+|---|---|
+| 🪶 **Task extractor** | Drop a wall of meeting notes / brain dump → get a clean ordered task list back, ready to file into any project group. |
+| 🧭 **Coaching on a task** | One-line reframing + three concrete next actions ordered by leverage + one risk to avoid. Always under 200 words. Tunable system prompt in Settings. |
+| 🎛️ **Three providers, one switch** | Anthropic Claude, OpenAI ChatGPT, Google Gemini. One dropdown to swap. |
+| 🛑 **Off completely** | No key, no AI — the rest of the app behaves identically. AI is gated behind "is the key configured?", so an offline workspace is the default, not a degraded mode. |
+
+### Distribution
+
+| | |
+|---|---|
+| 🖥️ **macOS desktop** | Universal signed + notarized DMG (Apple Silicon + Intel). Auto-updates via GitHub Releases with an in-app progress dialog. Optional PIN lock at launch with rate-limited account-password recovery. |
+| 📱 **PWA** | Installable on iOS / Android / desktop browsers. Slide-in drawer sidebar, full-screen content, iOS safe-area aware. Offline-capable. Data lives in the browser's storage on that device. |
+| 🐧 **Windows / Linux** | Code is fully cross-platform — encryption + backup + auto-update behave identically. No CI binaries yet; [build locally](#windows--linux-builds-experimental-not-in-ci) when you need one. |
 
 ---
 
 ## Table of contents
 
+**For users**
+
+- [Why Cadence](#why-cadence)
 - [Screenshots](#screenshots)
+- [What's in the box](#whats-in-the-box)
 - [Install](#install)
 - [Getting started](#getting-started)
 - [Concepts](#concepts)
-- [Power features](#power-features)
-  - [⌘K command palette](#k-command-palette)
-  - [Markdown editing](#markdown-editing)
-  - [Person Timeline](#person-timeline)
-  - [1:1 Mode](#11-mode)
-  - [Agenda](#agenda)
-  - [Analytics dashboard](#analytics-dashboard)
-  - [Recurring reminders](#recurring-reminders)
-  - [Feedback log](#feedback-log)
-  - [Smart to-do lists](#smart-to-do-lists)
-  - [AI Assistant (BYO API key)](#ai-assistant-byo-api-key)
-  - [Backups & recovery](#backups--recovery)
-  - [Storage & cache](#storage--cache)
-  - [Notes (encrypted at rest)](#notes-encrypted-at-rest)
-  - [Profile & change password](#profile--change-password)
-  - [LAN sync (multi-device, no cloud)](#lan-sync-multi-device-no-cloud)
+- [Power features](#power-features) (notes, to-dos, AI, backups, LAN sync, …)
 - [Mobile / PWA](#mobile--pwa)
 - [Keyboard & native menus](#keyboard--native-menus)
 - [Data, privacy and backups](#data-privacy-and-backups)
 - [Auto-updates](#auto-updates)
+
+**For developers**
+
 - [Building from source](#building-from-source)
 - [Releasing](#releasing)
 - [macOS code signing & notarization](#macos-code-signing--notarization)
@@ -123,6 +154,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
+- [Migration notes (from Leeadman)](#migration-notes-from-leeadman)
 - [License](#license)
 
 ---
@@ -586,6 +618,12 @@ The PWA "updates" itself silently via the service worker — the next time the d
 
 ---
 
+# For developers
+
+Everything below this line is implementation-detail territory — how to build from source, the on-disk layout, release plumbing, the architecture deep-dive. If you're using Cadence rather than hacking on it, you can stop here and head to [Install](#install) instead.
+
+---
+
 ## Building from source
 
 ### Requirements
@@ -619,6 +657,45 @@ npm install
 ```bash
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run build
 ```
+
+### Windows / Linux builds (experimental, not in CI)
+
+GitHub Releases ship signed macOS DMG + ZIP only. The renderer and the Electron main process are platform-agnostic (atomic fsync'ed writes, scrypt + AES-256-GCM, LAN sync, auto-updater all work on Windows and Linux), but the project's `electron-builder` config and release workflow only target macOS by design — adding Windows code signing infrastructure and ongoing CI minutes isn't worth it until there's real demand.
+
+If you want to run Cadence on Windows or Linux today, you can build locally:
+
+**Windows (portable .exe, unsigned)** — fastest path; no installer, no SmartScreen reputation needed (still shows a "Windows protected your PC" warning the first time; click *More info → Run anyway*).
+
+```bash
+# Run on a Windows machine (or via Wine on macOS/Linux with electron-builder docs)
+npm pkg set "build.win.target=portable"
+npm run build
+# Output: release/Cadence-<version>-portable.exe
+```
+
+**Windows (NSIS installer, unsigned)** — full Start-menu + uninstall integration.
+
+```bash
+npm pkg set "build.win.target=nsis"
+npm pkg set "build.nsis.oneClick=false"
+npm pkg set "build.nsis.allowToChangeInstallationDirectory=true"
+npm run build
+# Output: release/Cadence Setup <version>.exe
+```
+
+**Linux (AppImage)** — single executable file; works on most distros without root.
+
+```bash
+# Run on Linux (or macOS with Docker for cross-compile)
+npm pkg set "build.linux.target=AppImage"
+npm pkg set "build.linux.category=Office"
+npm run build
+# Output: release/Cadence-<version>.AppImage
+```
+
+Data lives in `%APPDATA%\Cadence\` on Windows and `~/.config/cadence/` on Linux — `app.getPath('userData')` resolves per-OS automatically and the same encryption + backup rules apply.
+
+When/if community demand justifies it, these targets will be promoted into the release workflow (with Azure Trusted Signing for Windows so SmartScreen stays quiet). Until then, treat the above as "build it yourself" instructions.
 
 ### Dev vs installed app data isolation
 
@@ -993,6 +1070,24 @@ Issues and pull requests are welcome. Please:
    - `npx tsc --noEmit` — strict type-check.
    - `npm run build:web` — Electron-targeted Vite build.
    - `npm run build:pwa` — Pages-targeted Vite build.
+
+---
+
+## Migration notes (from Leeadman)
+
+<details>
+<summary>Click to expand — only relevant if you used the pre-rename build.</summary>
+
+The project was previously called *Leeadman*. The rename to *Cadence* touches every user-visible surface: window title, Dock, menus, manifest, on-disk file names (`cadence-data-<userId>.json`, `cadence-accounts.json`, …), localStorage keys and macOS `appId` (`com.cadence.app`).
+
+If you have data from a pre-rename build on the same machine:
+
+- **The desktop app auto-migrates it once on first launch.** It copies the contents of `~/Library/Application Support/Leeadman/` (or the equivalent on Windows / Linux) into the new `Cadence/` userData folder, renaming every `leeadman-*` file to `cadence-*`. The legacy folder stays in place as a safety net — feel free to delete it after confirming the migration worked.
+- **PWA path migration.** Older PWA installs registered against `/cadence/?source=pwa`. The marketing landing now lives at `/cadence/` and the app moved to `/cadence/app/`; an inline redirect in the landing's `<head>` bounces `?source=pwa` traffic so existing PWA installs keep working without manual reinstall.
+- **JSON backups still work.** If you only have a JSON backup (`leeadman-backup-*.json` exported from the old build), use *Settings → Backup → Import JSON* in the new app — the importer reads the file contents, not the filename.
+- **Vite env variables.** `CADENCE_PWA=1` is the canonical flag now, but `LEEADMAN_PWA=1` is still accepted for one more release so old CI workflows don't break.
+
+</details>
 
 ---
 

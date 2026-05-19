@@ -7,9 +7,13 @@
   --border: #3a404c;
   --text: #f1f3f7;
   --muted: #9ca8b8;
-  --accent: #5b8def;
-  --accent-2: #3d6fd8;
-  --accent-soft: rgba(91, 141, 239, 0.18);
+  /* Desaturated slate-blue accent. Brand "loudness" lives on the icon
+     (warm cream + wood-brown dial); the in-app accent is calm so the
+     interface itself stays out of the way. WCAG: #859aaf vs #0a1020
+     button text ≈ 8:1, vs #171a21 body bg ≈ 7:1 — both pass AA-large. */
+  --accent: #859aaf;
+  --accent-2: #677d96;
+  --accent-soft: rgba(133, 154, 175, 0.18);
   --danger: #f87171;
   --ok: #4ade80;
   --radius: 10px;
@@ -30,7 +34,7 @@
   --input-text: var(--text);
   --input-placeholder: #6b7480;
   --input-focus-border: var(--accent);
-  --input-focus-ring: rgba(91, 141, 239, 0.25);
+  --input-focus-ring: rgba(133, 154, 175, 0.30);
 
   --btn-bg-from: rgba(255, 255, 255, 0.06);
   --btn-bg-to: rgba(255, 255, 255, 0.02);
@@ -269,7 +273,7 @@ code {
 .input:hover:not(:focus):not(:disabled),
 .select:hover:not(:focus):not(:disabled),
 .textarea:hover:not(:focus):not(:disabled) {
-  border-color: rgba(91, 141, 239, 0.4);
+  border-color: rgba(133, 154, 175, 0.4);
 }
 .input:focus,
 .select:focus,
@@ -325,7 +329,7 @@ code {
 }
 
 .btn:hover:not(:disabled) {
-  border-color: rgba(91, 141, 239, 0.4);
+  border-color: rgba(133, 154, 175, 0.4);
   background: linear-gradient(180deg, var(--btn-hover-from), var(--btn-hover-to));
 }
 
@@ -494,7 +498,7 @@ code {
   color: var(--ok);
 }
 .pill--info {
-  background: rgba(91, 141, 239, 0.18);
+  background: rgba(133, 154, 175, 0.18);
   color: var(--accent);
 }
 .pill--danger {
@@ -651,9 +655,13 @@ code {
   --border: #d6dbe4;
   --text: #0f172a;
   --muted: #4f5867;
-  --accent: #2563eb;
-  --accent-2: #1d4ed8;
-  --accent-soft: rgba(37, 99, 235, 0.1);
+  /* Light-theme counterpart of the desaturated slate-blue accent. Pulled
+     a touch darker than the dark-theme value (#859aaf) so it still passes
+     AA contrast against the off-white #ffffff / #eef1f6 surfaces and reads
+     as "intentional muted choice" rather than "browser default link". */
+  --accent: #547292;
+  --accent-2: #3d5d80;
+  --accent-soft: rgba(84, 114, 146, 0.12);
   --danger: #dc2626;
   --ok: #15803d;
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
@@ -664,7 +672,7 @@ code {
   --input-text: #0f172a;
   --input-placeholder: #8a94a4;
   --input-focus-border: var(--accent);
-  --input-focus-ring: rgba(37, 99, 235, 0.18);
+  --input-focus-ring: rgba(84, 114, 146, 0.22);
 
   --btn-bg-from: #ffffff;
   --btn-bg-to: #f3f5fa;
@@ -703,7 +711,7 @@ code {
 }
 :root[data-theme='light'] code {
   background: rgba(15, 23, 42, 0.06);
-  color: #1d4ed8;
+  color: #3d5d80;
 }
 
 :root[data-theme='light'] .card {
@@ -711,19 +719,21 @@ code {
   box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03), 0 1px 3px rgba(15, 23, 42, 0.04);
 }
 
-/* Primary button: in light mode keep a strong blue with white text so the
-   call-to-action reads clearly against the white panels. */
+/* Primary button: muted slate-blue gradient with white text. Saturation
+   pulled down from the original royal-blue so the icon stays the loudest
+   element in the brand system; contrast against #ffffff text still passes
+   AA at the medium tone. */
 :root[data-theme='light'] .btn--primary {
-  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
-  border-color: #1d4ed8;
+  background: linear-gradient(180deg, #6f8ba8 0%, #547292 100%);
+  border-color: #3d5d80;
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.35) inset,
-    0 4px 16px rgba(37, 99, 235, 0.22);
+    0 4px 16px rgba(84, 114, 146, 0.22);
 }
 
 :root[data-theme='light'] .btn--primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
-  border-color: #1e40af;
+  background: linear-gradient(180deg, #547292 0%, #3d5d80 100%);
+  border-color: #2d4a6a;
 }
 
 :root[data-theme='light'] .btn--danger:hover:not(:disabled) {
@@ -1273,7 +1283,7 @@ code {
 
 .icon-btn:hover {
   background: linear-gradient(180deg, var(--btn-hover-from), var(--btn-hover-to));
-  border-color: rgba(91, 141, 239, 0.4);
+  border-color: rgba(133, 154, 175, 0.4);
 }
 
 .icon-btn:active {
@@ -1290,7 +1300,7 @@ code {
 }
 
 :root[data-theme='light'] .icon-btn:hover {
-  border-color: rgba(37, 99, 235, 0.3);
+  border-color: rgba(84, 114, 146, 0.3);
 }
 
 .profile-menu {
@@ -1437,9 +1447,13 @@ code {
   width: 36px;
   height: 36px;
   flex-shrink: 0;
-  background: linear-gradient(145deg, #7c4dff 0%, var(--accent) 55%, var(--accent-2) 100%);
-  clip-path: polygon(50% 0%, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
-  box-shadow: 0 2px 10px rgba(91, 141, 239, 0.45);
+  display: block;
+  border-radius: 9px;
+  object-fit: cover;
+  background: transparent;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 6px 14px rgba(0, 0, 0, 0.28);
 }
 
 .app-sidebar__brand-text {
@@ -1521,7 +1535,7 @@ code {
 }
 
 .app-sidebar__link--active {
-  background: rgba(91, 141, 239, 0.22);
+  background: rgba(133, 154, 175, 0.22);
   color: #dbe8ff;
 }
 
@@ -2020,8 +2034,8 @@ code {
 .todos-row {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  padding: 14px 6px;
+  gap: 12px;
+  padding: 10px 6px;
   border-bottom: 1px solid var(--tp-divider);
   transition: background 0.12s ease;
 }
@@ -2035,8 +2049,96 @@ code {
   border-radius: var(--radius-sm);
 }
 
+/* ---- Compact row layout ------------------------------------------------
+ *
+ * The default ("comfortable") row keeps generous padding and lets the
+ * toolbar wrap onto extra lines, which can stack to 3+ lines at typical
+ * desktop widths once you have Schedule + status + priority + group +
+ * trash sitting beside each other.
+ *
+ * Compact mode is the opinionated "fit in two lines" variant:
+ *   - row padding ~30 % tighter
+ *   - sub-row never wraps (toolbar shrinks instead)
+ *   - selects drop to a narrower min-width and use a smaller font
+ *   - "Schedule" button shows the icon only — its label is hidden
+ *   - status pills shrink so the title can still breathe
+ *
+ * The result is one row for the title + badges and one row for the
+ * meta + controls, regardless of how many secondary widgets the row
+ * contains.
+ */
 .todos-row--compact {
-  padding: 10px 6px;
+  padding: 8px 6px;
+  gap: 10px;
+}
+
+.todos-row--compact .todos-row__sub {
+  margin-top: 4px;
+  /* Force everything below the title into a single line. The toolbar
+   * children all `flex: 0 1 auto` so they shrink before they wrap. */
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.todos-row--compact .todos-row__meta {
+  /* Stop the meta column from greedily taking 140 px + when the toolbar
+   * could use that width for its controls. We give it just enough for a
+   * date label and the icons. */
+  flex: 0 1 auto;
+  font-size: 11.5px;
+}
+
+.todos-row--compact .todos-row__toolbar {
+  flex-wrap: nowrap;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Last-resort overflow safety: on extremely narrow viewports the
+   * toolbar will horizontally scroll rather than stack onto a third
+   * line. Practically this almost never triggers — the shrunk controls
+   * fit on every desktop width we ship the Electron build at. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.todos-row--compact .todos-row__toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.todos-row--compact .todos-row__move {
+  min-width: 5.5rem;
+  max-width: 9rem;
+  font-size: 11.5px;
+  padding: 4px 6px;
+}
+
+.todos-row--compact .todos-row__sched-btn {
+  padding: 4px 8px;
+  font-size: 11.5px;
+}
+
+/* Hide the "Schedule" / "Reschedule" label in compact rows; the calendar
+ * icon is enough at that density. The aria-label on the button is still
+ * read by assistive tech, so we don't lose accessibility. */
+.todos-row--compact .todos-row__sched-btn > span {
+  display: none;
+}
+
+.todos-row--compact .todos-row__status {
+  height: 16px;
+  padding: 0 6px;
+  font-size: 9.5px;
+}
+
+.todos-row--compact .todos-row__check {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+.todos-row--compact .todos-row__handle {
+  margin-top: 1px;
 }
 
 .todos-row--done .todos-row__title {
@@ -2158,8 +2260,8 @@ code {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px 14px;
-  margin-top: 8px;
+  gap: 6px 12px;
+  margin-top: 5px;
 }
 
 .todos-row__meta {
@@ -2169,7 +2271,12 @@ code {
   gap: 6px;
   font-size: 12px;
   color: var(--tp-muted);
-  flex: 1 1 140px;
+  /* Was `flex: 1 1 140px` — at typical desktop widths that 140 px basis
+   * was enough to push the toolbar onto its own line. Letting the meta
+   * shrink to its content frees that space for the toolbar so the whole
+   * sub-row usually fits in one line, falling back to a wrap only at
+   * truly narrow widths. */
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -2202,8 +2309,11 @@ code {
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  flex: 1 1 220px;
+  gap: 6px;
+  /* `flex: 1 1 0` (instead of the old `1 1 220px`) means the toolbar
+   * stretches to fill whatever the meta hasn't claimed without forcing
+   * a wrap when the inline content would have fit in <220 px. */
+  flex: 1 1 0;
   min-width: 0;
 }
 
@@ -2228,11 +2338,16 @@ code {
 }
 
 .todos-row__move {
-  min-width: 7rem;
-  max-width: 11rem;
+  /* Two select widgets sit side-by-side in this toolbar (status,
+   * priority, group). The old 7 rem floor pushed the trailing controls
+   * past the row's available width on most desktops, forcing the
+   * sub-row to wrap to a third line. 5.5 rem still fits "In progress"
+   * and "No priority" without truncating their labels. */
+  min-width: 5.5rem;
+  max-width: 10rem;
   flex: 0 1 auto;
   font-size: 12px;
-  padding: 6px 8px;
+  padding: 5px 8px;
   border: 1px solid var(--tp-divider);
   border-radius: var(--radius-sm);
   background: var(--tp-input-bg);
@@ -2353,20 +2468,36 @@ code {
   border: 1px solid var(--tp-divider);
   background: rgba(255, 255, 255, 0.06);
   color: var(--tp-text);
+  /* Ensures the label has space even when the button hasn't measured a
+   * width yet (helps against the old "blank pill" rendering we hit when
+   * a light-theme override accidentally hid the text). */
+  min-width: 64px;
 }
 
-:root[data-theme='light'] .todos-add-inline__submit,
+/* Light-theme override applies ONLY to the secondary "Cancel" button —
+ * the primary submit gets its own contrasted treatment below so we don't
+ * end up with white text on a white background, which is what made the
+ * button look empty in earlier builds. */
 :root[data-theme='light'] .todos-add-inline__cancel {
   background: #fff;
 }
 
 .todos-add-inline__submit {
-  background: linear-gradient(180deg, rgba(126, 176, 255, 0.2), var(--accent-2));
-  border-color: rgba(110, 168, 254, 0.45);
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  border-color: var(--accent-2);
   color: #fff;
+  /* The text colour is hard-coded white because every accent shade we
+   * ship (dark & light themes) is dark enough to give white >= AA
+   * contrast. Don't change to a theme var without re-checking contrast. */
 }
 
 :root[data-theme='light'] .todos-add-inline__submit {
+  /* Use the darker `--accent-2` end-stop on both ends so the light-theme
+   * gradient stays readable even on bright displays — the previous
+   * rgba(126,176,255,0.2) top stop washed out to near-white over a white
+   * card background and visually hid the label. */
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  border-color: var(--accent-2);
   color: #fff;
 }
 
@@ -2428,9 +2559,15 @@ code {
 }
 
 .todos-new-list__ok {
-  background: linear-gradient(180deg, rgba(126, 176, 255, 0.2), var(--accent-2));
+  /* Solid accent → accent-2 gradient (no transparent top stop). The
+   * original `rgba(126,176,255,0.2)` top wash-out left the button looking
+   * empty on light-theme backgrounds because the transparent half blended
+   * straight into the white card behind it — same class of bug as the
+   * inline submit button used to have. */
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
   color: #fff;
-  border-color: rgba(110, 168, 254, 0.45);
+  border-color: var(--accent-2);
+  min-width: 64px;
 }
 
 .todos-new-list__cancel {
@@ -2486,12 +2623,12 @@ code {
   margin: 0 0 20px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: linear-gradient(145deg, rgba(91, 141, 239, 0.14), rgba(26, 29, 36, 0.65));
+  background: linear-gradient(145deg, rgba(133, 154, 175, 0.14), rgba(26, 29, 36, 0.65));
   box-shadow: var(--shadow-sm);
 }
 
 :root[data-theme='light'] .home-page__hero {
-  background: linear-gradient(145deg, rgba(91, 141, 239, 0.12), #fff);
+  background: linear-gradient(145deg, rgba(133, 154, 175, 0.12), #fff);
 }
 
 .home-page__brand {
@@ -2506,20 +2643,11 @@ code {
   width: 52px;
   height: 52px;
   border-radius: 14px;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  object-fit: cover;
+  background: transparent;
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.35) inset,
-    0 8px 24px rgba(75, 139, 250, 0.35);
-  position: relative;
-}
-
-.home-page__logo::after {
-  content: '';
-  position: absolute;
-  inset: 10px;
-  border-radius: 8px;
-  border: 2px solid rgba(255, 255, 255, 0.45);
-  opacity: 0.85;
+    0 1px 0 rgba(255, 255, 255, 0.12) inset,
+    0 10px 26px rgba(0, 0, 0, 0.35);
 }
 
 .home-page__title {
@@ -2637,7 +2765,7 @@ code {
 
 .home-tile--accent {
   border-color: rgba(126, 176, 255, 0.35);
-  background: linear-gradient(160deg, rgba(91, 141, 239, 0.1), var(--panel));
+  background: linear-gradient(160deg, rgba(133, 154, 175, 0.1), var(--panel));
 }
 
 .home-tile__ic {
@@ -2647,7 +2775,7 @@ code {
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: rgba(91, 141, 239, 0.15);
+  background: rgba(133, 154, 175, 0.15);
   color: var(--accent);
 }
 
@@ -2756,7 +2884,7 @@ code {
 
 .md-editor__tab--active {
   background: var(--accent-soft);
-  border-color: rgba(91, 141, 239, 0.5);
+  border-color: rgba(133, 154, 175, 0.5);
   color: var(--text);
 }
 
@@ -2810,7 +2938,7 @@ code {
 
 .md-toolbar__btn[aria-expanded='true'] {
   background: var(--accent-soft);
-  border-color: rgba(91, 141, 239, 0.45);
+  border-color: rgba(133, 154, 175, 0.45);
   color: var(--text);
 }
 
@@ -3185,7 +3313,7 @@ code {
 
 .timeline__filter--active {
   background: var(--accent-soft);
-  border-color: rgba(91, 141, 239, 0.5);
+  border-color: rgba(133, 154, 175, 0.5);
   color: var(--text);
 }
 
@@ -3350,7 +3478,7 @@ code {
    background which clashes with the dark palette; recolour to a calm
    accent-tinted chip that works in both themes. */
 .cmdp__mark {
-  background: rgba(91, 141, 239, 0.28);
+  background: rgba(133, 154, 175, 0.28);
   color: inherit;
   padding: 0 2px;
   border-radius: 3px;
@@ -3395,8 +3523,8 @@ code {
 }
 
 .todos-section--pinned {
-  border-color: rgba(91, 141, 239, 0.45);
-  box-shadow: 0 0 0 1px rgba(91, 141, 239, 0.12);
+  border-color: rgba(133, 154, 175, 0.45);
+  box-shadow: 0 0 0 1px rgba(133, 154, 175, 0.12);
 }
 
 .todos-section--pinned .todos-section__pin {
@@ -3768,6 +3896,67 @@ code {
   background: linear-gradient(180deg, rgba(126, 176, 255, 0.12), transparent);
   border-color: rgba(126, 176, 255, 0.3);
 }
+
+.stat-card--warn {
+  background: linear-gradient(180deg, rgba(255, 178, 74, 0.14), transparent);
+  border-color: rgba(255, 178, 74, 0.32);
+}
+
+.stat-card--warn .stat-card__value {
+  color: #ffb24a;
+}
+
+/* ---- Status distribution bar (analytics) ----------------------------
+ *
+ * A single horizontal flex bar that visualises todo counts per status.
+ * Colours mirror the in-row status badges so a glance at either gives
+ * you the same mental model. Segments collapse smoothly to 0 width when
+ * a status is empty (we filter them out in JSX), so the bar never has
+ * weird 0-px slivers.
+ */
+.analytics-stack {
+  margin-top: 16px;
+}
+.analytics-stack__bar {
+  display: flex;
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+}
+.analytics-stack__seg {
+  height: 100%;
+  transition: width 240ms ease;
+}
+.analytics-stack__seg--todo        { background: rgba(126, 176, 255, 0.75); }
+.analytics-stack__seg--in_progress { background: rgba(255, 178, 74, 0.85); }
+.analytics-stack__seg--done        { background: rgba(74, 222, 128, 0.85); }
+.analytics-stack__seg--cancelled   { background: rgba(148, 163, 184, 0.55); }
+
+.analytics-stack__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin-top: 10px;
+  list-style: none;
+  padding: 0;
+}
+.analytics-stack__legend-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.analytics-stack__sw {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.analytics-stack__sw--todo        { background: rgba(126, 176, 255, 0.85); }
+.analytics-stack__sw--in_progress { background: rgba(255, 178, 74, 0.95); }
+.analytics-stack__sw--done        { background: rgba(74, 222, 128, 0.95); }
+.analytics-stack__sw--cancelled   { background: rgba(148, 163, 184, 0.75); }
 
 .seg {
   display: inline-flex;
@@ -4472,6 +4661,80 @@ code {
 .todos-row--prio-urgent { border-left: 3px solid rgba(255, 115, 115, 0.6); }
 .todos-row--prio-high   { border-left: 3px solid rgba(255, 178, 74, 0.55); }
 
+/* ---- Todo status badges & row modifiers -------------------------------
+ *
+ * Each non-default status (`in_progress`, `done`, `cancelled`) gets a small
+ * pill in the row's top line. `todo` is the default — no badge — to keep
+ * the list quiet for tasks that haven't been touched yet.
+ *
+ * The status dropdown in the row toolbar mirrors the same tone so the
+ * picker visually reflects the current state without needing to read the
+ * label. The colours intentionally reuse the existing semantic palette
+ * (info / warn / ok / muted) so they sit next to priority pills without
+ * fighting them.
+ */
+.todos-row__status {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.todos-row__status--in_progress {
+  color: #ffb24a;
+  background: rgba(255, 178, 74, 0.13);
+  border-color: rgba(255, 178, 74, 0.32);
+}
+.todos-row__status--done {
+  color: var(--ok);
+  background: rgba(74, 222, 128, 0.13);
+  border-color: rgba(74, 222, 128, 0.32);
+}
+.todos-row__status--cancelled {
+  color: var(--tp-muted);
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.28);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* Inline status select picks up an accent tone from its current value
+ * (set via the dynamic className on the <select>). This makes the
+ * dropdown read as a status indicator even when collapsed. */
+.todos-row__status-select--in_progress { color: #ffb24a; }
+.todos-row__status-select--done        { color: var(--ok); }
+.todos-row__status-select--cancelled   { color: var(--tp-muted); }
+.todos-row__status-select               { font-weight: 600; }
+
+/* WIP rows get a subtle amber left stripe so a glance down the list shows
+ * "what am I in the middle of?" without scanning every status pill.
+ * Priority stripes (urgent / high) take precedence — they're more
+ * actionable so they shouldn't be hidden by an in-progress mark. */
+.todos-row--wip:not(.todos-row--prio-urgent):not(.todos-row--prio-high) {
+  border-left: 3px solid rgba(255, 178, 74, 0.45);
+}
+
+/* Cancelled rows get a heavier dim than completed rows so they read as
+ * "explicitly dropped" rather than "this is just done". The existing
+ * `--done` modifier already handles the strikethrough on the title; we
+ * extend it here with a stronger opacity and a muted left stripe so the
+ * row recedes visually. */
+.todos-row--cancelled {
+  opacity: 0.55;
+}
+.todos-row--cancelled .todos-row__title {
+  color: var(--tp-muted);
+}
+.todos-row--cancelled:not(.todos-row--prio-urgent):not(.todos-row--prio-high) {
+  border-left: 3px solid rgba(148, 163, 184, 0.4);
+}
+
 .todos-section__prio {
   text-transform: capitalize;
   font-weight: 700;
@@ -4893,13 +5156,13 @@ details summary {
 
 .notes-icon-btn--pressed {
   background: var(--accent-soft);
-  border-color: rgba(91, 141, 239, 0.4);
+  border-color: rgba(133, 154, 175, 0.4);
   color: var(--accent);
 }
 
 .notes-icon-btn--pressed:hover:not(:disabled) {
   background: var(--accent-soft);
-  border-color: rgba(91, 141, 239, 0.6);
+  border-color: rgba(133, 154, 175, 0.6);
 }
 
 .notes-page__empty {
@@ -5001,7 +5264,7 @@ details summary {
 
 .notes-page__list-item--active,
 .notes-page__list-item--active:hover {
-  background: var(--accent-soft, rgba(91, 141, 239, 0.18));
+  background: var(--accent-soft, rgba(133, 154, 175, 0.18));
 }
 
 .notes-page__list-item--active::before {

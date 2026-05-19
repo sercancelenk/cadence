@@ -344,11 +344,22 @@ function buildCommands(
 
   for (const t of data.todoItems as TodoItem[]) {
     if (!t.title) continue;
+    // Status hint mirrors the To-dos page label so the palette and the
+    // page agree on phrasing. Fall back to "Open" for the default `todo`
+    // status — that's the most natural one-word verb for "still pending".
+    const hint =
+      t.status === 'done'
+        ? 'Done'
+        : t.status === 'in_progress'
+          ? 'In progress'
+          : t.status === 'cancelled'
+            ? 'Cancelled'
+            : 'Open';
     cmds.push({
       id: `todo-${t.id}`,
       group: 'To-dos',
       label: t.title,
-      hint: t.done ? 'Done' : 'Open',
+      hint,
       icon: <IcListTodo size={16} />,
       run: () => navigate(PATH_TODOS),
     });

@@ -942,6 +942,14 @@ function normalizeEmail(email) {
 // ---------- Window -------------------------------------------------------------
 
 function createWindow() {
+  // In packaged builds electron-builder bakes the platform-specific icon
+  // (`.icns` / `.ico`) into the bundle, so the OS uses it everywhere
+  // automatically. In dev mode there's no bundle — Electron would fall
+  // back to its default globe icon for the window's title-bar / taskbar
+  // entry unless we point it at our PNG explicitly.
+  const devIconPath = path.join(__dirname, '..', 'build', 'icon.png');
+  const devIcon = fs.existsSync(devIconPath) ? devIconPath : undefined;
+
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -951,6 +959,7 @@ function createWindow() {
     backgroundColor: '#0b0b10',
     show: false,
     autoHideMenuBar: false,
+    icon: devIcon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -2141,6 +2150,22 @@ app.on('web-contents-created', (_e, contents) => {
 });
 
 app.whenReady().then(() => {
+  // macOS dock icon override. The packaged DMG ships with a proper `.icns`
+  // baked in, so the OS picks the right icon for both Finder and the dock
+  // automatically. In dev (`npm run dev`) Electron defaults to its grey
+  // globe — this points the dock at our PNG so the running app feels like
+  // the real product even before it's been signed and shipped.
+  if (process.platform === 'darwin' && app.dock?.setIcon) {
+    const dockIconPath = path.join(__dirname, '..', 'build', 'icon.png');
+    if (fs.existsSync(dockIconPath)) {
+      try {
+        app.dock.setIcon(dockIconPath);
+      } catch (err) {
+        console.warn('[cadence] app.dock.setIcon failed (continuing)', err);
+      }
+    }
+  }
+
   // Install a baseline Content-Security-Policy for the renderer.
   //
   // Dev vs prod split: in production the bundle is a fixed set of `self`

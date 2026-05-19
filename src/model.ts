@@ -120,11 +120,71 @@ export interface TodoGroup {
   createdAt: string;
 }
 
+/**
+ * Lifecycle status of a to-do item.
+ *
+ * The earlier model only had a `done: boolean` flag. That worked for a
+ * one-off checklist but stopped scaling once people started using the
+ * to-dos page as a lightweight project tracker — "I started this but
+ * haven't finished" and "I decided not to do this" need their own
+ * states or they pollute the open / completed buckets.
+ *
+ * The set is intentionally Kanban-shaped and small:
+ *   - `todo`         — not started yet (default for fresh rows)
+ *   - `in_progress`  — actively working on it
+ *   - `done`         — finished; equivalent to the legacy `done: true`
+ *   - `cancelled`    — explicitly dropped; not counted as overdue and
+ *                      excluded from completion-rate denominators
+ *
+ * `done: boolean` is kept on disk for back-compat (older builds reading
+ * a newer file still know what's complete). It is always derived from
+ * `status` on every write — never set independently.
+ */
+export type TodoStatus = 'todo' | 'in_progress' | 'done' | 'cancelled';
+
+export const TODO_STATUS_OPTIONS: {
+  value: TodoStatus;
+  label: string;
+  /** Short label used inside compact badges. */
+  shortLabel: string;
+  /** Lower = earlier in Kanban-style sort. */
+  rank: number;
+  /** Reused by `.badge--<tone>` styling in `app.css`. */
+  tone: 'info' | 'warn' | 'ok' | 'muted';
+}[] = [
+  { value: 'todo',        label: 'To do',       shortLabel: 'To do',  rank: 0, tone: 'info' },
+  { value: 'in_progress', label: 'In progress', shortLabel: 'WIP',    rank: 1, tone: 'warn' },
+  { value: 'done',        label: 'Done',        shortLabel: 'Done',   rank: 2, tone: 'ok' },
+  { value: 'cancelled',   label: 'Cancelled',   shortLabel: 'Cancel', rank: 3, tone: 'muted' },
+];
+
+export function todoStatusRank(s: TodoStatus | undefined): number {
+  return TODO_STATUS_OPTIONS.find((o) => o.value === s)?.rank ?? 0;
+}
+
+/** True iff the item is still open (counts towards "open tasks" stats). */
+export function isTodoOpen(status: TodoStatus | undefined): boolean {
+  return status === 'todo' || status === 'in_progress';
+}
+
 export interface TodoItem {
   id: string;
   groupId: string;
   title: string;
+  /**
+   * Lifecycle status. Always present after a `parseTodoItems` round-trip;
+   * older files written before this field existed are migrated from
+   * `done` on load (`done: true` → `'done'`, otherwise `'todo'`).
+   */
+  status: TodoStatus;
+  /**
+   * Legacy completion flag. Kept in lockstep with `status === 'done'`
+   * so older readers and exported backups still report the right
+   * checkbox state. New code should branch on `status`, not `done`.
+   */
   done: boolean;
+  /** Timestamp the item transitioned into `done` (used by analytics). */
+  doneAt?: string;
   dueAt?: string;
   /** Per-item priority (urgent / high / normal / low). */
   priority?: Priority;
@@ -442,21 +502,44 @@ function parseTodoGroups(raw: unknown[]): TodoGroup[] {
     }));
 }
 
+function parseTodoStatus(raw: unknown, done: boolean): TodoStatus {
+  // Accept any string that matches one of the known statuses. Anything
+  // else (older files, hand-edited JSON, future statuses we don't know)
+  // falls back to deriving from `done` so the row at least lands in
+  // the right open / closed bucket.
+  if (typeof raw === 'string') {
+    const candidate = raw as TodoStatus;
+    if (TODO_STATUS_OPTIONS.some((o) => o.value === candidate)) return candidate;
+  }
+  return done ? 'done' : 'todo';
+}
+
 function parseTodoItems(raw: unknown[]): TodoItem[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
-    .map((x, i) => ({
-      id: typeof x.id === 'string' ? x.id : uuid(),
-      groupId: typeof x.groupId === 'string' ? x.groupId : '',
-      title: typeof x.title === 'string' ? x.title : '',
-      done: !!x.done,
-      dueAt: typeof x.dueAt === 'string' ? x.dueAt : undefined,
-      priority: parsePriority(x.priority),
-      sortOrder: typeof x.sortOrder === 'number' ? x.sortOrder : i,
-      createdAt: typeof x.createdAt === 'string' ? x.createdAt : nowIso(),
-      updatedAt: typeof x.updatedAt === 'string' ? x.updatedAt : nowIso(),
-    }));
+    .map((x, i) => {
+      const done = !!x.done;
+      const status = parseTodoStatus(x.status, done);
+      // Keep the legacy `done` flag in lockstep with `status === 'done'`.
+      // This matters for backups written by older builds being re-read:
+      // if someone manually edits status to 'done' but leaves done:false,
+      // we still want the row to behave as completed.
+      const resolvedDone = status === 'done';
+      return {
+        id: typeof x.id === 'string' ? x.id : uuid(),
+        groupId: typeof x.groupId === 'string' ? x.groupId : '',
+        title: typeof x.title === 'string' ? x.title : '',
+        status,
+        done: resolvedDone,
+        doneAt: typeof x.doneAt === 'string' ? x.doneAt : undefined,
+        dueAt: typeof x.dueAt === 'string' ? x.dueAt : undefined,
+        priority: parsePriority(x.priority),
+        sortOrder: typeof x.sortOrder === 'number' ? x.sortOrder : i,
+        createdAt: typeof x.createdAt === 'string' ? x.createdAt : nowIso(),
+        updatedAt: typeof x.updatedAt === 'string' ? x.updatedAt : nowIso(),
+      };
+    });
 }
 
 /** v1 -> v2 migration: single implicit team, assign teamId to every person, __self -> __self__{team}. */

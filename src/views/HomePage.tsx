@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { IcArrowRight, IcCalendar, IcFolder, IcLayoutGrid, IcListTodo, IcSettings, IcUser } from '../components/icons';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
+import { isTodoOpen } from '../model';
+import { brandIconUrl } from '../lib/appBranding';
 import { PATH_TEAMS } from '../lib/routes';
 import { sortedTeams } from '../lib/teamSort';
 import { teamBase } from '../lib/teamPaths';
@@ -18,14 +20,20 @@ export function HomePage() {
       data.items.filter((it) => !it.done && it.kind === 'task' && data.people.some((p) => p.id === it.personId)).length,
     [data.items, data.people],
   );
-  const openTodos = useMemo(() => data.todoItems.filter((t) => !t.done).length, [data.todoItems]);
+  // "Open" = still actively pending (todo or in_progress). Cancelled rows
+  // were dropped on purpose and don't belong in the open count any more
+  // than done rows do.
+  const openTodos = useMemo(
+    () => data.todoItems.filter((t) => isTodoOpen(t.status)).length,
+    [data.todoItems],
+  );
   const peopleCount = data.people.filter((p) => !p.id.startsWith('__')).length;
 
   return (
     <div className="page home-page">
       <header className="home-page__hero">
         <div className="home-page__brand">
-          <span className="home-page__logo" aria-hidden />
+          <img className="home-page__logo" src={brandIconUrl()} alt="" aria-hidden />
           <div>
             <h1 className="home-page__title">Cadence</h1>
             <p className="home-page__tagline">A local-first leadership workspace — teams, personal to-dos and 1:1 follow-ups.</p>

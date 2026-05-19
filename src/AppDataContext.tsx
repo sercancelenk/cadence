@@ -25,6 +25,7 @@ import {
   removeNote as removeNoteFn,
   reorderTodoGroup as reorderTodoGroupFn,
   reorderTodoItem as reorderTodoItemFn,
+  setTodoStatus as setTodoStatusFn,
   updateTodoGroupPriority as updateTodoGroupPriorityFn,
   removeItem as removeItemFn,
   removePerson as removePersonFn,
@@ -57,6 +58,7 @@ import type {
   Team,
   TodoGroup,
   TodoItem,
+  TodoStatus,
   UserProfile,
 } from './model';
 import { normalizeData } from './model';
@@ -163,11 +165,12 @@ type Api = {
   addTodoItem: (groupId: string, title: string, extras?: { priority?: Priority; dueAt?: string }) => void;
   updateTodoItem: (
     id: string,
-    patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done' | 'priority'>>,
+    patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done' | 'status' | 'priority'>>,
   ) => void;
   reorderTodoItem: (itemId: string, targetGroupId: string, beforeItemId: string | null) => void;
   updateTodoGroupPriority: (groupId: string, priority: Priority | undefined) => void;
   toggleTodoItem: (id: string) => void;
+  setTodoStatus: (id: string, status: TodoStatus) => void;
   removeTodoItem: (id: string) => void;
   addNote: () => string;
   replaceNote: (note: Note) => void;
@@ -460,6 +463,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       updateTodoGroupPriority: (groupId, priority) =>
         update((x) => updateTodoGroupPriorityFn(x, groupId, priority)),
       toggleTodoItem: (id) => update((x) => toggleTodoItemFn(x, id)),
+      setTodoStatus: (id, status) => update((x) => setTodoStatusFn(x, id, status)),
       removeTodoItem: (id) => update((x) => removeTodoItemFn(x, id)),
       // Generate the id BEFORE the updater runs, so the updater itself is
       // pure (a requirement for React's setState(updater) — StrictMode may

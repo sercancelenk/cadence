@@ -15,7 +15,7 @@
  * does (main.tsx checks CADENCE_PWA flag + presence of `serviceWorker` API).
  */
 
-const CACHE_VERSION = 'v25-cadence-full-rename';
+const CACHE_VERSION = 'v26-cadence-app-subpath';
 const CACHE_NAME = `cadence-${CACHE_VERSION}`;
 
 const APP_SHELL = [

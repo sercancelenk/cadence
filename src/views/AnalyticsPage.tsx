@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useAppData } from '../AppDataContext';
-import type { AppData, Person, Team, TodoItem } from '../model';
-import { isLeaderPerson, isSelfPerson } from '../model';
+import type { AppData, Person, Team, TodoItem, TodoStatus } from '../model';
+import { isLeaderPerson, isSelfPerson, TODO_STATUS_OPTIONS } from '../model';
 
 type Range = 'day' | 'week' | 'month' | 'year';
 
@@ -126,12 +126,23 @@ function collectTaskRecords(data: AppData): TaskRecord[] {
   }
 
   for (const t of data.todoItems) {
+    // Cancelled todos were explicitly dropped — counting them in the
+    // "Created vs completed" chart or in completion-rate denominators
+    // would punish people for being decisive about what to drop. They
+    // still surface in the dedicated status-distribution panel below
+    // so the user can see them at a glance.
+    if (t.status === 'cancelled') continue;
     const created = parseSafeDate(t.createdAt);
     if (!created) continue;
     records.push({
       createdAt: created,
+      // Prefer the dedicated `doneAt` timestamp now that we track it
+      // explicitly — `updatedAt` was a best-effort approximation that
+      // moved every time the row was edited (priority, due date, …),
+      // which made the daily "Completed" curve drift. `doneAt` is only
+      // stamped on the first transition into done.
       done: !!t.done,
-      doneAt: t.done ? parseSafeDate(t.updatedAt) ?? created : null,
+      doneAt: t.done ? parseSafeDate(t.doneAt) ?? parseSafeDate(t.updatedAt) ?? created : null,
       dueAt: parseSafeDate(t.dueAt),
     });
   }
@@ -247,12 +258,46 @@ export function AnalyticsPage() {
     [data, records],
   );
 
+  /**
+   * Per-status breakdown of every personal to-do.
+   *
+   * `total` here is the grand total *including* cancelled rows so the
+   * pie / stacked bar add up to 100 % visually. The `rate` denominator
+   * deliberately excludes cancelled, though: a row the user dropped on
+   * purpose shouldn't drag the completion rate down. So:
+   *
+   *   rate = done / (todo + in_progress + done)
+   */
+  const todoStatusBreakdown = useMemo(() => {
+    const counts: Record<TodoStatus, number> = {
+      todo: 0,
+      in_progress: 0,
+      done: 0,
+      cancelled: 0,
+    };
+    for (const t of data.todoItems) {
+      counts[t.status] = (counts[t.status] ?? 0) + 1;
+    }
+    const total = data.todoItems.length;
+    const active = counts.todo + counts.in_progress + counts.done;
+    return {
+      counts,
+      total,
+      rate: active === 0 ? 0 : counts.done / active,
+    };
+  }, [data.todoItems]);
+
   const todoTotals = useMemo(() => {
     const now = Date.now();
-    const total = data.todoItems.length;
-    const completed = data.todoItems.filter((t) => t.done).length;
-    const overdue = data.todoItems.filter((t: TodoItem) => !t.done && t.dueAt && new Date(t.dueAt).getTime() < now).length;
-    return { total, completed, overdue, rate: total === 0 ? 0 : completed / total };
+    // Overdue still excludes cancelled — see same reasoning as above.
+    const overdue = data.todoItems.filter(
+      (t: TodoItem) =>
+        t.status !== 'cancelled' &&
+        t.status !== 'done' &&
+        t.dueAt &&
+        new Date(t.dueAt).getTime() < now,
+    ).length;
+    return { overdue };
   }, [data.todoItems]);
 
   return (
@@ -369,19 +414,91 @@ export function AnalyticsPage() {
       </div>
 
       <section className="card">
-        <h2 className="card__title">Personal to-dos</h2>
+        <h2 className="card__title">Personal to-dos · status breakdown</h2>
+        <p className="muted small" style={{ marginTop: -4, marginBottom: 12 }}>
+          Completion rate excludes cancelled tasks — dropping a task on
+          purpose shouldn't drag your numbers down.
+        </p>
+
         <div className="analytics-cards">
-          <StatCard label="Total" value={todoTotals.total} />
-          <StatCard label="Done" value={todoTotals.completed} tone="ok" />
+          <StatCard label="Total" value={todoStatusBreakdown.total} />
+          <StatCard label="To do" value={todoStatusBreakdown.counts.todo} tone="info" />
+          <StatCard label="In progress" value={todoStatusBreakdown.counts.in_progress} tone="warn" />
+          <StatCard label="Done" value={todoStatusBreakdown.counts.done} tone="ok" />
+          <StatCard label="Cancelled" value={todoStatusBreakdown.counts.cancelled} />
           <StatCard label="Overdue" value={todoTotals.overdue} tone={todoTotals.overdue ? 'danger' : undefined} />
-          <StatCard label="Completion rate" value={fmtPercent(todoTotals.rate)} tone="info" />
+          <StatCard label="Completion rate" value={fmtPercent(todoStatusBreakdown.rate)} tone="info" />
         </div>
+
+        <StatusStackBar counts={todoStatusBreakdown.counts} total={todoStatusBreakdown.total} />
       </section>
     </div>
   );
 }
 
-function StatCard({ label, value, tone }: { label: string; value: number | string; tone?: 'ok' | 'danger' | 'info' }) {
+/**
+ * Single horizontal bar split into four segments showing the relative
+ * proportion of each status. Renders nothing when there are no to-dos at
+ * all to avoid a confusing empty bar.
+ *
+ * We intentionally keep this as a pure CSS flex bar rather than an SVG
+ * donut: it composes nicely under the stat cards, scales with the card
+ * width on every viewport, and prints cleanly. A donut would also need
+ * separate label callouts which the stat cards above already provide.
+ */
+function StatusStackBar({
+  counts,
+  total,
+}: {
+  counts: Record<TodoStatus, number>;
+  total: number;
+}) {
+  if (total === 0) {
+    return <p className="muted small">No to-dos yet — add one to see the breakdown.</p>;
+  }
+  const segments = TODO_STATUS_OPTIONS.map((opt) => ({
+    status: opt.value,
+    label: opt.label,
+    count: counts[opt.value] ?? 0,
+    pct: ((counts[opt.value] ?? 0) / total) * 100,
+  })).filter((s) => s.count > 0);
+
+  return (
+    <div className="analytics-stack" aria-label="To-do status distribution">
+      <div className="analytics-stack__bar" role="img">
+        {segments.map((seg) => (
+          <span
+            key={seg.status}
+            className={`analytics-stack__seg analytics-stack__seg--${seg.status}`}
+            style={{ width: `${seg.pct}%` }}
+            title={`${seg.label}: ${seg.count} (${Math.round(seg.pct)}%)`}
+          />
+        ))}
+      </div>
+      <ul className="analytics-stack__legend muted small">
+        {segments.map((seg) => (
+          <li key={seg.status} className="analytics-stack__legend-row">
+            <span className={`analytics-stack__sw analytics-stack__sw--${seg.status}`} aria-hidden />
+            <span>
+              {seg.label} · <strong>{seg.count}</strong>
+              <span className="muted"> ({Math.round(seg.pct)}%)</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number | string;
+  tone?: 'ok' | 'danger' | 'info' | 'warn';
+}) {
   return (
     <div className={`stat-card${tone ? ` stat-card--${tone}` : ''}`}>
       <div className="stat-card__value">{value}</div>

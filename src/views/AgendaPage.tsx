@@ -7,6 +7,7 @@ import { formatShort, isPast } from '../lib/datetime';
 import { kindLabel } from '../lib/labels';
 import { teamPerson } from '../lib/teamPaths';
 import type { Item, TodoItem } from '../model';
+import { isTodoOpen } from '../model';
 
 type AgendaEntry =
   | {
@@ -67,7 +68,12 @@ export function AgendaPage() {
     }
 
     for (const t of data.todoItems) {
-      if (t.done && !showCompleted) continue;
+      // Cancelled todos were explicitly dropped — they no longer
+      // belong on the agenda even when "show completed" is on, because
+      // there's nothing left to act on. Done todos stay (toggleable)
+      // when showCompleted is true so people can review or reopen them.
+      if (t.status === 'cancelled') continue;
+      if (!isTodoOpen(t.status) && !showCompleted) continue;
       if (!t.dueAt) continue;
       const d = new Date(t.dueAt);
       if (Number.isNaN(d.getTime())) continue;
@@ -84,7 +90,7 @@ export function AgendaPage() {
       entries.filter(
         (e) =>
           e.when.getTime() < startOfDay(new Date()).getTime() &&
-          !(e.kind === 'item' ? e.item.done : e.todo.done),
+          (e.kind === 'item' ? !e.item.done : isTodoOpen(e.todo.status)),
       ),
     [entries],
   );
@@ -186,13 +192,16 @@ function EntryList({
           );
         }
         const { todo, groupName } = e;
-        const overdue = !todo.done && isPast(e.when.toISOString());
+        const open = isTodoOpen(todo.status);
+        const overdue = open && isPast(e.when.toISOString());
         return (
           <li key={e.key} className="list__block">
             <div className="row row--between">
               <div>
                 <div className="list__title">
-                  {todo.title || '(untitled)'} {todo.done ? <span className="pill pill--ok">done</span> : null}
+                  {todo.title || '(untitled)'}{' '}
+                  {todo.status === 'done' ? <span className="pill pill--ok">done</span> : null}
+                  {todo.status === 'in_progress' ? <span className="pill pill--info">in progress</span> : null}
                   {overdue ? <span className="pill pill--danger">overdue</span> : null}
                 </div>
                 <div className="muted small">
@@ -204,10 +213,10 @@ function EntryList({
                   type="button"
                   variant="secondary"
                   size="sm"
-                  icon={todo.done ? <IcUndo size={16} /> : <IcCheck size={16} />}
+                  icon={open ? <IcCheck size={16} /> : <IcUndo size={16} />}
                   onClick={() => onToggleTodo(todo.id)}
                 >
-                  {todo.done ? 'Reopen' : 'Done'}
+                  {open ? 'Done' : 'Reopen'}
                 </Button>
               </div>
             </div>

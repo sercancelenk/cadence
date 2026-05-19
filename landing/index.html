@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cadence — A local-first workspace for the way you actually work</title>
+
+    <meta
+      name="description"
+      content="Cadence is a local-first workspace for people, tasks, notes and agenda. AES-256-GCM encrypted on your device. AI assistance is opt-in and key-on-your-machine. Free, open source, no accounts in the cloud."
+    />
+    <meta name="theme-color" content="#0c0f15" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Open Graph + Twitter card so a paste into Slack/iMessage/Twitter
+         renders a real preview instead of a bare URL. -->
+    <meta property="og:title" content="Cadence — a local-first workspace" />
+    <meta
+      property="og:description"
+      content="People, tasks, notes, agenda. Encrypted at rest on your device. AI when you want it, off when you don't."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="./icon-512.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+    />
+    <link rel="stylesheet" href="./landing.css" />
+
+    <!-- Legacy PWA install bridge. Existing installs were registered against
+         /cadence/?source=pwa from the old manifest. After the marketing site
+         took over this URL the PWA moved to /cadence/app/ — this redirect
+         keeps the old saved start_url working without the user noticing.
+         Runs in <head> so the user never sees the marketing flash. -->
+    <script>
+      (function () {
+        try {
+          var params = new URLSearchParams(window.location.search);
+          if (params.has('source') && params.get('source') === 'pwa') {
+            window.location.replace('./app/?source=pwa');
+          }
+        } catch (_) {
+          /* swallow; landing will render normally if URL APIs are missing */
+        }
+      })();
+    </script>
+  </head>
+
+  <body>
+    <a class="skiplink" href="#features">Skip to features</a>
+
+    <header class="topnav" aria-label="Primary">
+      <a class="topnav__brand" href="#top" aria-label="Cadence home">
+        <span class="topnav__mark" aria-hidden>
+          <img src="./icon.svg" alt="" width="32" height="32" />
+        </span>
+        <span class="topnav__name">Cadence</span>
+      </a>
+      <nav class="topnav__links">
+        <a href="#features">Features</a>
+        <a href="#ai">AI</a>
+        <a href="#privacy">Privacy</a>
+        <a href="#download">Download</a>
+        <a
+          href="https://github.com/sercancelenk/cadence"
+          rel="noopener noreferrer"
+          target="_blank"
+          >GitHub</a
+        >
+      </nav>
+      <a class="btn btn--primary topnav__cta" href="./app/">Open the app →</a>
+    </header>
+
+    <main id="top">
+      <!-- ─── HERO ──────────────────────────────────────────────────────── -->
+      <section class="hero">
+        <div class="hero__grid">
+          <div class="hero__copy">
+            <p class="kicker">
+              <span class="kicker__dot" aria-hidden></span>
+              Local-first · v0.2 in active use
+            </p>
+
+            <h1 class="display">
+              A workspace for the
+              <span class="display__accent">way you actually work.</span>
+            </h1>
+
+            <p class="lede">
+              People, tasks, notes and agenda — all in one calm interface.
+              <strong>Encrypted on your device</strong> with AES-256-GCM.
+              Bring your own AI key when you want help; turn it off when you
+              don't. No servers in the middle, no telemetry, no upsell.
+            </p>
+
+            <div class="cta-row">
+              <a class="btn btn--primary btn--lg" href="./app/">
+                Open the web app
+              </a>
+              <a
+                class="btn btn--ghost btn--lg"
+                href="https://github.com/sercancelenk/cadence/releases/latest"
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                Download for macOS
+                <span class="btn__hint">.dmg · Apple Silicon + Intel</span>
+              </a>
+            </div>
+
+            <ul class="hero__bullets" aria-label="Highlights">
+              <li><span aria-hidden>●</span> macOS desktop · iOS / Android PWA</li>
+              <li><span aria-hidden>●</span> Auto-snapshots, atomic fsync'ed writes</li>
+              <li><span aria-hidden>●</span> Free and open source</li>
+            </ul>
+          </div>
+
+          <div class="hero__visual" aria-hidden>
+            <div class="hero__mark">
+              <img src="./icon.svg" alt="" width="320" height="320" />
+            </div>
+            <div class="hero__rings"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── VALUE PROPS ──────────────────────────────────────────────── -->
+      <section class="valueprops" aria-labelledby="vp-h">
+        <h2 id="vp-h" class="section__title">Why Cadence is different</h2>
+        <p class="section__sub">
+          Four trade-offs that productivity tools usually skip. We pick the
+          unfashionable side on each of them.
+        </p>
+
+        <div class="card-grid">
+          <article class="card">
+            <div class="card__icon card__icon--cream" aria-hidden>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12a9 9 0 1 1-9-9" />
+                <polyline points="21 3 21 9 15 9" />
+              </svg>
+            </div>
+            <h3>100% local-first</h3>
+            <p>
+              Every keystroke is written to your machine, not to a server.
+              Atomic <code>fsync</code>'ed writes, 50 rolling auto-snapshots,
+              refuse-to-overwrite guard, in-app recovery UI. A power loss
+              or kernel panic can't lose acknowledged data.
+            </p>
+          </article>
+
+          <article class="card">
+            <div class="card__icon card__icon--amber" aria-hidden>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <h3>Encrypted at rest</h3>
+            <p>
+              The desktop data file is wrapped in <strong>AES-256-GCM</strong>
+              with a key derived from your account password via
+              <code>scrypt</code>. Notes get an additional opt-in passphrase
+              lockbox. We can't read your data — and neither can anyone with
+              physical access to the file.
+            </p>
+          </article>
+
+          <article class="card">
+            <div class="card__icon card__icon--slate" aria-hidden>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2v4" />
+                <path d="m4.93 4.93 2.83 2.83" />
+                <path d="M2 12h4" />
+                <path d="M22 12h-4" />
+                <path d="m19.07 4.93-2.83 2.83" />
+                <circle cx="12" cy="14" r="6" />
+              </svg>
+            </div>
+            <h3>AI when you want it</h3>
+            <p>
+              Bring your own API key for Anthropic Claude, OpenAI or Google
+              Gemini. Calls go directly from your device to the provider —
+              no proxy, no Cadence-side telemetry. Turn AI off completely
+              and nothing else changes.
+            </p>
+          </article>
+
+          <article class="card">
+            <div class="card__icon card__icon--cream" aria-hidden>
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="16 18 22 12 16 6" />
+                <polyline points="8 6 2 12 8 18" />
+              </svg>
+            </div>
+            <h3>Open source, no upsell</h3>
+            <p>
+              The codebase is on GitHub. No accounts in the cloud, no premium
+              tier, no waitlist. If you don't like a behaviour you can fork
+              it. The desktop app auto-updates straight from GitHub Releases.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- ─── FEATURES SHOWCASE ────────────────────────────────────────── -->
+      <section id="features" class="features" aria-labelledby="feat-h">
+        <h2 id="feat-h" class="section__title">Built for the daily ritual</h2>
+        <p class="section__sub">
+          Cadence isn't trying to replace your IDE, your calendar and your
+          inbox. It's the in-between space — the place you actually plan
+          and reflect.
+        </p>
+
+        <div class="feature">
+          <div class="feature__copy">
+            <div class="feature__eyebrow">Notes</div>
+            <h3>A Markdown notebook with a real lockbox.</h3>
+            <p>
+              Two-pane macOS-Notes-style view with a resizable sidebar.
+              Reading defaults to <strong>Preview</strong>; one click flips
+              into <strong>Write</strong> mode with a full formatting
+              toolbar (Bold, Italic, Headings, Lists, Code, Code-block,
+              Link, Divider — with <kbd>⌘B</kbd> / <kbd>⌘I</kbd> /
+              <kbd>⌘K</kbd> shortcuts).
+            </p>
+            <p>
+              Lock individual notes with a workspace passphrase. Notes are
+              encrypted with a non-extractable <code>CryptoKey</code> derived
+              via PBKDF2-SHA-256 (200k iterations) → AES-256-GCM. Strict
+              per-view unlock: every time you open a locked note Cadence
+              asks for the passphrase, even within the same session.
+            </p>
+            <ul class="checklist">
+              <li>Five sort modes + drag-reorder inside the pinned tier</li>
+              <li>Pin, soft-delete, restore</li>
+              <li>Search indexes note bodies, not just titles</li>
+            </ul>
+          </div>
+          <figure class="feature__media">
+            <img src="./screenshots/notes.png" alt="Cadence notes view with resizable sidebar and markdown preview" loading="lazy" />
+          </figure>
+        </div>
+
+        <div class="feature feature--reverse">
+          <div class="feature__copy">
+            <div class="feature__eyebrow">Tasks</div>
+            <h3>Lists that respect priority, not just position.</h3>
+            <p>
+              Group tasks by project; each group has its own priority
+              (P0 / P1 / P2 / P3). Drag items between groups and order them
+              within each. Set recurring reminders (daily / weekly /
+              monthly) that fire as desktop notifications even when the
+              window is in the background.
+            </p>
+            <ul class="checklist">
+              <li>Recurring reminders that catch up gracefully after sleep</li>
+              <li>Pinned groups float to the top of the sidebar</li>
+              <li>One-click "mark all complete" and "clear completed"</li>
+            </ul>
+          </div>
+          <figure class="feature__media">
+            <img src="./screenshots/todos.png" alt="Cadence to-dos view with priority groups and drag handles" loading="lazy" />
+          </figure>
+        </div>
+
+        <div class="feature">
+          <div class="feature__copy">
+            <div class="feature__eyebrow">Agenda</div>
+            <h3>Tomorrow at a glance, this month in context.</h3>
+            <p>
+              A read-only calendar view of every reminder, due date and
+              recurring task across the workspace. Click any day to jump
+              to its detail; click any item to deep-link to the underlying
+              note or task. Lives offline; never asks for calendar permission.
+            </p>
+          </div>
+          <figure class="feature__media">
+            <img src="./screenshots/agenda.png" alt="Cadence agenda calendar grid" loading="lazy" />
+          </figure>
+        </div>
+
+        <div class="feature feature--reverse">
+          <div class="feature__copy">
+            <div class="feature__eyebrow">People + teams</div>
+            <h3>1:1 prep that doesn't live in a Slack DM.</h3>
+            <p>
+              Group people into teams, give each a private scratchpad and a
+              running agenda. Capture items, goals and feedback that survive
+              the meeting. Drop a wall of meeting notes into the AI extractor
+              and get a clean task list back, ready to drop into any project.
+            </p>
+          </div>
+          <figure class="feature__media">
+            <img src="./screenshots/home.png" alt="Cadence home view with teams and people" loading="lazy" />
+          </figure>
+        </div>
+
+        <div class="feature">
+          <div class="feature__copy">
+            <div class="feature__eyebrow">Global search</div>
+            <h3>⌘K finds whatever you typed, body included.</h3>
+            <p>
+              The command palette indexes every title <em>and body</em>
+              across notes, tasks, items and people's scratchpads. Matched
+              terms get highlighted with surrounding-context snippets so you
+              know <em>why</em> each result appeared. Press Enter to deep-link
+              straight to the note or task — no scrolling required.
+            </p>
+          </div>
+          <figure class="feature__media">
+            <img src="./screenshots/palette.png" alt="Cadence command palette open with search results across notes, todos and teams" loading="lazy" />
+          </figure>
+        </div>
+      </section>
+
+      <!-- ─── AI ───────────────────────────────────────────────────────── -->
+      <section id="ai" class="ai" aria-labelledby="ai-h">
+        <div class="ai__inner">
+          <p class="kicker">
+            <span class="kicker__dot kicker__dot--amber" aria-hidden></span>
+            BYO key · No proxy · Off by default
+          </p>
+          <h2 id="ai-h" class="section__title">
+            AI that joins the workspace, not the data pipeline.
+          </h2>
+          <p class="section__sub">
+            Cadence's AI assistant talks straight from your browser or
+            desktop to the provider you chose. Your key is stored next to
+            your data (in the same encrypted file). We can't see your
+            prompts, your replies or your usage — there is no Cadence
+            server in the loop.
+          </p>
+
+          <div class="ai-grid">
+            <article class="ai-card">
+              <h3>Task extractor</h3>
+              <p>
+                Drop a wall of meeting notes, a brain dump or a transcript.
+                Get back a clean, ordered task list ready to file into any
+                project group.
+              </p>
+              <p class="ai-card__hint">Best with Claude 3.5 Sonnet · GPT-4o</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Coaching on a single task</h3>
+              <p>
+                Stuck on a hard task? The assistant gives you a one-line
+                reframing, three concrete next actions ordered by leverage,
+                and one risk to avoid. Always under 200 words.
+              </p>
+              <p class="ai-card__hint">Tunable system prompt in Settings</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Three providers, one switch</h3>
+              <p>
+                Pick the model and price point you want: Anthropic Claude,
+                OpenAI ChatGPT, or Google Gemini. Switching providers is one
+                dropdown — nothing else in the app changes.
+              </p>
+              <p class="ai-card__hint">Anthropic · OpenAI · Google</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Off completely</h3>
+              <p>
+                No key, no AI — the rest of the app works exactly the same.
+                The whole AI surface is gated behind <em>"is the key
+                configured?"</em> so an offline workspace is the default,
+                not a degraded mode.
+              </p>
+              <p class="ai-card__hint">No telemetry either way</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── PRIVACY ──────────────────────────────────────────────────── -->
+      <section id="privacy" class="privacy" aria-labelledby="priv-h">
+        <h2 id="priv-h" class="section__title">What "local-first" actually means here</h2>
+        <p class="section__sub">
+          Some "local-first" apps mean "we sync your data through our cloud
+          and call it caching". Cadence is the stricter version.
+        </p>
+
+        <div class="privacy-grid">
+          <div class="privacy-card">
+            <h3>Where your data lives</h3>
+            <p>
+              On macOS: <code>~/Library/Application Support/Cadence/</code>.
+              On Windows: <code>%APPDATA%\Cadence\</code>. On Linux:
+              <code>~/.config/cadence/</code>. Trashing the app does
+              <strong>not</strong> delete your data — the data folder lives
+              outside the application bundle.
+            </p>
+          </div>
+
+          <div class="privacy-card">
+            <h3>What survives a crash</h3>
+            <p>
+              Every save opens a sibling <code>.tmp</code>, writes, calls
+              <code>fsync</code>, then atomically renames. A power loss
+              mid-write leaves either the old file or the new file — never
+              a half-written one. Worst case: ≤ 400 ms of unflushed typing.
+            </p>
+          </div>
+
+          <div class="privacy-card">
+            <h3>Backups, by default</h3>
+            <p>
+              Every save snapshots the previous file into
+              <code>backups/&lt;userId&gt;/</code>. 50 rolling slots labelled
+              <code>launch</code> / <code>post-login</code> /
+              <code>pre-save</code> / <code>pre-pwchange</code> /
+              <code>pre-restore</code>. Settings → Backups &amp; recovery
+              previews any of them with one click.
+            </p>
+          </div>
+
+          <div class="privacy-card">
+            <h3>Refuse-to-overwrite</h3>
+            <p>
+              If the data file exists but can't be decrypted with the
+              current session key, the writer refuses. You can't accidentally
+              destroy a locked workspace with one character's worth of state
+              after a bad login.
+            </p>
+          </div>
+
+          <div class="privacy-card">
+            <h3>Optional LAN sync</h3>
+            <p>
+              When you want two devices on the same Wi-Fi to share a
+              workspace, Settings → LAN sync exposes a token-protected
+              HTTP server that the PWA can talk to. The server is
+              <em>off</em> by default; the token is rotateable.
+            </p>
+          </div>
+
+          <div class="privacy-card">
+            <h3>No telemetry. Period.</h3>
+            <p>
+              Cadence makes zero network requests on its own. The auto-updater
+              hits GitHub Releases. The AI assistant hits whichever provider
+              you configured. Nothing else dials home.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── DOWNLOAD ─────────────────────────────────────────────────── -->
+      <section id="download" class="download" aria-labelledby="dl-h">
+        <h2 id="dl-h" class="section__title">Get Cadence</h2>
+        <p class="section__sub">
+          Use the web app from any device, or install the signed desktop
+          build for the full encryption + auto-update story.
+        </p>
+
+        <div class="download-grid">
+          <article class="download-card download-card--featured">
+            <div class="download-card__platform">macOS</div>
+            <h3>Signed desktop build</h3>
+            <p>
+              Universal DMG (Apple Silicon + Intel), notarised. Encrypted
+              data file, auto-updates from GitHub Releases, PIN-lock,
+              system notifications.
+            </p>
+            <a
+              class="btn btn--primary btn--lg"
+              href="https://github.com/sercancelenk/cadence/releases/latest"
+              rel="noopener noreferrer"
+              target="_blank"
+              >Download .dmg
+            </a>
+            <p class="download-card__hint">
+              Released on GitHub. Auto-updates automatically.
+            </p>
+          </article>
+
+          <article class="download-card">
+            <div class="download-card__platform">Web · PWA</div>
+            <h3>Try in the browser</h3>
+            <p>
+              The PWA build runs anywhere modern. Add it to your iOS or
+              Android home screen and it behaves like a native app —
+              data lives in browser storage on that device.
+            </p>
+            <a class="btn btn--ghost btn--lg" href="./app/">Open the web app</a>
+            <p class="download-card__hint">
+              No account in the cloud. Data stays on the device's storage.
+            </p>
+          </article>
+
+          <article class="download-card">
+            <div class="download-card__platform">Windows · Linux</div>
+            <h3>Experimental local build</h3>
+            <p>
+              The code runs cleanly on both. There's no signed CI release
+              yet — build locally from source with the documented one-line
+              setup. Encryption + backup + auto-update all behave the same.
+            </p>
+            <a
+              class="btn btn--ghost btn--lg"
+              href="https://github.com/sercancelenk/cadence#windows--linux-builds-experimental-not-in-ci"
+              rel="noopener noreferrer"
+              target="_blank"
+              >Read the build notes</a
+            >
+            <p class="download-card__hint">
+              Promoted into CI when there's real demand.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- ─── FOOTER ───────────────────────────────────────────────────── -->
+      <section class="closing">
+        <h2 class="display display--small">
+          A workspace that respects your time, your data, and your evening.
+        </h2>
+        <div class="cta-row cta-row--center">
+          <a class="btn btn--primary btn--lg" href="./app/">Open the web app →</a>
+          <a
+            class="btn btn--ghost btn--lg"
+            href="https://github.com/sercancelenk/cadence"
+            rel="noopener noreferrer"
+            target="_blank"
+            >Star on GitHub</a
+          >
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer__inner">
+        <div class="footer__brand">
+          <img src="./icon.svg" alt="" width="28" height="28" />
+          <span>Cadence</span>
+        </div>
+        <nav class="footer__links" aria-label="Footer">
+          <a href="https://github.com/sercancelenk/cadence" rel="noopener noreferrer" target="_blank">Source</a>
+          <a href="https://github.com/sercancelenk/cadence/releases" rel="noopener noreferrer" target="_blank">Releases</a>
+          <a href="https://github.com/sercancelenk/cadence#readme" rel="noopener noreferrer" target="_blank">README</a>
+          <a href="https://github.com/sercancelenk/cadence/issues" rel="noopener noreferrer" target="_blank">Issues</a>
+        </nav>
+        <p class="footer__meta">
+          Built with Electron, React, Vite. Plays well with Anthropic, OpenAI
+          and Google Gemini. <span>Made for people who like their data on
+          their own machine.</span>
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

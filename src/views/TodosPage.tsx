@@ -28,8 +28,8 @@ const AITaskExtractorDialog = lazy(() =>
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { isAIConfigured } from '../lib/ai';
 import { formatDateShort, formatTimeOnly, fromLocalDatetimeValue, isPast, toLocalDatetimeValue } from '../lib/datetime';
-import { PRIORITY_OPTIONS, priorityRank } from '../model';
-import type { Priority, TodoGroup, TodoItem } from '../model';
+import { PRIORITY_OPTIONS, priorityRank, TODO_STATUS_OPTIONS, isTodoOpen, todoStatusRank } from '../model';
+import type { Priority, TodoGroup, TodoItem, TodoStatus } from '../model';
 
 function hashHue(seed: string): number {
   let h = 0;
@@ -52,6 +52,7 @@ const LS_TODO_SECTIONS = 'cadence.todos.sectionsOpen.v1';
 const LS_TODO_SHOW_ARCHIVED = 'cadence.todos.showArchived.v1';
 const LS_TODO_HIDE_DONE = 'cadence.todos.hideDone.v1';
 const LS_TODO_SORT_MODE = 'cadence.todos.sortMode.v1';
+const LS_TODO_STATUS_FILTER = 'cadence.todos.statusFilter.v1';
 
 function todoSectionsStorageKey(userId: string) {
   return `${LS_TODO_SECTIONS}:${userId}`;
@@ -69,19 +70,52 @@ function todoSortModeKey(userId: string) {
   return `${LS_TODO_SORT_MODE}:${userId}`;
 }
 
+function todoStatusFilterKey(userId: string) {
+  return `${LS_TODO_STATUS_FILTER}:${userId}`;
+}
+
 /**
  * Controls how items inside a list are ordered:
  *   - 'manual'    → user-defined sortOrder (drag-and-drop)
  *   - 'priority'  → urgent > high > normal > low, ties broken by manual order
  *   - 'due'       → soonest due date first; undated items last
+ *   - 'status'    → Kanban order: todo → in_progress → done → cancelled,
+ *                   ties broken by manual order
  */
-type SortMode = 'manual' | 'priority' | 'due';
+type SortMode = 'manual' | 'priority' | 'due' | 'status';
 
 const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: 'manual', label: 'Manual order' },
   { value: 'priority', label: 'By priority' },
   { value: 'due', label: 'By due date' },
+  { value: 'status', label: 'By status' },
 ];
+
+/**
+ * Status filter modes. `all` is the default — we don't drop anything. The
+ * other modes either pick a single status or an aggregate ("open" = todo
+ * + in_progress, which matches the most useful "stuff I still have to do"
+ * view). `done` and `cancelled` make it easy to review closed work.
+ */
+type StatusFilter = 'all' | 'open' | TodoStatus;
+
+const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'open', label: 'Open (todo + WIP)' },
+  ...TODO_STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+];
+
+function matchesStatusFilter(status: TodoStatus, filter: StatusFilter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'open') return isTodoOpen(status);
+  return status === filter;
+}
+
+function parseStatusFilter(raw: string | null): StatusFilter {
+  if (!raw) return 'all';
+  if (STATUS_FILTER_OPTIONS.some((o) => o.value === raw)) return raw as StatusFilter;
+  return 'all';
+}
 
 function isSectionOpen(map: Record<string, boolean>, groupId: string): boolean {
   return map[groupId] !== false;
@@ -132,7 +166,7 @@ type TodoTaskRowProps = {
   onAskAI: (item: TodoItem) => void;
   onPatch: (
     id: string,
-    patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'priority'>>,
+    patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'priority' | 'status'>>,
   ) => void;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
@@ -217,7 +251,10 @@ function TodoTaskRow({
 
   const dueLabel = item.dueAt ? formatTimeOnly(item.dueAt) : '';
   const dueDateShort = formatDateShort(item.dueAt);
-  const overdue = item.dueAt && isPast(item.dueAt) && !item.done;
+  // Only OPEN rows (todo / in_progress) can be overdue. Done items aren't
+  // pending anymore, and cancelled ones were explicitly dropped — flagging
+  // either with an "Overdue" warning would just add noise.
+  const overdue = item.dueAt && isPast(item.dueAt) && isTodoOpen(item.status);
   const presets = useMemo(() => quickPresets(), []);
 
   const applyPreset = (when: Date) => {
@@ -244,9 +281,26 @@ function TodoTaskRow({
     onRemove(item.id);
   };
 
+  // Status meta is centralised so we don't repeat the lookup in every JSX
+  // branch. `tone` maps onto the `.badge--<tone>` modifiers in `app.css`,
+  // keeping the row's accent in sync with the global badge palette
+  // (info/warn/ok/muted).
+  const statusMeta = TODO_STATUS_OPTIONS.find((o) => o.value === item.status);
+  const statusTone = statusMeta?.tone ?? 'info';
+  const statusShort = statusMeta?.shortLabel ?? 'To do';
+
+  // The "done" CSS modifier was historically driven by `item.done` alone,
+  // which is fine for the checkmark but not enough now: cancelled rows
+  // also want the strikethrough treatment to read as "this is no longer
+  // an active task". We branch on status here and pass that through to
+  // every visual the row uses.
+  const isTerminal = item.status === 'done' || item.status === 'cancelled';
+
   return (
     <li
-      className={`todos-row${compact ? ' todos-row--compact' : ''}${item.done ? ' todos-row--done' : ''}${
+      className={`todos-row${compact ? ' todos-row--compact' : ''}${isTerminal ? ' todos-row--done' : ''}${
+        item.status === 'cancelled' ? ' todos-row--cancelled' : ''
+      }${item.status === 'in_progress' ? ' todos-row--wip' : ''}${
         item.priority ? ` todos-row--prio-${item.priority}` : ''
       }${isDragSrc ? ' todos-row--dragging' : ''}${isDropTgt ? ' todos-row--drop-target' : ''}`}
       style={ringStyle(item.groupId)}
@@ -330,6 +384,16 @@ function TodoTaskRow({
               {item.title}
             </button>
           )}
+
+          {item.status !== 'todo' ? (
+            <span
+              className={`todos-row__status todos-row__status--${item.status}`}
+              data-tone={statusTone}
+              title={`Status: ${statusMeta?.label ?? item.status}`}
+            >
+              {statusShort}
+            </span>
+          ) : null}
 
           {item.priority ? (
             <span className={`todos-row__prio todos-row__prio--${item.priority}`} title={`Priority: ${item.priority}`}>
@@ -424,6 +488,19 @@ function TodoTaskRow({
               ) : null}
             </div>
             <select
+              className={`todos-row__move todos-row__status-select todos-row__status-select--${item.status}`}
+              value={item.status}
+              onChange={(e) => onPatch(item.id, { status: e.target.value as TodoStatus })}
+              aria-label="Set status"
+              title="Status"
+            >
+              {TODO_STATUS_OPTIONS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+            <select
               className="todos-row__move"
               value={item.priority ?? ''}
               onChange={(e) =>
@@ -512,6 +589,7 @@ export function TodosPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [hideDone, setHideDone] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('manual');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [dragGroupId, setDragGroupId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dragItemId, setDragItemId] = useState<string | null>(null);
@@ -551,7 +629,10 @@ export function TodosPage() {
       const hideDoneRaw = localStorage.getItem(todoHideDoneKey(userId));
       setHideDone(hideDoneRaw === '1');
       const sortRaw = localStorage.getItem(todoSortModeKey(userId));
-      setSortMode(sortRaw === 'priority' || sortRaw === 'due' ? sortRaw : 'manual');
+      setSortMode(
+        sortRaw === 'priority' || sortRaw === 'due' || sortRaw === 'status' ? sortRaw : 'manual',
+      );
+      setStatusFilter(parseStatusFilter(localStorage.getItem(todoStatusFilterKey(userId))));
     } catch {
       setSectionOpenMap({});
     }
@@ -581,10 +662,11 @@ export function TodosPage() {
     try {
       localStorage.setItem(todoHideDoneKey(userId), hideDone ? '1' : '0');
       localStorage.setItem(todoSortModeKey(userId), sortMode);
+      localStorage.setItem(todoStatusFilterKey(userId), statusFilter);
     } catch {
       /* ignore */
     }
-  }, [hideDone, sortMode, sectionsHydrated, userId]);
+  }, [hideDone, sortMode, statusFilter, sectionsHydrated, userId]);
 
   const itemsByGroup = useMemo(() => {
     const m = new Map<string, TodoItem[]>();
@@ -607,6 +689,14 @@ export function TodosPage() {
         if (sortMode === 'due') {
           const dd = dueOf(a) - dueOf(b);
           if (dd !== 0) return dd;
+          return orderOf(a) - orderOf(b);
+        }
+        if (sortMode === 'status') {
+          // Kanban order: todo → in_progress → done → cancelled.
+          // Ties (same status) fall back to the user's manual ordering so
+          // the result is stable when the user toggles back to manual.
+          const ds = todoStatusRank(a.status) - todoStatusRank(b.status);
+          if (ds !== 0) return ds;
           return orderOf(a) - orderOf(b);
         }
         // manual
@@ -669,13 +759,28 @@ export function TodosPage() {
             ))}
           </select>
         </label>
+        <label className="todos-toolbar__select">
+          <span className="muted small">Status</span>
+          <select
+            className="input"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+            aria-label="Filter by status"
+          >
+            {STATUS_FILTER_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="todos-toolbar__check">
           <input
             type="checkbox"
             checked={hideDone}
             onChange={(e) => setHideDone(e.target.checked)}
           />
-          <span className="small">Hide completed</span>
+          <span className="small">Hide closed</span>
         </label>
         <label className="todos-toolbar__check">
           <input
@@ -700,12 +805,21 @@ export function TodosPage() {
 
       {visibleGroups.map((g, idx) => {
         const list = itemsByGroup.get(g.id) ?? [];
-        const matchedList = list.filter(matchesQuery);
+        // Search + status filter both apply before we split into open /
+        // terminal tiers. The status filter is its own concept on top of
+        // "Hide completed" so users can, say, look at only cancelled rows
+        // even when hideDone would normally hide them.
+        const matchedList = list.filter(
+          (it) => matchesQuery(it) && matchesStatusFilter(it.status, statusFilter),
+        );
         const draft = draftByGroup[g.id] ?? '';
-        const active = matchedList.filter((x) => !x.done);
-        const done = matchedList.filter((x) => x.done);
-        const totalActive = list.filter((x) => !x.done).length;
-        const totalDone = list.filter((x) => x.done).length;
+        // "Open" tier = todo + in_progress. Anything terminal (done,
+        // cancelled) goes into the closed tier and is rendered separately
+        // below so the open work always stays visible at the top.
+        const active = matchedList.filter((x) => isTodoOpen(x.status));
+        const closed = matchedList.filter((x) => !isTodoOpen(x.status));
+        const totalActive = list.filter((x) => isTodoOpen(x.status)).length;
+        const totalClosed = list.filter((x) => !isTodoOpen(x.status)).length;
         const sectionOpen = isSectionOpen(sectionOpenMap, g.id);
 
         if (q && matchedList.length === 0) return null;
@@ -801,9 +915,9 @@ export function TodosPage() {
                 }}
               />
 
-              <span className="todos-section__counts" title="Open · Completed">
+              <span className="todos-section__counts" title="Open · Total">
                 {totalActive}
-                <span className="muted"> / {totalActive + totalDone}</span>
+                <span className="muted"> / {totalActive + totalClosed}</span>
                 {g.priority ? (
                   <span
                     className={`pill todos-section__prio todos-section__prio--${g.priority}`}
@@ -889,14 +1003,19 @@ export function TodosPage() {
                   <button
                     type="button"
                     className="todos-section__menu-item"
-                    disabled={totalDone === 0}
+                    disabled={totalClosed === 0}
+                    title="Removes all done and cancelled tasks from this list"
                     onClick={() => {
-                      if (window.confirm(`Remove all completed tasks from “${g.name}”?`)) {
+                      if (
+                        window.confirm(
+                          `Remove all done and cancelled tasks from “${g.name}”? This can't be undone.`,
+                        )
+                      ) {
                         clearCompletedInGroup(g.id);
                       }
                     }}
                   >
-                    Clear completed ({totalDone})
+                    Clear closed ({totalClosed})
                   </button>
                   {data.todoGroups.length > 1 ? (
                     <>
@@ -920,13 +1039,15 @@ export function TodosPage() {
 
             {sectionOpen ? (
               <>
-                {active.length === 0 && (hideDone || done.length === 0) ? (
+                {active.length === 0 && (hideDone || closed.length === 0) ? (
                   <p className="todos-section__empty">
                     {q
                       ? 'No matching tasks in this list.'
-                      : hideDone && done.length > 0
-                        ? `${done.length} completed task${done.length === 1 ? '' : 's'} hidden.`
-                        : 'No tasks in this list.'}
+                      : statusFilter !== 'all'
+                        ? 'No tasks match this status filter.'
+                        : hideDone && closed.length > 0
+                          ? `${closed.length} closed task${closed.length === 1 ? '' : 's'} hidden.`
+                          : 'No tasks in this list.'}
                   </p>
                 ) : (
                   <ul className="todos-list">
@@ -961,7 +1082,7 @@ export function TodosPage() {
                       />
                     ))}
                     {!hideDone &&
-                      done.map((it) => (
+                      closed.map((it) => (
                         <TodoTaskRow
                           key={it.id}
                           item={it}

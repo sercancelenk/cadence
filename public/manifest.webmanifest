@@ -2,7 +2,7 @@
   "name": "Cadence",
   "short_name": "Cadence",
   "description": "Local-first workspace — people, tasks, notes, goals and reminders.",
-  "id": "/cadence/",
+  "id": "/cadence/app/",
   "start_url": "./?source=pwa",
   "scope": "./",
   "display": "standalone",

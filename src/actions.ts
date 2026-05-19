@@ -14,6 +14,7 @@ import type {
   Team,
   TodoGroup,
   TodoItem,
+  TodoStatus,
   UserProfile,
 } from './model';
 import { isLeaderPerson, isSelfPerson, nowIso, selfPersonIdForTeam, leaderPersonIdForTeam } from './model';
@@ -545,20 +546,33 @@ export function moveTodoGroup(data: AppData, groupId: string, direction: 'up' | 
 }
 
 /** Removes every completed task from the given list. */
+/**
+ * Drop both completed and cancelled rows from a list — the two terminal
+ * states. Old builds only cleared `done` rows; cancelled items now share
+ * that "no longer active" semantics so they're swept up too.
+ */
 export function clearCompletedInGroup(data: AppData, groupId: string): AppData {
   return {
     ...data,
-    todoItems: data.todoItems.filter((t) => !(t.groupId === groupId && t.done)),
+    todoItems: data.todoItems.filter(
+      (t) => !(t.groupId === groupId && (t.status === 'done' || t.status === 'cancelled')),
+    ),
   };
 }
 
-/** Marks every open task in the list as done (preserves already-done items). */
+/**
+ * Marks every still-open task in the list (todo / in_progress) as done.
+ * Cancelled rows are left alone — the user explicitly decided to drop
+ * them, "mark all complete" shouldn't undo that decision.
+ */
 export function markAllCompleteInGroup(data: AppData, groupId: string): AppData {
   const now = nowIso();
   return {
     ...data,
     todoItems: data.todoItems.map((t) =>
-      t.groupId === groupId && !t.done ? { ...t, done: true, updatedAt: now } : t,
+      t.groupId === groupId && (t.status === 'todo' || t.status === 'in_progress')
+        ? { ...t, status: 'done', done: true, doneAt: t.doneAt ?? now, updatedAt: now }
+        : t,
     ),
   };
 }
@@ -582,6 +596,7 @@ export function addTodoItem(
     id: uuid(),
     groupId: gid,
     title: title.trim() || 'Untitled task',
+    status: 'todo',
     done: false,
     sortOrder: minOrder - 1,
     createdAt: t,
@@ -592,10 +607,25 @@ export function addTodoItem(
   return { ...data, todoItems: [item, ...data.todoItems] };
 }
 
+/**
+ * Apply a partial update to a single to-do item.
+ *
+ * `status` is the authoritative lifecycle field. `done` (legacy boolean) and
+ * `doneAt` (timestamp of completion) are always derived from it so callers
+ * can't put the two out of sync:
+ *
+ *   - If `patch.status` is given, `done` follows it and `doneAt` is stamped
+ *     when transitioning into `'done'` (or cleared when transitioning out).
+ *   - If `patch.done` is given (legacy callers / checkbox toggles) we map
+ *     it to a status change instead and run the same bookkeeping.
+ *
+ * That keeps `toggleTodoItem` and per-row checkbox handlers working
+ * unchanged while still letting new code drive the model via `status`.
+ */
 export function updateTodoItem(
   data: AppData,
   id: string,
-  patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done' | 'priority'>>,
+  patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done' | 'status' | 'priority'>>,
 ): AppData {
   return {
     ...data,
@@ -603,9 +633,25 @@ export function updateTodoItem(
       if (x.id !== id) return x;
       const groupId =
         patch.groupId !== undefined && data.todoGroups.some((g) => g.id === patch.groupId) ? patch.groupId : x.groupId;
-      let done = x.done;
       const updatedAt = nowIso();
-      if (patch.done !== undefined) done = patch.done;
+
+      // Resolve next status from the patch. `status` wins over `done`
+      // if both are passed; that lets explicit "set to in_progress" calls
+      // survive even when an older codepath also nudges `done: false`.
+      let nextStatus: TodoStatus = x.status;
+      if (patch.status !== undefined) {
+        nextStatus = patch.status;
+      } else if (patch.done !== undefined) {
+        nextStatus = patch.done ? 'done' : 'todo';
+      }
+      const nextDone = nextStatus === 'done';
+      // Only stamp `doneAt` on a fresh transition into done — if the row
+      // was already done we keep the original timestamp so analytics show
+      // when it was *first* completed.
+      let nextDoneAt = x.doneAt;
+      if (nextDone && !x.done) nextDoneAt = updatedAt;
+      else if (!nextDone) nextDoneAt = undefined;
+
       const priority =
         patch.priority !== undefined ? (patch.priority || undefined) : x.priority;
       return {
@@ -613,12 +659,24 @@ export function updateTodoItem(
         title: patch.title !== undefined ? patch.title.trim() || x.title : x.title,
         groupId,
         dueAt: patch.dueAt !== undefined ? patch.dueAt || undefined : x.dueAt,
-        done,
+        status: nextStatus,
+        done: nextDone,
+        doneAt: nextDoneAt,
         priority,
         updatedAt,
       };
     }),
   };
+}
+
+/**
+ * Explicit "set this item's status to X" helper.
+ *
+ * Thin wrapper around `updateTodoItem` so call sites (status dropdown,
+ * bulk-status menu) don't have to remember the `done` ↔ `status` mapping.
+ */
+export function setTodoStatus(data: AppData, id: string, status: TodoStatus): AppData {
+  return updateTodoItem(data, id, { status });
 }
 
 /**

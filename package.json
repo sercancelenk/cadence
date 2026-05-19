@@ -12,8 +12,10 @@
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "build:web": "vite build",
     "build:pwa": "cross-env CADENCE_PWA=1 vite build",
+    "build:pages": "npm run build:pwa && node scripts/build-pages.mjs",
     "build": "vite build && electron-builder",
     "preview": "vite preview",
+    "preview:landing": "npx --yes serve dist -l 4173",
     "build:release": "vite build && electron-builder --publish always",
     "icons": "node scripts/generate-pwa-icons.mjs"
   },

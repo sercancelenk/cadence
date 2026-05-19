@@ -68,3 +68,28 @@ export const SYNC_FINGERPRINT_LEGACY = `${APP_SLUG_LEGACY}-sync` as const;
  */
 export const NOTES_VERIFIER_PLAINTEXT = `${APP_SLUG}-notes-v1` as const;
 export const NOTES_VERIFIER_PLAINTEXT_LEGACY = 'leeadman-notes-v2' as const;
+
+/**
+ * Resolve a `public/`-rooted asset to a URL the renderer can fetch.
+ *
+ * Vite ships everything under `public/` to the build output root at
+ * deploy time, but the served path depends on the configured `base`:
+ *   - Electron / `npm run dev`: served from `/`, e.g. `/icon.svg`.
+ *   - PWA on GitHub Pages: served from `/cadence/app/`, e.g.
+ *     `/cadence/app/icon.svg`.
+ * Hard-coding `/icon.svg` in components or in CSS works in dev but
+ * 404s once deployed. `import.meta.env.BASE_URL` is the canonical Vite
+ * way to bridge that gap, so anything that wants a public asset URL
+ * should funnel through here instead of building the string by hand.
+ */
+export function publicAssetUrl(name: string): string {
+  const base = import.meta.env.BASE_URL || '/';
+  const trimmedBase = base.endsWith('/') ? base : `${base}/`;
+  const trimmedName = name.startsWith('/') ? name.slice(1) : name;
+  return `${trimmedBase}${trimmedName}`;
+}
+
+/** Convenience wrapper for the brand mark used in the sidebar / hero. */
+export function brandIconUrl(): string {
+  return publicAssetUrl('icon.svg');
+}

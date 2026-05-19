@@ -13,6 +13,7 @@ import {
   IcUsers,
 } from './icons';
 import { useAppData } from '../AppDataContext';
+import { brandIconUrl } from '../lib/appBranding';
 import { PATH_HOME, PATH_TEAMS } from '../lib/routes';
 import { teamLeader, teamMe, teamPeople as teamPeopleRoute, teamBase } from '../lib/teamPaths';
 
@@ -29,7 +30,7 @@ export function AppSidebar({ collapsed }: Props) {
   return (
     <aside className="app-sidebar" aria-label="Main navigation">
       <div className="app-sidebar__brand">
-        <span className="app-sidebar__logo" aria-hidden />
+        <img className="app-sidebar__logo" src={brandIconUrl()} alt="" aria-hidden />
         {!collapsed ? (
           <div className="app-sidebar__brand-text">
             <span className="app-sidebar__title">Cadence</span>
