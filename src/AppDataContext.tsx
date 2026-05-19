@@ -61,6 +61,24 @@ import type {
 } from './model';
 import { normalizeData } from './model';
 
+/**
+ * Surfaced save failure. Either:
+ *   - an in-renderer `persist()` error (the IPC call rejected or returned
+ *     false), or
+ *   - a `data:saveError` push from the main process (e.g. refused to
+ *     overwrite an undecipherable file).
+ *
+ * The provider keeps the most recent failure in state so any view can render
+ * a banner; this is critical for the user's "never lose data silently"
+ * requirement.
+ */
+export type PersistError = {
+  reason?: string;
+  error?: string;
+  /** ms since epoch of when we observed the failure. */
+  at: number;
+};
+
 type Api = {
   data: AppData;
   ready: boolean;
@@ -72,6 +90,23 @@ type Api = {
    */
   reload: () => Promise<void>;
   update: (fn: (d: AppData) => AppData) => void;
+  /**
+   * Most recent unrecoverable save failure (or null). Subscribe to this from
+   * a Layout-level banner so users see save issues anywhere in the app, not
+   * just on Settings.
+   */
+  lastSaveError: PersistError | null;
+  /** Wall-clock timestamp (ms since epoch) of the last successful disk save. */
+  lastSavedAt: number | null;
+  /** True while a save is currently in flight. */
+  saving: boolean;
+  clearSaveError: () => void;
+  /**
+   * Force an immediate flush of the debounced save buffer. Returns when the
+   * write has been acknowledged (or rejected). Used by destructive flows
+   * (logout, password change) that must not lose unsaved typing.
+   */
+  flushPendingSave: () => Promise<void>;
   rememberTeam: (teamId: string) => void;
   addTeam: (name: string) => void;
   updateTeam: (teamId: string, patch: Partial<Pick<Team, 'name' | 'status'>>) => void;
@@ -136,7 +171,10 @@ type Api = {
   removeTodoItem: (id: string) => void;
   addNote: () => string;
   replaceNote: (note: Note) => void;
-  patchNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'pinned'>>) => void;
+  patchNote: (
+    id: string,
+    patch: Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'sortOrder' | 'lastOpenedAt'>>,
+  ) => void;
   removeNote: (id: string) => void;
   setNotesLock: (lock: NotesLock | undefined) => void;
 };
@@ -149,16 +187,41 @@ function storageKeyForUser(userId: string) {
   return `${STORAGE_PREFIX}-data-${userId}`;
 }
 
-async function persist(userId: string, data: AppData) {
+/**
+ * Persist the current snapshot to the underlying store (Electron file or
+ * browser localStorage) and report success/failure to the caller. Unlike the
+ * old fire-and-forget version, every failure path here surfaces to the
+ * provider so a global banner can warn the user — silently dropping a save
+ * is the worst possible outcome for a local-first app.
+ */
+async function persist(userId: string, data: AppData): Promise<{ ok: true } | { ok: false; reason: string; error?: string }> {
   const api = window.cadence;
   if (api?.saveData) {
-    await api.saveData(data);
-    return;
+    try {
+      const ok = await api.saveData(data);
+      if (ok === true) return { ok: true };
+      // The main process returns `false` when `writeUserData()` refused to
+      // write (e.g. existing file is undecipherable). The detailed reason
+      // also arrives via the `data:saveError` IPC channel.
+      return { ok: false, reason: 'write-rejected', error: 'Main process rejected the write.' };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'ipc-error',
+        error: err instanceof Error ? err.message : 'IPC saveData call failed.',
+      };
+    }
   }
   try {
     localStorage.setItem(storageKeyForUser(userId), JSON.stringify(data));
-  } catch {
-    /* ignore */
+    return { ok: true };
+  } catch (err) {
+    // QuotaExceeded, SecurityError (private mode), etc.
+    return {
+      ok: false,
+      reason: 'localstorage-error',
+      error: err instanceof Error ? err.message : 'localStorage write failed.',
+    };
   }
 }
 
@@ -188,36 +251,88 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const [data, setData] = useState<AppData | null>(null);
   const [ready, setReady] = useState(false);
+  const [lastSaveError, setLastSaveError] = useState<PersistError | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The most recent payload pending a debounced save, kept so we can flush it
   // synchronously on tab close / unmount.
   const pendingSave = useRef<AppData | null>(null);
 
-  const flushPendingSave = useCallback(() => {
+  // Bubble main-process save failures (e.g. "refused to overwrite an
+  // undecipherable file") up to the global banner. This complements the
+  // try/catch in `runPersist` because some failures only come from main,
+  // not from a rejected IPC call.
+  useEffect(() => {
+    const off = window.cadence?.onSaveError?.((evt) => {
+      setLastSaveError({
+        reason: evt?.reason ?? 'main-process',
+        error: evt?.error ?? 'Main process reported a save error.',
+        at: Date.now(),
+      });
+    });
+    return () => {
+      if (typeof off === 'function') off();
+    };
+  }, []);
+
+  const runPersist = useCallback(async (uid: string, payload: AppData) => {
+    setSaving(true);
+    try {
+      const r = await persist(uid, payload);
+      if (r.ok) {
+        setLastSavedAt(Date.now());
+        setLastSaveError(null);
+      } else {
+        setLastSaveError({ reason: r.reason, error: r.error, at: Date.now() });
+      }
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const flushPendingSave = useCallback(async () => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
     const uid = userIdRef.current;
     const next = pendingSave.current;
-    if (uid && next) {
-      pendingSave.current = null;
-      void persist(uid, next);
+    if (!uid || !next) return;
+    pendingSave.current = null;
+    await runPersist(uid, next);
+  }, [runPersist]);
+
+  // Synchronous variant used by `beforeunload` / `pagehide`. Async-await is
+  // fine for promise-based persistence here because Electron `ipcRenderer`
+  // can usually deliver the message before the renderer process is torn
+  // down, but we explicitly don't await — we just fire and let the listener
+  // resolve in the background. Worst case is the OS kills us; best case
+  // (and the common case) is the message reaches main before we die.
+  const flushPendingSaveSync = useCallback(() => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
     }
-  }, []);
+    const uid = userIdRef.current;
+    const next = pendingSave.current;
+    if (!uid || !next) return;
+    pendingSave.current = null;
+    void runPersist(uid, next);
+  }, [runPersist]);
 
   // Best-effort: flush before the browser/Electron tab actually goes away so
   // the user never loses the last 400ms of typing on an abrupt close.
   useEffect(() => {
-    const onPageHide = () => flushPendingSave();
+    const onPageHide = () => flushPendingSaveSync();
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('beforeunload', onPageHide);
     return () => {
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('beforeunload', onPageHide);
-      flushPendingSave();
+      flushPendingSaveSync();
     };
-  }, [flushPendingSave]);
+  }, [flushPendingSaveSync]);
 
   useEffect(() => {
     if (!userId) {
@@ -244,12 +359,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
       setData(merged);
       setReady(true);
-      if (seeded) void persist(userId, merged);
+      if (seeded) void runPersist(userId, merged);
     })();
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [userId, runPersist]);
 
   const scheduleSave = useCallback((next: AppData) => {
     const uid = userIdRef.current;
@@ -260,9 +375,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       saveTimer.current = null;
       const payload = pendingSave.current;
       pendingSave.current = null;
-      if (payload) void persist(uid, payload);
+      if (payload) void runPersist(uid, payload);
     }, SAVE_DEBOUNCE_MS);
-  }, []);
+  }, [runPersist]);
 
   const update = useCallback(
     (fn: (d: AppData) => AppData) => {
@@ -310,6 +425,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       ready: ready && data !== null,
       replaceAll,
       reload,
+      lastSaveError,
+      lastSavedAt,
+      saving,
+      clearSaveError: () => setLastSaveError(null),
+      flushPendingSave,
       rememberTeam: (teamId) => update((x) => setLastTeamIdFn(x, teamId)),
       update,
       addTeam: (name) => update((x) => addTeamFn(x, name)),
@@ -355,7 +475,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       removeNote: (id) => update((x) => removeNoteFn(x, id)),
       setNotesLock: (lock) => update((x) => setNotesLockFn(x, lock)),
     };
-  }, [data, ready, update, replaceAll, reload]);
+  }, [data, ready, update, replaceAll, reload, lastSaveError, lastSavedAt, saving, flushPendingSave]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }

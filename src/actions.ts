@@ -731,11 +731,22 @@ export function replaceNote(data: AppData, note: Note): AppData {
 export function patchNote(
   data: AppData,
   id: string,
-  patch: Partial<Pick<Note, 'title' | 'body' | 'pinned'>>,
+  patch: Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'sortOrder' | 'lastOpenedAt'>>,
 ): AppData {
+  // Distinguish user-visible edits (title/body/pinned) from bookkeeping
+  // touches (sortOrder, lastOpenedAt). Bookkeeping touches must NOT bump
+  // `updatedAt` — otherwise opening or re-ordering a note would push it
+  // to the top of the "Last updated" list, which is the exact opposite
+  // of what those sort modes are supposed to expose.
+  const isContentChange = 'title' in patch || 'body' in patch || 'pinned' in patch;
   return {
     ...data,
-    notes: data.notes.map((n) => (n.id === id ? { ...n, ...patch, updatedAt: nowIso() } : n)),
+    notes: data.notes.map((n) => {
+      if (n.id !== id) return n;
+      const next: Note = { ...n, ...patch };
+      if (isContentChange) next.updatedAt = nowIso();
+      return next;
+    }),
   };
 }
 

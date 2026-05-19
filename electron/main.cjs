@@ -439,12 +439,55 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false } = {
   return okWrite ? { ok: true } : { ok: false, error: 'I/O error while writing data file.' };
 }
 
+/**
+ * Atomic, durable write of a UTF-8 string to `filePath`.
+ *
+ * Why this much ceremony for a single write?
+ *   - Naïve `writeFileSync` returns when the bytes are queued in the kernel
+ *     page cache, NOT when they have been persisted to the underlying
+ *     storage. On macOS/Linux that delay can be 5–30 seconds.
+ *   - A power loss, kernel panic, or forced reboot in that window will lose
+ *     the "successful" write — exactly the failure mode the user wants to
+ *     avoid ("notlarım kaybolmasın").
+ *
+ * What we do instead:
+ *   1. Write the new content to a sibling `.tmp` file with an explicit
+ *      fd open/write/fsync/close cycle. `fsync(fd)` blocks until the bytes
+ *      are on durable storage.
+ *   2. Atomically rename the tmp file over the target. POSIX guarantees the
+ *      directory entry update is atomic, so a crash mid-rename leaves either
+ *      the old file or the new file — never a torn one.
+ *   3. fsync the containing directory so the rename itself survives a
+ *      crash. (No-op / not supported on Windows; we swallow that error.)
+ */
 function writeJsonText(filePath, text) {
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const tmp = `${filePath}.tmp`;
-    fs.writeFileSync(tmp, text, 'utf8');
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      fs.writeSync(fd, text, 0, 'utf8');
+      try {
+        fs.fsyncSync(fd);
+      } catch (err) {
+        console.warn('[cadence] fsync(file) failed (continuing)', err);
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmp, filePath);
+    try {
+      const dirFd = fs.openSync(path.dirname(filePath), 'r');
+      try {
+        fs.fsyncSync(dirFd);
+      } finally {
+        fs.closeSync(dirFd);
+      }
+    } catch {
+      // Some platforms (Windows) don't allow fsync on directory fds.
+      // The rename itself is still atomic; we just don't get the extra
+      // crash guarantee for the directory entry.
+    }
     return true;
   } catch (err) {
     console.error('[cadence] failed to write', filePath, err);

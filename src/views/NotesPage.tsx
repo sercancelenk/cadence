@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAppData } from '../AppDataContext';
 import { useAccount } from '../AccountContext';
 import { MarkdownEditor } from '../components/ui/MarkdownEditor';
 import {
   IcEyeOff,
+  IcGrip,
   IcKey,
   IcLock,
   IcLockOff,
@@ -24,6 +26,30 @@ import {
 import type { Note, NotesLock } from '../model';
 
 const PLACEHOLDER_TITLE = 'New note';
+
+/**
+ * Sort modes available in the sidebar dropdown. `manual` is special — it's
+ * the only mode that lets the user drag rows up/down to reorder them
+ * (using each note's persisted `sortOrder`).
+ *
+ * Pinned notes always sort to the top, regardless of mode.
+ */
+type NoteSortMode = 'updated' | 'opened' | 'created' | 'title' | 'manual';
+
+const SORT_OPTIONS: { value: NoteSortMode; label: string }[] = [
+  { value: 'updated', label: 'Last updated' },
+  { value: 'opened', label: 'Last opened' },
+  { value: 'created', label: 'Created' },
+  { value: 'title', label: 'Title (A→Z)' },
+  { value: 'manual', label: 'Manual' },
+];
+
+/** Sidebar resize bounds. Kept liberal — the goal is to prevent the
+ *  sidebar from collapsing to a useless slit or hogging the editor pane,
+ *  not to police taste. */
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_MAX_WIDTH = 560;
+const SIDEBAR_DEFAULT_WIDTH = 320;
 
 /**
  * What the user is trying to do when we prompt for the passphrase.
@@ -93,8 +119,25 @@ export function NotesPage() {
   const { data, addNote, patchNote, replaceNote, removeNote, setNotesLock, update } = useAppData();
   const unlock = useNotesUnlock();
   const account = useAccount();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Visible width of the left sidebar in px. Reset per session — we don't
+   *  persist this anywhere; the user can tune it on each visit if they like. */
+  const [sidebarWidth, setSidebarWidth] = useState<number>(SIDEBAR_DEFAULT_WIDTH);
+  /** Active sort mode for the notes list. Per-session state (not persisted)
+   *  — defaults to "Last updated" which is also the historical behaviour. */
+  const [sortMode, setSortMode] = useState<NoteSortMode>('updated');
+  /** Note id currently being dragged for manual reorder, or null. */
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  /** Target note id the dragged row is currently hovering over (used to
+   *  paint a drop indicator); null when no drop target is active. */
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  /** Tracks the live drag delta for the sidebar resize handle. The pointer
+   *  events flow through a ref so we don't re-render the page on every
+   *  mouse-move — the inline grid-template-columns is updated from the
+   *  `sidebarWidth` state once per drop. */
+  const resizeStateRef = useRef<{ startX: number; startW: number } | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [pendingIntent, setPendingIntent] = useState<PendingIntent | null>(null);
@@ -140,17 +183,95 @@ export function NotesPage() {
 
   // ----- DERIVED ---------------------------------------------------------
 
+  /**
+   * Sorted list driving the sidebar. Pinned notes always float to the top
+   * regardless of `sortMode` — within each pinned tier the active mode
+   * decides the order.
+   *
+   *   - `updated` / `created` / `opened`: descending ISO string compare
+   *     (newest first). `opened` falls back to `updatedAt` when a note
+   *     was never opened (legacy data, freshly imported, etc.) so brand-
+   *     new notes don't sink to the bottom of the list.
+   *   - `title`: case-insensitive locale compare, ascending.
+   *   - `manual`: ascending `sortOrder`; notes without a `sortOrder` are
+   *     treated as +∞ so they end up after manually-ordered ones (in their
+   *     `updatedAt`-descending order as a tiebreaker).
+   */
   const notes = useMemo<Note[]>(() => {
+    const cmpUpdated = (a: Note, b: Note) => (b.updatedAt || '').localeCompare(a.updatedAt || '');
+    const cmpCreated = (a: Note, b: Note) => (b.createdAt || '').localeCompare(a.createdAt || '');
+    const cmpOpened = (a: Note, b: Note) =>
+      (b.lastOpenedAt || b.updatedAt || '').localeCompare(a.lastOpenedAt || a.updatedAt || '');
+    const cmpTitle = (a: Note, b: Note) =>
+      (a.title || PLACEHOLDER_TITLE).localeCompare(b.title || PLACEHOLDER_TITLE, undefined, {
+        sensitivity: 'base',
+      });
+    const cmpManual = (a: Note, b: Note) => {
+      const ao = typeof a.sortOrder === 'number' ? a.sortOrder : Number.POSITIVE_INFINITY;
+      const bo = typeof b.sortOrder === 'number' ? b.sortOrder : Number.POSITIVE_INFINITY;
+      if (ao !== bo) return ao - bo;
+      return cmpUpdated(a, b);
+    };
+    const cmp =
+      sortMode === 'created'
+        ? cmpCreated
+        : sortMode === 'opened'
+          ? cmpOpened
+          : sortMode === 'title'
+            ? cmpTitle
+            : sortMode === 'manual'
+              ? cmpManual
+              : cmpUpdated;
     return [...data.notes].sort((a, b) => {
       if (!!b.pinned !== !!a.pinned) return b.pinned ? 1 : -1;
-      return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+      return cmp(a, b);
     });
-  }, [data.notes]);
+  }, [data.notes, sortMode]);
+
+  /**
+   * Honour an incoming `?id=<noteId>` deep link (used by the global search
+   * + ⌘K command palette when the user clicks a Note hit). We only consume
+   * the query string once on arrival — after consuming it we strip it from
+   * the URL so a later reload doesn't keep re-selecting the same note and
+   * fighting the user's manual navigation inside the page.
+   */
+  useEffect(() => {
+    const id = searchParams.get('id');
+    if (!id) return;
+    if (data.notes.some((n) => n.id === id)) {
+      setSelectedId(id);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('id');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     if (selectedId && notes.some((n) => n.id === selectedId)) return;
     setSelectedId(notes[0]?.id ?? null);
   }, [notes, selectedId]);
+
+  /**
+   * Whenever the user picks a note we stamp `lastOpenedAt`. This is the
+   * single source of truth feeding the "Last opened" sort mode — every
+   * other path (deep-link, list click, keyboard nav) ends up going through
+   * `selectedId`, so we don't have to hook each call-site individually.
+   *
+   * We intentionally do NOT touch `updatedAt` here: opening a note is not
+   * an edit and shouldn't bubble that note to the top of the default
+   * (Last updated) view.
+   */
+  useEffect(() => {
+    if (!selectedId) return;
+    const n = data.notes.find((x) => x.id === selectedId);
+    if (!n) return;
+    const now = new Date().toISOString();
+    // Cheap throttle: don't churn the store if we just stamped this note.
+    if (n.lastOpenedAt && now.slice(0, 16) === n.lastOpenedAt.slice(0, 16)) return;
+    patchNote(selectedId, { lastOpenedAt: now });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   const selected = useMemo(
     () => (selectedId ? notes.find((n) => n.id === selectedId) ?? null : null),
@@ -305,6 +426,131 @@ export function NotesPage() {
     },
     [data.notes, decrypted, replaceNote, setNotesLock, unlock, update],
   );
+
+  // ----- SIDEBAR RESIZE --------------------------------------------------
+  //
+  // Drag-to-resize is implemented with Pointer Events so the same code path
+  // works for mouse, touch and pen. We capture the pointer on the handle
+  // element so the move/up events keep firing even if the cursor leaves
+  // the handle's bounding box during a fast drag.
+  //
+  // The handler does its arithmetic against a snapshot captured on
+  // pointerdown (`resizeStateRef`) so the math stays correct no matter how
+  // many re-renders fire while the user is dragging.
+
+  const beginSidebarResize = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      // Only respond to primary-button drags. Right-click / middle-click
+      // shouldn't kick off a resize.
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const handle = e.currentTarget;
+      handle.setPointerCapture(e.pointerId);
+      resizeStateRef.current = { startX: e.clientX, startW: sidebarWidth };
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [sidebarWidth],
+  );
+
+  const onSidebarResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const s = resizeStateRef.current;
+    if (!s) return;
+    const next = clamp(s.startW + (e.clientX - s.startX), SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+    setSidebarWidth(next);
+  }, []);
+
+  const endSidebarResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeStateRef.current) return;
+    resizeStateRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // Pointer already released (e.g. focus lost) — safe to ignore.
+    }
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }, []);
+
+  // ----- MANUAL DRAG-REORDER ---------------------------------------------
+  //
+  // Active only when `sortMode === 'manual'`. Uses native HTML5 drag-and-
+  // drop (lightweight, no extra deps, accessible enough for our needs).
+  // On drop we rewrite `sortOrder` on every note in the dragged note's
+  // pinned tier — keeping pinned notes locked at the top and only
+  // re-indexing the half of the list that the user actually re-ordered.
+
+  const onRowDragStart = useCallback(
+    (e: React.DragEvent<HTMLLIElement>, noteId: string) => {
+      if (sortMode !== 'manual') return;
+      e.dataTransfer.effectAllowed = 'move';
+      // Some browsers require setData to actually fire dragover/drop.
+      try {
+        e.dataTransfer.setData('text/plain', noteId);
+      } catch {
+        // Restricted contexts (e.g. headless tests) can throw — safe to ignore.
+      }
+      setDraggingId(noteId);
+    },
+    [sortMode],
+  );
+
+  const onRowDragOver = useCallback(
+    (e: React.DragEvent<HTMLLIElement>, noteId: string) => {
+      if (sortMode !== 'manual' || !draggingId || draggingId === noteId) return;
+      // Both rows must be in the same pinned tier — we don't allow a pinned
+      // note to drag below an unpinned one (or vice versa), the pin row
+      // boundary stays as a hard separator in every sort mode.
+      const dragged = notes.find((n) => n.id === draggingId);
+      const target = notes.find((n) => n.id === noteId);
+      if (!dragged || !target || !!dragged.pinned !== !!target.pinned) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (dropTargetId !== noteId) setDropTargetId(noteId);
+    },
+    [sortMode, draggingId, notes, dropTargetId],
+  );
+
+  const onRowDrop = useCallback(
+    (e: React.DragEvent<HTMLLIElement>, noteId: string) => {
+      if (sortMode !== 'manual' || !draggingId || draggingId === noteId) return;
+      e.preventDefault();
+      const dragged = notes.find((n) => n.id === draggingId);
+      const target = notes.find((n) => n.id === noteId);
+      if (!dragged || !target || !!dragged.pinned !== !!target.pinned) {
+        setDraggingId(null);
+        setDropTargetId(null);
+        return;
+      }
+      // Take the subset of notes in the same pinned tier (in current sort
+      // order), remove the dragged one, then re-insert it at the target's
+      // position. We rewrite `sortOrder` for every note in that tier so
+      // future reorders have a stable baseline to work from.
+      const tier = notes.filter((n) => !!n.pinned === !!dragged.pinned);
+      const without = tier.filter((n) => n.id !== draggingId);
+      const insertAt = without.findIndex((n) => n.id === noteId);
+      const reordered = [
+        ...without.slice(0, insertAt),
+        dragged,
+        ...without.slice(insertAt),
+      ];
+      update((d) => ({
+        ...d,
+        notes: d.notes.map((n) => {
+          const idx = reordered.findIndex((r) => r.id === n.id);
+          return idx === -1 ? n : { ...n, sortOrder: idx };
+        }),
+      }));
+      setDraggingId(null);
+      setDropTargetId(null);
+    },
+    [sortMode, draggingId, notes, update],
+  );
+
+  const onRowDragEnd = useCallback(() => {
+    setDraggingId(null);
+    setDropTargetId(null);
+  }, []);
 
   // ----- BUTTON HANDLERS ------------------------------------------------
 
@@ -608,11 +854,27 @@ export function NotesPage() {
   const hasRecovery = !!data.notesLock?.recovery;
 
   return (
-    <div className="notes-page">
+    <div
+      className="notes-page"
+      style={{ gridTemplateColumns: `minmax(0, ${sidebarWidth}px) 6px minmax(0, 1fr)` }}
+    >
       <aside className="notes-page__sidebar">
         <header className="notes-page__sidebar-header">
           <h2>Notes</h2>
           <div className="notes-page__sidebar-actions">
+            <select
+              className="select select--compact notes-page__sort"
+              value={sortMode}
+              onChange={(e) => setSortMode(e.target.value as NoteSortMode)}
+              aria-label="Sort notes by"
+              title="Sort notes by"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
             {hasLock && !hasRecovery ? (
               <IconButton
                 onClick={() => {
@@ -687,13 +949,39 @@ export function NotesPage() {
                 : n.body || '';
               const preview = previewText.replace(/\s+/g, ' ').slice(0, 80);
               const title = (n.title || PLACEHOLDER_TITLE).trim() || PLACEHOLDER_TITLE;
+              const isManual = sortMode === 'manual';
+              const isDragging = draggingId === n.id;
+              const isDropTarget = dropTargetId === n.id;
+              const liClass = [
+                'notes-page__list-row',
+                isDragging ? 'notes-page__list-row--dragging' : '',
+                isDropTarget ? 'notes-page__list-row--drop-target' : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
               return (
-                <li key={n.id}>
+                <li
+                  key={n.id}
+                  className={liClass}
+                  // Draggable only in manual mode. In other modes the row
+                  // behaves as a plain navigation button so the user doesn't
+                  // accidentally trigger drag interactions during scrolling.
+                  draggable={isManual}
+                  onDragStart={(e) => onRowDragStart(e, n.id)}
+                  onDragOver={(e) => onRowDragOver(e, n.id)}
+                  onDrop={(e) => onRowDrop(e, n.id)}
+                  onDragEnd={onRowDragEnd}
+                >
                   <button
                     type="button"
                     className={`notes-page__list-item${selectedId === n.id ? ' notes-page__list-item--active' : ''}`}
                     onClick={() => setSelectedId(n.id)}
                   >
+                    {isManual ? (
+                      <span className="notes-page__drag-handle" aria-hidden title="Drag to reorder">
+                        <IcGrip size={12} />
+                      </span>
+                    ) : null}
                     <div className="notes-page__list-title">
                       {n.pinned ? <span className="notes-page__pin" aria-hidden>★</span> : null}
                       <span>{title}</span>
@@ -724,6 +1012,17 @@ export function NotesPage() {
           </ul>
         )}
       </aside>
+
+      <div
+        className="notes-page__resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize notes sidebar"
+        onPointerDown={beginSidebarResize}
+        onPointerMove={onSidebarResizeMove}
+        onPointerUp={endSidebarResize}
+        onPointerCancel={endSidebarResize}
+      />
 
       <section className="notes-page__main">
         {!selected ? (
@@ -835,11 +1134,19 @@ export function NotesPage() {
               </div>
             ) : (
               <div className="notes-page__editor">
+                {/* Default to the rendered preview when arriving at a note —
+                    the user asked for reading-mode by default; clicking
+                    "Write" inside the editor flips to edit mode (and
+                    the toolbar). We also re-key the editor on note id so
+                    the mode resets per note instead of bleeding over from
+                    whichever note the user was just editing. */}
                 <MarkdownEditor
+                  key={selected.id}
                   value={editorBody}
                   onChange={onChangeBody}
                   placeholder="Type your note in Markdown…"
                   rows={18}
+                  initialMode="preview"
                 />
               </div>
             )}
@@ -1241,6 +1548,13 @@ export function NotesPage() {
  * and the dialog should mirror that so they aren't shown "to view locked
  * notes" copy while they're really just trying to lock the current note.
  */
+/** Inclusive clamp — kept inline (not in lib/) because we currently only
+ *  need it for the sidebar resize math; promoting it can wait until a
+ *  second caller shows up. */
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(Math.max(n, min), max);
+}
+
 function unlockDialogTitle(intent: PendingIntent | null): string {
   switch (intent) {
     case 'lock':

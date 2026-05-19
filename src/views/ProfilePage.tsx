@@ -49,6 +49,7 @@ export function ProfilePage() {
   const [phone, setPhone] = useState(profile.phone ?? '');
   const [bio, setBio] = useState(profile.bio ?? '');
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarError, setAvatarError] = useState<string | null>(null);
@@ -60,14 +61,48 @@ export function ProfilePage() {
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwSuccess, setPwSuccess] = useState(false);
 
-  // Re-sync the form whenever the profile in context changes (login, import, etc.).
+  // Detect "user has typed but not saved yet" so:
+  //   1. We can warn them if they try to navigate away.
+  //   2. We can prevent the sync-from-context effect below from wiping
+  //      their in-progress edits when something else in `data` changes
+  //      (e.g. the reminder watcher's 45-second tick mutates `data`, which
+  //      re-renders this page; without the guard the effect would overwrite
+  //      the user's draft display name with the persisted value — the
+  //      "display name kaydedilmiyor" symptom).
+  const dirty =
+    tab === 'edit' &&
+    (displayName !== profile.displayName ||
+      jobTitle !== (profile.jobTitle ?? '') ||
+      department !== (profile.department ?? '') ||
+      phone !== (profile.phone ?? '') ||
+      bio !== (profile.bio ?? ''));
+
+  // Re-sync the form whenever the profile in context changes (login, import,
+  // restore-from-backup, etc.) BUT never while the user is actively editing.
+  // Otherwise an unrelated data update mid-edit would silently discard the
+  // user's typing.
   useEffect(() => {
+    if (tab === 'edit') return;
     setDisplayName(profile.displayName);
     setJobTitle(profile.jobTitle ?? '');
     setDepartment(profile.department ?? '');
     setPhone(profile.phone ?? '');
     setBio(profile.bio ?? '');
-  }, [profile.displayName, profile.jobTitle, profile.department, profile.phone, profile.bio]);
+  }, [tab, profile.displayName, profile.jobTitle, profile.department, profile.phone, profile.bio]);
+
+  // Native "unsaved changes" warning when the user closes the window /
+  // refreshes / quits while there's an unsaved Profile draft. Browsers no
+  // longer let us customise the prompt text, but they do honour the
+  // preventDefault() to show a generic confirmation dialog.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
 
   const initials = useMemo(() => initialsFor(profile.displayName), [profile.displayName]);
   const avatarUrl = profile.avatarDataUrl;
@@ -94,24 +129,41 @@ export function ProfilePage() {
   };
 
   const apply = () => {
+    const trimmedName = displayName.trim();
+    if (!trimmedName) {
+      // Defensive: <input required> should already block submission, but
+      // belt-and-braces guarantees we never silently fall back to the old
+      // name (which is what the reducer does for empty input).
+      setSaveError('Display name cannot be empty.');
+      return;
+    }
+    setSaveError(null);
     updateUserProfile({
-      displayName,
+      displayName: trimmedName,
       jobTitle,
       department,
       phone,
       bio,
     });
+    // Reflect the trimmed value locally so the dirty-state check stops
+    // flagging the field as modified.
+    setDisplayName(trimmedName);
     setSavedAt(Date.now());
     setTab('view');
     window.setTimeout(() => setSavedAt(null), 2200);
   };
 
   const cancelEdit = () => {
+    if (dirty) {
+      const ok = window.confirm('Discard your unsaved profile changes?');
+      if (!ok) return;
+    }
     setDisplayName(profile.displayName);
     setJobTitle(profile.jobTitle ?? '');
     setDepartment(profile.department ?? '');
     setPhone(profile.phone ?? '');
     setBio(profile.bio ?? '');
+    setSaveError(null);
     setTab('view');
   };
 
@@ -180,7 +232,7 @@ export function ProfilePage() {
                 else setTab('view');
               }}
             >
-              Back
+              {tab === 'edit' ? (dirty ? 'Cancel (unsaved)' : 'Cancel') : 'Back'}
             </Button>
           )}
         </div>
@@ -325,7 +377,17 @@ export function ProfilePage() {
                 onChange={(e) => setBio(e.target.value)}
               />
             </label>
-            <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+            {saveError ? (
+              <p className="form-msg form-msg--err small" style={{ marginTop: 8 }}>
+                {saveError}
+              </p>
+            ) : null}
+            <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', alignItems: 'center', gap: 12 }}>
+              {dirty ? (
+                <span className="muted small" style={{ marginRight: 'auto' }}>
+                  Unsaved changes
+                </span>
+              ) : null}
               <Button type="button" variant="ghost" onClick={cancelEdit}>
                 Cancel
               </Button>

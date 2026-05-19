@@ -205,6 +205,11 @@ export interface Note {
   pinned?: boolean;
   /** Optional manual sort order; lower number first within the same pinned tier. */
   sortOrder?: number;
+  /** ISO timestamp of the last time the user opened this note for viewing.
+   *  Optional so historical data continues to load without migration; the
+   *  Notes page treats a missing value as "never opened" and falls back to
+   *  `updatedAt` when sorting by Opened. */
+  lastOpenedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -707,6 +712,7 @@ function parseNotes(raw: unknown): Note[] {
       cipher,
       pinned: !!o.pinned,
       sortOrder: typeof o.sortOrder === 'number' ? o.sortOrder : undefined,
+      lastOpenedAt: typeof o.lastOpenedAt === 'string' ? o.lastOpenedAt : undefined,
       createdAt: typeof o.createdAt === 'string' ? o.createdAt : nowIso(),
       updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
     });

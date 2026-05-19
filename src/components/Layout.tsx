@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { AppSidebar } from './AppSidebar';
 import { TopBar } from './TopBar';
+import { useAppData } from '../AppDataContext';
+import { IcAlertTriangle, IcX } from './icons';
+import { PATH_SETTINGS } from '../lib/routes';
 
 const MOBILE_BREAKPOINT = 700;
 
@@ -63,6 +66,7 @@ export function Layout() {
         navCollapsed={navCollapsed}
         onToggleNav={() => setNavCollapsed((c) => !c)}
       />
+      <SaveErrorBanner />
       <div className="app-shell__body">
         <AppSidebar collapsed={navCollapsed && !isMobile} />
         {drawerOpen ? (
@@ -76,6 +80,51 @@ export function Layout() {
         <main className="main main--scroll main--canvas">
           <Outlet />
         </main>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Top-of-screen banner that warns the user when an autosave failed. Shown
+ * regardless of which page they're on, because losing a write silently is
+ * the worst failure mode for a local-first app. Dismiss is best-effort —
+ * the next successful save clears it automatically.
+ */
+function SaveErrorBanner() {
+  const { lastSaveError, clearSaveError } = useAppData();
+  const navigate = useNavigate();
+  if (!lastSaveError) return null;
+  const reason = lastSaveError.reason ?? 'unknown';
+  const detail = lastSaveError.error ?? 'Autosave failed.';
+  return (
+    <div role="alert" className="save-error-banner">
+      <span className="save-error-banner__icon" aria-hidden>
+        <IcAlertTriangle size={16} />
+      </span>
+      <div className="save-error-banner__text">
+        <strong>Autosave failed.</strong>{' '}
+        <span className="save-error-banner__detail">
+          {detail} (reason: {reason})
+        </span>
+      </div>
+      <div className="save-error-banner__actions">
+        <button
+          type="button"
+          className="save-error-banner__btn save-error-banner__btn--primary"
+          onClick={() => navigate(`${PATH_SETTINGS}#backups`)}
+        >
+          Open Backups
+        </button>
+        <button
+          type="button"
+          className="save-error-banner__btn"
+          onClick={clearSaveError}
+          aria-label="Dismiss"
+          title="Dismiss"
+        >
+          <IcX size={14} />
+        </button>
       </div>
     </div>
   );

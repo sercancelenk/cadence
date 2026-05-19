@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useMatch } from 'react-router-dom';
-import { IcArrowRight, IcLock, IcLogOut, IcMenu, IcMoon, IcSettings, IcStar, IcSun, IcUser } from './icons';
+import {
+  IcArrowRight,
+  IcLock,
+  IcLogOut,
+  IcMenu,
+  IcMoon,
+  IcSearch,
+  IcSettings,
+  IcStar,
+  IcSun,
+  IcUser,
+} from './icons';
+import { CMD_PALETTE_OPEN_EVENT } from './CommandPalette';
 import { useAccount } from '../AccountContext';
 import { useSession } from '../AuthContext';
 import { useAppData } from '../AppDataContext';
@@ -70,6 +82,17 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
   const initials = profile.displayName.trim().slice(0, 2).toUpperCase() || 'ME';
   const crumb = useMemo(() => breadcrumbFromPath(data, location.pathname), [data, location.pathname]);
 
+  /** Detect the platform once for the keyboard-shortcut badge — Mac users
+   *  see ⌘K, everyone else sees Ctrl+K. We can't rely on the OS in the
+   *  Electron environment, but `navigator.platform` is good enough here
+   *  for a label that's purely cosmetic. */
+  const shortcutLabel = useMemo(() => {
+    if (typeof navigator === 'undefined') return 'Ctrl K';
+    return /mac|iphone|ipad/i.test(navigator.platform) ? '⌘ K' : 'Ctrl K';
+  }, []);
+
+  const openSearch = () => window.dispatchEvent(new Event(CMD_PALETTE_OPEN_EVENT));
+
   return (
     <header className="topbar">
       <div className="topbar__left">
@@ -88,6 +111,28 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
       </div>
 
       <div className="topbar__center">
+        {/* Global search trigger. Clicking (or focusing + Enter) opens
+            the existing ⌘K command palette via a custom DOM event — the
+            palette is the single source of truth for cross-app search.
+            We deliberately use a button instead of a real <input> here so
+            the keyboard shortcut and focus behaviour stay consistent and
+            we don't have to wire two parallel search states. */}
+        <button
+          type="button"
+          className="topbar__search"
+          onClick={openSearch}
+          onKeyDown={(e) => {
+            if (e.key === '/') {
+              e.preventDefault();
+              openSearch();
+            }
+          }}
+          aria-label="Search across notes, teams, people, items and to-dos"
+        >
+          <IcSearch size={16} />
+          <span className="topbar__search-text">Search teams, notes, tasks…</span>
+          <kbd className="topbar__search-kbd">{shortcutLabel}</kbd>
+        </button>
         <div className="team-switcher" ref={switcherRef}>
           <button
             type="button"

@@ -21,6 +21,48 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
 
 ---
 
+## Screenshots
+
+A quick tour of the desktop app. Every page below is the **macOS Electron build** in dark mode — the light theme mirrors the same layouts.
+
+### Home — global search and quick access
+
+![Home page with the global search pill in the top bar, stat cards and quick-access tiles](docs/screenshots/home.png)
+
+> The top bar carries a Bootstrap-style **global search pill** with a `⌘ K` / `Ctrl K` shortcut badge — clicking it (or pressing the shortcut) opens the command palette that fuzzy-searches across navigation targets, teams, people, items, to-dos **and notes (titles + content)**.
+
+### To-dos — drag-reorder, priorities, sort modes
+
+![To-dos page with manual sort, hide-completed and per-list add row](docs/screenshots/todos.png)
+
+> Drag-to-reorder lists and items by the grip handle, sort by Manual / Priority / Due date, hide completed at the top, archive lists, search across every list.
+
+### Notes — resizable sidebar, sort modes, Markdown toolbar
+
+![Notes page with resizable sidebar, sort dropdown, Write/Preview tabs and Markdown toolbar](docs/screenshots/notes.png)
+
+> Drag the divider between the sidebar and the editor to resize the list (220–560 px). The sidebar offers five sort modes (**Last updated / Last opened / Created / Title / Manual**) — in *Manual* a grip handle appears on each row for drag-reorder. Notes open in *Preview* by default; switching to *Write* reveals a full Markdown formatting toolbar (B / I / S / H1–H3 / lists / link / inline code / code block / divider, with ⌘B / ⌘I / ⌘K shortcuts). Locked notes are AES-256-GCM-encrypted at rest and the *Remove notes passphrase* button always re-prompts for the passphrase.
+
+### Agenda — Today / This week / Overdue
+
+![Agenda page showing today, this week and overdue tasks unified](docs/screenshots/agenda.png)
+
+> One unified view of every reminder, due task and personal to-do for the next seven days, plus an *Overdue* bucket up top.
+
+### Analytics — fully local dashboard
+
+![Analytics dashboard with stat cards, created vs completed chart and per-team performance](docs/screenshots/analytics.png)
+
+> Completion rate, a daily / weekly / monthly / yearly created-vs-completed SVG chart, per-team performance bars and a top-contributors table. Nothing leaves your device — the chart is rendered as inline SVG.
+
+### Settings — appearance, PIN, backups, AI, LAN sync
+
+![Settings page with appearance, PIN protection and application version cards](docs/screenshots/settings.png)
+
+> Theme toggle, PIN lock with rate-limited recovery, rolling backup snapshots with one-click restore, AI assistant (BYO API key for Claude / ChatGPT / Gemini), LAN sync server, storage diagnostics and auto-update controls.
+
+---
+
 ## What's in the box
 
 | | |
@@ -37,8 +79,8 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
 | **Agenda** | Unified Today / This-week view combining reminders + due tasks + personal to-dos, plus an "Overdue" bucket. |
 | **Analytics** | Local-only dashboard with daily / weekly / monthly / yearly created-vs-completed charts, per-team and per-person scoreboards, plus to-do completion stats. |
 | **LAN sync (no cloud)** | Opt-in tiny HTTP server inside Electron with bearer-token auth, **constant-time** token compare, **DNS-rebinding-resistant** Host header validation, **same-LAN-only CORS**, and **payload-shape validation**, so a second device on the same Wi-Fi can pull / push a snapshot — and the host also serves the PWA itself, so an iPhone can open `http://<host-ip>:9787` directly with no mixed-content warning. |
-| **Notes (encrypted at rest)** | macOS-Notes-style two-pane view (sidebar list + Markdown editor, pin to top, soft delete with confirm). Locked notes are encrypted with a **workspace master key** derived once per session via **PBKDF2-SHA-256 (200k iters) → AES-256-GCM** (non-extractable `CryptoKey`); every keystroke re-encrypts in sub-millisecond AES with a fresh IV. The passphrase is never written to disk and never stored as a string after derivation — only a tiny verifier blob is persisted. |
-| **⌘K Command Palette** | Fuzzy search across navigation, teams, people, items and to-dos with keyboard navigation. |
+| **Notes (encrypted at rest)** | macOS-Notes-style two-pane view with a **resizable sidebar** (drag the divider, 220–560 px), per-note pin/star, soft delete with confirm. Reading is **preview-by-default** with one click to flip into a **Markdown editor + formatting toolbar** (Bold / Italic / Strike / H1–H3 / Bullet / Numbered / Task / Link / Code / Code-block / Divider, with ⌘B/⌘I/⌘K shortcuts). The list supports five sort modes — **Last updated**, **Last opened**, **Created**, **Title** and **Manual** (drag-to-reorder within the pinned tier). Locked notes are encrypted with a **workspace master key** derived once per session via **PBKDF2-SHA-256 (200k iters) → AES-256-GCM** (non-extractable `CryptoKey`); every keystroke re-encrypts in sub-millisecond AES with a fresh IV. The passphrase is never written to disk and never stored as a string after derivation — only a tiny verifier blob is persisted, and removing the lock prompts for the passphrase **every time** to prevent accidental clicks. |
+| **Global search + ⌘K palette** | Top-bar search button (Bootstrap-style pill, with a `⌘ K` / `Ctrl K` shortcut badge) opens a global command palette: fuzzy search across navigation targets, teams, people, items, **to-dos and notes**. Locked notes are searchable by **title only** (we never decrypt bodies through the palette). Clicking a Note hit deep-links to `/notes?id=<id>` and selects that note; the URL is cleaned up immediately so reloads don't fight the user's navigation. |
 | **Markdown everywhere** | Notes, scratchpads, item bodies and 1:1 agendas use GitHub-flavored markdown (checklists, tables, code, links). |
 | **Recurring reminders** | Daily / weekly / monthly cadence for any reminder, auto-advances after firing. |
 | **Smart to-do lists** | List + item drag-and-drop reorder, **priority levels** (Urgent / High / Normal / Low) on both lists and items with sort-by-priority, **hide / show completed**, **delete confirmation**, pin to top, archive, bulk ops, search, count badges. Task input is a multi-line auto-resizing textarea. |
@@ -49,6 +91,7 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
 
 ## Table of contents
 
+- [Screenshots](#screenshots)
 - [Install](#install)
 - [Getting started](#getting-started)
 - [Concepts](#concepts)
@@ -169,13 +212,18 @@ The complete data model is in [`src/model.ts`](./src/model.ts).
 
 ### ⌘K command palette
 
-Press <kbd>⌘ K</kbd> (macOS) or <kbd>Ctrl K</kbd> (Windows / Linux) to open a global fuzzy-search palette:
+The top bar carries a **global search pill** ("Search teams, notes, tasks…") sitting next to the team-switcher — click it, focus it with `/`, or press <kbd>⌘ K</kbd> (macOS) / <kbd>Ctrl K</kbd> (Windows / Linux) and the same palette opens. The button is both an entry point and a visual reminder of the keyboard shortcut (the trailing `⌘ K` / `Ctrl K` badge auto-adapts to the platform).
 
-- **Navigate** — Home, Teams, To-dos, Agenda, Profile, Settings.
+The palette searches across:
+
+- **Navigate** — Home, Teams, To-dos, Agenda, **Notes**, Profile, Settings.
 - **Teams** — jump straight to any team or its People page.
 - **People** — every person across every team.
 - **Items** — every task / goal / note / feedback / document by title.
 - **To-dos** — every personal task.
+- **Notes** — every standalone note. Locked notes are searched by **title only** (we never decrypt bodies through the palette, and the title row carries a 🔒 + *Locked* hint so you know what you're clicking on).
+
+Picking a Notes hit navigates to `/notes?id=<id>`; the page selects that note on mount and immediately strips the query string from the URL so a refresh doesn't keep fighting your manual navigation.
 
 Arrow keys to move, <kbd>Enter</kbd> to open, <kbd>Esc</kbd> to close.
 
@@ -187,6 +235,22 @@ Notes, item bodies, person scratchpads and 1:1 agendas all use **GitHub-flavored
 - Checklists (`- [ ]` / `- [x]`).
 - Tables, autolinks, strikethrough.
 - External links open in your default browser.
+
+In *Write* mode the editor now also shows a **formatting toolbar** that operates on the current textarea selection (and falls back to a placeholder when nothing is selected, so the user can immediately type to replace it):
+
+| Button | What it does | Shortcut |
+|---|---|---|
+| **B** | Wraps selection in `**…**` (bold) | <kbd>⌘ B</kbd> / <kbd>Ctrl B</kbd> |
+| **I** | Wraps selection in `*…*` (italic) | <kbd>⌘ I</kbd> / <kbd>Ctrl I</kbd> |
+| **S** | Wraps in `~~…~~` (strikethrough) | — |
+| **H ▾** | H1 / H2 / H3 — prepends `#`, `##`, `###` to every line in the selection | — |
+| • / 1. / ☐ | Prepends `- `, `1. `, or `- [ ] ` to every line | — |
+| 🔗 | Inserts `[selection](https://)` and parks the caret over the URL placeholder | <kbd>⌘ K</kbd> when the textarea is focused |
+| `</>` | Wraps in single backticks (inline code) | — |
+| `{ }` | Inserts a fenced \`\`\`code block\`\`\` around the selection (smart-aware of line boundaries) | — |
+| — | Inserts a `---` horizontal divider | — |
+
+The toolbar is line-aware (lists and headings always operate on whole lines, never mid-word) and focus-preserving (the caret lands inside the new markup so you can keep typing without picking up the mouse again).
 
 ### Person Timeline
 
@@ -304,8 +368,11 @@ This panel is purely diagnostic — you can ignore it forever and nothing degrad
 
 `/notes` is a macOS-Notes-style two-pane view for free-form personal notes that don't belong to a team or a person:
 
-- **Sidebar** — chronological list of all notes, with title + one-line preview + last-edited time. Pinned notes float to the top with a star.
-- **Editor** — a Markdown editor with edit/preview tabs (same renderer as person scratchpads and 1:1 agendas). Title is a plain inline input; the body autosaves on every keystroke through the same debounced writer your tasks use.
+- **Resizable sidebar.** Drag the thin vertical divider between the sidebar and the editor pane to size it to taste (Pointer Events under the hood, so it works with mouse, touch and pen). Bounded to 220–560 px so it never collapses to a useless slit or swallows the editor.
+- **Sortable list.** A compact dropdown at the top of the sidebar offers five modes — **Last updated** (default), **Last opened**, **Created**, **Title (A→Z)** and **Manual**. Pinned notes always float to the top regardless of mode; the active mode controls the order within each pinned tier.
+- **Manual drag-to-reorder.** Switch to *Manual* sort and each row grows a grip handle on the left — drag any row up or down to drop it into its new slot (a blue indicator paints the drop position). The reorder rewrites `sortOrder` only within the pinned tier the row belongs to, so you can never accidentally cross the pin boundary.
+- **Editor.** A Markdown editor with edit/preview tabs (same renderer as person scratchpads and 1:1 agendas), now opening in **Preview** mode by default — reading is the common case, click *Write* to flip into the textarea + formatting toolbar (see [Markdown editing](#markdown-editing)). Title is a plain inline input; the body autosaves on every keystroke through the same debounced writer your tasks use.
+- **Last-opened tracking.** Selecting a note stamps an internal `lastOpenedAt` timestamp that powers the "Last opened" sort mode. The stamp explicitly does **not** bump `updatedAt`, so opening a note never bubbles it up in the "Last updated" view.
 - **Pin / Delete** — pin keeps a note at the top of the list; delete asks for explicit confirmation (locked notes get a louder warning because losing ciphertext is unrecoverable).
 
 **Per-note lock with workspace master key.** Click the lock button on any note and you'll be prompted, once, to set a **Notes passphrase** (≥ 6 chars). From then on:
@@ -317,7 +384,9 @@ This panel is purely diagnostic — you can ignore it forever and nothing degrad
 5. **Out-of-order encrypt protection.** A monotonic generation counter discards any encrypt result whose keystroke has already been superseded, so two near-simultaneous typings can't cause the older text to overwrite the newer ciphertext.
 6. **Session lifetime.** The master key is wiped automatically by logging out, locking the app with PIN, or restarting — the `NotesUnlockProvider` lives below `AuthGate` and unmounts in any of those cases.
 
-**Remove the passphrase.** A *Remove lock* button in the Notes sidebar header opens a confirmation dialog. If accepted, Cadence decrypts every locked note up-front with the current master key; if any note fails (master key mismatch) it aborts the whole operation and leaves your data untouched. On success it converts every locked note back to plaintext and clears `AppData.notesLock` in one atomic save.
+**Remove the passphrase.** A dedicated *Remove notes passphrase* button (padlock-with-slash icon) in the Notes sidebar header **always** prompts you to re-enter the Notes passphrase before showing the destructive confirm dialog — even if the session master key is still cached in memory from an earlier unlock this session. Once you've re-authenticated and confirmed, Cadence decrypts every locked note up-front with the current master key; if any note fails (master key mismatch) it aborts the whole operation and leaves your data untouched. On success it converts every locked note back to plaintext and clears `AppData.notesLock` in one atomic save.
+
+**Strict per-view unlocking.** Clicking *Unlock to view* on a locked note **always** opens the passphrase prompt, even if you unlocked the same note (or another locked note) a minute ago in the same session. Navigating away from a viewed locked note clears its in-memory plaintext, and the next view request drops the cached session key and re-prompts — so locking a note actually keeps it hidden every time you come back to it, not just until you next clicked the unlock button. Editing a note that's currently visible still uses the in-memory key (so each keystroke isn't gated on a prompt), but the moment you leave the note the strict-prompt rule re-engages.
 
 **What's stored where:**
 
@@ -473,6 +542,26 @@ Standard shortcuts apply (⌘ Q, ⌘ W, ⌘ R, ⌘ F, ⌘ , …). The global **�
 - **No telemetry, no analytics.** Sync only happens when you explicitly use the LAN server (or Export/Import).
 - **Backups**: see [**Backups & recovery**](#backups--recovery). For manual portable backups use *Settings → Backup → Export JSON*; the export is the **decrypted** data so you can diff / migrate it. Treat it like a sensitive file. Use *Import JSON* to restore — it replaces your current data (and snapshots the old state first).
 
+### Durability guarantees (won't I lose data on a crash?)
+
+The desktop build is engineered so a kernel panic, power loss or kill-9 cannot silently lose acknowledged writes:
+
+- **Atomic, fsync'ed writes.** Every save opens a sibling `.tmp` file with an explicit `open → write → fsync → close` cycle, then atomically `rename()`s it over the live file, then fsyncs the containing directory. The bytes are on durable storage before `saveData()` returns. A crash mid-write leaves either the old file or the new file — never a torn half-write.
+- **Debounced + flushed-on-exit.** Edits coalesce for 400 ms to avoid hammering the disk, but `beforeunload` / `pagehide` flush the pending payload synchronously. The worst case (an instant SIGKILL with a partial debounce timer) loses ≤ 400 ms of typing, never a committed save.
+- **Pre-save snapshots.** Before every write, the *current* file is copied into `backups/<userId>/data-pre-save-<timestamp>.json`. So even a logic bug that writes garbage cannot destroy your previous state — the immediate prior version is one click away in *Settings → Backups & recovery*.
+- **Refuse-to-overwrite undecipherable data.** If the live file exists but cannot be decrypted with the current session key (e.g. you signed in with the wrong password and somehow bypassed the prompt), the writer aborts and the UI shows a banner. You can't accidentally overwrite locked data with one character's worth of state.
+- **Global "autosave failed" banner.** Any save failure — IPC error, refuse-to-overwrite, disk full — is surfaced as a red banner above every page, with a one-click link to *Backups & recovery*. There is no silent failure path.
+- **Anonymous `userData` directory, not inside the app bundle.** On macOS your data lives in `~/Library/Application Support/Cadence/`, which is **outside** `Cadence.app`. **Trashing the app does not delete your data.** Reinstalling later picks the data right back up. The same is true on Linux (`~/.config/cadence`) and Windows (`%APPDATA%\Cadence`).
+- **Uninstall-safe backups.** The rolling 50-snapshot history lives next to the live file inside `userData/backups/<userId>/`. As long as you don't manually delete `userData`, every save from the past N days is recoverable.
+
+### Belt-and-braces: keep an off-device copy
+
+Atomic writes + 50 rolling snapshots survive crashes, bad updates and accidental in-app deletes. They do **not** survive a `rm -rf ~/Library/Application Support/Cadence`, a wiped SSD, a stolen laptop, or a misconfigured Time Machine.
+
+For total peace of mind, periodically run *Settings → Backup → Export JSON* and copy the resulting `cadence-backup-YYYY-MM-DD.json` to iCloud Drive, Dropbox, a USB stick, or another machine. The export is a fully decrypted, version-tagged JSON dump — diff-friendly and migration-friendly. Importing it later restores everything (and snapshots the existing state to `pre-restore` first, so the import itself is reversible).
+
+A monthly export is plenty for typical use; weekly if you treat the app as a primary system of record.
+
 ---
 
 ## Auto-updates
@@ -509,7 +598,7 @@ The PWA "updates" itself silently via the service worker — the next time the d
 
 ```bash
 git clone https://github.com/sercancelenk/cadence.git
-cd leeadman
+cd cadence
 npm install
 ```
 
@@ -855,6 +944,12 @@ Google retired the Gemini 1.x family from the `v1beta` endpoint in late 2025. Op
 | 1.22 | **Manual CI/CD** — Release & Pages workflows manual-only and CI-gated; automatic version bumps via `run_number` |
 | 1.23 | **Polished light & dark themes** — proper input contrast, focus rings, accent-aware hovers everywhere |
 | 1.24 | **PIN reset with account password** — in-app, rate-limited recovery so you can never lock yourself out |
+| 1.25 | **Notes — resizable sidebar** — drag the divider between list and editor (Pointer Events, 220–560 px, works with mouse / touch / pen) |
+| 1.26 | **Markdown formatting toolbar** — Bold / Italic / Strike / H1–H3 dropdown / Bullet / Numbered / Task / Link / Inline code / Code block / Divider, with selection-aware insertions and ⌘B/⌘I/⌘K shortcuts |
+| 1.27 | **Notes sort modes + manual drag-reorder** — Last updated / Last opened / Created / Title / Manual; per-row drag handle in Manual mode that respects the pinned/unpinned tier boundary |
+| 1.28 | **Notes — preview-by-default reading mode** — each note opens in rendered preview; one click on *Write* flips into the editor and the new toolbar |
+| 1.29 | **Notes — strict per-view unlocking** — viewing a locked note always re-prompts for the passphrase; the *Remove notes passphrase* action requires re-auth even with a warm session key (and uses a clearer padlock-with-slash icon) |
+| 1.30 | **Top-bar global search pill** — Bootstrap-style search button in the header (with auto-platform `⌘ K` / `Ctrl K` badge) that opens the existing command palette; the palette now indexes **standalone notes** too and deep-links to `/notes?id=<id>` on click |
 
 ### Tier 2 — next
 
