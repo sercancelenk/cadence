@@ -37,8 +37,9 @@ const {
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
-const http = require('http');
+const https = require('https');
 const os = require('os');
+const selfsigned = require('selfsigned');
 
 // Single source of truth for product-name strings (see also
 // src/lib/appBranding.ts on the renderer side). If you find yourself
@@ -538,6 +539,10 @@ function writeSyncConfig(cfg) {
 
 let syncServer = null;
 let syncBoundPort = null;
+// Cached TLS metadata so `sync:status` can hand the fingerprint /
+// expiry to the renderer without re-reading the cert each time.
+let syncTlsFingerprint = null;
+let syncTlsNotAfter = null;
 
 function localIPv4Addresses() {
   const out = [];
@@ -548,6 +553,191 @@ function localIPv4Addresses() {
     }
   }
   return out;
+}
+
+// -- TLS for the sync server ---------------------------------------------------
+//
+// We run the sync server over HTTPS even on the LAN. Reasons:
+//
+//   1. Modern browsers (Firefox HTTPS-Only, Chrome's "Always use secure
+//      connections", iOS Safari Private Relay) refuse to navigate to
+//      `http://` URLs in many configurations. The QR-pair flow needs the
+//      phone to *open* a URL, so the URL has to be `https://`.
+//   2. HTTPS sidesteps the active mixed-content block (HTTPS pages
+//      cannot `fetch` HTTP URLs). The PWA at github.io can now talk to
+//      the LAN host without serving the bundle from the host as a
+//      workaround.
+//   3. LAN traffic is encrypted end-to-end. An attacker who has joined
+//      your Wi-Fi sees TLS-protected bytes instead of the workspace.
+//
+// Because the cert is self-signed, the *first* visit from a given
+// device shows a security warning ("Your connection is not private").
+// The user taps "Advanced → Proceed Anyway" once and the device
+// remembers the cert. We surface a clear explainer in the host UI so
+// this isn't mysterious.
+//
+// Apple's iOS / Safari rejects TLS server certs whose validity period
+// is longer than 825 days (per RFC 8555 + Apple's 2020 policy). We use
+// 800 days as a defensive ceiling: long enough that most users never
+// have to re-accept, short enough to stay under Safari's hard limit.
+const SYNC_TLS_FILENAME = `${DATA_FILE_PREFIX}-sync-tls.json`;
+const SYNC_TLS_VALIDITY_DAYS = 800;
+// Regenerate ~30 days before expiry so a quietly-paired phone is never
+// surprised by a hard-expired cert.
+const SYNC_TLS_RENEW_THRESHOLD_DAYS = 30;
+
+function syncTlsPath() {
+  return path.join(app.getPath('userData'), SYNC_TLS_FILENAME);
+}
+
+function readTlsBundle() {
+  // Returns the stored TLS material or `null` if missing/corrupt.
+  // Format: `{ version: 1, key, cert, sans: [...], generatedAt, notAfter, fingerprint }`.
+  const p = syncTlsPath();
+  if (!fs.existsSync(p)) return null;
+  try {
+    const raw = fs.readFileSync(p, 'utf8');
+    const j = JSON.parse(raw);
+    if (!j || typeof j !== 'object') return null;
+    if (typeof j.key !== 'string' || typeof j.cert !== 'string') return null;
+    return j;
+  } catch (e) {
+    console.warn('[cadence] tls bundle unreadable; will regenerate', e?.message);
+    return null;
+  }
+}
+
+function writeTlsBundle(bundle) {
+  // We touch the user data directory directly rather than going through
+  // the snapshot writer — the bundle is small (~3 KB) and isn't part of
+  // the workspace backup story.
+  const p = syncTlsPath();
+  const tmp = `${p}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(bundle, null, 2));
+  fs.renameSync(tmp, p);
+  // Restrict to owner-only on POSIX. No-op on Windows but harmless.
+  try {
+    fs.chmodSync(p, 0o600);
+  } catch {
+    /* swallow */
+  }
+}
+
+function computeFingerprint(certPem) {
+  try {
+    const x509 = new crypto.X509Certificate(certPem);
+    return x509.fingerprint256;
+  } catch (e) {
+    console.warn('[cadence] could not compute cert fingerprint', e?.message);
+    return null;
+  }
+}
+
+function listCertSans(certPem) {
+  try {
+    const x509 = new crypto.X509Certificate(certPem);
+    const raw = x509.subjectAltName || '';
+    // `subjectAltName` is a comma-separated list like
+    // "DNS:localhost, IP Address:192.168.1.45". Pull the values into a
+    // flat array we can compare with the current host IP list.
+    const out = [];
+    for (const piece of raw.split(',')) {
+      const trimmed = piece.trim();
+      const colon = trimmed.indexOf(':');
+      if (colon < 0) continue;
+      out.push(trimmed.slice(colon + 1).trim());
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+async function generateTlsBundle(ips) {
+  // Always include localhost + 127.0.0.1 + ::1 so the cert is usable
+  // for local development and for the `curl --resolve` debugging
+  // workflow even before the user knows their LAN IP.
+  const altNames = [
+    { type: 7, ip: '127.0.0.1' },
+    { type: 2, value: 'localhost' },
+  ];
+  for (const ip of ips) {
+    if (ip === '127.0.0.1') continue;
+    altNames.push({ type: 7, ip });
+  }
+
+  const notBefore = new Date();
+  const notAfter = new Date(notBefore.getTime() + SYNC_TLS_VALIDITY_DAYS * 24 * 60 * 60 * 1000);
+
+  // `selfsigned@5` returns a Promise — be sure to await.
+  const pems = await selfsigned.generate(
+    [{ name: 'commonName', value: `${APP_NAME} sync` }],
+    {
+      algorithm: 'sha256',
+      keySize: 2048,
+      notBeforeDate: notBefore,
+      notAfterDate: notAfter,
+      extensions: [
+        // basicConstraints: leaf cert (CA:FALSE) is the default for
+        // selfsigned but be explicit so we don't accidentally issue a
+        // CA cert if defaults change.
+        { name: 'basicConstraints', cA: false },
+        { name: 'subjectAltName', altNames },
+        { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
+        { name: 'extKeyUsage', serverAuth: true },
+      ],
+    },
+  );
+
+  const bundle = {
+    version: 1,
+    key: pems.private,
+    cert: pems.cert,
+    sans: ips.slice(),
+    generatedAt: notBefore.toISOString(),
+    notAfter: notAfter.toISOString(),
+    fingerprint: computeFingerprint(pems.cert),
+  };
+  writeTlsBundle(bundle);
+  return bundle;
+}
+
+/**
+ * Load the stored TLS bundle, regenerating it lazily when necessary.
+ * Regeneration triggers:
+ *   - No file on disk yet (first run after enabling sync)
+ *   - Cert expired or within {@link SYNC_TLS_RENEW_THRESHOLD_DAYS} of expiry
+ *   - Any current LAN IP is not present in the cert's SAN list (the
+ *     user moved networks or got a new DHCP lease — the old cert would
+ *     produce a hostname-mismatch warning every time)
+ */
+async function ensureTlsBundle() {
+  const ips = localIPv4Addresses();
+  const existing = readTlsBundle();
+
+  const now = Date.now();
+  const renewByMs = SYNC_TLS_RENEW_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+
+  if (existing) {
+    const notAfter = Date.parse(existing.notAfter || '');
+    const expiringSoon = Number.isFinite(notAfter) && notAfter - now < renewByMs;
+    const sans = listCertSans(existing.cert);
+    // Some browsers (esp. iOS Safari) require the IP itself, not the
+    // hostname, to appear as an IP-type SAN. We compare textual values
+    // since `listCertSans` already flattens "IP Address:..." → "...".
+    const missingIp = ips.some((ip) => ip !== '127.0.0.1' && !sans.includes(ip));
+
+    if (!expiringSoon && !missingIp) {
+      // Still valid and the SAN list covers every detected interface.
+      return existing;
+    }
+
+    console.log(
+      `[cadence] regenerating sync TLS cert (expiringSoon=${expiringSoon}, missingIp=${missingIp})`,
+    );
+  }
+
+  return await generateTlsBundle(ips);
 }
 
 // CORS for the /v1/ API. We deliberately do NOT use a wildcard origin: per
@@ -564,7 +754,13 @@ function applyApiCors(req, res) {
   if (origin && isTrustworthyLanOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Authorization, Content-Type, If-Match, If-None-Match',
+    );
+    // Browsers hide unknown response headers from JS unless we ask for
+    // them by name — without this the client can't read ETag back.
+    res.setHeader('Access-Control-Expose-Headers', 'ETag');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   }
 }
@@ -728,18 +924,31 @@ function serveStaticAsset(req, res) {
   stream.pipe(res);
 }
 
-function startSyncServer(port = SYNC_DEFAULT_PORT) {
-  return new Promise((resolve, reject) => {
-    if (syncServer) {
-      resolve({ ok: true, port: syncBoundPort });
-      return;
-    }
-    const cfg = readSyncConfig();
-    if (!cfg.enabled || !cfg.token) {
-      resolve({ ok: false, error: 'Sync is not enabled.' });
-      return;
-    }
-    const server = http.createServer((req, res) => {
+async function startSyncServer(port = SYNC_DEFAULT_PORT) {
+  if (syncServer) {
+    return { ok: true, port: syncBoundPort, fingerprint: syncTlsFingerprint };
+  }
+  const cfg = readSyncConfig();
+  if (!cfg.enabled || !cfg.token) {
+    return { ok: false, error: 'Sync is not enabled.' };
+  }
+
+  // Load or lazily generate the TLS material. This is an awaited call
+  // up front so that if anything goes wrong (e.g. disk full, key gen
+  // failure) we surface the error to the renderer instead of leaving
+  // the user with a half-started server.
+  let tlsBundle;
+  try {
+    tlsBundle = await ensureTlsBundle();
+  } catch (err) {
+    console.error('[cadence] sync TLS bundle generation failed', err);
+    return { ok: false, error: `TLS certificate setup failed: ${err.message || err}` };
+  }
+  syncTlsFingerprint = tlsBundle.fingerprint || null;
+  syncTlsNotAfter = tlsBundle.notAfter || null;
+
+  return await new Promise((resolve, reject) => {
+    const requestHandler = (req, res) => {
       // Defense in depth #1: DNS-rebinding guard. A browser that has been
       // tricked into resolving `attacker.com` to our LAN IP will send the
       // attacker's hostname in `Host:`. Anything that isn't a private IP /
@@ -751,7 +960,7 @@ function startSyncServer(port = SYNC_DEFAULT_PORT) {
         return;
       }
 
-      const url = new URL(req.url, `http://${req.headers.host}`);
+      const url = new URL(req.url, `https://${req.headers.host}`);
       const isApi = url.pathname.startsWith('/v1/');
 
       // CORS only applies to the /v1/ API. Static assets are GET-only and
@@ -804,9 +1013,34 @@ function startSyncServer(port = SYNC_DEFAULT_PORT) {
 
         if (url.pathname === '/v1/snapshot' && req.method === 'GET') {
           const data = readUserData(uid);
+          // ETag computed from the serialized payload — same bytes the
+          // client will receive. This way two clients can compare ETags
+          // without separately running the same hash on their copies.
+          // We trim to 16 hex chars (64 bits) — collision-resistant
+          // enough for a per-user dataset that gets one write per save.
+          const dataJson = JSON.stringify({ ok: true, data });
+          const etag = `"${crypto
+            .createHash('sha256')
+            .update(dataJson)
+            .digest('hex')
+            .slice(0, 16)}"`;
+
+          // `If-None-Match`: client is asking "is anything new since I
+          // last pulled?" — if our hash matches, return 304 with no
+          // body. This is what lets the PWA's auto-pull on focus stay
+          // cheap when nothing actually changed.
+          const ifNoneMatch = req.headers['if-none-match'];
+          if (ifNoneMatch && ifNoneMatch === etag) {
+            res.statusCode = 304;
+            res.setHeader('ETag', etag);
+            res.end();
+            return;
+          }
+
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: true, ts: new Date().toISOString(), data }));
+          res.setHeader('ETag', etag);
+          res.end(JSON.stringify({ ok: true, ts: new Date().toISOString(), etag, data }));
           return;
         }
 
@@ -857,10 +1091,54 @@ function startSyncServer(port = SYNC_DEFAULT_PORT) {
                 );
                 return;
               }
+
+              // Optimistic concurrency: if the client sent an `If-Match`
+              // header, it's telling us "I started with this version of
+              // the workspace — only accept my push if nothing else has
+              // changed since". If the current host snapshot has a
+              // different ETag we refuse with 412 so the client can
+              // pull + merge instead of blindly stomping on whichever
+              // device wrote last. Clients that don't send the header
+              // get the old behaviour (last-write-wins) for back-compat.
+              const ifMatch = req.headers['if-match'];
+              if (ifMatch) {
+                const current = readUserData(uid);
+                const currentJson = JSON.stringify({ ok: true, data: current });
+                const currentEtag = `"${crypto
+                  .createHash('sha256')
+                  .update(currentJson)
+                  .digest('hex')
+                  .slice(0, 16)}"`;
+                if (currentEtag !== ifMatch) {
+                  res.statusCode = 412;
+                  res.setHeader('Content-Type', 'application/json');
+                  res.setHeader('ETag', currentEtag);
+                  res.end(
+                    JSON.stringify({
+                      ok: false,
+                      error:
+                        'host has newer changes since you pulled — pull again, reapply your edits, then push.',
+                      currentEtag,
+                    }),
+                  );
+                  return;
+                }
+              }
+
               const writeRes = writeUserData(uid, payload);
+              // Always return the post-write ETag so the client can stop
+              // tracking the previous one (otherwise a successful push
+              // followed by another push would 412 against itself).
+              const newJson = JSON.stringify({ ok: true, data: payload });
+              const newEtag = `"${crypto
+                .createHash('sha256')
+                .update(newJson)
+                .digest('hex')
+                .slice(0, 16)}"`;
               res.statusCode = writeRes.ok ? 200 : 500;
               res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify(writeRes));
+              res.setHeader('ETag', newEtag);
+              res.end(JSON.stringify({ ...writeRes, etag: newEtag }));
             } catch (err) {
               res.statusCode = 400;
               res.setHeader('Content-Type', 'application/json');
@@ -886,16 +1164,38 @@ function startSyncServer(port = SYNC_DEFAULT_PORT) {
         return;
       }
       serveStaticAsset(req, res);
-    });
+    };
+
+    const server = https.createServer(
+      {
+        key: tlsBundle.key,
+        cert: tlsBundle.cert,
+        // Force a modern handshake. Older protocols are turned off so
+        // the user is never *quietly* sniffable even if their phone /
+        // OS still supports them. iOS 13+, Android 9+, Chrome / Firefox
+        // / Safari all default to TLS 1.2+, so this isn't a compat
+        // hazard in practice.
+        minVersion: 'TLSv1.2',
+      },
+      requestHandler,
+    );
 
     server.on('error', (err) => {
       console.error('[cadence] sync server error', err);
       reject(err);
     });
+    // Bind on all interfaces so phones on the LAN can reach us. The
+    // bound port is reported back so the renderer can show it (we let
+    // the OS pick a fallback when the requested port is busy).
     server.listen(port, '0.0.0.0', () => {
       syncServer = server;
       syncBoundPort = server.address().port;
-      resolve({ ok: true, port: syncBoundPort });
+      resolve({
+        ok: true,
+        port: syncBoundPort,
+        fingerprint: syncTlsFingerprint,
+        notAfter: syncTlsNotAfter,
+      });
     });
   });
 }
@@ -909,6 +1209,8 @@ function stopSyncServer() {
     const s = syncServer;
     syncServer = null;
     syncBoundPort = null;
+    syncTlsFingerprint = null;
+    syncTlsNotAfter = null;
     s.close(() => resolve({ ok: true }));
   });
 }
@@ -2274,6 +2576,16 @@ ipcMain.handle('sync:status', () => {
     port: syncBoundPort,
     token: cfg.token ?? null,
     ips: localIPv4Addresses(),
+    // `tls` carries everything the host UI needs to render the
+    // "first-time pairing" explainer and the cert fingerprint badge.
+    // `null` while the server is stopped — no cert is loaded into
+    // memory in that state.
+    tls: syncServer
+      ? {
+          fingerprint: syncTlsFingerprint,
+          notAfter: syncTlsNotAfter,
+        }
+      : null,
   };
 });
 
@@ -2293,6 +2605,10 @@ ipcMain.handle('sync:enable', async () => {
     token: cfg.token,
     port: syncBoundPort,
     ips: localIPv4Addresses(),
+    tls: {
+      fingerprint: syncTlsFingerprint,
+      notAfter: syncTlsNotAfter,
+    },
   };
 });
 

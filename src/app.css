@@ -4925,6 +4925,106 @@ code {
   font-size: 12px;
 }
 
+/* QR card inside the host section. We give it a faint surface so the
+ * white QR background doesn't clash with the dark theme, and centre the
+ * code so it photographs well from any phone angle. */
+.sync-host__qr {
+  align-items: flex-start;
+}
+
+.sync-host__qr-canvas {
+  display: inline-flex;
+  background: #ffffff;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  /* Tightly bounded — phones lock focus easier on a smaller code at
+   * close range than on something that fills the screen. */
+  width: max-content;
+  max-width: 100%;
+}
+
+.sync-host__qr-canvas svg {
+  display: block;
+  width: 220px;
+  height: 220px;
+}
+
+/* Friendly explainer next to the QR — without this users see the
+ * "Your connection is not private" warning on the phone, panic, and
+ * abandon the pairing. The text reads as a heads-up, not an error. */
+.sync-host__cert-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 420px;
+}
+
+.sync-host__cert-note p {
+  margin: 6px 0 0;
+}
+
+.sync-host__cert-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--surface);
+  padding: 1px 6px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+/* Connected badge in the pair-with-another-device card. The green dot
+ * mirrors common "online" affordances; we deliberately don't blink it
+ * to avoid the "look at me!" feeling — it should fade into the UI when
+ * everything's fine. */
+.sync-client__status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  flex-wrap: wrap;
+}
+
+.sync-client__status-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.sync-client__status-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--surface);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.sync-client__dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+  /* Subtle inner glow makes it read as a "status light" instead of a
+   * decorative dot. */
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.sync-client__dot--ok {
+  background: var(--ok);
+  color: var(--ok);
+}
+
 .sync-warning {
   margin: 8px 0 12px;
   padding: 10px 12px;

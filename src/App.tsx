@@ -9,6 +9,7 @@ import { ThemeProvider } from './ThemeContext';
 import { PATH_TEAMS } from './lib/routes';
 import { CommandPalette } from './components/CommandPalette';
 import { NotesUnlockProvider } from './lib/NotesUnlockContext';
+import { useLanSyncAutoPull } from './lib/useLanSyncAutoPull';
 import './app.css';
 
 // Each route lives in its own JS chunk. The Markdown editor and `react-markdown`
@@ -125,6 +126,9 @@ function Boot() {
 
 function AppRoutes() {
   useReminderWatcher();
+  // Keep this device's workspace in sync with the paired host (if any).
+  // No-op when the user hasn't paired yet, so safe to mount unconditionally.
+  useLanSyncAutoPull();
   return (
     <>
       <CommandPalette />

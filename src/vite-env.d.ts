@@ -125,12 +125,17 @@ interface CadenceApi {
         port: number | null;
         token: string | null;
         ips: string[];
+        tls: {
+          fingerprint: string | null;
+          notAfter: string | null;
+        } | null;
       }>;
       syncEnable: () => Promise<{
         ok: boolean;
         token?: string;
         port?: number | null;
         ips?: string[];
+        tls?: { fingerprint: string | null; notAfter: string | null };
         error?: string;
       }>;
       syncDisable: () => Promise<{ ok: boolean }>;

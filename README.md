@@ -444,23 +444,46 @@ This panel is purely diagnostic — you can ignore it forever and nothing degrad
 
 `Settings → Multi-device sync` lets two devices on the same Wi-Fi share a workspace without any cloud service:
 
-- The Electron app runs an optional, opt-in HTTP server (default port `9787`) protected by a **bearer token** stored in `sync.json`.
+- The Electron app runs an optional, opt-in **HTTPS** server (default port `9787`) protected by a **bearer token** stored in `sync.json`. The TLS certificate is **generated on this device** (self-signed, never leaves the machine) and persisted in `cadence-sync-tls.json` next to the workspace data.
 - Endpoints:
   - `GET  /v1/ping` — **unauthenticated** reachability probe; clients hit this to distinguish "host unreachable" from "host reachable but wrong token".
-  - `GET  /v1/snapshot` — returns the active user's data (Bearer token required).
-  - `POST /v1/snapshot` — replaces the active user's data (Bearer token required).
-  - `GET  /*` — serves the **bundled PWA assets** (index.html, JS, CSS, icons) from the host's own `dist/` folder. This is what defeats the "https://github.io → http://lan" mixed-content block, see below.
-- Settings shows the host's reachable LAN URLs, the pairing token (with a Rotate button) and a **Pair with another device** form for the *client* side: paste the URL + token and tap **Pull from host** or **Push to host**.
+  - `GET  /v1/snapshot` — returns the active user's data, with an `ETag` header. Clients sending `If-None-Match` get a zero-body **304 Not Modified** when nothing has changed since their last pull.
+  - `POST /v1/snapshot` — replaces the active user's data (Bearer token required). Clients sending `If-Match` get a **412 Precondition Failed** if the host has moved on since their last pull — Cadence then prompts to pull the newer version instead of silently overwriting it.
+  - `GET  /*` — serves the **bundled PWA assets** (index.html, JS, CSS, icons) from the host's own `dist/` folder. This is what defeats the "https://github.io → http://lan" mixed-content block and powers QR pairing, see below.
+- Settings shows the host's reachable LAN URLs, the pairing token (with a Rotate button), a **scannable QR code** for one-tap mobile pairing and a **Pair with another device** form for the *client* side.
 - The server auto-resumes on next launch if you previously enabled it.
 
-**Mobile / PWA pairing — the mixed-content fix:** browsers block plain-HTTP fetches from HTTPS pages, so calling `http://192.168.1.5:9787` from `https://*.github.io` is silently denied — that's the "Pull failed" you'd otherwise see. Cadence dodges this by serving the **same PWA bundle** from the sync server. The host UI shows a `http://<lan-ip>:9787/` URL labelled *For mobile or PWA on this network — open this URL in the browser*; opening it on your phone loads the Cadence PWA over plain HTTP from the host, so the subsequent `fetch('http://.../v1/snapshot')` is **same-origin** and the browser permits it. No more github.io ↔ LAN dead-end.
+**QR-code pairing.** The host card renders a QR encoding `https://<lan-ip>:9787/?pair=<base64url(token)>`. Open the iPhone/Android camera, point it at the code, tap the URL banner — the phone opens the PWA bundled on the desktop. On the *first* pairing the browser shows a **"Your connection is not private"** warning because the cert is self-signed and the phone doesn't know about it yet; tap **Advanced → Visit Website / Proceed Anyway** once and your phone will remember this device permanently. The PWA then loads from the host (same-origin, no mixed-content) and the **`?pair=` handler** stores the URL + token in the phone's `localStorage` automatically. No typing the IP, no typing the 192-bit token, no further warnings.
 
-**Client UX**: the pair form normalises whatever you type (adds `http://`, defaults port `9787`), has a **Test reachability** button that pings `/v1/ping` with an 8-second timeout, and gives targeted error messages — `401` ("token rotated/wrong"), `503` ("no user signed in on the host"), timeout ("check Wi-Fi and that the host server is running") instead of a generic "Pull failed".
+**Bidirectional auto-sync.** Once a client is paired, the app keeps both sides in sync in the background — **push first, pull after**:
+
+- ~500 ms after launch (opening the PWA on your phone shows the latest data straight away and ships any unpushed edits up).
+- On window focus and `visibilitychange` to visible (you tabbed away → came back, or unlocked the phone).
+- On `online` events (the OS just told us Wi-Fi came back).
+
+Each cycle computes the local snapshot's ETag (same SHA-256 prefix formula the host uses, so the bytes line up) and compares with `pair.etag` (the host's last-confirmed ETag):
+
+- **First pair** (no prior etag) → pull only, adopt the host's state and ETag.
+- **Local matches host** → conditional pull with `If-None-Match`. The host returns **304 Not Modified** with zero body when nothing has changed since.
+- **Local differs from host** → push with `If-Match: pair.etag`. On 200 OK we adopt the new ETag and skip the pull (the host now has our snapshot, there's nothing to download). On **412 Precondition Failed** we *silently bail* — the desktop edited too, and overwriting either side would lose data. The next manual Push from Settings surfaces an explicit "Pull host's version first?" dialog so the user resolves the conflict deliberately.
+
+All cycles share the same throttle (minimum 30 s between attempts, no calls when `navigator.onLine` is false, in-flight lock to prevent concurrent runs). Errors are silent in the background path — the badge going stale is the signal — while Settings shows targeted messages for explicit Pull/Push actions.
+
+**Optimistic concurrency.** Manual **Push to host** sends `If-Match: <pair.etag>` too — if the host's snapshot has moved on, the request is rejected with **412** and the UI offers a "Pull host's version first?" dialog. Last-write-wins becomes a deliberate choice, never an accident.
+
+**Connection badge.** When this device is paired, the *Pair with another device* card flips to **Paired with host** — green dot, the canonical host URL, "synced 3 min ago" relative timestamp (auto-refreshes every minute) and a **Disconnect** button that clears the saved pair.
+
+**Mobile / PWA pairing — why HTTPS:** modern browsers' "HTTPS-Only Mode" (Firefox), "Always use secure connections" (Chrome) and Safari Private Relay refuse to navigate to `http://` URLs in many configurations. They also block `fetch()` from HTTPS pages to HTTP hosts entirely (active mixed-content rule). Self-signed HTTPS on the desktop sidesteps both: the URL is `https://`, so browsers navigate to it; and a github.io-hosted PWA can `fetch` it without mixed-content blocking. The trade-off is the one-time **"Your connection is not private"** warning on first pairing per device — the certificate is generated by the host with a 800-day validity (within Apple's hard cap), persists on disk, and is reissued only when the LAN IP changes or expiry nears.
+
+**Cert fingerprint display.** The host card shows the first 8 bytes of the SHA-256 cert fingerprint so a security-conscious user can verify out-of-band that the warning on their phone matches the certificate the host actually issued.
+
+**Client UX**: the pair form normalises whatever you type (adds `https://`, defaults port `9787`), has a **Test reachability** button that pings `/v1/ping` with an 8-second timeout, and gives targeted error messages — `401` ("token rotated/wrong"), `503` ("no user signed in on the host"), `412` ("host has newer changes"), timeout ("check Wi-Fi and that the host server is running") instead of a generic "Pull failed".
 
 #### Sync security — what we did and didn't do
 
 The threat model is "untrusted devices on the same Wi-Fi" and "a malicious public website trying to reach into the user's LAN through their browser". Defenses, in code:
 
+- **TLS encryption on the wire.** Sync runs over HTTPS with a self-signed cert (RSA 2048, SHA-256), TLS 1.2+. Even an attacker who's joined your Wi-Fi sees only encrypted bytes — not the workspace, not the bearer token.
 - **Random 192-bit token.** `crypto.randomBytes(24)` per workspace, base64-encoded. Brute-force is not on the table.
 - **Constant-time token compare.** `crypto.timingSafeEqual` instead of `===`, plus a small artificial delay on failure paths so 401 vs 200 cannot be cleanly differentiated by latency measurement.
 - **DNS-rebinding defense.** Every request's `Host:` header is checked against a private-IP / localhost / `.local` allow-list. A browser that's been tricked into thinking `attacker.com` resolves to your LAN IP still sends `Host: attacker.com` — we send back 403 before any route runs.
@@ -470,15 +493,23 @@ The threat model is "untrusted devices on the same Wi-Fi" and "a malicious publi
 - **Body size cap.** `POST` bodies over 25 MB get an explicit `413 Payload Too Large` response (with a JSON error body) before we keep buffering, instead of a bare socket reset that the client would render as a useless "Pull failed".
 - **Refuse-to-overwrite + auto-backup.** Even if a properly-authenticated client pushes a corrupt-but-shape-valid payload, the writer takes a snapshot before saving and refuses to save an undecipherable file. Worst case: one round-trip to the **Backups & recovery** tab.
 
-#### Why we don't (yet) run HTTPS
+#### Why self-signed HTTPS (not plain HTTP, not a real CA cert)
 
-Self-signed HTTPS is technically easy (Node `https.createServer` + a generated cert) but **counter-productive** for a LAN tool:
+We tried plain HTTP first. It didn't survive contact with modern browsers:
 
-- iOS Safari and Chrome show a *Not secure* warning on every visit; the user habituates to clicking "Proceed anyway", which trains them to ignore the very warning that protects against real attacks.
-- Real CA certificates require a public DNS name and ports 80/443 reachable from the internet — which is exactly what a LAN-only tool is trying to *avoid*.
-- The mixed-content block that motivated HTTPS in the first place is already solved by the host serving its own PWA bundle (see *the mixed-content fix*).
+- Firefox's *HTTPS-Only Mode* (default in some installs) refuses to navigate to `http://` URLs — the QR-scan flow dies before it begins.
+- Chrome's *Always use secure connections* does the same. Safari Private Relay forwards LAN IPs in opaque ways that broke pairing on some networks.
+- The active mixed-content rule prevents `https://*.github.io` from `fetch`-ing `http://192.168.x.x`, so a PWA installed from GitHub Pages couldn't talk to the host at all.
 
-Net: on a trusted home network, HTTP-on-LAN + the hardening above is more honest than HTTPS-with-a-warning-everyone-clicks-through. If your threat model includes an untrusted Wi-Fi network (a coffee shop, a hotel) — don't run the sync server there at all; the toggle is off by default for a reason.
+A *real* CA-signed certificate is also off the table: it requires a public DNS name resolvable from the internet and ports 80/443 reachable for ACME challenge — which is exactly what a LAN-only tool is trying to avoid.
+
+That leaves self-signed HTTPS, which we do. The cost is a **one-time** "Your connection is not private" warning on each device — the phone caches the cert exception after the user taps "Proceed Anyway" once. Every subsequent visit is silent. To keep the prompt rare we:
+
+- Generate the cert with all detected LAN IPs in the **Subject Alternative Names** (Wi-Fi + Ethernet + VPN at once), so changing networks usually doesn't re-trigger the warning.
+- Set validity to **800 days** — under Apple's 825-day hard limit for self-signed server certs, so iOS Safari accepts it.
+- Re-issue automatically only when (a) the cert is within 30 days of expiry, or (b) a current interface IP isn't covered by the existing SAN list (you joined a new network).
+
+On a trusted home network, self-signed HTTPS + the bearer token + the hardening below is honest and works with modern browsers' defaults. If your threat model includes an untrusted Wi-Fi network (a coffee shop, a hotel) — don't run the sync server there at all; the toggle is off by default for a reason.
 
 ---
 
@@ -567,6 +598,7 @@ Standard shortcuts apply (⌘ Q, ⌘ W, ⌘ R, ⌘ F, ⌘ , …). The global **�
   - `backups/<userId>/data-<label>-<timestamp>.json` — rolling auto-snapshots (50 slots; labels include `launch`, `post-login`, `pre-save`, `pre-pwchange`, `pre-restore`).
   - `auth-lock.json` — optional PIN hash.
   - `sync.json` — LAN sync server config (token + enabled flag) when sync is on.
+  - `cadence-sync-tls.json` — self-signed TLS key/cert/SAN-list for the HTTPS sync server. Regenerated when expired (800-day life) or when the LAN IP list changes.
 - **Encryption-at-rest** (Electron): your data file is wrapped in **AES-256-GCM**. The 256-bit key is derived from your password with `scrypt(password, encSalt)` at login and lives only in main-process memory until logout. Changing your password atomically decrypts with the old key, derives a fresh `encSalt`, and re-encrypts under the new key. Legacy plaintext files from older versions are upgraded silently on the first save after login.
 - **Refuse-to-overwrite guard**: when the data writer finds an existing file it can't decrypt with the in-memory key, it refuses to write — your data stays safe and the UI surfaces a banner pointing at *Settings → Backups & recovery*.
 - **PIN protection** is an additional launch-time UI barrier (not the encryption key). It can be enabled/disabled independently in Settings. If you forget it, the lock screen has a "Forgot PIN? Reset with account password" flow (rate-limited).

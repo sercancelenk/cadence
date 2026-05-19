@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import { IcDownload, IcLock, IcMoon, IcRefresh, IcSparkles, IcSun, IcTrash, IcUpload, IcWifi } from '../components/icons';
 import { Button } from '../components/ui/Button';
 import { useAppData } from '../AppDataContext';
@@ -15,6 +16,18 @@ import { AI_PROVIDER_OPTIONS } from '../model';
 import { useTheme } from '../ThemeContext';
 import type { CacheBreakdownEntry, CacheStats, DataFileInfo, DataSources, SaveError } from '../vite-env';
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
+import {
+  buildPairUrl,
+  clearPair,
+  formatRelativeSync,
+  loadPair,
+  normalizeHostUrl,
+  pullSnapshot,
+  pushSnapshot,
+  recordSync,
+  savePair,
+  type LanSyncPair,
+} from '../lib/lanSyncClient';
 
 export function Settings() {
   const { data, replaceAll } = useAppData();
@@ -248,6 +261,14 @@ type SyncStatus = {
   port: number | null;
   token: string | null;
   ips: string[];
+  // TLS material is only populated while the server is running. The
+  // fingerprint is the SHA-256 of the self-signed cert; we surface a
+  // short prefix in the UI so a paranoid user can verify the warning
+  // they'll see on the phone.
+  tls: {
+    fingerprint: string | null;
+    notAfter: string | null;
+  } | null;
 };
 
 function SyncSection() {
@@ -301,10 +322,50 @@ function SyncSection() {
   };
 
   // Client-side pair form for the *current* device (mobile/PWA or another desktop).
-  const [pairUrl, setPairUrl] = useState('');
-  const [pairToken, setPairToken] = useState('');
+  // `savedPair` is the persisted pair info (host URL + token + ETag); when it's
+  // present we show the "connected" badge and use it for auto-pull. The form
+  // fields shadow `savedPair` so the user can edit + repair without losing the
+  // saved record until they explicitly Pull successfully.
+  const [savedPair, setSavedPair] = useState<LanSyncPair | null>(() => loadPair());
+  const [pairUrl, setPairUrl] = useState(() => savedPair?.url ?? '');
+  const [pairToken, setPairToken] = useState(() => savedPair?.token ?? '');
   const [pairBusy, setPairBusy] = useState(false);
   const [pairMsg, setPairMsg] = useState<{ kind: 'ok' | 'error' | 'info'; text: string } | null>(null);
+  // Force re-render every minute so the "synced 3 min ago" badge stays
+  // fresh without us needing a separate ticking state on every screen.
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Re-read the saved pair after mount. The `useState(loadPair)` init runs
+  // BEFORE the app-level auto-pull effect has had a chance to handle a
+  // `?pair=...` URL, so when the user lands directly on /settings via QR
+  // we'd otherwise show "not paired" until they reload. We also wire up
+  // the `storage` event so opening a second tab and pairing there keeps
+  // this tab in sync.
+  useEffect(() => {
+    const refresh = () => setSavedPair(loadPair());
+    // Microtask delay covers the QR-scan race: the auto-pull hook's
+    // effect (which actually writes the pair) runs in the same tick as
+    // ours but isn't guaranteed to fire first.
+    const t = window.setTimeout(refresh, 50);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+
+  // Sync form fields with `savedPair` when it changes (e.g. the QR-scan
+  // flow populated it from another component). We only overwrite empty
+  // fields to avoid trampling on the user's in-progress edits.
+  useEffect(() => {
+    if (!savedPair) return;
+    setPairUrl((u) => (u ? u : savedPair.url));
+    setPairToken((t) => (t ? t : savedPair.token));
+  }, [savedPair]);
 
   // Normalise whatever the user typed into a canonical base URL.
   // Accepts: "192.168.1.5", "192.168.1.5:9787", "http://192.168.1.5",
@@ -407,9 +468,67 @@ function SyncSection() {
     }
   };
 
-  const pull = async () => {
+  // Internal helper: turn a `PullOutcome` / `PushOutcome` discriminated
+  // union into a user-facing message. Keeps the action functions tidy.
+  const pullErrorMessage = useCallback(
+    (
+      outcome: Exclude<Awaited<ReturnType<typeof pullSnapshot>>, { kind: 'ok' } | { kind: 'not-modified' }>,
+    ): { kind: 'error'; text: string } => {
+      switch (outcome.kind) {
+        case 'unauthorised':
+          return { kind: 'error', text: 'Pull failed: token is incorrect or has been rotated on the host.' };
+        case 'no-session':
+          return { kind: 'error', text: 'Pull failed: no signed-in user on the host (open Cadence there and log in first).' };
+        case 'mixed-content':
+          return {
+            kind: 'error',
+            text:
+              'Pull blocked: this page is HTTPS but the host is http://. Open the LAN URL the host shows in your mobile browser.',
+          };
+        case 'timeout':
+          return { kind: 'error', text: 'Pull timed out. Check that both devices are on the same Wi-Fi and the host server is running.' };
+        case 'http-error':
+          if (outcome.status === 404) {
+            return { kind: 'error', text: "Pull failed: host responded but doesn't speak Cadence sync (404). Double-check the URL/port." };
+          }
+          return { kind: 'error', text: `Pull failed (HTTP ${outcome.status})${outcome.message ? `: ${outcome.message}` : ''}.` };
+        case 'network-error':
+          return { kind: 'error', text: `Pull failed: ${outcome.message}` };
+      }
+    },
+    [],
+  );
+
+  const pushErrorMessage = useCallback(
+    (
+      outcome: Exclude<Awaited<ReturnType<typeof pushSnapshot>>, { kind: 'ok' } | { kind: 'conflict' }>,
+    ): { kind: 'error'; text: string } => {
+      switch (outcome.kind) {
+        case 'unauthorised':
+          return { kind: 'error', text: 'Push failed: token is incorrect or has been rotated on the host.' };
+        case 'too-large':
+          return { kind: 'error', text: 'Push failed: payload exceeds the 25 MB limit. Compact your workspace or sync fewer items.' };
+        case 'mixed-content':
+          return {
+            kind: 'error',
+            text:
+              'Push blocked: this page is HTTPS but the host is http://. Open the LAN URL the host shows in your mobile browser.',
+          };
+        case 'timeout':
+          return { kind: 'error', text: 'Push timed out. Check that both devices are on the same Wi-Fi and the host server is running.' };
+        case 'http-error':
+          return { kind: 'error', text: `Push failed (HTTP ${outcome.status})${outcome.message ? `: ${outcome.message}` : ''}.` };
+        case 'network-error':
+          return { kind: 'error', text: `Push failed: ${outcome.message}` };
+      }
+    },
+    [],
+  );
+
+  const pull = useCallback(async () => {
     setPairMsg(null);
-    if (!sanitizedHost || !pairToken.trim()) {
+    const token = pairToken.trim();
+    if (!sanitizedHost || !token) {
       setPairMsg({ kind: 'error', text: 'Host URL and token are required.' });
       return;
     }
@@ -423,32 +542,33 @@ function SyncSection() {
     }
     setPairBusy(true);
     try {
-      const resp = await fetchWithTimeout(`${sanitizedHost}/v1/snapshot`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${pairToken.trim()}` },
-      });
-      if (!resp.ok) {
-        setPairMsg(describeError('Pull', null, resp));
-        return;
+      // First explicit pull from this device: don't send `If-None-Match`
+      // because we WANT the body — the user has nothing local to compare
+      // against yet. We pass the prior ETag only on background auto-pulls.
+      const outcome = await pullSnapshot(sanitizedHost, token);
+      if (outcome.kind === 'ok') {
+        replaceAll(outcome.data as AppData);
+        const next = savePair({ url: sanitizedHost, token, etag: outcome.etag });
+        recordSync(outcome.etag);
+        setSavedPair(next);
+        setPairMsg({ kind: 'ok', text: 'Pulled snapshot from host. This device is now paired.' });
+      } else if (outcome.kind === 'not-modified') {
+        // Shouldn't happen on an explicit pull (we didn't send If-None-Match)
+        // but defensively persist the pair anyway.
+        setSavedPair(savePair({ url: sanitizedHost, token }));
+        setPairMsg({ kind: 'ok', text: 'Already up to date.' });
+      } else {
+        setPairMsg(pullErrorMessage(outcome));
       }
-      const json = await resp.json();
-      const remote = json?.data;
-      if (!remote || typeof remote !== 'object') {
-        setPairMsg({ kind: 'error', text: 'Host returned no data.' });
-        return;
-      }
-      replaceAll(remote);
-      setPairMsg({ kind: 'ok', text: 'Pulled snapshot from host. Local data was replaced.' });
-    } catch (err) {
-      setPairMsg(describeError('Pull', err));
     } finally {
       setPairBusy(false);
     }
-  };
+  }, [pairToken, sanitizedHost, isMixedContentBlocked, replaceAll, pullErrorMessage]);
 
-  const push = async () => {
+  const push = useCallback(async () => {
     setPairMsg(null);
-    if (!sanitizedHost || !pairToken.trim()) {
+    const token = pairToken.trim();
+    if (!sanitizedHost || !token) {
       setPairMsg({ kind: 'error', text: 'Host URL and token are required.' });
       return;
     }
@@ -465,29 +585,126 @@ function SyncSection() {
     }
     setPairBusy(true);
     try {
-      const resp = await fetchWithTimeout(`${sanitizedHost}/v1/snapshot`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${pairToken.trim()}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ data }),
-      });
-      if (!resp.ok) {
-        setPairMsg(describeError('Push', null, resp));
-        return;
+      // Send `If-Match` with the ETag we received on our last pull. The
+      // host returns 412 if its data has changed since — that's the
+      // "you'd be overwriting newer edits" guard that turns last-write-
+      // wins into a deliberate choice the user has to make.
+      const outcome = await pushSnapshot(sanitizedHost, token, data, savedPair?.etag);
+      if (outcome.kind === 'ok') {
+        const next = savePair({ url: sanitizedHost, token, etag: outcome.etag, lastSyncedAt: new Date().toISOString() });
+        setSavedPair(next);
+        setPairMsg({ kind: 'ok', text: 'Pushed local data to the host.' });
+      } else if (outcome.kind === 'conflict') {
+        // Offer to pull, overwriting local. This is the safe choice: the
+        // user can manually re-apply their edits afterwards. We don't
+        // attempt automatic merge — too risky for a workspace this
+        // structured (it'd silently lose data on conflicts in nested
+        // fields).
+        const confirmPull = window.confirm(
+          `${outcome.message ?? 'Host has newer changes than your last pull.'}\n\nPull the host's version now? This will overwrite your local data.`,
+        );
+        if (confirmPull) {
+          const pullOutcome = await pullSnapshot(sanitizedHost, token);
+          if (pullOutcome.kind === 'ok') {
+            replaceAll(pullOutcome.data as AppData);
+            const next = savePair({ url: sanitizedHost, token, etag: pullOutcome.etag });
+            setSavedPair(next);
+            setPairMsg({
+              kind: 'ok',
+              text: 'Pulled host snapshot. Re-apply your edits, then push again.',
+            });
+          } else if (pullOutcome.kind === 'not-modified') {
+            setPairMsg({ kind: 'info', text: 'Host is already in sync — nothing to pull.' });
+          } else {
+            setPairMsg(pullErrorMessage(pullOutcome));
+          }
+        } else {
+          setPairMsg({
+            kind: 'info',
+            text: 'Push cancelled. Use Pull to see the host\'s latest version first.',
+          });
+        }
+      } else {
+        setPairMsg(pushErrorMessage(outcome));
       }
-      setPairMsg({ kind: 'ok', text: 'Pushed local data to the host.' });
-    } catch (err) {
-      setPairMsg(describeError('Push', err));
     } finally {
       setPairBusy(false);
     }
-  };
+  }, [pairToken, sanitizedHost, isMixedContentBlocked, data, savedPair?.etag, replaceAll, pullErrorMessage, pushErrorMessage]);
 
+  // "Disconnect" — forget the saved pair so this device stops auto-pulling.
+  const disconnect = useCallback(() => {
+    if (!window.confirm('Forget the paired host? This device will stop auto-syncing until you pair again.')) {
+      return;
+    }
+    clearPair();
+    setSavedPair(null);
+    setPairMsg({ kind: 'info', text: 'Disconnected. This device is no longer paired with any host.' });
+  }, []);
+
+  // Host URLs are HTTPS — the sync server runs TLS with a self-signed
+  // cert so modern browsers (with HTTPS-Only on) actually navigate to
+  // it, and an HTTPS PWA can fetch from it without mixed-content
+  // blocking. The "Proceed Anyway" prompt on first visit is a one-time
+  // cost, explained right above the QR.
   const hostUrls = status?.ips?.length && status?.port
-    ? status.ips.map((ip) => `http://${ip}:${status.port}`)
+    ? status.ips.map((ip) => `https://${ip}:${status.port}`)
     : [];
+
+  // TLS fingerprint shown so a paranoid user can verify out-of-band
+  // (compare with what the phone shows in the cert warning dialog).
+  // We render a short 8-byte prefix because the full 32 bytes is
+  // unreadable on a phone screen.
+  const certFingerprintShort = useMemo(() => {
+    const fp = status?.tls?.fingerprint;
+    if (!fp) return null;
+    return fp.split(':').slice(0, 8).join(':');
+  }, [status?.tls?.fingerprint]);
+
+  // Build a QR payload for the FIRST advertised LAN URL — the typical
+  // user case is "show me a code my phone can scan". Multi-homed hosts
+  // (Wi-Fi + Ethernet + VPN) get the first IP; we trust `os.networkInterfaces()`
+  // to put the routable one first, and the user can still copy any
+  // alternate URL manually below the QR.
+  //
+  // Payload format: `https://<ip>:<port>/?pair=<base64url(token)>`. When
+  // scanned with a phone camera, the OS opens the URL; the browser
+  // shows a one-time cert warning, the user taps "Proceed Anyway",
+  // then the PWA loads from the host (same-origin, no mixed-content)
+  // and reads `?pair=` to auto-pair.
+  const qrPayload = useMemo(() => {
+    if (!status?.token || hostUrls.length === 0) return '';
+    return buildPairUrl(hostUrls[0], status.token, '/');
+  }, [hostUrls, status?.token]);
+
+  const [qrSvg, setQrSvg] = useState<string>('');
+  useEffect(() => {
+    if (!qrPayload) {
+      setQrSvg('');
+      return;
+    }
+    // `qrcode` returns a Promise — generate the SVG asynchronously so a
+    // huge URL doesn't block the main thread. We render the result as
+    // raw HTML (`dangerouslySetInnerHTML`) because qrcode's output is a
+    // static SVG string with no JS — safe to inline.
+    let cancelled = false;
+    QRCode.toString(qrPayload, {
+      type: 'svg',
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      width: 220,
+      color: { dark: '#0f172a', light: '#ffffff' },
+    })
+      .then((svg) => {
+        if (!cancelled) setQrSvg(svg);
+      })
+      .catch(() => {
+        if (!cancelled) setQrSvg('');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [qrPayload]);
 
   return (
     <CollapsibleCard
@@ -498,9 +715,11 @@ function SyncSection() {
     >
       <p className="muted">
         Keep two devices on the same Wi-Fi in sync without any cloud server. The desktop app
-        runs a tiny HTTP server protected by a one-time token; another device (a second
-        desktop, or the PWA when running over HTTP) pulls or pushes a snapshot directly.
-        Nothing leaves your network.
+        runs a tiny <strong>HTTPS</strong> server protected by a one-time token; another device
+        (a second desktop, or the PWA on your phone) pulls or pushes a snapshot directly over
+        the LAN. The TLS certificate is generated by your computer and never leaves it — so the
+        first time a phone connects you'll see a "not private" warning and tap "Proceed"; that's
+        normal and you only do it once per device. Nothing leaves your network.
       </p>
 
       {isElectronHost ? (
@@ -531,6 +750,32 @@ function SyncSection() {
               </div>
               {status.token ? (
                 <div className="sync-host__details">
+                  {qrSvg ? (
+                    <div className="field sync-host__qr">
+                      <span>Scan to pair a phone (same Wi-Fi)</span>
+                      <div
+                        className="sync-host__qr-canvas"
+                        // qrcode lib output is a static SVG string with no
+                        // scripts — safe to inline.
+                        dangerouslySetInnerHTML={{ __html: qrSvg }}
+                      />
+                      <div className="sync-host__cert-note">
+                        <strong>First time? You'll see a security warning. That's expected.</strong>
+                        <p>
+                          Cadence encrypts the LAN connection with a certificate generated by{' '}
+                          <em>this</em> Mac/PC — no browser knows about it yet. On your phone, tap{' '}
+                          <strong>Advanced → Visit Website / Proceed Anyway</strong> once. Your phone
+                          will remember this device and never ask again.
+                        </p>
+                        {certFingerprintShort ? (
+                          <p className="muted small" style={{ margin: '6px 0 0' }}>
+                            Certificate fingerprint (SHA-256, first 8 bytes):{' '}
+                            <code>{certFingerprintShort}</code>
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="field">
                     <span>Pairing token</span>
                     <input className="input" readOnly value={status.token} onFocus={(e) => e.currentTarget.select()} />
@@ -538,7 +783,7 @@ function SyncSection() {
                   {hostUrls.length > 0 ? (
                     <>
                       <div className="field">
-                        <span>For mobile or PWA on this network — open this URL in the browser</span>
+                        <span>If the QR doesn't work — open this URL on the phone manually</span>
                         {hostUrls.map((u) => (
                           <div className="row" key={`pwa-${u}`} style={{ alignItems: 'stretch', gap: 6 }}>
                             <input
@@ -563,9 +808,9 @@ function SyncSection() {
                           </div>
                         ))}
                         <p className="muted small" style={{ marginTop: 6 }}>
-                          The PWA is also bundled on this port — opening these from the mobile browser loads it over
-                          HTTP from this device, sidestepping the HTTPS-blocks-HTTP mixed-content rule that breaks
-                          github.io ↔ LAN pairing.
+                          The PWA is bundled on this port and served over HTTPS. The same cert
+                          covers all listed interfaces — opening any one and tapping{' '}
+                          <em>Advanced → Proceed</em> once teaches your phone to trust this device.
                         </p>
                       </div>
                       <div className="field">
@@ -592,10 +837,36 @@ function SyncSection() {
       ) : null}
 
       <div className="card sync-client">
-        <h3 style={{ margin: '0 0 8px' }}>Pair with another device</h3>
-        <p className="muted small" style={{ marginTop: 0 }}>
-          Open Settings on the host device, copy the reachable URL and token, then paste them here.
-        </p>
+        <h3 style={{ margin: '0 0 8px' }}>
+          {savedPair ? 'Paired with host' : 'Pair with another device'}
+        </h3>
+
+        {savedPair ? (
+          <div className="sync-client__status" role="status">
+            <span className="sync-client__dot sync-client__dot--ok" aria-hidden />
+            <div className="sync-client__status-text">
+              <strong>Connected</strong> to <code>{savedPair.url}</code>
+              {savedPair.lastSyncedAt ? (
+                <span className="muted small">
+                  {' '}· last synced {formatRelativeSync(savedPair.lastSyncedAt)}
+                </span>
+              ) : (
+                <span className="muted small"> · awaiting first sync</span>
+              )}
+              <div className="muted small" style={{ marginTop: 2 }}>
+                Auto-syncs on launch, focus and every minute or so. Local edits push up first;
+                remote changes pull down after.
+              </div>
+            </div>
+            <Button type="button" variant="ghost" onClick={disconnect}>
+              Disconnect
+            </Button>
+          </div>
+        ) : (
+          <p className="muted small" style={{ marginTop: 0 }}>
+            On the host device, scan the QR code with your phone — or copy the URL and token below.
+          </p>
+        )}
 
         {isMixedContentBlocked ? (
           <div className="sync-warning" role="alert">
@@ -1602,27 +1873,8 @@ function DataSourceRow({
   );
 }
 
-function normalizeHostUrl(raw: string): string {
-  let s = raw.trim();
-  if (!s) return '';
-  // Strip protocol-relative `//`
-  if (s.startsWith('//')) s = s.slice(2);
-  // Default to http:// for LAN hosts.
-  if (!/^https?:\/\//i.test(s)) s = `http://${s}`;
-  try {
-    const u = new URL(s);
-    // Default the LAN sync port if missing.
-    if (!u.port && (u.protocol === 'http:' || u.protocol === 'https:')) {
-      u.port = '9787';
-    }
-    // Drop trailing slash so we can append `/v1/...` cleanly.
-    let out = u.toString();
-    if (out.endsWith('/')) out = out.slice(0, -1);
-    return out;
-  } catch {
-    return '';
-  }
-}
+// `normalizeHostUrl` moved to `lib/lanSyncClient.ts` so it can be reused
+// from the auto-pull hook and any non-UI callers.
 
 function formatBytes(bytes: number | undefined) {
   if (bytes == null) return '';
