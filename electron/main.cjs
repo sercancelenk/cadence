@@ -915,6 +915,15 @@ function serveStaticAsset(req, res) {
   res.statusCode = 200;
   res.setHeader('Content-Type', MIME_TYPES[ext] || 'application/octet-stream');
   res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  // Defensive: Vite emits <script type="module" crossorigin> and
+  // <link rel="modulepreload" crossorigin> in the production HTML, which
+  // makes browsers fetch those bytes in CORS mode even for same-origin
+  // URLs. Some Safari versions over self-signed HTTPS have been observed
+  // refusing such loads without ACAO. Safe to be `*` — no static asset is
+  // privileged; the token-protected /v1/* endpoints set their own CORS
+  // rules separately.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   // Pipe the file so large assets (vendor-react) stream instead of buffering.
   const stream = fs.createReadStream(abs);
   stream.on('error', () => {

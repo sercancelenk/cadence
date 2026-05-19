@@ -34,21 +34,36 @@ const PersonRoute = lazy(() => import('./views/People').then((m) => ({ default: 
 const TeamMePage = lazy(() => import('./views/People').then((m) => ({ default: m.TeamMePage })));
 const TeamLeaderPage = lazy(() => import('./views/People').then((m) => ({ default: m.TeamLeaderPage })));
 
-/** Electron .app / loadFile() uses the `file:` protocol where BrowserRouter renders blank; HashRouter is required there. */
+/**
+ * Pick the router and its basename based on where this bundle is being
+ * served from. There are four distinct runtime contexts the same source
+ * has to support:
+ *
+ *   1. Electron desktop (`file://`)   — BASE_URL='./' → HashRouter, no basename.
+ *   2. Vite dev server (`http://localhost:5173/`) — BASE_URL='/' → BrowserRouter, '/'.
+ *   3. GitHub Pages PWA (`/cadence/app/`)         — BASE_URL='/cadence/app/' → BrowserRouter, '/cadence/app'.
+ *   4. LAN sync server (`https://<lan-ip>:9787/`) — the Electron-built bundle
+ *      gets served over HTTPS to mobile devices. BASE_URL='./' here too,
+ *      which means BrowserRouter would activate with basename='.', a
+ *      string React Router cannot parse — every route silently fails to
+ *      match and the page renders as a bare <body> ("black screen").
+ *
+ * The fix: any build that emitted relative asset paths (BASE_URL='./')
+ * is an Electron-style bundle. Treat it as HashRouter regardless of how
+ * it's being delivered, so it survives being mirrored from the LAN sync
+ * server too.
+ */
+const baseUrl = import.meta.env.BASE_URL || '/';
+const isElectronStyleBundle = baseUrl === './';
 const isFileProtocol =
   typeof window !== 'undefined' && window.location.protocol === 'file:';
-const HistoryRouter = isFileProtocol ? HashRouter : BrowserRouter;
-/**
- * On GitHub Pages the app is served from `/cadence/`. Without a basename the
- * React Router would push `/login` etc. directly under the domain root and the
- * browser would 404 on hard refreshes / SW takeovers. Vite already exposes the
- * configured `base` via `import.meta.env.BASE_URL`, so we just trim the
- * trailing slash for React Router. Electron's HashRouter ignores basename.
- */
+const HistoryRouter = isFileProtocol || isElectronStyleBundle ? HashRouter : BrowserRouter;
 const routerBasename = (() => {
-  if (isFileProtocol) return undefined;
-  const raw = import.meta.env.BASE_URL || '/';
-  const trimmed = raw.replace(/\/+$/, '');
+  // HashRouter ignores basename entirely; only the PWA build (with an
+  // absolute Vite base) needs a basename for BrowserRouter to keep its
+  // history segments aligned with the GitHub Pages sub-path.
+  if (isFileProtocol || isElectronStyleBundle) return undefined;
+  const trimmed = baseUrl.replace(/\/+$/, '');
   return trimmed || '/';
 })();
 
