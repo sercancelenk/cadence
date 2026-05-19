@@ -7,17 +7,17 @@
 
     <meta
       name="description"
-      content="Cadence is a local-first workspace for people, tasks, notes and agenda. AES-256-GCM encrypted on your device. AI assistance is opt-in and key-on-your-machine. Free, open source, no accounts in the cloud."
+      content="Cadence is a local-first workspace for people, tasks, notes and agenda. AES-256-GCM encrypted on your device. Cross-device sync runs over your own Wi-Fi — no cloud, no account. AI assistance is BYO-key, off by default. Free and open source."
     />
     <meta name="theme-color" content="#0c0f15" />
     <meta name="color-scheme" content="dark" />
 
     <!-- Open Graph + Twitter card so a paste into Slack/iMessage/Twitter
          renders a real preview instead of a bare URL. -->
-    <meta property="og:title" content="Cadence — a local-first workspace" />
+    <meta property="og:title" content="Cadence — local-first workspace, cloud-free sync" />
     <meta
       property="og:description"
-      content="People, tasks, notes, agenda. Encrypted at rest on your device. AI when you want it, off when you don't."
+      content="People, tasks, notes, agenda. Encrypted at rest. Cross-device sync over your own Wi-Fi (no cloud). AI when you want it, off when you don't."
     />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="./icon-512.png" />
@@ -67,6 +67,7 @@
       <nav class="topnav__links">
         <a href="#features">Features</a>
         <a href="#ai">AI</a>
+        <a href="#sync">Sync</a>
         <a href="#privacy">Privacy</a>
         <a href="#download">Download</a>
         <a
@@ -96,9 +97,11 @@
 
             <p class="lede">
               People, tasks, notes and agenda — all in one calm interface.
-              <strong>Encrypted on your device</strong> with AES-256-GCM.
-              Bring your own AI key when you want help; turn it off when you
-              don't. No servers in the middle, no telemetry, no upsell.
+              <strong>Encrypted on your device</strong> with AES-256-GCM,
+              kept in step across your phone and laptop over
+              <strong>your own Wi-Fi</strong> — no cloud account, no
+              SaaS we forgot to renew. Bring your own AI key when you
+              want help; turn it off when you don't.
             </p>
 
             <div class="cta-row">
@@ -118,6 +121,7 @@
 
             <ul class="hero__bullets" aria-label="Highlights">
               <li><span aria-hidden>●</span> macOS desktop · iOS / Android PWA</li>
+              <li><span aria-hidden>●</span> Cross-device sync over your own Wi-Fi</li>
               <li><span aria-hidden>●</span> Auto-snapshots, atomic fsync'ed writes</li>
               <li><span aria-hidden>●</span> Free and open source</li>
             </ul>
@@ -148,12 +152,14 @@
                 <polyline points="21 3 21 9 15 9" />
               </svg>
             </div>
-            <h3>100% local-first</h3>
+            <h3>100% local-first, syncs without a cloud</h3>
             <p>
               Every keystroke is written to your machine, not to a server.
               Atomic <code>fsync</code>'ed writes, 50 rolling auto-snapshots,
-              refuse-to-overwrite guard, in-app recovery UI. A power loss
-              or kernel panic can't lose acknowledged data.
+              refuse-to-overwrite guard, in-app recovery UI. When you want
+              two devices to share a workspace, an <strong>opt-in LAN
+              server</strong> lets them talk directly — your bytes stay
+              between your phone and your laptop.
             </p>
           </article>
 
@@ -164,13 +170,14 @@
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
             </div>
-            <h3>Encrypted at rest</h3>
+            <h3>Encrypted on disk, encrypted on the wire</h3>
             <p>
               The desktop data file is wrapped in <strong>AES-256-GCM</strong>
               with a key derived from your account password via
               <code>scrypt</code>. Notes get an additional opt-in passphrase
-              lockbox. We can't read your data — and neither can anyone with
-              physical access to the file.
+              lockbox. LAN sync rides over <strong>TLS 1.2+</strong> with a
+              self-signed cert and a 192-bit bearer token — bytes are
+              encrypted whether they're sitting still or in motion.
             </p>
           </article>
 
@@ -320,6 +327,37 @@
             <img src="./screenshots/palette.png" alt="Cadence command palette open with search results across notes, todos and teams" loading="lazy" />
           </figure>
         </div>
+
+        <div class="feature feature--reverse">
+          <div class="feature__copy">
+            <div class="feature__eyebrow">Multi-device sync</div>
+            <h3>Scan once. Stay in step. No cloud in the loop.</h3>
+            <p>
+              <em>Settings → Multi-device sync</em> flips a TLS-secured
+              server on your desktop. The host card renders a scannable
+              QR code; point your iPhone or Android camera at it, accept
+              the one-time security warning, and the bundled PWA pairs
+              automatically. A green <strong>Connected · synced 2 min
+              ago</strong> badge lights up and the two devices keep each
+              other in step in the background.
+            </p>
+            <p>
+              Encrypted on disk with AES-256-GCM, encrypted on the wire
+              with TLS 1.2+, gated by a 192-bit bearer token and an
+              ETag-driven conflict guard. Your bytes never leave your
+              house — and there's no Cadence service in the middle to
+              breach, throttle or shut down.
+            </p>
+            <ul class="checklist">
+              <li>QR-code pairing — no IPs, no tokens to retype</li>
+              <li>Bidirectional auto-sync on launch / focus / online</li>
+              <li>412 Precondition Failed guards against silent overwrites</li>
+            </ul>
+          </div>
+          <figure class="feature__media">
+            <img src="./screenshots/settings.png" alt="Cadence Settings showing the LAN sync host card with QR code and Connected badge" loading="lazy" />
+          </figure>
+        </div>
       </section>
 
       <!-- ─── AI ───────────────────────────────────────────────────────── -->
@@ -385,6 +423,112 @@
         </div>
       </section>
 
+      <!-- ─── SYNC ─────────────────────────────────────────────────────── -->
+      <section id="sync" class="sync" aria-labelledby="sync-h">
+        <div class="sync__inner">
+          <p class="kicker">
+            <span class="kicker__dot kicker__dot--slate" aria-hidden></span>
+            No cloud · TLS on the wire · One QR scan to pair
+          </p>
+          <h2 id="sync-h" class="section__title">
+            Your devices, in step. No server in the middle.
+          </h2>
+          <p class="section__sub">
+            Every other sync product asks you to trust someone else's
+            cloud. Cadence runs an opt-in HTTPS server inside the desktop
+            app and lets your phone or laptop talk to it directly over
+            your own Wi-Fi. Your bytes never leave your network —
+            encrypted on disk, encrypted on the wire, and never mirrored
+            to a SaaS that could leak, throttle or disappear.
+          </p>
+
+          <div class="sync-grid">
+            <article class="sync-card">
+              <div class="sync-card__icon" aria-hidden>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  <rect x="9" y="11" width="6" height="5" rx="1" />
+                  <path d="M10 11V9a2 2 0 0 1 4 0v2" />
+                </svg>
+              </div>
+              <h3>HTTPS by default</h3>
+              <p>
+                Self-signed RSA-2048 / SHA-256 cert generated on the host,
+                persisted on disk, auto-renewed when expiry nears or the
+                LAN IP list changes. TLS 1.2 minimum. Works around HTTPS-Only
+                Mode and Safari Private Relay so a phone PWA can talk to
+                the desktop without mixed-content errors.
+              </p>
+              <p class="sync-card__hint">TLS 1.2+ · RSA 2048 · SHA-256</p>
+            </article>
+
+            <article class="sync-card">
+              <div class="sync-card__icon" aria-hidden>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <path d="M14 14h3v3" />
+                  <path d="M21 14v0" />
+                  <path d="M14 21h3" />
+                  <path d="M21 18v3" />
+                </svg>
+              </div>
+              <h3>One QR scan to pair</h3>
+              <p>
+                The host's Settings card renders a scannable QR encoding
+                the URL plus a 192-bit bearer token. Point your iPhone
+                or Android camera, tap the URL banner — the bundled PWA
+                loads from the desktop, the device pairs, the green
+                <em>Connected</em> badge lights up. No typing IPs, no
+                copying tokens, no second app to install.
+              </p>
+              <p class="sync-card__hint">192-bit token · base64url payload</p>
+            </article>
+
+            <article class="sync-card">
+              <div class="sync-card__icon" aria-hidden>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 0 0-15-6.7L3 8" />
+                  <path d="M3 4v4h4" />
+                  <path d="M3 12a9 9 0 0 0 15 6.7l3-2.7" />
+                  <path d="M21 20v-4h-4" />
+                </svg>
+              </div>
+              <h3>Bidirectional auto-sync</h3>
+              <p>
+                Paired devices stay in step in the background —
+                <em>push first, pull after</em> — on launch, on window
+                focus, on visibility change, when the network comes back.
+                SHA-256 ETags decide direction so we never overwrite a
+                remote that moved on, and never re-download bytes you
+                already have.
+              </p>
+              <p class="sync-card__hint">If-Match · If-None-Match · 304 short-circuit</p>
+            </article>
+
+            <article class="sync-card">
+              <div class="sync-card__icon" aria-hidden>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  <path d="m9 12 2 2 4-4" />
+                </svg>
+              </div>
+              <h3>Optimistic concurrency</h3>
+              <p>
+                The host rejects pushes with a <code>412 Precondition
+                Failed</code> when an ETag is stale; the app surfaces an
+                explicit <em>"Pull host's version first?"</em> prompt.
+                Last-write-wins becomes a deliberate decision, not an
+                accident. Background auto-sync backs off silently so
+                manual resolution stays the single source of truth.
+              </p>
+              <p class="sync-card__hint">412 conflict guard · No silent overwrites</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <!-- ─── PRIVACY ──────────────────────────────────────────────────── -->
       <section id="privacy" class="privacy" aria-labelledby="priv-h">
         <h2 id="priv-h" class="section__title">What "local-first" actually means here</h2>
@@ -438,12 +582,14 @@
           </div>
 
           <div class="privacy-card">
-            <h3>Optional LAN sync</h3>
+            <h3>Optional LAN sync (off by default)</h3>
             <p>
-              When you want two devices on the same Wi-Fi to share a
-              workspace, Settings → LAN sync exposes a token-protected
-              HTTP server that the PWA can talk to. The server is
-              <em>off</em> by default; the token is rotateable.
+              Settings → Multi-device sync exposes an HTTPS server (TLS
+              1.2+, self-signed cert generated on the host) protected by
+              a 192-bit bearer token and an ETag conflict guard. QR-code
+              pairing on phones, bidirectional auto-sync once paired.
+              See the <a href="#sync">Sync section</a> above for the
+              full story.
             </p>
           </div>
 
@@ -528,6 +674,9 @@
         <h2 class="display display--small">
           A workspace that respects your time, your data, and your evening.
         </h2>
+        <p class="closing__sub">
+          Local-first storage · Cloud-free sync · Optional AI · Free and open source.
+        </p>
         <div class="cta-row cta-row--center">
           <a class="btn btn--primary btn--lg" href="./app/">Open the web app →</a>
           <a
@@ -554,9 +703,10 @@
           <a href="https://github.com/sercancelenk/cadence/issues" rel="noopener noreferrer" target="_blank">Issues</a>
         </nav>
         <p class="footer__meta">
-          Built with Electron, React, Vite. Plays well with Anthropic, OpenAI
-          and Google Gemini. <span>Made for people who like their data on
-          their own machine.</span>
+          Built with Electron, React, Vite. Sync rides Node TLS &amp; the
+          Web Crypto API. Plays well with Anthropic, OpenAI and Google
+          Gemini. <span>Made for people who like their data on their own
+          machine — and their own Wi-Fi.</span>
         </p>
       </div>
     </footer>

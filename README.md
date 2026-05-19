@@ -106,7 +106,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | 🔒 **Encrypted at rest** | AES-256-GCM data file keyed via `scrypt(password)`. Notes get an additional PBKDF2 → AES-256-GCM lockbox with a non-extractable `CryptoKey`. |
 | 🛟 **Durable saves** | Atomic `open → write → fsync → close → rename` cycle plus directory fsync. A power loss or kernel panic leaves either the old file or the new file — never a torn one. Worst case: ≤ 400 ms of unflushed typing. |
 | 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Refuse-to-overwrite guard if the live file is undecipherable. |
-| 📡 **Optional LAN sync** | Token-protected HTTP server inside Electron (off by default) with constant-time token compare, DNS-rebinding resistance, same-LAN CORS and payload-shape validation. The host also serves the PWA itself so an iPhone can open `http://<host-ip>:9787` directly. |
+| 📡 **Optional LAN sync** | Token-protected **HTTPS** server inside Electron (off by default) with self-signed TLS (RSA 2048 / SHA-256), constant-time token compare, DNS-rebinding resistance, same-LAN CORS, ETag optimistic concurrency and payload-shape validation. The host also serves the PWA itself, so an iPhone can scan the QR code and open `https://<host-ip>:9787/` directly — no cloud round-trip. |
 | 🚫 **No telemetry** | Zero network calls outside of (a) the auto-updater hitting GitHub Releases, and (b) the AI assistant hitting whichever provider you configured. Nothing else dials home. |
 
 ### AI when you want it
@@ -1059,6 +1059,9 @@ Google retired the Gemini 1.x family from the `v1beta` endpoint in late 2025. Op
 | 1.28 | **Notes — preview-by-default reading mode** — each note opens in rendered preview; one click on *Write* flips into the editor and the new toolbar |
 | 1.29 | **Notes — strict per-view unlocking** — viewing a locked note always re-prompts for the passphrase; the *Remove notes passphrase* action requires re-auth even with a warm session key (and uses a clearer padlock-with-slash icon) |
 | 1.30 | **Top-bar global search pill** — Bootstrap-style search button in the header (with auto-platform `⌘ K` / `Ctrl K` badge) that opens the existing command palette; the palette now indexes **standalone notes** too and deep-links to `/notes?id=<id>` on click |
+| 1.31 | **LAN sync — HTTPS by default** — Electron server now runs TLS 1.2+ over a self-signed cert (RSA 2048 / SHA-256) persisted in `cadence-sync-tls.json`; auto-regenerated when the LAN IP list changes or expiry nears, 800-day validity to stay within Apple's hard cap. Fixes mixed-content / HTTPS-Only blockers between the GitHub Pages PWA and the desktop host. |
+| 1.32 | **LAN sync — QR-code pairing** — host card renders a scannable QR encoding `https://<lan-ip>:9787/?pair=<token>`; on the phone the camera URL opens the bundled PWA from the host, the `?pair=` handler stores the URL + token in `localStorage` and the device is paired with zero typing |
+| 1.33 | **LAN sync — bidirectional auto-sync + ETag conflicts** — paired devices keep both sides in step in the background (push first, pull after) on launch / focus / online / visibilitychange; `If-None-Match` gives a free 304 when nothing changed, `If-Match` triggers a 412 when the host moved on, and a "Connected · synced X ago" badge with a Disconnect button shows live state in Settings |
 
 ### Tier 2 — next
 
@@ -1068,9 +1071,7 @@ Google retired the Gemini 1.x family from the `v1beta` endpoint in late 2025. Op
 | 2.2 | Templates (1:1, skip-level, perf review, onboarding) | Apply a template to a new note/meeting and get a structured outline instantly. |
 | 2.3 | Person attributes | Start date, timezone, location, level, manager (dotted-line), pronouns, skills. Auto-computed tenure. |
 | 2.4 | iCal (`.ics`) export | Read-only feed so macOS Calendar / Google Calendar can subscribe. |
-| 2.5 | HTTPS for LAN sync (self-signed) | Lets the GitHub Pages PWA pull from the desktop without mixed-content blocking. |
-| 2.6 | Field-level merge in sync (last-write-wins per item) | Today's `Pull` / `Push` replace the whole snapshot; per-item merge would let two devices edit in parallel. |
-| 2.7 | QR-code rendering of the LAN pairing URL+token | Faster pairing on phones — point camera, no typing. |
+| 2.5 | Field-level merge in sync (last-write-wins per item) | Today's `Pull` / `Push` replace the whole snapshot; per-item merge would let two devices edit in parallel — the ETag conflict guard already prevents data loss, this would prevent the conflict in the first place. |
 
 ### Tier 3 — nice to have
 
