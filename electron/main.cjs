@@ -164,6 +164,18 @@ const SESSION_FILENAME = `${DATA_FILE_PREFIX}-session.json`;
 const AUTH_FILENAME = 'auth-lock.json';
 const BACKUPS_DIRNAME = 'backups';
 /**
+ * Tiny sidecar file that remembers when the auto-updater last successfully
+ * pinged GitHub Releases. Lives next to the other user-data files so it
+ * roams with the rest of the workspace state. Schema:
+ *   { lastCheckedAt: number }   — epoch ms
+ *
+ * It exists so a fast quit-relaunch cycle (or a Settings → "Check for
+ * updates" tap immediately after launch) doesn't keep firing fresh
+ * network requests. Loss / corruption is harmless: it just falls back
+ * to "never checked", which forces an immediate retry.
+ */
+const UPDATE_STATE_FILENAME = `${DATA_FILE_PREFIX}-update-state.json`;
+/**
  * How many rolling on-disk snapshots to keep per user. We snapshot before
  * every save, so 50 is roughly a few hours of heavy editing. The on-disk
  * format is identical to the live file (encrypted envelope or plaintext),
@@ -1139,12 +1151,137 @@ function buildMenu() {
 let updaterInstance = null;
 let lastUpdaterEvent = null;
 
+// ---- Auto-update scheduling --------------------------------------------
+//
+// We trigger an update probe in four situations:
+//
+//   1. ~15 s after app launch (first-paint settled).
+//   2. Every 6 h while the app stays open (`PERIODIC_CHECK_INTERVAL_MS`).
+//   3. When a window regains focus AND ≥ 2 h since the last successful
+//      check (`FOCUS_CHECK_MIN_GAP_MS`). Catches "laptop was asleep for
+//      8 h, user just came back" without spamming on every focus flip.
+//   4. Settings → "Check for updates" button (manual, bypasses gates).
+//
+// Every automatic trigger goes through `runUpdateCheck(reason, opts)`,
+// which applies:
+//   - `THROTTLE_MIN_GAP_MS` (30 min) so no two automatic checks land
+//     closer together than that, even across triggers.
+//   - Online gate (`navigator.onLine`-equivalent via `net.isOnline()`).
+//   - Persistent `lastCheckedAt` in the user-data dir, so a quit /
+//     relaunch within 30 min doesn't re-check.
+//
+// The manual Settings button passes `{ force: true }` and is free of
+// the throttle / interval logic — the user explicitly asked.
+
+const STARTUP_CHECK_DELAY_MS = 15 * 1000;
+const PERIODIC_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const FOCUS_CHECK_MIN_GAP_MS = 2 * 60 * 60 * 1000;
+const THROTTLE_MIN_GAP_MS = 30 * 60 * 1000;
+
+let updateCheckTimer = null;
+let updateCheckInFlight = false;
+
+function updateStateFilePath() {
+  return path.join(app.getPath('userData'), UPDATE_STATE_FILENAME);
+}
+
+function readLastUpdateCheckAt() {
+  try {
+    const raw = fs.readFileSync(updateStateFilePath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    const v = parsed && typeof parsed.lastCheckedAt === 'number' ? parsed.lastCheckedAt : 0;
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeLastUpdateCheckAt(ts) {
+  try {
+    const dir = app.getPath('userData');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+    fs.writeFileSync(updateStateFilePath(), JSON.stringify({ lastCheckedAt: ts }));
+  } catch (err) {
+    // Non-fatal: throttle just degrades to "ask every time" until next
+    // successful write. We deliberately don't crash on a writable-FS
+    // hiccup here.
+    console.warn('[cadence] could not persist update-check state', err);
+  }
+}
+
+function isOnlineForUpdateCheck() {
+  try {
+    // `net.isOnline()` (Electron 19+) consults the OS's network stack
+    // rather than just inspecting whether an interface exists. We fall
+    // through to `true` if the API isn't available so older builds keep
+    // the old "try anyway" behaviour.
+    const { net } = require('electron');
+    if (net && typeof net.isOnline === 'function') return !!net.isOnline();
+  } catch { /* ignore */ }
+  return true;
+}
+
 function broadcastUpdaterEvent(event) {
   lastUpdaterEvent = event;
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send('updater:event', event);
     }
+  }
+}
+
+/**
+ * Single entry-point for all auto-update probes.
+ *
+ * @param {string} reason  short label for logs ("launch", "periodic",
+ *                         "focus", "manual"). Helps when reading the
+ *                         devtools console of a deployed build.
+ * @param {{ force?: boolean, minGapMs?: number }} [opts]
+ *        - `force: true`     skips the throttle. Used by the Settings
+ *                            button so the user always sees a fresh
+ *                            answer.
+ *        - `minGapMs`        overrides `THROTTLE_MIN_GAP_MS` (focus
+ *                            uses 2 h instead of 30 min so a focus
+ *                            check that lands inside the throttle
+ *                            window still no-ops).
+ * @returns {Promise<{ ok: boolean, skipped?: string }>}
+ */
+async function runUpdateCheck(reason, opts = {}) {
+  const u = getAutoUpdater();
+  if (!u) return { ok: false, skipped: 'no-updater' };
+  if (updateCheckInFlight) return { ok: false, skipped: 'in-flight' };
+
+  const now = Date.now();
+  if (!opts.force) {
+    if (!isOnlineForUpdateCheck()) {
+      console.log(`[cadence] skip update check (${reason}): offline`);
+      return { ok: false, skipped: 'offline' };
+    }
+    const last = readLastUpdateCheckAt();
+    const gap = opts.minGapMs ?? THROTTLE_MIN_GAP_MS;
+    if (last && now - last < gap) {
+      const mins = Math.round((gap - (now - last)) / 60000);
+      console.log(`[cadence] skip update check (${reason}): throttled (${mins} min remaining)`);
+      return { ok: false, skipped: 'throttled' };
+    }
+  }
+
+  updateCheckInFlight = true;
+  console.log(`[cadence] update check (${reason})`);
+  // Stamp BEFORE the await so a slow check still occupies its throttle
+  // window. If the check throws we restore `prev` in the catch so the
+  // next legitimate check isn't penalised by a failed one.
+  const prev = readLastUpdateCheckAt();
+  writeLastUpdateCheckAt(now);
+  try {
+    await u.checkForUpdatesAndNotify();
+    return { ok: true };
+  } catch (err) {
+    console.error(`[cadence] update check (${reason}) failed`, err);
+    try { writeLastUpdateCheckAt(prev); } catch { /* ignore */ }
+    return { ok: false, skipped: 'error' };
+  } finally {
+    updateCheckInFlight = false;
   }
 }
 
@@ -1206,10 +1343,42 @@ function getAutoUpdater() {
 function setupAutoUpdater() {
   const u = getAutoUpdater();
   if (!u) return;
-  u.checkForUpdatesAndNotify().catch((err) => {
-    console.error('[cadence] autoUpdater check failed', err);
+
+  // 1) Initial check, after a short delay so first paint and IPC handshake
+  //    settle. 15 s is the "long enough to be invisible, short enough that
+  //    a user who launched specifically to update still gets it before
+  //    closing again" sweet spot used by VS Code / Notion.
+  setTimeout(() => {
+    runUpdateCheck('launch').catch(() => { /* logged inside */ });
+  }, STARTUP_CHECK_DELAY_MS);
+
+  // 2) Periodic check while the app stays open. 6 h covers a typical
+  //    workday with a single morning + afternoon poll. Slack uses 24 h,
+  //    Spotify ~4 h; 6 h sits in the middle and respects long-running
+  //    macOS sessions where people never quit.
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
+  updateCheckTimer = setInterval(() => {
+    runUpdateCheck('periodic').catch(() => { /* logged inside */ });
+  }, PERIODIC_CHECK_INTERVAL_MS);
+
+  // 3) Focus-based "came back from sleep / background" check. We use the
+  //    raised gap (`FOCUS_CHECK_MIN_GAP_MS`, 2 h) instead of the default
+  //    throttle here because focus events fire on every alt-tab — we
+  //    only care about returning from a genuine away period.
+  app.on('browser-window-focus', () => {
+    runUpdateCheck('focus', { minGapMs: FOCUS_CHECK_MIN_GAP_MS }).catch(() => { /* logged inside */ });
   });
 }
+
+// Make sure we don't leak the interval into a re-launch or a quit-while-
+// asleep scenario. Electron tears the module down on quit anyway, but
+// being explicit keeps tests and dev hot-reloads tidy.
+app.on('before-quit', () => {
+  if (updateCheckTimer) {
+    clearInterval(updateCheckTimer);
+    updateCheckTimer = null;
+  }
+});
 
 // ---------- IPC: data ----------------------------------------------------------
 
@@ -1619,13 +1788,18 @@ ipcMain.handle('app:checkUpdates', async () => {
     return { ok: true };
   }
 
-  try {
-    await u.checkForUpdates();
-    return { ok: true };
-  } catch (e) {
-    broadcastUpdaterEvent({ status: 'error', message: String(e) });
-    return { ok: false, error: String(e) };
+  // Manual button bypasses throttle & offline gate — the user explicitly
+  // asked, so we honour that and surface the error if the network is down.
+  const r = await runUpdateCheck('manual', { force: true });
+  if (!r.ok) {
+    const errorByCode = {
+      'in-flight':  'Another update check is already running. Please wait a moment and try again.',
+      'no-updater': 'Auto-updater is not available in this build.',
+      'error':      'Update check failed. Please check your internet connection and try again.',
+    };
+    return { ok: false, error: errorByCode[r.skipped] || `Update check skipped: ${r.skipped || 'unknown'}` };
   }
+  return { ok: true };
 });
 
 ipcMain.handle('app:installUpdate', () => {
