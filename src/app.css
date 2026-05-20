@@ -692,6 +692,17 @@ code {
   margin: 8px 0 0;
 }
 
+.auth-banner {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .auth-link {
   display: inline-block;
   margin-top: 14px;

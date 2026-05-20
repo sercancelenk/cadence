@@ -38,7 +38,7 @@ type Tab = 'view' | 'edit' | 'password';
 
 export function ProfilePage() {
   const { user, changePassword, hasElectronAccounts } = useAccount();
-  const { data, updateUserProfile } = useAppData();
+  const { data, updateUserProfile, flushPendingSave, lastSaveError } = useAppData();
   const profile = data.profile ?? { displayName: 'Me', favoriteTeamIds: [] };
 
   const [tab, setTab] = useState<Tab>('view');
@@ -128,7 +128,7 @@ export function ProfilePage() {
     }
   };
 
-  const apply = () => {
+  const apply = async () => {
     const trimmedName = displayName.trim();
     if (!trimmedName) {
       // Defensive: <input required> should already block submission, but
@@ -148,6 +148,24 @@ export function ProfilePage() {
     // Reflect the trimmed value locally so the dirty-state check stops
     // flagging the field as modified.
     setDisplayName(trimmedName);
+    // The reducer is synchronous (the top bar will already show the new
+    // name within this React tick) but the on-disk save is debounced.
+    // Flush it now so the user gets either a real "Saved" confirmation
+    // or an explicit error — otherwise a `data:save` rejection (e.g.
+    // missing session key after a stale resume) would leave the avatar
+    // showing the new name in-session but the disk file untouched, so
+    // the next launch would silently roll it back. That was the
+    // "Profile'da değiştirdim, sağ üstte eski isim" symptom.
+    try {
+      await flushPendingSave();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Could not save profile.');
+      return;
+    }
+    if (lastSaveError) {
+      setSaveError(lastSaveError.error ?? 'Could not save profile changes to disk.');
+      return;
+    }
     setSavedAt(Date.now());
     setTab('view');
     window.setTimeout(() => setSavedAt(null), 2200);
@@ -323,7 +341,7 @@ export function ProfilePage() {
             className="profile-form"
             onSubmit={(e: FormEvent) => {
               e.preventDefault();
-              apply();
+              void apply();
             }}
           >
             <label className="field">

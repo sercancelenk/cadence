@@ -1,19 +1,27 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { IcLogIn } from '../components/icons';
 import { Button } from '../components/ui/Button';
 import { useAccount } from '../AccountContext';
 
 export function LoginPage() {
-  const { user, loading, login } = useAccount();
+  const { user, loading, login, pendingReauth } = useAccount();
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? '/';
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(pendingReauth?.email ?? '');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [err, setErr] = useState('');
+
+  // When the session resume detects a missing data key (e.g. process
+  // restart after a PIN-protected boot), pre-fill the email so the user
+  // doesn't have to remember which address they registered with.
+  useEffect(() => {
+    if (pendingReauth?.email && !email) setEmail(pendingReauth.email);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingReauth?.email]);
 
   if (!loading && user) {
     return <Navigate to={from === '/login' ? '/' : from} replace />;
@@ -32,6 +40,14 @@ export function LoginPage() {
       <div className="auth-card auth-card--wide">
         <h1 className="auth-card__title">Sign in</h1>
         <p className="muted">Your data is stored locally on this device, in a file tied to your account.</p>
+        {pendingReauth ? (
+          <div className="auth-banner" role="status" aria-live="polite">
+            Welcome back{pendingReauth.displayName ? `, ${pendingReauth.displayName}` : ''}. Your
+            workspace is encrypted at rest, so we need your account password once per app launch to
+            unlock it. Your notes and todos are safe on disk — they will appear as soon as you sign
+            in.
+          </div>
+        ) : null}
         <form
           className="auth-form"
           onSubmit={async (e: FormEvent) => {

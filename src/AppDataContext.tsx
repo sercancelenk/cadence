@@ -216,9 +216,16 @@ async function persist(userId: string, data: AppData): Promise<{ ok: true } | { 
       const ok = await api.saveData(data);
       if (ok === true) return { ok: true };
       // The main process returns `false` when `writeUserData()` refused to
-      // write (e.g. existing file is undecipherable). The detailed reason
-      // also arrives via the `data:saveError` IPC channel.
-      return { ok: false, reason: 'write-rejected', error: 'Main process rejected the write.' };
+      // write — either because the existing file is undecipherable, or
+      // because the in-memory key was lost across a process restart (see
+      // `account:session` guard in `electron/main.cjs`). The detailed
+      // reason also arrives separately via `data:saveError`; this string
+      // is the fallback the banner shows when nothing better has arrived.
+      return {
+        ok: false,
+        reason: 'write-rejected',
+        error: 'Your changes were not saved. Sign out and back in to unlock the data file, or open Settings → Backups & Recovery to restore an earlier snapshot.',
+      };
     } catch (err) {
       return {
         ok: false,
@@ -455,6 +462,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const next = await loadInitial(uid);
     setData(next);
     setReady(true);
+    // After a restore/reload the on-disk file is, by definition, the source
+    // of truth again — any earlier save-rejection banner refers to a
+    // problem that no longer exists. Clearing it prevents the confusing
+    // "uyarı çıktı + data yüklendi" stacked state the user reported.
+    setLastSaveError(null);
   }, []);
 
   const api = useMemo<Api>(() => {

@@ -443,10 +443,33 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false } = {
     }
   }
 
+  // Defence in depth against plaintext-leak: refuse to save when the
+  // account is configured for encryption but the in-memory key is
+  // missing. Without this guard, a stale renderer (or a session-only
+  // resumed boot, see `account:session` above) would silently overwrite
+  // an encrypted file with PLAINTEXT bytes the next time the user
+  // typed anything. We never want to make encryption weaker mid-session.
+  const key = dataKeys.get(userId);
+  if (!key) {
+    const accounts = readAccounts();
+    const u = accounts.users.find((x) => x.id === userId);
+    if (u && typeof u.encSalt === 'string' && u.encSalt) {
+      console.error(
+        '[cadence] refusing to write data: account is encrypted but no in-memory key',
+        { userId, allowOverwriteUnreadable },
+      );
+      return {
+        ok: false,
+        reason: 'no-key',
+        error:
+          'Your session is locked: the encryption key is no longer in memory. Please sign in again and retry.',
+      };
+    }
+  }
+
   snapshotCurrentDataFile(userId, 'pre-save');
 
   const json = JSON.stringify(payload);
-  const key = dataKeys.get(userId);
   const out = key ? encryptPayload(json, key) : json;
   const okWrite = writeJsonText(file, out);
   return okWrite ? { ok: true } : { ok: false, error: 'I/O error while writing data file.' };
@@ -2290,6 +2313,55 @@ ipcMain.handle('account:session', () => {
     clearSession();
     return { user: null };
   }
+
+  // CRITICAL: a "resumed" session does NOT carry an in-memory data key —
+  // those only exist after `account:login` / `account:register` /
+  // `account:changePassword` (because deriving them requires the
+  // plaintext password, which we never persist). On Electron restart
+  // we have a session ID on disk but no key in memory.
+  //
+  // If the on-disk data file is encrypted, we MUST NOT pretend the
+  // session is fully resumed. Doing so causes two compounding bugs:
+  //   (a) `readUserDataResult` returns `{ ok:false, reason:'no-key' }`,
+  //       the renderer treats that as "no data", and the user boots
+  //       into an empty workspace.
+  //   (b) the very next `data:save` falls through `writeUserData` with
+  //       no key in memory — until this commit, that path silently
+  //       wrote PLAINTEXT, both overwriting the encrypted file AND
+  //       leaking decrypted bytes to disk.
+  //
+  // Both are fixed below. Here, we surface "needs-re-auth" so the
+  // renderer can route the user to the Login screen instead of an
+  // empty workspace.
+  const accountIsEncrypted = typeof u.encSalt === 'string' && !!u.encSalt;
+  if (accountIsEncrypted && !dataKeys.has(uid)) {
+    const file = dataPathForUser(u.id);
+    let dataFileIsEncrypted = false;
+    if (fs.existsSync(file)) {
+      try {
+        const head = fs.readFileSync(file, 'utf8');
+        dataFileIsEncrypted = isEncryptedFile(head);
+      } catch (err) {
+        console.warn('[cadence] account:session could not probe data file', err);
+        // Conservative: if we can't tell, assume encrypted → require re-auth.
+        dataFileIsEncrypted = true;
+      }
+    } else {
+      // No data file yet (first launch after register, account purge, etc).
+      // No key required — let the session resume so the user sees an empty
+      // workspace they can populate.
+      dataFileIsEncrypted = false;
+    }
+    if (dataFileIsEncrypted) {
+      return {
+        user: null,
+        requiresAuth: true,
+        email: u.email,
+        displayName: typeof u.displayName === 'string' ? u.displayName : undefined,
+      };
+    }
+  }
+
   return {
     user: {
       id: u.id,

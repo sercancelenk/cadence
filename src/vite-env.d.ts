@@ -104,7 +104,19 @@ interface CadenceApi {
       authVerify: (payload: { pin: string }) => Promise<{ ok: boolean }>;
       authClear: (payload: { pin: string }) => Promise<{ ok: boolean; error?: string }>;
       authResetWithAccountPassword: (payload: { password: string }) => Promise<{ ok: boolean; error?: string }>;
-      accountSession: () => Promise<{ user: AccountUser | null }>;
+      accountSession: () => Promise<{
+        user: AccountUser | null;
+        /**
+         * Set when the on-disk session is for an encrypted account but the
+         * in-memory data key was lost across the process restart. The
+         * renderer should route the user to the Login screen (so the password
+         * can be re-derived) instead of pretending the resume succeeded —
+         * see `account:session` in `electron/main.cjs` for the rationale.
+         */
+        requiresAuth?: boolean;
+        email?: string;
+        displayName?: string;
+      }>;
       accountRegister: (payload: {
         email: string;
         password: string;

@@ -12,9 +12,19 @@ import { pbkdf2HashPassword, pbkdf2VerifyPassword } from './lib/passwordPbkdf2';
 
 export type AccountUser = { id: string; email: string; displayName?: string };
 
+/**
+ * Surfaces a session-resume that could not derive the data key. The renderer
+ * routes the user to /login with the email pre-filled instead of dropping
+ * them into an empty workspace (which is what happened before — and was the
+ * single root cause behind "PIN açtım, restart yaptım, bütün datam gitti").
+ */
+export type PendingReauth = { email: string; displayName?: string };
+
 type Ctx = {
   user: AccountUser | null;
   loading: boolean;
+  pendingReauth: PendingReauth | null;
+  clearPendingReauth: () => void;
   refresh: () => Promise<void>;
   login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   register: (opts: {
@@ -81,7 +91,10 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AccountUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasLegacyData, setHasLegacyData] = useState(false);
+  const [pendingReauth, setPendingReauth] = useState<PendingReauth | null>(null);
   const electron = useElectronAccount();
+
+  const clearPendingReauth = useCallback(() => setPendingReauth(null), []);
 
   const refreshLegacyHint = useCallback(async () => {
     if (window.cadence?.accountHasLegacyData) {
@@ -95,6 +108,15 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     if (window.cadence?.accountSession) {
       const r = await window.cadence.accountSession();
+      // `requiresAuth` means: a session ID is on disk but the account is
+      // encrypted and we have no key in memory. We MUST NOT pretend the
+      // user is signed in (that's the bug that made every restart look
+      // like data loss). Surface the email so /login can pre-fill it.
+      if (!r?.user && r?.requiresAuth && typeof r.email === 'string' && r.email) {
+        setPendingReauth({ email: r.email, displayName: r.displayName });
+      } else {
+        setPendingReauth(null);
+      }
       setUser(r?.user ?? null);
       setLoading(false);
       await refreshLegacyHint();
@@ -282,10 +304,18 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     [user],
   );
 
+  // Once the user actually signs in, the pending re-auth banner is moot —
+  // clear it so the login screen and any consumers don't flash stale state.
+  useEffect(() => {
+    if (user && pendingReauth) setPendingReauth(null);
+  }, [user, pendingReauth]);
+
   const v = useMemo(
     () => ({
       user,
       loading,
+      pendingReauth,
+      clearPendingReauth,
       refresh,
       login,
       register,
@@ -296,7 +326,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       hasLegacyData,
       refreshLegacyHint,
     }),
-    [user, loading, refresh, login, register, logout, changePassword, verifyPassword, electron, hasLegacyData, refreshLegacyHint],
+    [user, loading, pendingReauth, clearPendingReauth, refresh, login, register, logout, changePassword, verifyPassword, electron, hasLegacyData, refreshLegacyHint],
   );
 
   return <AccountCtx.Provider value={v}>{children}</AccountCtx.Provider>;

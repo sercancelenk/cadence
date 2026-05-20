@@ -2287,6 +2287,13 @@ function BackupsRecoverySection() {
     try {
       const r = await window.cadence!.dataRestoreFromSource!({ filePath });
       if (r.ok) {
+        // Successful restore means the file is now consistent with the
+        // session — any earlier save error (e.g. "refusing to overwrite an
+        // undecipherable file" banner left over from before the user
+        // re-authenticated) is no longer relevant. Clear it so the user
+        // doesn't see "error" + "success" stacked, which was the source
+        // of the "uyarı çıktı ama data yüklemiş" confusion.
+        setSaveError(null);
         setMsg({ kind: 'ok', text: `Restored from ${r.restoredFrom ?? label}. Reloading…` });
         await reload();
         await refresh();
