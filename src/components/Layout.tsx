@@ -3,6 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { AppSidebar } from './AppSidebar';
 import { TopBar } from './TopBar';
 import { QuickAddFab } from './QuickAddFab';
+import { BackToTopFab } from './BackToTopFab';
 import { useAppData } from '../AppDataContext';
 import { IcAlertTriangle, IcX } from './icons';
 import { PATH_SETTINGS } from '../lib/routes';
@@ -83,6 +84,7 @@ export function Layout() {
           <Outlet />
         </main>
       </div>
+      <BackToTopFab />
       <QuickAddFab />
     </div>
   );

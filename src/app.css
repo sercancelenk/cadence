@@ -150,9 +150,32 @@ code {
 }
 
 .page {
-  max-width: 1180px;
+  /* Content-density tiers (per-route opt-in via modifier classes below):
+   *
+   *   default 1280px — reading + lists + small grids (Settings, Agenda,
+   *                    Team dashboard, Profile). Comfortable line length
+   *                    even on a 27" monitor.
+   *   .page--wide 1600px — data-dense surfaces (Home, Teams, To-dos,
+   *                    Analytics, People). Multi-column grids / charts
+   *                    naturally absorb the extra width.
+   *   .page--narrow 920px — focused forms (reserved for future use).
+   *
+   * Every tier still has a hard cap: a 5K / ultrawide display centres
+   * the content rather than letting a single sentence span the
+   * viewport. The bump from 1180 → 1280 closes the worst of the
+   * "empty kanvas" feeling on 16" / 27" displays without making
+   * paragraph text uncomfortable. */
+  max-width: 1280px;
   margin: 0 auto;
   padding: 40px 28px 48px;
+}
+
+.page--wide {
+  max-width: 1600px;
+}
+
+.page--narrow {
+  max-width: 920px;
 }
 
 .page-head h1 {
@@ -3104,54 +3127,7 @@ code {
   align-items: center;
 }
 
-/* "Add details" toggle inside the new-task form. Sits left of the
- * primary Add button so the action stays right-anchored, and uses the
- * same visual language as the per-row details button. We push it to
- * the left with `margin-right: auto` so Add / Cancel still hug the
- * right edge regardless of whether the toggle is present. */
-.todos-add-inline__details-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-right: auto;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px dashed color-mix(in srgb, var(--accent-2) 35%, transparent);
-  background: transparent;
-  color: var(--tp-muted);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
-}
-
-.todos-add-inline__details-toggle:hover {
-  background: var(--accent-soft);
-  color: var(--accent-2);
-  border-color: color-mix(in srgb, var(--accent-2) 55%, transparent);
-}
-
-.todos-add-inline__details-toggle[aria-expanded='true'] {
-  border-style: solid;
-  background: var(--accent-soft);
-  color: var(--accent-2);
-}
-
-.todos-add-inline--expanded .todos-add-inline__body {
-  margin-top: 4px;
-}
-
 .todos-add-inline__body {
-  width: 100%;
-}
-
-.todos-add-inline__textarea {
-  resize: none;
-  line-height: 1.45;
-  min-height: 4.4em;
-  overflow-y: hidden;
-  white-space: pre-wrap;
-  word-break: break-word;
   width: 100%;
 }
 
@@ -3234,27 +3210,14 @@ code {
   color: var(--tp-muted);
 }
 
-.todos-add-list {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--tp-add);
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 8px 2px;
-  border-radius: var(--radius-sm);
-}
-
-.todos-add-list:hover {
-  background: var(--accent-soft);
-}
-
-.todos-add-list__plus {
-  color: var(--tp-add);
+/* Card that wraps the list-creator form when it's opened from the
+ * header "Add list" button. Sits right under the page header so it
+ * always lands in the user's existing line of sight — no scroll
+ * required to find the input. */
+.todos-new-list-card {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--tp-divider));
 }
 
 .todos-new-list {
@@ -3299,6 +3262,14 @@ code {
   min-width: 64px;
 }
 
+.todos-new-list__ok:disabled {
+  /* Slightly mute the gradient so the affordance still reads as a
+   * primary button but visibly waits for input. We avoid `opacity` on
+   * the whole element to keep the label contrast above AA. */
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 55%, transparent), color-mix(in srgb, var(--accent-2) 55%, transparent));
+  cursor: not-allowed;
+}
+
 .todos-new-list__cancel {
   background: rgba(255, 255, 255, 0.04);
   color: var(--tp-muted);
@@ -3337,11 +3308,11 @@ code {
   }
 }
 
-/* —— Ana sayfa —— */
-.home-page {
-  max-width: 920px;
-}
-
+/* —— Ana sayfa ——
+ * Width is handled by .page--wide (1600px). The page expands to fill maximized
+ * windows; internal grids cap themselves so KPI tiles and quick-access cards
+ * stay readable instead of stretching into giant slabs.
+ */
 .home-page__hero {
   display: flex;
   flex-wrap: wrap;
@@ -3415,6 +3386,8 @@ code {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 28px;
+  /* Cap stat tiles so large screens don't blow them up into oversized slabs. */
+  max-width: 880px;
 }
 
 @media (max-width: 640px) {
@@ -3461,7 +3434,9 @@ code {
 
 .home-page__tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  /* Slightly wider minimum so tiles breathe on maximized windows; auto-fill
+   * still keeps 2–3 columns on smaller widths. */
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 14px;
   margin-bottom: 32px;
 }
@@ -4233,14 +4208,176 @@ code {
    ============================================================ */
 .todos-toolbar {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
+  gap: 10px;
   padding: 10px 14px;
+}
+
+/* Top row of the toolbar: a focused search field on the left, the
+ * Filters disclosure (and the AI Extract button when enabled) anchored
+ * to the right. Wraps gracefully on narrow widths. */
+.todos-toolbar__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.todos-toolbar__search {
+.todos-toolbar__search-wrap {
+  position: relative;
   flex: 1 1 240px;
+  min-width: 200px;
+  display: flex;
+  align-items: center;
+}
+
+.todos-toolbar__search-ic {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--tp-muted);
+  pointer-events: none;
+  display: inline-flex;
+}
+
+.todos-toolbar__search {
+  width: 100%;
+  padding: 8px 36px 8px 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--tp-divider);
+  background: var(--tp-input-bg);
+  color: var(--tp-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.todos-toolbar__search::-webkit-search-cancel-button {
+  /* Native cancel decoration conflicts with our own clear button. */
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.todos-toolbar__search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--tp-muted);
+  cursor: pointer;
+}
+
+.todos-toolbar__search-clear:hover {
+  background: color-mix(in srgb, var(--tp-muted) 18%, transparent);
+  color: var(--tp-text);
+}
+
+.todos-toolbar__row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.todos-toolbar__filters-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--tp-divider);
+  background: var(--tp-input-bg);
+  color: var(--tp-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.todos-toolbar__filters-btn:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--tp-divider));
+  background: var(--accent-soft);
+}
+
+.todos-toolbar__filters-btn--open {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--tp-divider));
+  color: var(--accent-2);
+}
+
+.todos-toolbar__filters-btn--active:not(.todos-toolbar__filters-btn--open) {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--tp-divider));
+  color: var(--accent-2);
+}
+
+.todos-toolbar__filters-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Filter panel revealed by the disclosure. Lives BELOW the search row
+ * so the controls never compete with the primary input for attention.
+ * Each control keeps the look of the original toolbar — labels above
+ * compact selects — but they're now grouped behind a single affordance. */
+.todos-toolbar__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--tp-divider);
+}
+
+.todos-toolbar__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.todos-toolbar__filter select.input {
+  height: 32px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+.todos-toolbar__filters-reset {
+  margin-left: auto;
+  padding: 6px 10px;
+  border: 1px dashed var(--tp-divider);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--tp-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.todos-toolbar__filters-reset:hover {
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 50%, transparent);
+  background: var(--accent-soft);
 }
 
 .todos-toolbar__check {
@@ -5589,13 +5726,14 @@ code {
   color: #ff8d8d;
 }
 
-/* "Extract from notes" toolbar button in the Todos view. */
+/* "Extract from notes" toolbar button in the Todos view. Sits inside
+ * the row-actions group, so it inherits its alignment from that flex
+ * container and only needs to manage its own internal spacing. */
 .todos-toolbar__ai {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-  margin-left: auto;
 }
 
 .ai-thread {
@@ -5712,19 +5850,7 @@ code {
   text-transform: uppercase;
 }
 
-/* —— Toolbar select + drag handle + priorities —— */
-.todos-toolbar__select {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.todos-toolbar__select select.input {
-  height: 32px;
-  padding: 0 8px;
-  font-size: 13px;
-}
-
+/* —— Drag handle + priorities —— */
 .todos-row__handle {
   display: inline-flex;
   align-items: center;
@@ -7066,6 +7192,64 @@ details summary {
 .app-profile__row--on .app-profile__row-icon {
   background: var(--accent);
   color: #fff;
+}
+
+/* ============================================================
+   Back-to-Top FAB
+   ------------------------------------------------------------
+   Tiny floating chevron that appears once the main scroll surface
+   has scrolled past ~320px. Stacked above the Quick-Add FAB on the
+   right edge so the two affordances never overlap. The component
+   mounts unconditionally but the element only renders while the
+   scroll threshold is exceeded — when invisible it adds zero DOM.
+   ============================================================ */
+
+.back-to-top-fab {
+  position: fixed;
+  right: 24px;
+  /* Sits one button-height above the Quick-Add FAB so they read as a
+   * vertical stack. The base FAB is 56px high; with 24px gap that's
+   * 24 + 56 + 14 ≈ 94px. Rounded to 92 for visual rhythm. */
+  bottom: 92px;
+  z-index: 79;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow:
+    0 10px 20px -10px rgba(0, 0, 0, 0.4),
+    0 3px 6px -2px rgba(0, 0, 0, 0.25);
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+  animation: backToTopFadeIn 180ms ease-out;
+}
+
+.back-to-top-fab:hover {
+  transform: translateY(-2px);
+  background: var(--bg-elevated);
+  box-shadow:
+    0 16px 28px -10px rgba(0, 0, 0, 0.45),
+    0 4px 10px -2px rgba(0, 0, 0, 0.3);
+}
+
+.back-to-top-fab:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 3px;
+}
+
+@keyframes backToTopFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ============================================================

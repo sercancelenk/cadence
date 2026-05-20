@@ -37,7 +37,7 @@ export function HomeTeams() {
   }, [data]);
 
   return (
-    <div className="page">
+    <div className="page page--wide">
       <header className="page-head">
         <h1>Teams</h1>
         <p className="muted">Each team has a private &quot;Me&quot; workspace and individual pages for every member. Add more teams to separate different groups of work.</p>

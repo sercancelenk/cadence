@@ -9,10 +9,13 @@ import {
   IcLayoutGrid,
   IcListTodo,
   IcPlus,
+  IcSearch,
+  IcSliders,
   IcSparkles,
   IcStar,
   IcStickyNote,
   IcTrash,
+  IcX,
 } from '../components/icons';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
@@ -26,11 +29,10 @@ const AIAssistantDialog = lazy(() =>
 const AITaskExtractorDialog = lazy(() =>
   import('../components/AITaskExtractorDialog').then((m) => ({ default: m.AITaskExtractorDialog })),
 );
-import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 // MarkdownEditor pulls in react-markdown + remark-gfm (the same chunk
 // the Notes page uses). We lazy-load it here so the initial Todos page
-// payload stays light — most users never expand a task's body, and the
-// editor only mounts when somebody actually clicks "details".
+// payload stays light — the editor only mounts when somebody opens a
+// row for editing or starts a new task with `+`.
 const MarkdownEditor = lazy(() =>
   import('../components/ui/MarkdownEditor').then((m) => ({ default: m.MarkdownEditor })),
 );
@@ -136,6 +138,39 @@ function matchesStatusFilter(status: TodoStatus, filter: StatusFilter): boolean 
   if (filter === 'all') return true;
   if (filter === 'open') return isTodoOpen(status);
   return status === filter;
+}
+
+/**
+ * Parse a single markdown blob into a title + body pair. The first
+ * non-empty line becomes the title (with any leading `#` stripped so
+ * users can write headings naturally); everything after it is the body,
+ * trimmed of leading/trailing blank lines.
+ *
+ * Used by BOTH the inline edit flow on existing rows and the new-task
+ * add form, so the two surfaces stay symmetric: type a heading + notes,
+ * hit save, get a task whose title matches what you wrote up top.
+ */
+function parseTitleAndBody(content: string): { title: string; body: string } {
+  const lines = content.split('\n');
+  let titleIdx = -1;
+  let title = '';
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed) {
+      title = trimmed.replace(/^#+\s+/, '');
+      titleIdx = i;
+      break;
+    }
+  }
+  const body =
+    titleIdx >= 0
+      ? lines
+          .slice(titleIdx + 1)
+          .join('\n')
+          .replace(/^\n+/, '')
+          .replace(/\n+$/, '')
+      : '';
+  return { title, body };
 }
 
 function parseStatusFilter(raw: string | null): StatusFilter {
@@ -254,31 +289,8 @@ function TodoTaskRow({
     setEditing(true);
   };
 
-  const parseEdit = (content: string): { title: string; body: string } => {
-    const lines = content.split('\n');
-    let titleIdx = -1;
-    let title = '';
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      if (trimmed) {
-        title = trimmed.replace(/^#+\s+/, '');
-        titleIdx = i;
-        break;
-      }
-    }
-    const body =
-      titleIdx >= 0
-        ? lines
-            .slice(titleIdx + 1)
-            .join('\n')
-            .replace(/^\n+/, '')
-            .replace(/\n+$/, '')
-        : '';
-    return { title, body };
-  };
-
   const saveEdit = () => {
-    const { title, body } = parseEdit(draftEdit);
+    const { title, body } = parseTitleAndBody(draftEdit);
     const patch: Parameters<typeof onPatch>[1] = {};
     // Fall back to the existing title if the user cleared everything —
     // we never want to leave a task with an empty title.
@@ -712,18 +724,11 @@ export function TodosPage() {
   } = useAppData();
   const [newGroupName, setNewGroupName] = useState('');
   const [newListOpen, setNewListOpen] = useState(false);
+  // Combined markdown draft per group. The first non-empty line becomes
+  // the task title on submit (stripped of any leading `#`), the rest is
+  // the body. Sharing the same buffer as the inline-edit flow keeps the
+  // two surfaces symmetric and avoids the old "title vs. details" split.
   const [draftByGroup, setDraftByGroup] = useState<Record<string, string>>({});
-  // Optional markdown body draft per group. We keep it separate from the
-  // title draft so a user who never expands the "Add details" toggle
-  // never pays the markdown editor's hydration cost. Cleared whenever a
-  // task is submitted or the add form is dismissed.
-  const [bodyDraftByGroup, setBodyDraftByGroup] = useState<Record<string, string>>({});
-  // Per-group "details panel is open in the new-task form" flag. We
-  // intentionally do NOT persist this to localStorage — the expand
-  // state is a per-attempt UI affordance, not a preference. If the
-  // user wants their next task to have details too, expanding again
-  // is one tap.
-  const [addExpandedGroupId, setAddExpandedGroupId] = useState<string | null>(null);
   const [addingGroupId, setAddingGroupId] = useState<string | null>(null);
   const [compact, setCompact] = useState(false);
   const [sectionOpenMap, setSectionOpenMap] = useState<Record<string, boolean>>({});
@@ -733,6 +738,11 @@ export function TodosPage() {
   const [hideDone, setHideDone] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('manual');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  // The filter disclosure is a per-session UI toggle, NOT a saved
+  // preference. Keeping it transient avoids surprising users with a
+  // panel that re-opens itself on every visit just because they once
+  // peeked inside.
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [dragGroupId, setDragGroupId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dragItemId, setDragItemId] = useState<string | null>(null);
@@ -871,7 +881,7 @@ export function TodosPage() {
     (typeof it.body === 'string' && it.body.toLowerCase().includes(q));
 
   return (
-    <div className="page todos-route">
+    <div className="page page--wide todos-route">
       <header className="page-head todos-route__head">
         <div className="todos-route__head-main">
           <h1>Today</h1>
@@ -882,6 +892,18 @@ export function TodosPage() {
           </p>
         </div>
         <div className="todos-route__head-actions">
+          <button
+            type="button"
+            className={`todos-route__display-btn todos-route__add-list-btn${
+              newListOpen ? ' todos-route__add-list-btn--active' : ''
+            }`}
+            title={newListOpen ? 'Close list creator' : 'Create a new list'}
+            aria-expanded={newListOpen}
+            onClick={() => setNewListOpen((o) => !o)}
+          >
+            <IcPlus size={16} strokeWidth={2.5} />
+            <span>Add list</span>
+          </button>
           <button
             type="button"
             className="todos-route__display-btn"
@@ -895,72 +917,199 @@ export function TodosPage() {
         </div>
       </header>
 
-      <section className="card todos-toolbar">
-        <input
-          type="search"
-          className="input todos-toolbar__search"
-          placeholder="Search tasks…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <label className="todos-toolbar__select">
-          <span className="muted small">Sort</span>
-          <select
-            className="input"
-            value={sortMode}
-            onChange={(e) => setSortMode(e.target.value as SortMode)}
-            aria-label="Sort items by"
+      {newListOpen ? (
+        // List creator lives at the top of the page now so the user
+        // doesn't have to scroll past every existing list to reach it.
+        // It mirrors the look of the inline "Add task" form for visual
+        // continuity between the two creation surfaces.
+        <section className="card todos-new-list-card">
+          <form
+            className="todos-new-list"
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault();
+              const name = newGroupName.trim();
+              if (!name) return;
+              addTodoGroup(name);
+              setNewGroupName('');
+              setNewListOpen(false);
+            }}
           >
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="todos-toolbar__select">
-          <span className="muted small">Status</span>
-          <select
-            className="input"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-            aria-label="Filter by status"
-          >
-            {STATUS_FILTER_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="todos-toolbar__check">
-          <input
-            type="checkbox"
-            checked={hideDone}
-            onChange={(e) => setHideDone(e.target.checked)}
-          />
-          <span className="small">Hide closed</span>
-        </label>
-        <label className="todos-toolbar__check">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(e) => setShowArchived(e.target.checked)}
-          />
-          <span className="small">Show archived</span>
-        </label>
-        {aiEnabled ? (
-          <button
-            type="button"
-            className="btn btn--ghost todos-toolbar__ai"
-            onClick={() => setExtractorOpen(true)}
-            title="Paste notes and let AI extract tasks for you"
-          >
-            <IcSparkles size={14} />
-            <span>Extract from notes</span>
-          </button>
-        ) : null}
-      </section>
+            <input
+              className="todos-new-list__input"
+              placeholder="New list name"
+              value={newGroupName}
+              autoFocus
+              onChange={(e) => setNewGroupName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setNewGroupName('');
+                  setNewListOpen(false);
+                }
+              }}
+              aria-label="New list name"
+            />
+            <button type="submit" className="todos-new-list__ok" disabled={!newGroupName.trim()}>
+              Create
+            </button>
+            <button
+              type="button"
+              className="todos-new-list__cancel"
+              onClick={() => {
+                setNewGroupName('');
+                setNewListOpen(false);
+              }}
+            >
+              Cancel
+            </button>
+          </form>
+        </section>
+      ) : null}
+
+      {/* —— Search + filters toolbar ——
+       * Two-row layout: a focused search input + the only ever-visible
+       * actions (Filters disclosure, AI extract) on top; the four
+       * filter controls collapse behind the disclosure so the toolbar
+       * never feels like a wall of inputs.
+       */}
+      {(() => {
+        // Count every "non-default" filter so we can badge the toggle
+        // when filters are active even if the panel is collapsed.
+        // `sortMode === 'manual'` is the default; everything else
+        // counts. Search is intentionally excluded — it already has
+        // its own visible input, no point double-counting it.
+        const activeCount =
+          (sortMode !== 'manual' ? 1 : 0) +
+          (statusFilter !== 'all' ? 1 : 0) +
+          (hideDone ? 1 : 0) +
+          (showArchived ? 1 : 0);
+        const resetFilters = () => {
+          setSortMode('manual');
+          setStatusFilter('all');
+          setHideDone(false);
+          setShowArchived(false);
+        };
+        return (
+          <section className="card todos-toolbar">
+            <div className="todos-toolbar__row">
+              <div className="todos-toolbar__search-wrap">
+                <span className="todos-toolbar__search-ic" aria-hidden>
+                  <IcSearch size={15} />
+                </span>
+                <input
+                  type="search"
+                  className="todos-toolbar__search"
+                  placeholder="Search tasks…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  aria-label="Search tasks"
+                />
+                {search ? (
+                  <button
+                    type="button"
+                    className="todos-toolbar__search-clear"
+                    aria-label="Clear search"
+                    title="Clear search"
+                    onClick={() => setSearch('')}
+                  >
+                    <IcX size={14} />
+                  </button>
+                ) : null}
+              </div>
+              <div className="todos-toolbar__row-actions">
+                <button
+                  type="button"
+                  className={`todos-toolbar__filters-btn${
+                    filtersOpen ? ' todos-toolbar__filters-btn--open' : ''
+                  }${activeCount > 0 ? ' todos-toolbar__filters-btn--active' : ''}`}
+                  aria-expanded={filtersOpen}
+                  aria-controls="todos-toolbar-filters"
+                  onClick={() => setFiltersOpen((o) => !o)}
+                  title={filtersOpen ? 'Hide filters' : 'Show filters'}
+                >
+                  <IcSliders size={15} />
+                  <span>Filters</span>
+                  {activeCount > 0 ? (
+                    <span className="todos-toolbar__filters-badge" aria-label={`${activeCount} active filters`}>
+                      {activeCount}
+                    </span>
+                  ) : null}
+                </button>
+                {aiEnabled ? (
+                  <button
+                    type="button"
+                    className="btn btn--ghost todos-toolbar__ai"
+                    onClick={() => setExtractorOpen(true)}
+                    title="Paste notes and let AI extract tasks for you"
+                  >
+                    <IcSparkles size={14} />
+                    <span>Extract from notes</span>
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {filtersOpen ? (
+              <div id="todos-toolbar-filters" className="todos-toolbar__filters">
+                <label className="todos-toolbar__filter">
+                  <span className="muted small">Sort</span>
+                  <select
+                    className="input"
+                    value={sortMode}
+                    onChange={(e) => setSortMode(e.target.value as SortMode)}
+                    aria-label="Sort items by"
+                  >
+                    {SORT_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="todos-toolbar__filter">
+                  <span className="muted small">Status</span>
+                  <select
+                    className="input"
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                    aria-label="Filter by status"
+                  >
+                    {STATUS_FILTER_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="todos-toolbar__check">
+                  <input
+                    type="checkbox"
+                    checked={hideDone}
+                    onChange={(e) => setHideDone(e.target.checked)}
+                  />
+                  <span className="small">Hide closed</span>
+                </label>
+                <label className="todos-toolbar__check">
+                  <input
+                    type="checkbox"
+                    checked={showArchived}
+                    onChange={(e) => setShowArchived(e.target.checked)}
+                  />
+                  <span className="small">Show archived</span>
+                </label>
+                {activeCount > 0 ? (
+                  <button
+                    type="button"
+                    className="todos-toolbar__filters-reset"
+                    onClick={resetFilters}
+                    title="Reset all filters to their defaults"
+                  >
+                    Reset
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+        );
+      })()}
 
       {visibleGroups.length === 0 && allGroupsSorted.length > 0 ? (
         // The user has lists but they're all filtered out — most often
@@ -1261,84 +1410,54 @@ export function TodosPage() {
             {sectionOpen ? (
               <>
                 {addingGroupId === g.id ? (() => {
-                  const bodyDraft = bodyDraftByGroup[g.id] ?? '';
                   const submitAdd = () => {
-                    const title = draft.trim();
+                    const { title, body } = parseTitleAndBody(draft);
                     if (!title) {
+                      // Nothing actionable yet — just close the form rather
+                      // than spawn an empty task. The draft is preserved
+                      // so reopening with `+` puts the user back where
+                      // they left off (handy after an accidental Cancel).
                       setAddingGroupId(null);
-                      setAddExpandedGroupId((cur) => (cur === g.id ? null : cur));
                       return;
                     }
-                    addTodoItem(g.id, title, bodyDraft.trim() ? { body: bodyDraft } : undefined);
+                    addTodoItem(g.id, title, body ? { body } : undefined);
                     setDraftByGroup((prev) => ({ ...prev, [g.id]: '' }));
-                    setBodyDraftByGroup((prev) => ({ ...prev, [g.id]: '' }));
                     setAddingGroupId(null);
-                    setAddExpandedGroupId((cur) => (cur === g.id ? null : cur));
                   };
                   const cancelAdd = () => {
                     setAddingGroupId(null);
-                    setAddExpandedGroupId((cur) => (cur === g.id ? null : cur));
                   };
-                  const expanded = addExpandedGroupId === g.id;
                   return (
                     <form
-                      className={`todos-add-inline todos-add-inline--multi${
-                        expanded ? ' todos-add-inline--expanded' : ''
-                      }`}
+                      className="todos-add-inline todos-add-inline--multi"
                       onSubmit={(e: FormEvent) => {
                         e.preventDefault();
                         submitAdd();
                       }}
                     >
-                      <AutoResizeTextarea
-                        className="todos-add-inline__input todos-add-inline__textarea"
-                        placeholder={'Describe the task — Enter for a new line, ⌘/Ctrl+Enter to add'}
-                        value={draft}
-                        autoFocus
-                        minRows={3}
-                        maxRows={10}
-                        ariaLabel="New task"
-                        onChange={(v) => setDraftByGroup((prev) => ({ ...prev, [g.id]: v }))}
-                        onSubmit={submitAdd}
-                        onCancel={cancelAdd}
-                      />
-                      {expanded ? (
-                        <div className="todos-add-inline__body" role="region" aria-label="Task details">
-                          <Suspense
-                            fallback={
-                              <div className="todos-row__details-loading muted small">Loading editor…</div>
-                            }
-                          >
-                            <MarkdownEditor
-                              value={bodyDraft}
-                              onChange={(v) =>
-                                setBodyDraftByGroup((prev) => ({ ...prev, [g.id]: v }))
-                              }
-                              placeholder="Optional details — notes, links, checklists, code… markdown supported."
-                              rows={5}
-                              initialMode="edit"
-                            />
-                          </Suspense>
-                        </div>
-                      ) : null}
-                      <div className="todos-add-inline__actions">
-                        <button type="submit" className="todos-add-inline__submit">
-                          Add
-                        </button>
-                        <button
-                          type="button"
-                          className="todos-add-inline__details-toggle"
-                          aria-expanded={expanded}
-                          onClick={() =>
-                            setAddExpandedGroupId((cur) => (cur === g.id ? null : g.id))
+                      <div className="todos-add-inline__body" role="region" aria-label="New task">
+                        <Suspense
+                          fallback={
+                            <div className="todos-row__details-loading muted small">Loading editor…</div>
                           }
-                          title={expanded ? 'Hide details' : 'Add markdown details'}
                         >
-                          <IcStickyNote size={14} />
-                          <span>{expanded ? 'Hide details' : 'Add details'}</span>
-                        </button>
+                          <MarkdownEditor
+                            value={draft}
+                            onChange={(v) =>
+                              setDraftByGroup((prev) => ({ ...prev, [g.id]: v }))
+                            }
+                            placeholder="First line is the title — Markdown supported below."
+                            rows={6}
+                            initialMode="edit"
+                          />
+                        </Suspense>
+                      </div>
+                      <div className="todos-add-inline__actions">
                         <button type="button" className="todos-add-inline__cancel" onClick={cancelAdd}>
                           Cancel
+                        </button>
+                        <button type="submit" className="todos-add-inline__submit">
+                          Add
                         </button>
                       </div>
                     </form>
@@ -1442,39 +1561,19 @@ export function TodosPage() {
         </div>
       ) : null}
 
-      <section className="card todos-route__foot">
-        {newListOpen ? (
-          <form
-            className="todos-new-list"
-            onSubmit={(e: FormEvent) => {
-              e.preventDefault();
-              if (!newGroupName.trim()) return;
-              addTodoGroup(newGroupName.trim());
-              setNewGroupName('');
-              setNewListOpen(false);
-            }}
-          >
-            <input
-              className="todos-new-list__input"
-              placeholder="New list name"
-              value={newGroupName}
-              autoFocus
-              onChange={(e) => setNewGroupName(e.target.value)}
-            />
-            <button type="submit" className="todos-new-list__ok">
-              Create
-            </button>
-            <button type="button" className="todos-new-list__cancel" onClick={() => setNewListOpen(false)}>
-              Cancel
-            </button>
-          </form>
-        ) : (
-          <button type="button" className="todos-add-list" onClick={() => setNewListOpen(true)}>
-            <IcPlus size={17} className="todos-add-list__plus" strokeWidth={2.5} />
-            Add list
-          </button>
-        )}
-      </section>
+      {allGroupsSorted.length === 0 ? (
+        // Brand-new workspace: no lists at all. We don't auto-create one
+        // because that's a meaningful first decision and silently
+        // seeding it would dirty the encrypted store on first boot.
+        // Instead, point at the header button so the empty state is
+        // never a dead end.
+        <section className="card todos-empty-hint">
+          <h3 className="todos-empty-hint__title">No lists yet</h3>
+          <p className="muted small todos-empty-hint__body">
+            Use <strong>Add list</strong> at the top of the page to create your first list.
+          </p>
+        </section>
+      ) : null}
 
       {aiTask || extractorOpen ? (
         <Suspense fallback={null}>

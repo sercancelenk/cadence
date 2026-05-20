@@ -30,7 +30,7 @@ export function HomePage() {
   const peopleCount = data.people.filter((p) => !p.id.startsWith('__')).length;
 
   return (
-    <div className="page home-page">
+    <div className="page page--wide home-page">
       <header className="home-page__hero">
         <div className="home-page__brand">
           <img className="home-page__logo" src={brandIconUrl()} alt="" aria-hidden />

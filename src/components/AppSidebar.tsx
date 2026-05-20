@@ -63,6 +63,12 @@ export function AppSidebar({ collapsed }: Props) {
       </div>
 
       <nav className="app-sidebar__nav">
+        {/* "App" carries the day-to-day surfaces in roughly the order a
+            user moves through them: glance at the dashboard, scan the
+            day on Agenda, work the queue on To-dos, capture thoughts in
+            Notes, dip into Teams when a 1:1 comes up. Analytics moved
+            to "Account" because it's a meta / personal-stats surface,
+            not a work-in-progress one. */}
         <div className="app-sidebar__section">
           {!collapsed ? <div className="app-sidebar__section-label">App</div> : null}
           <NavLink to={PATH_HOME} end className={linkCls} title="Home">
@@ -71,11 +77,11 @@ export function AppSidebar({ collapsed }: Props) {
             </span>
             {!collapsed ? <span>Home</span> : null}
           </NavLink>
-          <NavLink to={PATH_TEAMS} end className={linkCls} title="Teams">
+          <NavLink to="/agenda" className={linkCls} title="Agenda">
             <span className="app-sidebar__ic">
-              <IcFolder size={18} />
+              <IcCalendar size={18} />
             </span>
-            {!collapsed ? <span>Teams</span> : null}
+            {!collapsed ? <span>Agenda</span> : null}
           </NavLink>
           <NavLink
             to="/todos"
@@ -103,12 +109,6 @@ export function AppSidebar({ collapsed }: Props) {
               </span>
             ) : null}
           </NavLink>
-          <NavLink to="/agenda" className={linkCls} title="Agenda">
-            <span className="app-sidebar__ic">
-              <IcCalendar size={18} />
-            </span>
-            {!collapsed ? <span>Agenda</span> : null}
-          </NavLink>
           <NavLink
             to="/notes"
             className={linkCls}
@@ -126,16 +126,22 @@ export function AppSidebar({ collapsed }: Props) {
               <span className="app-sidebar__badge">{notesSummary.total}</span>
             ) : null}
           </NavLink>
+          <NavLink to={PATH_TEAMS} end className={linkCls} title="Teams">
+            <span className="app-sidebar__ic">
+              <IcFolder size={18} />
+            </span>
+            {!collapsed ? <span>Teams</span> : null}
+          </NavLink>
+        </div>
+
+        <div className="app-sidebar__section">
+          {!collapsed ? <div className="app-sidebar__section-label">Account</div> : null}
           <NavLink to="/analytics" className={linkCls} title="Analytics">
             <span className="app-sidebar__ic">
               <IcChartBar size={18} />
             </span>
             {!collapsed ? <span>Analytics</span> : null}
           </NavLink>
-        </div>
-
-        <div className="app-sidebar__section">
-          {!collapsed ? <div className="app-sidebar__section-label">Account</div> : null}
           <NavLink to="/profile" className={linkCls} title="Profile">
             <span className="app-sidebar__ic">
               <IcUser size={18} />

@@ -91,7 +91,7 @@ export function People() {
   if (!teamId || !team) return <Navigate to={PATH_TEAMS} replace />;
 
   return (
-    <div className="page">
+    <div className="page page--wide">
       <header className="page-head">
         <h1>Team members · {team.name}</h1>
         <p className="muted">Each person has their own workspace with tasks, goals, structured notes and a free-form scratchpad.</p>
@@ -246,7 +246,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
   const isLeader = isLeaderPerson(person);
 
   return (
-    <div className="page">
+    <div className="page page--wide">
       <header className="page-head">
         <div className="row row--between">
           <div>

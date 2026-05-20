@@ -274,7 +274,7 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId }: Props) 
             {rows.length > 0 ? (
               <>
                 <div className="row" style={{ flexWrap: 'wrap', gap: 10, marginBottom: 10, alignItems: 'center' }}>
-                  <label className="todos-toolbar__select" style={{ marginLeft: 'auto' }}>
+                  <label className="todos-toolbar__filter" style={{ marginLeft: 'auto' }}>
                     <span className="muted small">Add all to</span>
                     <select
                       className="input"

@@ -379,6 +379,35 @@ export function IcArrowLeft(p: IconProps) {
   );
 }
 
+export function IcArrowUp(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path d="M12 19V5M6 11l6-6 6 6" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function IcSliders(p: IconProps) {
+  // Three horizontal sliders with offset knobs — the canonical "filters"
+  // glyph (matches lucide / feather). Used to label compact filter
+  // toggles on dense toolbars where a text label would crowd the row.
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path
+        d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12M20 18h0"
+        strokeWidth={sw}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="16" cy="6" r="2" strokeWidth={sw} />
+      <circle cx="8" cy="12" r="2" strokeWidth={sw} />
+      <circle cx="18" cy="18" r="2" strokeWidth={sw} />
+    </svg>
+  );
+}
+
 export function IcChevronLeft(p: IconProps) {
   const { s, cn, sw, rest } = split(p);
   return (

@@ -301,7 +301,7 @@ export function AnalyticsPage() {
   }, [data.todoItems]);
 
   return (
-    <div className="page analytics-page">
+    <div className="page page--wide analytics-page">
       <header className="page-head">
         <h1>Analytics</h1>
         <p className="muted">
