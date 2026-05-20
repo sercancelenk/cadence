@@ -108,6 +108,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Refuse-to-overwrite guard if the live file is undecipherable. |
 | 📡 **Optional LAN sync** | Token-protected **HTTPS** server inside Electron (off by default) with self-signed TLS (RSA 2048 / SHA-256), constant-time token compare, DNS-rebinding resistance, same-LAN CORS, ETag optimistic concurrency and payload-shape validation. The host also serves the PWA itself, so an iPhone can scan the QR code and open `https://<host-ip>:9787/` directly — no cloud round-trip. |
 | 🚫 **No telemetry** | Zero network calls outside of (a) the auto-updater hitting GitHub Releases, and (b) the AI assistant hitting whichever provider you configured. Nothing else dials home. |
+| 🏢 **Enterprise / shared-device ready** | Three onboarding presets (Personal / Work-Standard / Work-Strict) the user picks at first launch, plus an admin-deployable `policy.json` (cross-platform, 5-layer search) that **wins over the user preset** and gates Sync / AI / Export / Updates with defence-in-depth in the Electron main process. A separate "Cadence for Work" build flavor (`npm run build:enterprise`) ships a locked binary with its own app ID and update channel. See [docs/ENTERPRISE.md](docs/ENTERPRISE.md). |
 
 ### AI when you want it
 

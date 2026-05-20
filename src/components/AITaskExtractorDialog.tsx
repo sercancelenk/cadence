@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppData } from '../AppDataContext';
 import { AIError, extractTasksFromNotes, isAIConfigured } from '../lib/ai';
 import type { ExtractedTask } from '../lib/ai';
+import { useFeatures } from '../lib/features';
 import type { Priority, TodoGroup } from '../model';
 import { PRIORITY_OPTIONS } from '../model';
 import { Button } from './ui/Button';
@@ -40,6 +41,7 @@ type Row = {
  */
 export function AITaskExtractorDialog({ open, onClose, defaultGroupId }: Props) {
   const { data, addTodoItem, updateAISettings } = useAppData();
+  const { features } = useFeatures();
   const aiSettings = data.aiSettings;
   const groups = data.todoGroups;
 
@@ -75,8 +77,16 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId }: Props) 
   }, [defaultGroupId, groups]);
 
   if (!open) return null;
+  // Defence in depth — refuse to render if the AI feature is disabled
+  // by policy, even if a parent route forgot to gate the entry-point
+  // button. See the same guard in AIAssistantDialog.
+  if (!features.ai) return null;
 
   const extract = async () => {
+    if (!features.ai) {
+      setError('AI is disabled by your organization policy.');
+      return;
+    }
     if (!isAIConfigured(aiSettings)) {
       setError('AI is not configured. Open Settings → AI Assistant to add a provider and key.');
       return;

@@ -11,6 +11,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { NotesUnlockProvider } from './lib/NotesUnlockContext';
 import { WelcomeTour } from './components/WelcomeTour';
 import { useSyncAutoSync } from './lib/useSyncAutoSync';
+import { FeaturesProvider, useFeatures } from './lib/features';
 import './app.css';
 
 // Each route lives in its own JS chunk. The Markdown editor and `react-markdown`
@@ -114,15 +115,20 @@ export default function App() {
   return (
     <HistoryRouter basename={routerBasename}>
       <ThemeProvider>
-        <AccountProvider>
-          <Suspense fallback={<BootLoading label="Loading…" />}>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/register" element={<RegisterPage />} />
-              <Route path="*" element={<ProtectedShell />} />
-            </Routes>
-          </Suspense>
-        </AccountProvider>
+        {/* FeaturesProvider must wrap AccountProvider — login/register routes
+            also consult the feature flags (e.g. to hide "Sign up" if a strict
+            shared-device policy is in place). */}
+        <FeaturesProvider>
+          <AccountProvider>
+            <Suspense fallback={<BootLoading label="Loading…" />}>
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/register" element={<RegisterPage />} />
+                <Route path="*" element={<ProtectedShell />} />
+              </Routes>
+            </Suspense>
+          </AccountProvider>
+        </FeaturesProvider>
       </ThemeProvider>
     </HistoryRouter>
   );
@@ -143,8 +149,12 @@ function Boot() {
 function AppRoutes() {
   useReminderWatcher();
   // Keep this device's workspace in sync with the paired host (if any).
-  // No-op when the user hasn't paired yet, so safe to mount unconditionally.
-  useSyncAutoSync();
+  // No-op when the user hasn't paired yet, so safe to mount unconditionally —
+  // BUT when policy disables both sync backends we don't even want to
+  // start the polling timer. Saves battery on shared/work devices and
+  // avoids any debug-log noise that might hint at a hidden code path.
+  const { features } = useFeatures();
+  useSyncAutoSync({ enabled: features.sync.lan || features.sync.cloud });
   return (
     <>
       <CommandPalette />

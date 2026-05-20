@@ -6,11 +6,17 @@ const { contextBridge, ipcRenderer } = require('electron');
 const api = {
   loadData: () => ipcRenderer.invoke('data:load'),
   loadDataResult: () => ipcRenderer.invoke('data:loadResult'),
-  saveData: (data) => ipcRenderer.invoke('data:save', data),
+  // Optional `expectedUid` is a defence-in-depth guard against the
+  // "fast logout → login → late timer fires" race documented in
+  // electron/main.cjs `data:save`. New callers should always pass it;
+  // omitting it falls back to the old "trust the active session" path
+  // for any legacy renderer code we haven't migrated yet.
+  saveData: (data, expectedUid) => ipcRenderer.invoke('data:save', data, expectedUid),
   dataListSources: () => ipcRenderer.invoke('data:listSources'),
   dataPreviewSource: (payload) => ipcRenderer.invoke('data:previewSource', payload),
   dataRestoreFromSource: (payload) => ipcRenderer.invoke('data:restoreFromSource', payload),
   openUserDataFolder: () => ipcRenderer.invoke('data:openUserDataFolder'),
+  revealInOS: (payload) => ipcRenderer.invoke('data:revealInOS', payload),
   cacheStats: () => ipcRenderer.invoke('cache:stats'),
   clearChromiumCache: () => ipcRenderer.invoke('cache:clearChromium'),
   onSaveError: (cb) => {
@@ -44,6 +50,7 @@ const api = {
   accountHasLegacyData: () => ipcRenderer.invoke('account:hasLegacyData'),
   accountChangePassword: (payload) => ipcRenderer.invoke('account:changePassword', payload),
   accountVerifyPassword: (payload) => ipcRenderer.invoke('account:verifyPassword', payload),
+  policyGet: () => ipcRenderer.invoke('policy:get'),
   syncStatus: () => ipcRenderer.invoke('sync:status'),
   syncEnable: () => ipcRenderer.invoke('sync:enable'),
   syncDisable: () => ipcRenderer.invoke('sync:disable'),

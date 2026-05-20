@@ -1,0 +1,51 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "$comment": "Enterprise (Cadence for Work) build configuration. Mirrors the public build in package.json#build but with a distinct appId, productName and update channel so the auto-updater never crosses streams between the two flavors. Run via 'npm run build:enterprise'. Requires `cross-env CADENCE_DISTRIBUTION=enterprise` to also be set for the vite step so the renderer bundle is the locked flavor.",
+
+  "appId": "com.cadence.app.enterprise",
+  "productName": "Cadence for Work",
+
+  "directories": {
+    "output": "release/enterprise"
+  },
+
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "YOUR_GITHUB_USERNAME",
+      "repo": "cadence",
+      "releaseType": "release",
+      "channel": "enterprise"
+    }
+  ],
+
+  "mac": {
+    "category": "public.app-category.productivity",
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["universal"]
+      },
+      {
+        "target": "zip",
+        "arch": ["universal"]
+      }
+    ],
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "build/entitlements.mac.plist",
+    "entitlementsInherit": "build/entitlements.mac.plist",
+    "notarize": true
+  },
+
+  "dmg": {
+    "writeUpdateInfo": true,
+    "sign": false
+  }
+}

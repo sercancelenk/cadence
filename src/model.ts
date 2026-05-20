@@ -172,6 +172,20 @@ export interface TodoItem {
   groupId: string;
   title: string;
   /**
+   * Optional long-form description for the task, in GitHub-flavored
+   * markdown. Rendered with the same MarkdownEditor / preview pipeline
+   * used by the Notes page so checklists, links, code blocks and tables
+   * all work. Empty string and `undefined` are treated identically by
+   * the UI — both mean "no details".
+   *
+   * Backwards compatibility: older files written before this field
+   * existed simply load with `body` undefined; `parseTodoItems`
+   * preserves any string it finds, defensively trimming whitespace-only
+   * values to undefined so we don't carry around empty bodies in
+   * exports / sync payloads.
+   */
+  body?: string;
+  /**
    * Lifecycle status. Always present after a `parseTodoItems` round-trip;
    * older files written before this field existed are migrated from
    * `done` on load (`done: true` → `'done'`, otherwise `'todo'`).
@@ -551,10 +565,18 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
         typeof repeatRaw === 'string' && repeats.includes(repeatRaw as ReminderRepeat)
           ? (repeatRaw as ReminderRepeat)
           : undefined;
+      // Trim whitespace-only bodies down to undefined: a markdown editor
+      // that's been opened-and-closed without any input would otherwise
+      // leave an empty string in the file. Empty strings and undefined
+      // mean the same thing in UI terms, so we normalise to one
+      // representation here and keep the file lean for sync diffs.
+      const rawBody = typeof x.body === 'string' ? x.body : undefined;
+      const body = rawBody && rawBody.trim() ? rawBody : undefined;
       return {
         id: typeof x.id === 'string' ? x.id : uuid(),
         groupId: typeof x.groupId === 'string' ? x.groupId : '',
         title: typeof x.title === 'string' ? x.title : '',
+        body,
         status,
         done: resolvedDone,
         doneAt: typeof x.doneAt === 'string' ? x.doneAt : undefined,
@@ -759,6 +781,24 @@ export function normalizeData(raw: unknown): AppData {
     people = people.map((p) => ({ ...p, teamId: p.teamId || tid }));
   }
 
+  const notes = parseNotes(o.notes);
+  let notesLock = parseNotesLock(o.notesLock);
+
+  // Defensive: orphan notesLock cleanup. The lock object can survive on
+  // disk after the user clears the notes passphrase if the corresponding
+  // write was interrupted, or after a sync pull from a device that had
+  // already unlocked everything. Keeping the orphan lock around makes
+  // the NotesPage prompt the user for a passphrase that no longer
+  // unlocks anything, which is indistinguishable from "my data is gone"
+  // for a non-technical user. The lock is a UI affordance, not the
+  // source of truth, so dropping it here is safe — the only thing it
+  // could potentially still decrypt is gone (locked=true notes have
+  // already been stripped if their cipher was malformed).
+  const hasAnyLockedNote = notes.some((n) => n.locked);
+  if (notesLock && !hasAnyLockedNote) {
+    notesLock = undefined;
+  }
+
   let data: AppData = {
     version: DATA_VERSION,
     teams,
@@ -769,8 +809,8 @@ export function normalizeData(raw: unknown): AppData {
     todoGroups,
     todoItems,
     aiSettings: parseAISettings(o.aiSettings),
-    notes: parseNotes(o.notes),
-    notesLock: parseNotesLock(o.notesLock),
+    notes,
+    notesLock,
   };
 
   data = ensureTeamsHaveSelf(data);
@@ -778,6 +818,51 @@ export function normalizeData(raw: unknown): AppData {
   data = ensureProfile(data);
 
   return patchDataToV3(data);
+}
+
+/**
+ * A coarse fingerprint of the user's workspace: how many of each kind of
+ * "user-visible thing" the file contains. This is the canonical shape we
+ * compare across boots / backups when we suspect data may have been lost.
+ *
+ * Why this design:
+ *   - The numbers themselves are non-sensitive (they don't leak any
+ *     content), which means we can safely persist them in localStorage as
+ *     a last-known-good marker. localStorage is process-local to the
+ *     renderer; it survives Electron restarts but not OS reinstalls.
+ *   - "Total" is a single integer that's easy to compare with `<` for
+ *     "did we suddenly shrink?". Per-kind values let the integrity banner
+ *     tell the user "5 todos before, 0 now" instead of an opaque
+ *     "data may be missing".
+ *   - We deliberately do NOT include archived/visible distinctions here:
+ *     if a user archives every todo group, the total stays the same and
+ *     we don't fire a false-positive data-loss banner. The
+ *     "all groups archived → empty UI" failure mode is handled by the
+ *     TodosPage empty-state hint instead.
+ */
+export type DataShape = {
+  teams: number;
+  people: number;
+  items: number;
+  todoGroups: number;
+  todoItems: number;
+  notes: number;
+  total: number;
+};
+
+export function shapeOfData(d: AppData | null | undefined): DataShape {
+  if (!d) return { teams: 0, people: 0, items: 0, todoGroups: 0, todoItems: 0, notes: 0, total: 0 };
+  const teams = d.teams.length;
+  // Self / leader auto-people don't count — they're an empty-workspace
+  // convenience scaffold, not actual user content. We strip them so the
+  // shape matches what a user would call "my data".
+  const people = d.people.filter((p) => p.id.indexOf('__self__') !== 0 && p.id.indexOf('__leader__') !== 0).length;
+  const items = d.items.length;
+  const todoGroups = d.todoGroups.length;
+  const todoItems = d.todoItems.length;
+  const notes = d.notes.length;
+  const total = teams - 1 /* default "My first team" */ + people + items + todoGroups + todoItems + notes;
+  return { teams, people, items, todoGroups, todoItems, notes, total: Math.max(0, total) };
 }
 
 function parseAISettings(raw: unknown): AISettings | undefined {

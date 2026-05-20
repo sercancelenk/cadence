@@ -25,6 +25,33 @@ const base = isPwa
   ? process.env.CADENCE_BASE || process.env.LEEADMAN_BASE || '/cadence/app/'
   : './';
 
+/**
+ * Distribution flavor (Phase 2 enterprise gating).
+ *
+ *   "" / unset → public build. Every feature is reachable; users pick a
+ *                preset in onboarding, optional policy.json overrides.
+ *   "enterprise" → locked build for shared / company devices. The bundle
+ *                  treats the workspace as if a `work-strict` policy were
+ *                  always in effect. Users CANNOT open the preset picker
+ *                  or re-enable Sync/AI/Export from the UI; a real
+ *                  policy.json may still loosen specific flags (e.g.
+ *                  re-enable AI for an internal Azure OpenAI), but the
+ *                  baseline is locked down.
+ *
+ * The renderer reads `import.meta.env.CADENCE_DISTRIBUTION` (typed in
+ * `src/vite-env.d.ts`). Compile-time literal substitution lets Vite
+ * dead-code-eliminate the user-facing preset picker in the locked build
+ * — `import.meta.env.CADENCE_DISTRIBUTION !== 'enterprise' && …` collapses
+ * to `false` so the trailing JSX is dropped from the bundle.
+ *
+ * For deeper audit confidence (no sync/AI code at ALL in the binary)
+ * we'd need to lazy-load the Cloud + AI modules behind dynamic imports
+ * gated on the same env. That's a future tightening; runtime gating is
+ * the immediate guarantee. See docs/ENTERPRISE.md.
+ */
+const distribution = (process.env.CADENCE_DISTRIBUTION || '').toLowerCase();
+const isEnterprise = distribution === 'enterprise';
+
 // In PWA builds the GitHub-Pages deploy expects the SPA assets to sit under
 // `/cadence/app/`. We honour that by emitting straight into `dist/app/` so
 // the same `dist/` directory can also receive the marketing landing's
@@ -37,6 +64,7 @@ export default defineConfig({
   define: {
     'import.meta.env.CADENCE_PWA': JSON.stringify(isPwa ? '1' : ''),
     'import.meta.env.LEEADMAN_PWA': JSON.stringify(isPwa ? '1' : ''),
+    'import.meta.env.CADENCE_DISTRIBUTION': JSON.stringify(isEnterprise ? 'enterprise' : ''),
   },
   server: { port: 5173, strictPort: true },
   build: {

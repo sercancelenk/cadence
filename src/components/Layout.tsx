@@ -67,6 +67,7 @@ export function Layout() {
         onToggleNav={() => setNavCollapsed((c) => !c)}
       />
       <SaveErrorBanner />
+      <DataIntegrityBanner />
       <div className="app-shell__body">
         <AppSidebar collapsed={navCollapsed && !isMobile} />
         {drawerOpen ? (
@@ -80,6 +81,67 @@ export function Layout() {
         <main className="main main--scroll main--canvas">
           <Outlet />
         </main>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * High-priority banner shown when boot detects that the freshly loaded
+ * workspace is meaningfully smaller than the last-known-good
+ * fingerprint we persisted on the previous successful save. This is
+ * how we surface "looks like data may have been lost" without ever
+ * silently mutating the user's file — the user decides whether to
+ * restore a backup, dismiss the alarm (= accept the current state),
+ * or just inspect.
+ *
+ * UX choices:
+ *   - Yellow / amber tone, NOT red. Red is reserved for "save failed
+ *     right now"; this banner reports a historical suspicion.
+ *   - The numbers are spelled out ("12 items → 0 items") because
+ *     percentage-only is too abstract under stress.
+ *   - "Open Backups & Recovery" is the primary action — it's almost
+ *     always what the user wants.
+ *   - Dismiss is not destructive: it just rebases the fingerprint to
+ *     the current shape. If the user signs out and back in, no banner.
+ */
+function DataIntegrityBanner() {
+  const { dataLossSuspicion, dismissDataLossSuspicion } = useAppData();
+  const navigate = useNavigate();
+  if (!dataLossSuspicion) return null;
+  const { current, previous } = dataLossSuspicion;
+  return (
+    <div role="alert" className="data-integrity-banner">
+      <span className="data-integrity-banner__icon" aria-hidden>
+        <IcAlertTriangle size={16} />
+      </span>
+      <div className="data-integrity-banner__text">
+        <strong>Looks like data may be missing.</strong>{' '}
+        <span className="data-integrity-banner__detail">
+          Your previous session had <strong>{previous.total} items</strong> (
+          {previous.teams} teams, {previous.todoItems} todos, {previous.notes} notes);
+          this boot loaded <strong>{current.total} items</strong> (
+          {current.teams} teams, {current.todoItems} todos, {current.notes} notes).
+          Open Backups & Recovery to inspect or restore an earlier snapshot.
+        </span>
+      </div>
+      <div className="data-integrity-banner__actions">
+        <button
+          type="button"
+          className="data-integrity-banner__btn data-integrity-banner__btn--primary"
+          onClick={() => navigate(`${PATH_SETTINGS}#backups`)}
+        >
+          Open Backups
+        </button>
+        <button
+          type="button"
+          className="data-integrity-banner__btn"
+          onClick={dismissDataLossSuspicion}
+          aria-label="Dismiss (accept current state as the new normal)"
+          title="Dismiss (accept current state as the new normal)"
+        >
+          <IcX size={14} />
+        </button>
       </div>
     </div>
   );

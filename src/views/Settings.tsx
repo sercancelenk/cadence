@@ -62,11 +62,18 @@ import {
   setSyncPassphrase,
   subscribeSyncPassphrase,
 } from '../lib/syncSession';
+import {
+  PRESETS,
+  PRESET_LABELS,
+  useFeatures,
+  type PresetName,
+} from '../lib/features';
 
 export function Settings() {
   const { data, replaceAll } = useAppData();
   const { theme, setTheme } = useTheme();
   const { pinEnabled, refresh: refreshSession, lockSession } = useSession();
+  const { features, managed, source, setPreset } = useFeatures();
   const [path, setPath] = useState<string>('');
   const [appVersion, setAppVersion] = useState<string>('');
   const [newPin, setNewPin] = useState('');
@@ -123,6 +130,13 @@ export function Settings() {
           </Button>
         </div>
       </CollapsibleCard>
+
+      <AppProfileSection
+        features={features}
+        managed={managed}
+        source={source}
+        setPreset={setPreset}
+      />
 
       <CollapsibleCard id="pin" title="PIN protection" badge={pinEnabled ? 'Enabled' : 'Disabled'}>
         <p className="muted">
@@ -214,72 +228,83 @@ export function Settings() {
         </p>
       </CollapsibleCard>
 
-      <CollapsibleCard id="updates" title="Auto updates (GitHub Releases)" defaultOpen={false}>
-        <p className="muted">
-          When the packaged app launches, it checks GitHub Releases for a newer version. You can also check on demand below — a dialog will guide you through download and restart.
-        </p>
-        <div className="row" style={{ marginTop: 12 }}>
-          <Button
-            type="button"
-            variant="secondary"
-            icon={<IcRefresh size={17} />}
-            onClick={() => setUpdaterOpen(true)}
-          >
-            Check for updates
-          </Button>
-        </div>
-      </CollapsibleCard>
+      {features.updateCheck ? (
+        <>
+          <CollapsibleCard id="updates" title="Auto updates (GitHub Releases)" defaultOpen={false}>
+            <p className="muted">
+              When the packaged app launches, it checks GitHub Releases for a newer version. You can also check on demand below — a dialog will guide you through download and restart.
+            </p>
+            <div className="row" style={{ marginTop: 12 }}>
+              <Button
+                type="button"
+                variant="secondary"
+                icon={<IcRefresh size={17} />}
+                onClick={() => setUpdaterOpen(true)}
+              >
+                Check for updates
+              </Button>
+            </div>
+          </CollapsibleCard>
 
-      <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
+          <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
+        </>
+      ) : null}
 
       <CollapsibleCard id="data-location" title="Data location (Electron)" defaultOpen={false}>
         {path ? <pre className="pre">{path}</pre> : <p className="muted">No Electron data path available; in the browser preview, data lives in localStorage.</p>}
         <p className="muted small">File name pattern: {DATA_FILE_PREFIX}-data-&lt;userId&gt;.json</p>
       </CollapsibleCard>
 
-      <CollapsibleCard id="backup" title="Backup">
-        <div className="row">
-          <Button type="button" variant="primary" icon={<IcDownload size={17} />} onClick={exportJson}>
-            Export JSON
-          </Button>
-          <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={() => fileRef.current?.click()}>
-            Import JSON
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="application/json,.json"
-            hidden
-            onChange={async (e) => {
-              const f = e.target.files?.[0];
-              e.target.value = '';
-              if (!f) return;
-              try {
-                const text = await f.text();
-                const parsed = JSON.parse(text) as AppData;
-                replaceAll(parsed);
-              } catch {
-                window.alert('Could not read the file or the JSON is invalid.');
-              }
-            }}
-          />
-        </div>
-        <p className="muted small" style={{ marginTop: 8 }}>
-          Importing replaces your existing data. Always export a backup first. Backups exported by older
-          builds (file name <code>leeadman-backup-*.json</code>) work too — the importer reads the JSON
-          contents, not the filename.
-        </p>
-      </CollapsibleCard>
+      {features.dataExport ? (
+        <CollapsibleCard id="backup" title="Backup">
+          <div className="row">
+            <Button type="button" variant="primary" icon={<IcDownload size={17} />} onClick={exportJson}>
+              Export JSON
+            </Button>
+            <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={() => fileRef.current?.click()}>
+              Import JSON
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (!f) return;
+                try {
+                  const text = await f.text();
+                  const parsed = JSON.parse(text) as AppData;
+                  replaceAll(parsed);
+                } catch {
+                  window.alert('Could not read the file or the JSON is invalid.');
+                }
+              }}
+            />
+          </div>
+          <p className="muted small" style={{ marginTop: 8 }}>
+            Importing replaces your existing data. Always export a backup first. Backups exported by older
+            builds (file name <code>leeadman-backup-*.json</code>) work too — the importer reads the JSON
+            contents, not the filename.
+          </p>
+        </CollapsibleCard>
+      ) : null}
 
+      {/* Backups & Recovery is the IN-APP restore flow (snapshots stored on
+          disk by the main process). It does NOT exfiltrate data — even on
+          work-strict, IT typically wants users to be able to recover their
+          own workspace. We keep this visible regardless of the dataExport
+          flag, which only governs file-out / file-in. */}
       <BackupsRecoverySection />
 
       <StorageCacheSection />
 
-      <SyncSection />
+      {features.sync.lan ? <SyncSection /> : null}
 
-      <CloudSyncSection />
+      {features.sync.cloud ? <CloudSyncSection /> : null}
 
-      <AISettingsSection />
+      {features.ai ? <AISettingsSection /> : null}
 
       <CollapsibleCard id="reminders" title="Reminders" defaultOpen={false}>
         <p className="muted">
@@ -2284,6 +2309,23 @@ function BackupsRecoverySection() {
     }
     setBusy(true);
     setMsg(null);
+    // Capture the *target snapshot's* counts before we run the restore so
+    // we can tell the user exactly what they'll see after reload. This
+    // turns the previously silent "I clicked restore and nothing visibly
+    // happened" into a concrete confirmation:
+    //   "Restored: 3 teams, 12 tasks, 5 notes."
+    const targetSnapshot = sources?.backups.find((b) => b.path === filePath)
+      || (sources?.live?.path === filePath ? sources.live : null)
+      || (sources?.legacy?.path === filePath ? sources.legacy : null)
+      || sources?.otherUsers.find((o) => o.path === filePath)
+      || null;
+    const c = targetSnapshot?.counts;
+    const restoredShapeText = c
+      ? `${c.teams ?? 0} team${(c.teams ?? 0) === 1 ? '' : 's'}, ` +
+        `${c.todoItems ?? 0} task${(c.todoItems ?? 0) === 1 ? '' : 's'}, ` +
+        `${c.notes ?? 0} note${(c.notes ?? 0) === 1 ? '' : 's'}` +
+        (c.todoGroupsArchived ? ` (${c.todoGroupsArchived} archived list${c.todoGroupsArchived === 1 ? '' : 's'})` : '')
+      : '';
     try {
       const r = await window.cadence!.dataRestoreFromSource!({ filePath });
       if (r.ok) {
@@ -2294,7 +2336,13 @@ function BackupsRecoverySection() {
         // doesn't see "error" + "success" stacked, which was the source
         // of the "uyarı çıktı ama data yüklemiş" confusion.
         setSaveError(null);
-        setMsg({ kind: 'ok', text: `Restored from ${r.restoredFrom ?? label}. Reloading…` });
+        const headline = `Restored from ${r.restoredFrom ?? label}.`;
+        setMsg({
+          kind: 'ok',
+          text: restoredShapeText
+            ? `${headline} Loaded: ${restoredShapeText}.`
+            : `${headline} Reloading…`,
+        });
         await reload();
         await refresh();
       } else {
@@ -2666,13 +2714,28 @@ function DataSourceRow({
     );
   }
   const c = info.counts;
+  // Build the human summary. Tasks and notes are the two things users
+  // most often ask "where did my X go?" about, so we always show those
+  // counts even when zero. Other counts only show when non-zero to keep
+  // the line short.
   const dataSummary = c
     ? [
         c.teams ? `${c.teams} team${c.teams === 1 ? '' : 's'}` : null,
         c.people ? `${c.people} people` : null,
         c.items ? `${c.items} items` : null,
-        c.todoGroups ? `${c.todoGroups} lists` : null,
-        c.todoItems ? `${c.todoItems} tasks` : null,
+        // For todo groups we include the archived split when relevant —
+        // that's the exact failure mode the user reported ("Todos sayfası
+        // boş ama backup'ta data var"). Seeing "2 lists (2 archived)"
+        // makes the diagnosis obvious from the recovery viewer alone.
+        c.todoGroups
+          ? `${c.todoGroups} list${c.todoGroups === 1 ? '' : 's'}${
+              c.todoGroupsArchived ? ` (${c.todoGroupsArchived} archived)` : ''
+            }`
+          : null,
+        `${c.todoItems ?? 0} task${(c.todoItems ?? 0) === 1 ? '' : 's'}`,
+        `${c.notes ?? 0} note${(c.notes ?? 0) === 1 ? '' : 's'}${
+          c.notesLocked ? ` (${c.notesLocked} locked)` : ''
+        }`,
       ]
         .filter(Boolean)
         .join(' · ') || 'empty'
@@ -2681,6 +2744,21 @@ function DataSourceRow({
     : info.error
     ? `error: ${info.error}`
     : 'unreadable';
+
+  // Same "everything archived → looks empty" red flag the TodosPage
+  // empty-state handles, but visible right inside Backups & Recovery so
+  // the user can spot a snapshot taken AFTER the accidental archive vs
+  // a healthier one taken before.
+  const allGroupsArchived =
+    !!c && (c.todoGroups ?? 0) > 0 && (c.todoGroupsArchived ?? 0) === c.todoGroups;
+  // notesLock object exists but no notes are locked — orphan lock that
+  // would cause "your notes ask for a passphrase that never works"
+  // confusion. New normalize() strips this on load, but the indicator
+  // helps users avoid restoring an older snapshot that still carries
+  // the orphan.
+  const orphanNotesLock = !!c && c.hasNotesLock && !c.notesLocked;
+
+  const canReveal = typeof window !== 'undefined' && !!window.cadence?.revealInOS;
 
   return (
     <div className="list__row" style={{ marginBottom: 8 }}>
@@ -2692,20 +2770,64 @@ function DataSourceRow({
           {info.encrypted ? ' · encrypted' : ''}
           {info.bytes != null ? ` · ${formatBytes(info.bytes)}` : ''}
         </div>
+        {(allGroupsArchived || orphanNotesLock) ? (
+          <div
+            className="small"
+            style={{
+              marginTop: 4,
+              color: '#b45309',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+            }}
+          >
+            {allGroupsArchived ? (
+              <span>
+                ⚠ All todo lists in this snapshot are archived — restoring will look like
+                "empty Todos page". Turn on "Show archived" in Todos after restore.
+              </span>
+            ) : null}
+            {orphanNotesLock ? (
+              <span>
+                ⚠ This snapshot carries a notes-lock object but no locked notes. The app
+                now auto-cleans this on load, but it&apos;s worth picking a cleaner snapshot
+                if you can.
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      {onRestore ? (
-        <Button
-          type="button"
-          variant="secondary"
-          icon={<IcUpload size={16} />}
-          onClick={() => onRestore(info.path)}
-          disabled={info.encrypted && !info.decryptable}
-        >
-          Restore
-        </Button>
-      ) : (
-        <span className="muted small">live</span>
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {canReveal ? (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={async () => {
+              try {
+                await window.cadence!.revealInOS!({ filePath: info.path });
+              } catch (err) {
+                console.warn('[cadence] revealInOS failed', err);
+              }
+            }}
+            title="Show this file in Finder / Explorer"
+          >
+            Reveal
+          </Button>
+        ) : null}
+        {onRestore ? (
+          <Button
+            type="button"
+            variant="secondary"
+            icon={<IcUpload size={16} />}
+            onClick={() => onRestore(info.path)}
+            disabled={info.encrypted && !info.decryptable}
+          >
+            Restore
+          </Button>
+        ) : (
+          <span className="muted small">live</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -2734,4 +2856,228 @@ function formatRelativeTime(iso: string | undefined) {
   const days = Math.round(h / 24);
   if (days < 14) return `${days}d ago`;
   return d.toLocaleString();
+}
+
+// ─── App profile (feature presets / enterprise policy) ─────────────────────────
+//
+// Top-of-Settings card that shows the currently active feature preset and
+// either lets the user switch between Personal / Work-Standard / Work-Strict
+// (when no policy file is in effect) or surfaces a "Managed by your
+// organization" badge with the policy path (when one is).
+//
+// The card is intentionally the SECOND card on the Settings page (right
+// after Appearance) — it's the discoverable place where a user notices
+// that some features are gated, and learns what the work modes mean.
+
+type AppProfileSectionProps = {
+  features: ReturnType<typeof useFeatures>['features'];
+  managed: ReturnType<typeof useFeatures>['managed'];
+  source: ReturnType<typeof useFeatures>['source'];
+  setPreset: ReturnType<typeof useFeatures>['setPreset'];
+};
+
+function AppProfileSection({ features, managed, source, setPreset }: AppProfileSectionProps) {
+  const currentPreset: PresetName | 'custom' = (() => {
+    // Match against the three named presets; otherwise call it "custom"
+    // (a policy.json with granular overrides falls here).
+    for (const name of ['personal', 'work-standard', 'work-strict'] as PresetName[]) {
+      const p = PRESETS[name];
+      if (
+        p.sync.lan === features.sync.lan &&
+        p.sync.cloud === features.sync.cloud &&
+        p.ai === features.ai &&
+        p.dataExport === features.dataExport &&
+        p.updateCheck === features.updateCheck
+      ) {
+        return name;
+      }
+    }
+    return 'custom';
+  })();
+
+  const badgeText = managed
+    ? 'Managed by organization'
+    : currentPreset === 'custom'
+      ? 'Custom'
+      : PRESET_LABELS[currentPreset].title;
+
+  return (
+    <CollapsibleCard
+      id="app-profile"
+      title="App profile"
+      defaultOpen={false}
+      badge={badgeText}
+    >
+      {managed ? (
+        <div className="app-profile__managed">
+          <p>
+            <strong>
+              {source.kind === 'distribution'
+                ? 'This is the Cadence for Work build.'
+                : 'This device is managed by your organization.'}
+            </strong>{' '}
+            Sync, AI, export and update settings are{' '}
+            {source.kind === 'distribution'
+              ? 'baked into this build flavor'
+              : 'governed by a policy file deployed to this machine'}
+            . You can&apos;t change the preset here — contact your IT administrator if something
+            isn&apos;t right.
+          </p>
+          {source.kind === 'policy' ? (
+            <dl className="app-profile__meta">
+              <dt>Policy path</dt>
+              <dd>
+                <code>{source.path}</code>
+              </dd>
+              {source.managedBy ? (
+                <>
+                  <dt>Managed by</dt>
+                  <dd>{source.managedBy}</dd>
+                </>
+              ) : null}
+              {source.preset ? (
+                <>
+                  <dt>Base preset</dt>
+                  <dd>{PRESET_LABELS[source.preset].title}</dd>
+                </>
+              ) : null}
+            </dl>
+          ) : null}
+          {source.kind === 'distribution' ? (
+            <dl className="app-profile__meta">
+              <dt>Build flavor</dt>
+              <dd>Cadence for Work ({source.distribution})</dd>
+              {source.policyHint ? (
+                <>
+                  <dt>Sidecar policy</dt>
+                  <dd>
+                    <code>{source.policyHint.path}</code>
+                  </dd>
+                  {source.policyHint.managedBy ? (
+                    <>
+                      <dt>Managed by</dt>
+                      <dd>{source.policyHint.managedBy}</dd>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
+            </dl>
+          ) : null}
+          <FeatureGrid features={features} />
+        </div>
+      ) : (
+        <div className="app-profile__picker">
+          <p className="muted small">
+            Choose the profile that matches where you&apos;ll use Cadence. You can change this any
+            time — the app remembers your choice on this device.
+          </p>
+          <div className="app-profile__presets">
+            {(['personal', 'work-standard', 'work-strict'] as PresetName[]).map((name) => {
+              const label = PRESET_LABELS[name];
+              const selected = currentPreset === name;
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  className={`app-profile__card${selected ? ' app-profile__card--selected' : ''}`}
+                  onClick={() => setPreset(name)}
+                  aria-pressed={selected}
+                >
+                  <div className="app-profile__card-head">
+                    <span className="app-profile__card-title">{label.title}</span>
+                    {selected ? <span className="app-profile__card-badge">Active</span> : null}
+                  </div>
+                  <p className="app-profile__card-desc">{label.description}</p>
+                  <FeatureChips preset={name} />
+                </button>
+              );
+            })}
+          </div>
+          {currentPreset === 'custom' ? (
+            <p className="muted small" style={{ marginTop: 12 }}>
+              The active configuration matches none of the three named presets — selecting a card
+              above will overwrite it.
+            </p>
+          ) : null}
+        </div>
+      )}
+    </CollapsibleCard>
+  );
+}
+
+function FeatureChips({ preset }: { preset: PresetName }) {
+  const f = PRESETS[preset];
+  const chips: { label: string; on: boolean }[] = [
+    { label: 'LAN sync', on: f.sync.lan },
+    { label: 'Cloud sync', on: f.sync.cloud },
+    { label: 'AI assistant', on: f.ai },
+    { label: 'Data export', on: f.dataExport },
+    { label: 'Auto updates', on: f.updateCheck },
+  ];
+  return (
+    <ul className="app-profile__chips">
+      {chips.map((c) => (
+        <li
+          key={c.label}
+          className={`app-profile__chip app-profile__chip--${c.on ? 'on' : 'off'}`}
+          aria-label={`${c.label}: ${c.on ? 'enabled' : 'disabled'}`}
+        >
+          <span aria-hidden>{c.on ? '✓' : '×'}</span>
+          {c.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function FeatureGrid({
+  features,
+}: {
+  features: AppProfileSectionProps['features'];
+}) {
+  const rows: { label: string; on: boolean; hint: string }[] = [
+    {
+      label: 'LAN sync',
+      on: features.sync.lan,
+      hint: "Same-Wi-Fi device pairing (data stays inside the company network).",
+    },
+    {
+      label: 'Cloud sync',
+      on: features.sync.cloud,
+      hint: "End-to-end encrypted snapshots in Google Drive.",
+    },
+    {
+      label: 'AI assistant',
+      on: features.ai,
+      hint: "Bring-your-own-key calls to OpenAI / Anthropic from the renderer.",
+    },
+    {
+      label: 'Data export',
+      on: features.dataExport,
+      hint: "JSON backup downloads from the Backup card.",
+    },
+    {
+      label: 'Auto updates',
+      on: features.updateCheck,
+      hint: "Periodic + manual checks against GitHub Releases.",
+    },
+  ];
+  return (
+    <ul className="app-profile__grid">
+      {rows.map((r) => (
+        <li
+          key={r.label}
+          className={`app-profile__row app-profile__row--${r.on ? 'on' : 'off'}`}
+        >
+          <span className="app-profile__row-label">
+            <span className="app-profile__row-icon" aria-hidden>
+              {r.on ? '✓' : '×'}
+            </span>
+            {r.label}
+          </span>
+          <span className="muted small">{r.hint}</span>
+        </li>
+      ))}
+    </ul>
+  );
 }

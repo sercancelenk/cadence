@@ -4,6 +4,7 @@ import {
   IcCalendar,
   IcCheck,
   IcChevronDown,
+  IcChevronRight,
   IcClock,
   IcGrip,
   IcLayoutGrid,
@@ -11,6 +12,7 @@ import {
   IcPlus,
   IcSparkles,
   IcStar,
+  IcStickyNote,
   IcTrash,
 } from '../components/icons';
 import { useAccount } from '../AccountContext';
@@ -26,8 +28,16 @@ const AITaskExtractorDialog = lazy(() =>
   import('../components/AITaskExtractorDialog').then((m) => ({ default: m.AITaskExtractorDialog })),
 );
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
+// MarkdownEditor pulls in react-markdown + remark-gfm (the same chunk
+// the Notes page uses). We lazy-load it here so the initial Todos page
+// payload stays light — most users never expand a task's body, and the
+// editor only mounts when somebody actually clicks "details".
+const MarkdownEditor = lazy(() =>
+  import('../components/ui/MarkdownEditor').then((m) => ({ default: m.MarkdownEditor })),
+);
 import { SchedulePopover, type SchedulePatch } from '../components/ui/SchedulePopover';
 import { isAIConfigured } from '../lib/ai';
+import { useFeatures } from '../lib/features';
 import { formatDateShort, formatTimeOnly, isPast } from '../lib/datetime';
 import { PRIORITY_OPTIONS, priorityRank, TODO_STATUS_OPTIONS, isTodoOpen, todoStatusRank } from '../model';
 import type { Priority, TodoGroup, TodoItem, TodoStatus } from '../model';
@@ -185,7 +195,7 @@ type TodoTaskRowProps = {
   onPatch: (
     id: string,
     patch: Partial<
-      Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'priority' | 'status' | 'remindAt' | 'remindRepeat'>
+      Pick<TodoItem, 'title' | 'body' | 'groupId' | 'dueAt' | 'priority' | 'status' | 'remindAt' | 'remindRepeat'>
     >,
   ) => void;
   onToggle: (id: string) => void;
@@ -218,6 +228,35 @@ function TodoTaskRow({
   const [draftTitle, setDraftTitle] = useState(item.title);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Markdown details: open by default if the task already has a body
+  // (otherwise hide it so the row stays compact for the 80% of tasks
+  // that are quick one-liners). The toggle button switches modes and
+  // the editor lazy-loads on first open, same chunk Notes uses.
+  const [detailsOpen, setDetailsOpen] = useState<boolean>(!!item.body);
+  // Inline draft so the textarea is responsive (we don't want every
+  // keystroke to round-trip through the global store before it shows
+  // up). Patches are pushed on blur and on detail-close so the live
+  // file stays in step with what the user sees — matches Notes-page
+  // semantics.
+  const [draftBody, setDraftBody] = useState<string>(item.body ?? '');
+  // Track the most recently committed body so an external change (sync
+  // pull, another window) re-syncs the local draft. We only adopt the
+  // upstream value when our draft equals the previously seen one — that
+  // way we never clobber un-committed typing in the editor.
+  const lastCommittedBodyRef = useRef<string>(item.body ?? '');
+  useEffect(() => {
+    const upstream = item.body ?? '';
+    if (upstream !== lastCommittedBodyRef.current && upstream !== draftBody) {
+      setDraftBody(upstream);
+    }
+    lastCommittedBodyRef.current = upstream;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.body]);
+  const commitBody = () => {
+    if (draftBody !== (item.body ?? '')) {
+      onPatch(item.id, { body: draftBody });
+    }
+  };
   // The schedule trigger ref is forwarded to the popover so the popover's
   // outside-click detection ignores re-clicks on the trigger itself
   // (otherwise close+immediate-reopen ping-pongs around setState batching).
@@ -470,6 +509,37 @@ function TodoTaskRow({
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              className={`todos-row__details-btn${detailsOpen ? ' todos-row__details-btn--open' : ''}${
+                item.body ? ' todos-row__details-btn--has-body' : ''
+              }`}
+              title={
+                detailsOpen
+                  ? 'Hide details'
+                  : item.body
+                  ? 'Show details (this task has notes)'
+                  : 'Add details'
+              }
+              aria-label={detailsOpen ? 'Hide details' : 'Show details'}
+              aria-expanded={detailsOpen}
+              onClick={() => {
+                // Closing the panel commits the draft body so anything the
+                // user typed but never blurred out of doesn't get lost
+                // when the editor unmounts.
+                if (detailsOpen) commitBody();
+                setDetailsOpen((o) => !o);
+              }}
+            >
+              <IcStickyNote size={14} />
+              <IcChevronRight
+                size={10}
+                style={{
+                  transform: detailsOpen ? 'rotate(90deg)' : 'none',
+                  transition: 'transform 120ms ease',
+                }}
+              />
+            </button>
             {aiEnabled ? (
               <button
                 type="button"
@@ -496,6 +566,62 @@ function TodoTaskRow({
             </button>
           </div>
         </div>
+
+        {detailsOpen ? (
+          // Lazy-mounted markdown editor + preview. We render the
+          // Suspense fallback as a thin skeleton because the editor
+          // chunk is small enough that the swap is usually instant on
+          // a warm cache — a heavier loader would feel like a hitch.
+          //
+          // The editor lives INSIDE the row (not as a popover or modal)
+          // so the surrounding context (status pills, due date, group
+          // tag) stays visible while the user writes. That's the same
+          // reason the Notes page picked an inline editor over a
+          // separate "Edit" view.
+          <div className="todos-row__details" role="region" aria-label="Task details">
+            <Suspense
+              fallback={
+                <div className="todos-row__details-loading muted small">Loading editor…</div>
+              }
+            >
+              <MarkdownEditor
+                value={draftBody}
+                onChange={setDraftBody}
+                onBlur={commitBody}
+                placeholder="Add details — notes, links, checklists, code… markdown supported."
+                rows={6}
+                initialMode={item.body ? 'preview' : 'edit'}
+              />
+            </Suspense>
+          </div>
+        ) : item.body ? (
+          // Closed-but-has-body summary: a one-line "this task has
+          // notes" hint so the user can see at a glance which rows
+          // carry hidden context. Click anywhere on the hint to open
+          // the editor — saves the precise icon-click on touch screens.
+          <button
+            type="button"
+            className="todos-row__details-hint"
+            onClick={() => setDetailsOpen(true)}
+            title="Show details"
+          >
+            <IcStickyNote size={12} />
+            <span>
+              {(() => {
+                // First non-empty line, capped to ~80 chars so the row
+                // doesn't grow unbounded. We strip markdown syntax for
+                // the inline tease — full rendering happens when the
+                // user expands the panel.
+                const firstLine = (item.body ?? '')
+                  .split('\n')
+                  .map((s) => s.trim())
+                  .find((s) => s.length > 0) ?? '';
+                const stripped = firstLine.replace(/[#>*_`~\-]/g, '').trim();
+                return stripped.length > 80 ? `${stripped.slice(0, 80)}…` : stripped;
+              })()}
+            </span>
+          </button>
+        ) : null}
       </div>
     </li>
   );
@@ -523,6 +649,17 @@ export function TodosPage() {
   const [newGroupName, setNewGroupName] = useState('');
   const [newListOpen, setNewListOpen] = useState(false);
   const [draftByGroup, setDraftByGroup] = useState<Record<string, string>>({});
+  // Optional markdown body draft per group. We keep it separate from the
+  // title draft so a user who never expands the "Add details" toggle
+  // never pays the markdown editor's hydration cost. Cleared whenever a
+  // task is submitted or the add form is dismissed.
+  const [bodyDraftByGroup, setBodyDraftByGroup] = useState<Record<string, string>>({});
+  // Per-group "details panel is open in the new-task form" flag. We
+  // intentionally do NOT persist this to localStorage — the expand
+  // state is a per-attempt UI affordance, not a preference. If the
+  // user wants their next task to have details too, expanding again
+  // is one tap.
+  const [addExpandedGroupId, setAddExpandedGroupId] = useState<string | null>(null);
   const [addingGroupId, setAddingGroupId] = useState<string | null>(null);
   const [compact, setCompact] = useState(false);
   const [sectionOpenMap, setSectionOpenMap] = useState<Record<string, boolean>>({});
@@ -539,7 +676,13 @@ export function TodosPage() {
   const [aiTask, setAiTask] = useState<TodoItem | null>(null);
   const [extractorOpen, setExtractorOpen] = useState(false);
 
-  const aiEnabled = isAIConfigured(data.aiSettings);
+  // Two layers of "is AI usable here?":
+  //   1. `features.ai` — runtime policy / preset (work-strict turns this off
+  //      so the buttons NEVER appear, even if the user has an API key saved).
+  //   2. `isAIConfigured(aiSettings)` — user has actually entered an API key.
+  // Both must be true for any AI affordance to render.
+  const { features: appFeatures } = useFeatures();
+  const aiEnabled = appFeatures.ai && isAIConfigured(data.aiSettings);
   const allGroupsSorted = useMemo(() => sortGroups(data.todoGroups), [data.todoGroups]);
 
   const visibleGroups = useMemo(
@@ -651,7 +794,17 @@ export function TodosPage() {
   const groupById = useMemo(() => new Map(allGroupsSorted.map((g) => [g.id, g])), [allGroupsSorted]);
 
   const q = search.trim().toLowerCase();
-  const matchesQuery = (it: TodoItem) => !q || it.title.toLowerCase().includes(q);
+  // Search hits BOTH the title and the optional markdown body. Body
+  // matching is what made the old "I know I wrote a link about this
+  // somewhere" lookup miss in the title-only era; now any markdown
+  // detail field counts as part of the task's searchable surface.
+  // We lowercase the body on the fly — these collections are small
+  // enough (< 10k items in the most absurd cases) that the overhead is
+  // unmeasurable next to a single keystroke render.
+  const matchesQuery = (it: TodoItem) =>
+    !q ||
+    it.title.toLowerCase().includes(q) ||
+    (typeof it.body === 'string' && it.body.toLowerCase().includes(q));
 
   return (
     <div className="page todos-route">
@@ -751,34 +904,46 @@ export function TodosPage() {
         // device that finished a project) or the search/status filters
         // are too tight. Spell that out and offer the one-click fix so
         // they don't think their data was lost.
-        <section className="card todos-empty-hint">
-          <h3 className="todos-empty-hint__title">
-            {(() => {
-              const archived = allGroupsSorted.filter((g) => g.archived).length;
-              if (archived > 0 && archived === allGroupsSorted.length) {
-                const itemsInArchived = data.todoItems.filter((it) =>
-                  allGroupsSorted.some((g) => g.id === it.groupId && g.archived),
-                ).length;
-                return `All ${archived} of your lists are archived (${itemsInArchived} items inside).`;
-              }
-              return 'No lists match the current filters.';
-            })()}
-          </h3>
-          <p className="muted small todos-empty-hint__body">
-            {allGroupsSorted.every((g) => g.archived)
-              ? 'Turn on "Show archived" in the toolbar above to see them, or create a new list below.'
-              : 'Adjust the status filter or search box above, or create a new list below.'}
-          </p>
-          {allGroupsSorted.some((g) => g.archived) && !showArchived ? (
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => setShowArchived(true)}
+        //
+        // The "all-archived" case in particular has been reported as
+        // "data kayboldu" multiple times because the empty Todos page
+        // looks identical to a fresh install. We raise the visual
+        // weight (amber alarm variant + explicit item count) so the
+        // user immediately sees that the data is on disk, just hidden,
+        // and can recover with one click.
+        (() => {
+          const archived = allGroupsSorted.filter((g) => g.archived).length;
+          const allArchived = archived > 0 && archived === allGroupsSorted.length;
+          const itemsInArchived = data.todoItems.filter((it) =>
+            allGroupsSorted.some((g) => g.id === it.groupId && g.archived),
+          ).length;
+          return (
+            <section
+              className={`card todos-empty-hint${allArchived ? ' todos-empty-hint--alarm' : ''}`}
+              role={allArchived ? 'alert' : undefined}
             >
-              Show archived lists
-            </button>
-          ) : null}
-        </section>
+              <h3 className="todos-empty-hint__title">
+                {allArchived
+                  ? `⚠ Your data is safe — all ${archived} of your lists are archived (${itemsInArchived} items inside).`
+                  : 'No lists match the current filters.'}
+              </h3>
+              <p className="muted small todos-empty-hint__body">
+                {allArchived
+                  ? 'Your todos are still on disk. Click below to bring them back, or pick "Unarchive" from each list\'s menu to permanently restore it. (You can also restore an earlier snapshot from Settings → Backups & Recovery.)'
+                  : 'Adjust the status filter or search box above, or create a new list below.'}
+              </p>
+              {allArchived && !showArchived ? (
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => setShowArchived(true)}
+                >
+                  Show archived lists
+                </button>
+              ) : null}
+            </section>
+          );
+        })()
       ) : null}
 
       {visibleGroups.map((g, idx) => {
@@ -1084,50 +1249,96 @@ export function TodosPage() {
                   </ul>
                 )}
 
-                {addingGroupId === g.id ? (
-                  <form
-                    className="todos-add-inline todos-add-inline--multi"
-                    onSubmit={(e: FormEvent) => {
-                      e.preventDefault();
-                      if (!draft.trim()) {
-                        setAddingGroupId(null);
-                        return;
-                      }
-                      addTodoItem(g.id, draft.trim());
-                      setDraftByGroup((prev) => ({ ...prev, [g.id]: '' }));
+                {addingGroupId === g.id ? (() => {
+                  // Local helper bound to this group so the form is a
+                  // single submission path no matter whether the user
+                  // confirmed with Enter, ⌘/Ctrl+Enter, the Add button,
+                  // or onBlur. Cancellation cleans up BOTH drafts and
+                  // collapses the details panel so the next add starts
+                  // from a clean slate.
+                  const bodyDraft = bodyDraftByGroup[g.id] ?? '';
+                  const submitAdd = () => {
+                    const title = draft.trim();
+                    if (!title) {
                       setAddingGroupId(null);
-                    }}
-                  >
-                    <AutoResizeTextarea
-                      className="todos-add-inline__input todos-add-inline__textarea"
-                      placeholder={'Describe the task — Enter for a new line, ⌘/Ctrl+Enter to add'}
-                      value={draft}
-                      autoFocus
-                      minRows={3}
-                      maxRows={10}
-                      ariaLabel="New task"
-                      onChange={(v) => setDraftByGroup((prev) => ({ ...prev, [g.id]: v }))}
-                      onSubmit={() => {
-                        if (!draft.trim()) {
-                          setAddingGroupId(null);
-                          return;
-                        }
-                        addTodoItem(g.id, draft.trim());
-                        setDraftByGroup((prev) => ({ ...prev, [g.id]: '' }));
-                        setAddingGroupId(null);
+                      setAddExpandedGroupId((cur) => (cur === g.id ? null : cur));
+                      return;
+                    }
+                    addTodoItem(g.id, title, bodyDraft.trim() ? { body: bodyDraft } : undefined);
+                    setDraftByGroup((prev) => ({ ...prev, [g.id]: '' }));
+                    setBodyDraftByGroup((prev) => ({ ...prev, [g.id]: '' }));
+                    setAddingGroupId(null);
+                    setAddExpandedGroupId((cur) => (cur === g.id ? null : cur));
+                  };
+                  const cancelAdd = () => {
+                    setAddingGroupId(null);
+                    setAddExpandedGroupId((cur) => (cur === g.id ? null : cur));
+                  };
+                  const expanded = addExpandedGroupId === g.id;
+                  return (
+                    <form
+                      className={`todos-add-inline todos-add-inline--multi${
+                        expanded ? ' todos-add-inline--expanded' : ''
+                      }`}
+                      onSubmit={(e: FormEvent) => {
+                        e.preventDefault();
+                        submitAdd();
                       }}
-                      onCancel={() => setAddingGroupId(null)}
-                    />
-                    <div className="todos-add-inline__actions">
-                      <button type="submit" className="todos-add-inline__submit">
-                        Add
-                      </button>
-                      <button type="button" className="todos-add-inline__cancel" onClick={() => setAddingGroupId(null)}>
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                ) : (
+                    >
+                      <AutoResizeTextarea
+                        className="todos-add-inline__input todos-add-inline__textarea"
+                        placeholder={'Describe the task — Enter for a new line, ⌘/Ctrl+Enter to add'}
+                        value={draft}
+                        autoFocus
+                        minRows={3}
+                        maxRows={10}
+                        ariaLabel="New task"
+                        onChange={(v) => setDraftByGroup((prev) => ({ ...prev, [g.id]: v }))}
+                        onSubmit={submitAdd}
+                        onCancel={cancelAdd}
+                      />
+                      {expanded ? (
+                        <div className="todos-add-inline__body" role="region" aria-label="Task details">
+                          <Suspense
+                            fallback={
+                              <div className="todos-row__details-loading muted small">Loading editor…</div>
+                            }
+                          >
+                            <MarkdownEditor
+                              value={bodyDraft}
+                              onChange={(v) =>
+                                setBodyDraftByGroup((prev) => ({ ...prev, [g.id]: v }))
+                              }
+                              placeholder="Optional details — notes, links, checklists, code… markdown supported."
+                              rows={5}
+                              initialMode="edit"
+                            />
+                          </Suspense>
+                        </div>
+                      ) : null}
+                      <div className="todos-add-inline__actions">
+                        <button type="submit" className="todos-add-inline__submit">
+                          Add
+                        </button>
+                        <button
+                          type="button"
+                          className="todos-add-inline__details-toggle"
+                          aria-expanded={expanded}
+                          onClick={() =>
+                            setAddExpandedGroupId((cur) => (cur === g.id ? null : g.id))
+                          }
+                          title={expanded ? 'Hide details' : 'Add markdown details'}
+                        >
+                          <IcStickyNote size={14} />
+                          <span>{expanded ? 'Hide details' : 'Add details'}</span>
+                        </button>
+                        <button type="button" className="todos-add-inline__cancel" onClick={cancelAdd}>
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  );
+                })() : (
                   <button type="button" className="todos-add-task" onClick={() => setAddingGroupId(g.id)}>
                     <IcPlus size={18} className="todos-add-task__plus" strokeWidth={2.5} />
                     Add task

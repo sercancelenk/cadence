@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useAppData } from '../AppDataContext';
 import { askAI, AIError, buildTaskPrompt, isAIConfigured } from '../lib/ai';
+import { useFeatures } from '../lib/features';
 import { Button } from './ui/Button';
 import { MarkdownView } from './ui/MarkdownEditor';
 import { AutoResizeTextarea } from './ui/AutoResizeTextarea';
@@ -25,6 +26,7 @@ type Props = {
  */
 export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props) {
   const { data } = useAppData();
+  const { features } = useFeatures();
   const aiSettings = data.aiSettings;
 
   type Turn = { id: number; role: 'user' | 'assistant'; content: string };
@@ -62,8 +64,18 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
   }, []);
 
   if (!open) return null;
+  // Defence in depth — if a parent forgets to gate this dialog under the
+  // `features.ai` policy, the dialog itself refuses to open. The parent
+  // gating in TodosPage / People hides the entry-point button; this
+  // second gate makes the modal a true no-op even if someone wires it
+  // up through a different code path in the future.
+  if (!features.ai) return null;
 
   const send = async (prompt: string) => {
+    if (!features.ai) {
+      setError('AI is disabled by your organization policy.');
+      return;
+    }
     if (!isAIConfigured(aiSettings)) {
       setError('AI is not configured. Open Settings to add a provider and key.');
       return;

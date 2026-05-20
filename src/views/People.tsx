@@ -9,6 +9,7 @@ import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { Button } from '../components/ui/Button';
 import { MarkdownEditor, MarkdownView } from '../components/ui/MarkdownEditor';
 import { isAIConfigured } from '../lib/ai';
+import { useFeatures } from '../lib/features';
 import { useAppData } from '../AppDataContext';
 import { distinctCategoriesForTeam, SUGGESTED_CATEGORIES } from '../lib/categories';
 import { fromLocalDatetimeValue, formatShort, isPast, toLocalDatetimeValue } from '../lib/datetime';
@@ -554,7 +555,10 @@ function KindSection({
   const [draftFeedbackKind, setDraftFeedbackKind] = useState<FeedbackKind>('coaching');
   const [aiTarget, setAiTarget] = useState<Item | null>(null);
   const { data } = useAppData();
-  const aiEnabled = isAIConfigured(data.aiSettings);
+  // Hide AI affordances entirely when the active policy/preset disables AI
+  // (e.g. work-strict). Otherwise fall back to the per-account API-key gate.
+  const { features: appFeatures } = useFeatures();
+  const aiEnabled = appFeatures.ai && isAIConfigured(data.aiSettings);
   const listId = `cat-${teamId}-${kind}`;
 
   return (

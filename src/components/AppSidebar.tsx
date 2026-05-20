@@ -27,6 +27,29 @@ export function AppSidebar({ collapsed }: Props) {
   const { data } = useAppData();
   const team = teamId ? data.teams.find((t) => t.id === teamId) : undefined;
 
+  // Compute small badges for nav links that have a "hidden by filter"
+  // failure mode. The point is to make data presence obvious from the
+  // sidebar so a user who walks into an "empty" Todos / Notes page can
+  // tell at a glance that the data is on disk and just filtered out.
+  //
+  // - Todos: open-todo count by default, plus an "(N archived)" hint
+  //   when every todo group has been archived (the exact failure mode
+  //   the user reported). Showing it in the sidebar means the user sees
+  //   the warning even before they click into the page.
+  // - Notes: locked vs unlocked split, again only when relevant.
+  const todoSummary = (() => {
+    const totalGroups = data.todoGroups.length;
+    const archivedGroups = data.todoGroups.filter((g) => g.archived).length;
+    const openTodos = data.todoItems.filter((t) => t.status !== 'done' && t.status !== 'cancelled').length;
+    const allArchived = totalGroups > 0 && archivedGroups === totalGroups;
+    return { openTodos, allArchived, archivedGroups, totalGroups };
+  })();
+  const notesSummary = (() => {
+    const total = data.notes.length;
+    const locked = data.notes.filter((n) => n.locked).length;
+    return { total, locked };
+  })();
+
   return (
     <aside className="app-sidebar" aria-label="Main navigation">
       <div className="app-sidebar__brand">
@@ -54,11 +77,31 @@ export function AppSidebar({ collapsed }: Props) {
             </span>
             {!collapsed ? <span>Teams</span> : null}
           </NavLink>
-          <NavLink to="/todos" className={linkCls} title="To-dos">
+          <NavLink
+            to="/todos"
+            className={linkCls}
+            title={
+              todoSummary.allArchived
+                ? `To-dos — all ${todoSummary.archivedGroups} lists archived (${todoSummary.openTodos} open todos hidden)`
+                : `To-dos — ${todoSummary.openTodos} open`
+            }
+          >
             <span className="app-sidebar__ic">
               <IcListTodo size={18} />
             </span>
             {!collapsed ? <span>To-dos</span> : null}
+            {!collapsed && (todoSummary.openTodos > 0 || todoSummary.allArchived) ? (
+              <span
+                className={`app-sidebar__badge${todoSummary.allArchived ? ' app-sidebar__badge--warn' : ''}`}
+                aria-label={
+                  todoSummary.allArchived
+                    ? `${todoSummary.openTodos} open todos hidden in archived lists`
+                    : `${todoSummary.openTodos} open todos`
+                }
+              >
+                {todoSummary.allArchived ? `${todoSummary.openTodos} ⚠` : todoSummary.openTodos}
+              </span>
+            ) : null}
           </NavLink>
           <NavLink to="/agenda" className={linkCls} title="Agenda">
             <span className="app-sidebar__ic">
@@ -66,11 +109,22 @@ export function AppSidebar({ collapsed }: Props) {
             </span>
             {!collapsed ? <span>Agenda</span> : null}
           </NavLink>
-          <NavLink to="/notes" className={linkCls} title="Notes">
+          <NavLink
+            to="/notes"
+            className={linkCls}
+            title={
+              notesSummary.locked > 0
+                ? `Notes — ${notesSummary.total} total (${notesSummary.locked} locked)`
+                : `Notes — ${notesSummary.total} total`
+            }
+          >
             <span className="app-sidebar__ic">
               <IcStickyNote size={18} />
             </span>
             {!collapsed ? <span>Notes</span> : null}
+            {!collapsed && notesSummary.total > 0 ? (
+              <span className="app-sidebar__badge">{notesSummary.total}</span>
+            ) : null}
           </NavLink>
           <NavLink to="/analytics" className={linkCls} title="Analytics">
             <span className="app-sidebar__ic">

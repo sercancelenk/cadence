@@ -58,7 +58,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
   const location = useLocation();
   const teamMatch = useMatch({ path: '/teams/:teamId/*', end: false });
   const activeTeamId = teamMatch?.params.teamId;
-  const { data, rememberTeam, toggleFavoriteTeam, updateTeam } = useAppData();
+  const { data, rememberTeam, toggleFavoriteTeam, updateTeam, flushPendingSave } = useAppData();
   const { user, logout } = useAccount();
   const { theme, toggle } = useTheme();
   const { pinEnabled, lockSession } = useSession();
@@ -237,6 +237,19 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
               type="button"
               className="profile-menu__link profile-menu__link--danger"
               onClick={async () => {
+                // CRITICAL data-loss guard: there may be a debounced save
+                // pending for the CURRENT user. If we logout first, the
+                // session is cleared, and the in-flight save either
+                //   (a) silently drops (uid null → data:save returns false), or
+                //   (b) — worse — writes the current user's payload into the
+                //       NEXT signed-in user's file if a fast logout→login
+                //       happens before the IPC resolves.
+                // Flushing here guarantees the user's last keystrokes are
+                // persisted under the right account before we tear the
+                // session down. The defence-in-depth `expectedUid` guard
+                // in the main process backstops this if something else
+                // bypasses the flow.
+                try { await flushPendingSave(); } catch { /* best effort */ }
                 await logout();
                 navigate('/login');
               }}

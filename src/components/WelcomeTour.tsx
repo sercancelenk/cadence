@@ -23,11 +23,12 @@
  *     `.surface` tokens (no inline colours).
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccount } from '../AccountContext';
 import { loadPair } from '../lib/lanSyncClient';
 import { loadStoredTokens, isClientConfigured } from '../lib/syncBackends/gdriveAuth';
+import { PRESET_LABELS, useFeatures, type PresetName } from '../lib/features';
 
 const COMPLETED_KEY = 'cadence.tour.completed.v1';
 
@@ -69,8 +70,10 @@ function looksLikeReturningDevice(): boolean {
 
 export function WelcomeTour() {
   const { user } = useAccount();
+  const { managed, hasUserPreset, setPreset, features } = useFeatures();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
+  const [chosenPreset, setChosenPreset] = useState<PresetName | null>(null);
 
   // Decide ONCE on mount whether this run should show the tour. We
   // recompute only when the account changes (e.g. user signs out
@@ -78,6 +81,11 @@ export function WelcomeTour() {
   const shouldShow = useMemo(() => {
     if (!user) return false;
     if (looksLikeReturningDevice()) return false;
+    // If the user already picked an "App profile" preset on this device
+    // (e.g. they completed an earlier tour and just signed up under a
+    // new account) we still want to show the welcome cards, but the
+    // policy/preset step itself becomes informational instead of a
+    // forced choice.
     return !readCompletedAccountIds().includes(user.id);
   }, [user]);
 
@@ -92,82 +100,167 @@ export function WelcomeTour() {
     markCompleted(user.id);
   };
 
-  const steps = [
-    {
+  type Step = {
+    title: string;
+    body: ReactNode;
+    /** Step-specific override for the "advance" button label. */
+    nextLabel?: string;
+    /** Whether the Next button is allowed to proceed (e.g. preset chosen). */
+    nextEnabled?: boolean;
+  };
+
+  // Three-step tour, with an EXTRA first step injected when the user
+  // hasn't yet chosen a preset and isn't on a managed device. That step
+  // is the single source of truth for "where will you use Cadence?".
+  const steps: Step[] = [];
+
+  const needsProfileStep = !managed && !hasUserPreset;
+
+  if (needsProfileStep) {
+    steps.push({
+      title: 'Where will you use Cadence?',
+      body: (
+        <>
+          <p>
+            Pick the profile that matches your situation. Cadence ships with three sensible
+            defaults; you can change this any time from Settings → App profile.
+          </p>
+          <div className="welcome-tour__presets">
+            {(['personal', 'work-standard', 'work-strict'] as PresetName[]).map((p) => {
+              const label = PRESET_LABELS[p];
+              const isSelected = chosenPreset === p;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  className={`welcome-tour__preset${isSelected ? ' welcome-tour__preset--selected' : ''}`}
+                  onClick={() => {
+                    setChosenPreset(p);
+                    setPreset(p);
+                  }}
+                  aria-pressed={isSelected}
+                >
+                  <span className="welcome-tour__preset-title">{label.title}</span>
+                  <span className="welcome-tour__preset-desc">{label.description}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ),
+      nextEnabled: chosenPreset !== null,
+    });
+  } else if (managed) {
+    steps.push({
       title: 'Welcome to Cadence',
       body: (
         <>
           <p>
-            Cadence is a local-first workspace for managing teams, notes, and to-dos. Everything you
-            create lives on your device by default — nothing leaves it unless you choose.
+            <strong>This device is managed by your organization.</strong> Sync, AI, export and
+            update settings have been pre-configured for you — you don&apos;t need to set anything
+            up. Anything that doesn&apos;t appear in Settings has been disabled by your
+            administrator.
           </p>
-          <ul className="welcome-tour__bullets">
-            <li>
-              <strong>To-dos</strong> with reminders, schedules, and status tracking.
-            </li>
-            <li>
-              <strong>Notes</strong> with optional passphrase-protected encryption.
-            </li>
-            <li>
-              <strong>Teams</strong>, people, agendas, and analytics.
-            </li>
-          </ul>
+          <p className="muted small">
+            See Settings → App profile for the full list of enabled features and the policy file
+            governing this device.
+          </p>
         </>
       ),
-    },
-    {
+    });
+  }
+
+  steps.push({
+    title: needsProfileStep ? "Here's what Cadence is" : 'Welcome to Cadence',
+    body: (
+      <>
+        <p>
+          Cadence is a local-first workspace for managing teams, notes, and to-dos. Everything you
+          create lives on your device by default — nothing leaves it unless you choose.
+        </p>
+        <ul className="welcome-tour__bullets">
+          <li>
+            <strong>To-dos</strong> with reminders, schedules, and status tracking.
+          </li>
+          <li>
+            <strong>Notes</strong> with optional passphrase-protected encryption.
+          </li>
+          <li>
+            <strong>Teams</strong>, people, agendas, and analytics.
+          </li>
+        </ul>
+      </>
+    ),
+  });
+
+  // Sync overview only makes sense when at least one sync backend is
+  // available under the current policy/preset. Otherwise we'd be teasing
+  // the user about a feature they can't actually use.
+  if (features.sync.lan || features.sync.cloud) {
+    steps.push({
       title: 'Sync across devices, on your terms',
       body: (
         <>
           <p>
-            Cadence has two ways to keep multiple devices in sync. Pick whichever fits how you
-            work — both are optional.
+            Cadence has up to two ways to keep multiple devices in sync — both optional, and you
+            can mix them. (Some options may be unavailable in your profile.)
           </p>
           <ul className="welcome-tour__bullets">
-            <li>
-              <strong>LAN sync</strong> — turn your computer into a tiny private host. Your phone
-              joins by scanning a QR code on the same Wi-Fi. No cloud, no account.
-            </li>
-            <li>
-              <strong>Cloud sync (Google Drive)</strong>{' '}
-              {isClientConfigured() ? (
-                <>— end-to-end encrypted, stored in your own Drive's hidden app folder.</>
-              ) : (
-                <>
-                  — available when your administrator configures a Google OAuth client ID. See
-                  Settings for current status.
-                </>
-              )}
-            </li>
+            {features.sync.lan ? (
+              <li>
+                <strong>LAN sync</strong> — turn your computer into a tiny private host. Your phone
+                joins by scanning a QR code on the same Wi-Fi. No cloud, no account.
+              </li>
+            ) : null}
+            {features.sync.cloud ? (
+              <li>
+                <strong>Cloud sync (Google Drive)</strong>{' '}
+                {isClientConfigured() ? (
+                  <>— end-to-end encrypted, stored in your own Drive&apos;s hidden app folder.</>
+                ) : (
+                  <>
+                    — available when your administrator configures a Google OAuth client ID. See
+                    Settings for current status.
+                  </>
+                )}
+              </li>
+            ) : null}
           </ul>
         </>
       ),
-    },
-    {
-      title: 'Two short setup steps (optional)',
-      body: (
-        <>
-          <p>You can start using Cadence right now without configuring anything. When you're ready:</p>
-          <ul className="welcome-tour__bullets">
+    });
+  }
+
+  steps.push({
+    title: 'A couple of next steps (all optional)',
+    body: (
+      <>
+        <p>You can start using Cadence right now without configuring anything. When you&apos;re ready:</p>
+        <ul className="welcome-tour__bullets">
+          {features.sync.lan || features.sync.cloud ? (
             <li>
-              Open <Link to="/settings">Settings → Cloud sync</Link> to pair a device or sign in to
-              Drive.
+              Open <Link to="/settings">Settings → Sync</Link> to pair a device or sign in to a
+              cloud backend.
             </li>
+          ) : null}
+          {features.ai ? (
             <li>
-              Add an AI provider key in Settings → AI assistant if you want intelligent note &amp; todo
-              extraction.
+              Add an AI provider key in Settings → AI assistant if you want intelligent note &amp;
+              todo extraction.
             </li>
-            <li>
-              For full guidance, see the README on GitHub — every feature is documented there.
-            </li>
-          </ul>
-        </>
-      ),
-    },
-  ];
+          ) : null}
+          <li>
+            See <Link to="/settings">Settings → App profile</Link> to review which features are
+            enabled on this device.
+          </li>
+        </ul>
+      </>
+    ),
+  });
 
   const cur = steps[step];
   const isLast = step === steps.length - 1;
+  const nextAllowed = cur.nextEnabled !== false;
 
   return (
     <div className="welcome-tour__backdrop" role="dialog" aria-modal="true" aria-labelledby="welcome-tour-title">
@@ -190,8 +283,13 @@ export function WelcomeTour() {
             Skip
           </button>
           {!isLast ? (
-            <button type="button" className="btn btn--primary" onClick={() => setStep((s) => s + 1)}>
-              Next
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={!nextAllowed}
+              onClick={() => setStep((s) => s + 1)}
+            >
+              {cur.nextLabel ?? 'Next'}
             </button>
           ) : (
             <button type="button" className="btn btn--primary" onClick={dismiss}>

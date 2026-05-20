@@ -1379,14 +1379,11 @@ function buildMenu() {
               {
                 label: 'Check for Updates…',
                 click: () => {
-                  if (app.isPackaged) {
-                    try {
-                      const { autoUpdater } = require('electron-updater');
-                      autoUpdater.checkForUpdatesAndNotify();
-                    } catch (e) {
-                      console.error('[cadence] auto-updater error', e);
-                    }
-                  }
+                  // Funnel through `runUpdateCheck` so the policy guard
+                  // applies here too — otherwise an enterprise build with
+                  // `updateCheck=false` could still hit GitHub via the
+                  // macOS app menu.
+                  void runUpdateCheck('menu', { force: true });
                 },
               },
               { type: 'separator' },
@@ -1581,6 +1578,16 @@ function broadcastUpdaterEvent(event) {
  * @returns {Promise<{ ok: boolean, skipped?: string }>}
  */
 async function runUpdateCheck(reason, opts = {}) {
+  // Defence in depth: policy or enterprise build may forbid hitting the
+  // GitHub Releases endpoint. The renderer hides the "Check for updates"
+  // button when `features.updateCheck` is false, but the periodic
+  // background timer below also calls this function — and so does the
+  // OS-level "Check for Updates…" menu item — so we must refuse here
+  // too. Air-gapped enterprise deployments rely on this.
+  if (!isFeatureAllowed('updateCheck')) {
+    console.log(`[cadence] skip update check (${reason}): disabled by policy`);
+    return { ok: false, skipped: 'policy' };
+  }
   const u = getAutoUpdater();
   if (!u) return { ok: false, skipped: 'no-updater' };
   if (updateCheckInFlight) return { ok: false, skipped: 'in-flight' };
@@ -1722,9 +1729,37 @@ ipcMain.handle('data:load', () => {
   return readUserData(uid);
 });
 
-ipcMain.handle('data:save', (_evt, payload) => {
+ipcMain.handle('data:save', (_evt, payload, expectedUid) => {
   const uid = readSessionUserId();
   if (!uid) return false;
+  // Defence in depth: the renderer can pass the user ID it BELIEVES is
+  // active when it queued the save. If the active session has flipped
+  // to a different user between the renderer scheduling the save and
+  // this IPC executing (fast logout → login race; in-flight debounced
+  // save from the previous account), we MUST NOT overwrite the new
+  // user's data file with the previous user's payload — that would
+  // destroy the new user's data and conflate two accounts' state.
+  //
+  // Callers that don't pass `expectedUid` (legacy compat) keep the old
+  // "trust the current session" behaviour. The renderer now always
+  // passes it via `AppDataContext.persist()` so this guard is live for
+  // the main code paths.
+  if (typeof expectedUid === 'string' && expectedUid && expectedUid !== uid) {
+    console.warn(
+      '[cadence] refusing data:save — session changed underneath the renderer',
+      { expectedUid, currentUid: uid },
+    );
+    if (mainWindow) {
+      try {
+        mainWindow.webContents.send('data:saveError', {
+          ok: false,
+          reason: 'session-changed',
+          error: 'Your save was discarded because the active session changed between when you typed and when the save was committed. The data was NOT written under the wrong account.',
+        });
+      } catch { /* ignore */ }
+    }
+    return false;
+  }
   const r = writeUserData(uid, payload);
   if (!r.ok && mainWindow) {
     // Surface destructive-write refusals to the renderer so it can show a
@@ -1809,14 +1844,37 @@ function inspectDataFile(filePath, uid) {
 
 function summarizeAppData(obj) {
   if (!obj || typeof obj !== 'object') return null;
+  // Pre-compute "archived" splits for todo groups so the Backups & Recovery
+  // viewer can flag a backup that's already in the failure mode the user
+  // reported (everything archived → looks empty in TodosPage). Lets the
+  // user pick a snapshot from BEFORE the accidental archive ran.
+  let todoGroupsArchived = 0;
+  if (Array.isArray(obj.todoGroups)) {
+    for (const g of obj.todoGroups) {
+      if (g && typeof g === 'object' && g.archived) todoGroupsArchived += 1;
+    }
+  }
+  // Locked-vs-unlocked notes split has the same diagnostic value (notesLock
+  // orphan = "I can't see my notes because the app keeps asking me for a
+  // passphrase that no longer unlocks anything"). We surface both counts.
+  let notesLocked = 0;
+  if (Array.isArray(obj.notes)) {
+    for (const n of obj.notes) {
+      if (n && typeof n === 'object' && n.locked) notesLocked += 1;
+    }
+  }
   return {
     teams: Array.isArray(obj.teams) ? obj.teams.length : 0,
     people: Array.isArray(obj.people) ? obj.people.length : 0,
     items: Array.isArray(obj.items) ? obj.items.length : 0,
     todoGroups: Array.isArray(obj.todoGroups) ? obj.todoGroups.length : 0,
+    todoGroupsArchived,
     todoItems: Array.isArray(obj.todoItems) ? obj.todoItems.length : 0,
+    notes: Array.isArray(obj.notes) ? obj.notes.length : 0,
+    notesLocked,
+    hasNotesLock: obj.notesLock && typeof obj.notesLock === 'object' ? true : false,
     lastTeamId: typeof obj.lastTeamId === 'string' ? obj.lastTeamId : undefined,
-    profileName: obj.profile && typeof obj.profile.name === 'string' ? obj.profile.name : undefined,
+    profileName: obj.profile && typeof obj.profile.displayName === 'string' ? obj.profile.displayName : undefined,
   };
 }
 
@@ -1964,6 +2022,29 @@ ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
 ipcMain.handle('data:openUserDataFolder', () => {
   shell.openPath(app.getPath('userData'));
   return { ok: true };
+});
+
+/**
+ * Reveal a specific file (typically a backup) in Finder / Explorer / the
+ * default file manager. Scoped to userData/ so a malicious renderer can't
+ * use this to enumerate arbitrary disk paths. The user uses this when they
+ * want to inspect a backup with a third-party tool (diff, jq, hex viewer)
+ * before deciding to restore it.
+ */
+ipcMain.handle('data:revealInOS', (_evt, { filePath } = {}) => {
+  if (typeof filePath !== 'string' || !filePath) return { ok: false, error: 'filePath required' };
+  const userData = app.getPath('userData');
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(path.resolve(userData))) {
+    return { ok: false, error: 'Refusing to reveal paths outside the app data folder.' };
+  }
+  if (!fs.existsSync(resolved)) return { ok: false, error: 'File no longer exists.' };
+  try {
+    shell.showItemInFolder(resolved);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 });
 
 // ─── Storage & cache diagnostics ─────────────────────────────────────────
@@ -2150,6 +2231,276 @@ ipcMain.handle('app:installUpdate', () => {
   });
   return { ok: true };
 });
+
+// ---------- IPC: policy (enterprise / shared-device gating) -------------------
+//
+// Cadence ships a single binary that can target both public users and
+// enterprise/work-device deployments. Enterprise admins (or self-install
+// scripts on smaller teams) drop a `policy.json` onto the machine; the
+// renderer's `useFeatures()` hook reads it via `policy:get` and gates UI
+// (Cloud sync, LAN sync, AI provider, backup export, update checks) based
+// on what the policy permits.
+//
+// We deliberately don't enforce policy in IPC handlers themselves — gating
+// at IPC level would mean every existing handler grows a "is this feature
+// permitted right now?" branch, which is both invasive and easy to get
+// wrong. Instead we:
+//   - Hide the entry points in the renderer when policy disables a feature.
+//   - Forbid LAN sync server start-up here when policy says so (defence in
+//     depth: even a buggy renderer can't spin up the LAN HTTPS server).
+// AI calls go directly from renderer to the LLM provider (no IPC), so the
+// renderer-side gate is sufficient for that path.
+//
+// Path precedence (first hit wins; an empty file or invalid JSON is logged
+// and the next path is tried):
+//   1. App bundle resources (immutable; signed into the .app/.exe).
+//      macOS: `Cadence.app/Contents/Resources/policy.json`
+//      Linux: `<asar root>/extraResources/policy.json` (when packaged).
+//   2. OS-managed location (MDM-friendly).
+//      macOS: `/Library/Managed Preferences/<appId>.policy.json`
+//      Windows: `%ProgramFiles%\Cadence\policy.json`
+//      Linux:  `/etc/cadence/policy.json`
+//   3. Shared admin location (self-install scripts).
+//      macOS: `/Library/Application Support/Cadence/policy.json`
+//      Windows: `%ProgramData%\Cadence\policy.json`
+//      Linux:  `/etc/cadence/policy.json` (already covered above; deduped)
+//   4. User-writable location (developer override / power user).
+//      `<userData>/policy.json`
+
+function candidatePolicyPaths() {
+  const candidates = [];
+
+  // The packaged app's display name. For the public build this is
+  // `Cadence`; for the enterprise build flavor it's `Cadence for Work`
+  // (set by electron-builder.enterprise.json). We deploy enterprise
+  // policies under the productName-derived directory because that's
+  // what electron's `app.getPath('userData')` already uses, but we
+  // ALSO check the canonical `APP_NAME` path so an IT team that ships
+  // a single policy.json file for a mixed fleet doesn't have to deploy
+  // twice. The dedup pass at the bottom collapses the duplicates on
+  // public-build machines where the two names are identical.
+  const productName = (() => {
+    try {
+      return typeof app.getName === 'function' ? app.getName() : APP_NAME;
+    } catch { return APP_NAME; }
+  })();
+  // Strip any dev-mode suffix (`Cadence (Dev)` → `Cadence`) when looking
+  // for an installed policy. Developers running with `npm run dev`
+  // already have ProductName="Cadence (Dev)" in `app.setName` (see top
+  // of this file); their machines should pick up the same policy as
+  // the packaged build for testing purposes.
+  const productNameClean = productName.replace(/\s+\(Dev\)$/i, '');
+
+  // 1. App bundle resources — read-only after install.
+  try {
+    const resourcesPath = process.resourcesPath || path.join(app.getAppPath(), '..');
+    candidates.push({
+      path: path.join(resourcesPath, 'policy.json'),
+      managedBy: 'app-bundle',
+    });
+  } catch (_e) { void _e; }
+
+  // 2. OS-managed (MDM) location.
+  if (process.platform === 'darwin') {
+    // Both `<appId>.policy.json` (preferred) and `policy.json` (legacy
+    // / older docs) are checked — MDM tools write the former, but a
+    // hand-edited deployment often produces the latter.
+    candidates.push({
+      path: `/Library/Managed Preferences/${APP_SLUG}.policy.json`,
+      managedBy: 'mdm',
+    });
+    candidates.push({
+      path: '/Library/Managed Preferences/cadence.policy.json',
+      managedBy: 'mdm',
+    });
+  } else if (process.platform === 'win32') {
+    const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
+    candidates.push({ path: path.join(pf, productNameClean, 'policy.json'), managedBy: 'admin' });
+    if (productNameClean !== APP_NAME) {
+      candidates.push({ path: path.join(pf, APP_NAME, 'policy.json'), managedBy: 'admin' });
+    }
+  } else {
+    candidates.push({
+      path: `/etc/${APP_SLUG}/policy.json`,
+      managedBy: 'admin',
+    });
+  }
+
+  // 3. Shared admin location. Check the productName-derived directory
+  //    first (enterprise build) and fall back to the canonical APP_NAME
+  //    directory (public build / mixed-fleet single-file deploys).
+  if (process.platform === 'darwin') {
+    candidates.push({ path: `/Library/Application Support/${productNameClean}/policy.json`, managedBy: 'admin' });
+    if (productNameClean !== APP_NAME) {
+      candidates.push({ path: `/Library/Application Support/${APP_NAME}/policy.json`, managedBy: 'admin' });
+    }
+  } else if (process.platform === 'win32') {
+    const pd = process.env['ProgramData'] || 'C:\\ProgramData';
+    candidates.push({ path: path.join(pd, productNameClean, 'policy.json'), managedBy: 'admin' });
+    if (productNameClean !== APP_NAME) {
+      candidates.push({ path: path.join(pd, APP_NAME, 'policy.json'), managedBy: 'admin' });
+    }
+  }
+
+  // 4. User-writable location — last resort, lowest precedence.
+  try {
+    candidates.push({
+      path: path.join(app.getPath('userData'), 'policy.json'),
+      managedBy: 'user',
+    });
+  } catch (_e) { void _e; }
+
+  // Dedup while preserving order: in the unusual case of two candidates
+  // resolving to the same absolute path, keep the higher-precedence one.
+  const seen = new Set();
+  return candidates.filter((c) => {
+    if (!c.path) return false;
+    if (seen.has(c.path)) return false;
+    seen.add(c.path);
+    return true;
+  });
+}
+
+/**
+ * Attempt to load a policy file from the first existing candidate path.
+ * Validates the JSON, normalises the payload to the shape the renderer
+ * expects (see `parsePolicy` in `src/lib/features.tsx`), and returns
+ * `null` when no candidate yields a valid policy.
+ *
+ * IMPORTANT: this MUST NOT throw — a malformed admin-supplied file should
+ * cause us to fall back to the user's preset (or default), not lock the
+ * user out of the app.
+ */
+function loadPolicy() {
+  const candidates = candidatePolicyPaths();
+  for (const cand of candidates) {
+    try {
+      if (!fs.existsSync(cand.path)) continue;
+      const text = fs.readFileSync(cand.path, 'utf8');
+      if (!text.trim()) continue;
+      let raw;
+      try {
+        raw = JSON.parse(text);
+      } catch (parseErr) {
+        console.warn(LOG_TAG, 'policy.json at', cand.path, 'is not valid JSON; skipping', parseErr);
+        continue;
+      }
+      if (!raw || typeof raw !== 'object') continue;
+
+      // Build the renderer-facing payload. Validation happens both here
+      // AND in `parsePolicy()` on the renderer side — defence in depth,
+      // and it keeps the IPC contract obvious.
+      const out = { path: cand.path, managedBy: typeof raw.managedBy === 'string' ? raw.managedBy : cand.managedBy };
+      if (typeof raw.preset === 'string' && (raw.preset === 'personal' || raw.preset === 'work-standard' || raw.preset === 'work-strict')) {
+        out.preset = raw.preset;
+      }
+      if (raw.features && typeof raw.features === 'object') {
+        const f = raw.features;
+        const features = {};
+        if (f.sync && typeof f.sync === 'object') {
+          const sync = {};
+          if (typeof f.sync.lan === 'boolean') sync.lan = f.sync.lan;
+          if (typeof f.sync.cloud === 'boolean') sync.cloud = f.sync.cloud;
+          if (Object.keys(sync).length) features.sync = sync;
+        }
+        if (typeof f.ai === 'boolean') features.ai = f.ai;
+        if (typeof f.dataExport === 'boolean') features.dataExport = f.dataExport;
+        if (typeof f.updateCheck === 'boolean') features.updateCheck = f.updateCheck;
+        if (Object.keys(features).length) out.features = features;
+      }
+      if (!out.preset && !out.features) {
+        console.warn(LOG_TAG, 'policy.json at', cand.path, 'has neither preset nor features; skipping');
+        continue;
+      }
+      console.log(LOG_TAG, 'policy loaded from', cand.path);
+      return out;
+    } catch (err) {
+      console.warn(LOG_TAG, 'policy load failed for', cand.path, err);
+    }
+  }
+  return null;
+}
+
+// Cache the result for the lifetime of the process. Policy is immutable
+// during a session by design — re-reading it on every renderer call would
+// invite a race where the UI flickers between gated/ungated states. Admins
+// who change policy.json need the user to restart the app, which is also
+// how Chrome / Edge enterprise policies behave.
+let _cachedPolicy = undefined;
+function getCachedPolicy() {
+  if (_cachedPolicy === undefined) _cachedPolicy = loadPolicy();
+  return _cachedPolicy;
+}
+
+/**
+ * Is this running on the locked enterprise build flavor (`Cadence for Work`)?
+ *
+ * The renderer learns its flavor at compile time via Vite's
+ * `import.meta.env.CADENCE_DISTRIBUTION` literal substitution; the main
+ * process has no such build-time hook because `main.cjs` is shipped
+ * verbatim by electron-builder. We instead infer the flavor from the
+ * `productName` set by `electron-builder.enterprise.json` (which is also
+ * what end-users see in their Applications folder), and additionally
+ * honour an explicit `CADENCE_DISTRIBUTION=enterprise` env var so a
+ * developer running `npm run dev` with that flag set still gets the
+ * defence-in-depth behaviour.
+ *
+ * This is the "policy is implied by the build" backstop — without it, a
+ * `Cadence for Work` install with NO policy.json on disk would allow
+ * `sync:enable` to start the LAN server even though the renderer
+ * (correctly) keeps the UI hidden.
+ */
+function isEnterpriseBuild() {
+  try {
+    if (process.env.CADENCE_DISTRIBUTION === 'enterprise') return true;
+    if (typeof app.getName === 'function' && app.getName() === 'Cadence for Work') return true;
+  } catch { /* ignore */ }
+  return false;
+}
+
+/**
+ * Resolve the "is feature X allowed by policy" decision for a single
+ * binary flag (lan, cloud, ai, dataExport, updateCheck). Mirrors the
+ * renderer's `resolveFeatures()` precedence but does NOT use any
+ * renderer code (main.cjs is plain Node, no Vite). Keep the rules in
+ * sync if you change them in `src/lib/features.tsx`.
+ *
+ * Order of precedence (highest wins):
+ *   1. Sidecar policy.json explicit flag value
+ *   2. Sidecar policy.json preset's value
+ *   3. Enterprise build → `work-strict` defaults (sync/cloud/ai/export = false, updates = true)
+ *   4. Public build → `personal` defaults (everything = true)
+ */
+function isFeatureAllowed(featurePath) {
+  const policy = getCachedPolicy();
+  const enterprise = isEnterpriseBuild();
+
+  const presetDefaults = {
+    personal:        { 'sync.lan': true,  'sync.cloud': true,  ai: true,  dataExport: true,  updateCheck: true },
+    'work-standard': { 'sync.lan': false, 'sync.cloud': false, ai: true,  dataExport: true,  updateCheck: true },
+    'work-strict':   { 'sync.lan': false, 'sync.cloud': false, ai: false, dataExport: false, updateCheck: true },
+  };
+
+  // 1. Explicit policy flag.
+  if (policy?.features) {
+    if (featurePath === 'sync.lan'    && typeof policy.features.sync?.lan    === 'boolean') return policy.features.sync.lan;
+    if (featurePath === 'sync.cloud'  && typeof policy.features.sync?.cloud  === 'boolean') return policy.features.sync.cloud;
+    if (featurePath === 'ai'          && typeof policy.features.ai          === 'boolean') return policy.features.ai;
+    if (featurePath === 'dataExport'  && typeof policy.features.dataExport  === 'boolean') return policy.features.dataExport;
+    if (featurePath === 'updateCheck' && typeof policy.features.updateCheck === 'boolean') return policy.features.updateCheck;
+  }
+
+  // 2. Policy preset.
+  if (policy?.preset && presetDefaults[policy.preset]) {
+    return presetDefaults[policy.preset][featurePath];
+  }
+
+  // 3 / 4. Build-implied baseline.
+  const base = enterprise ? presetDefaults['work-strict'] : presetDefaults.personal;
+  return base[featurePath];
+}
+
+ipcMain.handle('policy:get', () => getCachedPolicy());
 
 // ---------- IPC: auth (PIN) ---------------------------------------------------
 
@@ -2671,6 +3022,20 @@ ipcMain.handle('sync:status', () => {
 });
 
 ipcMain.handle('sync:enable', async () => {
+  // Defence in depth: the renderer hides Sync UI when policy or the
+  // enterprise build flavor forbids LAN sync, but a buggy or malicious
+  // renderer must not be able to spin up the LAN server anyway. The
+  // `isFeatureAllowed` helper combines sidecar policy, build flavor and
+  // preset defaults using the SAME precedence as the renderer (see
+  // `src/lib/features.tsx`), so this is a single source of truth.
+  if (!isFeatureAllowed('sync.lan')) {
+    return {
+      ok: false,
+      error:
+        'LAN sync is disabled by your organization policy. Contact your IT administrator if you need this enabled.',
+    };
+  }
+
   let cfg = readSyncConfig();
   if (!cfg.token) cfg.token = crypto.randomBytes(24).toString('base64url');
   cfg.enabled = true;
@@ -2748,6 +3113,18 @@ ipcMain.handle('sync:rotateToken', async () => {
 const GDRIVE_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 
 ipcMain.handle('gdrive:beginAuth', async (_evt, payload = {}) => {
+  // Defence in depth: cloud sync gating mirrors the LAN sync gating in
+  // `sync:enable`. The renderer hides the "Connect Drive" button when
+  // policy disables cloud sync, but a manually-issued IPC must still
+  // refuse to open a browser window for the OAuth handshake.
+  if (!isFeatureAllowed('sync.cloud')) {
+    return {
+      ok: false,
+      reason: 'policy-disabled',
+      detail:
+        'Cloud sync is disabled by your organization policy. Contact your IT administrator if you need this enabled.',
+    };
+  }
   const { clientId, scopes } = payload;
   if (typeof clientId !== 'string' || !clientId) {
     return { ok: false, reason: 'no-client-id', detail: 'Client ID is required.' };

@@ -941,6 +941,76 @@ code {
   background: color-mix(in srgb, var(--danger, #ef4444) 90%, black);
 }
 
+/* Boot-time data-loss suspicion banner. Amber tone (vs the SaveErrorBanner's
+   red) because this isn't a current failure — it's a "looks like something
+   happened between sessions" alarm. Same horizontal layout for muscle memory. */
+.data-integrity-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #f59e0b 40%, transparent);
+  color: var(--text, inherit);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.data-integrity-banner__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #b45309;
+  flex: 0 0 auto;
+}
+
+.data-integrity-banner__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.data-integrity-banner__detail {
+  opacity: 0.9;
+  word-break: break-word;
+}
+
+.data-integrity-banner__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.data-integrity-banner__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, #f59e0b 55%, transparent);
+  background: transparent;
+  color: var(--text, inherit);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.data-integrity-banner__btn:hover {
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+}
+
+.data-integrity-banner__btn--primary {
+  background: #f59e0b;
+  color: #1f1505;
+  border-color: transparent;
+}
+
+.data-integrity-banner__btn--primary:hover {
+  background: color-mix(in srgb, #f59e0b 90%, black);
+}
+
 .main--scroll {
   flex: 1;
   overflow: auto;
@@ -1655,6 +1725,46 @@ code {
   opacity: 0.92;
 }
 
+/* Small count chip on the right side of a sidebar link. Used to surface
+   "open todos" / "notes total" so an "empty looking" page is always
+   accompanied by a clear sign that data still exists. The --warn variant
+   means the count is hidden by filters (e.g. all groups archived) and
+   the user should investigate. */
+.app-sidebar__badge {
+  margin-left: auto;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(241, 243, 247, 0.92);
+  letter-spacing: 0;
+}
+
+.app-sidebar__badge--warn {
+  background: #f59e0b;
+  color: #1f1505;
+}
+
+:root[data-theme='light'] .app-sidebar__badge {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--text);
+}
+
+:root[data-theme='light'] .app-sidebar__badge--warn {
+  background: #f59e0b;
+  color: #1f1505;
+}
+
+.app-shell--nav-collapsed .app-sidebar__badge {
+  display: none;
+}
+
 .app-sidebar__ic .ui-ic {
   width: 18px;
   height: 18px;
@@ -2137,11 +2247,24 @@ code {
   padding: 18px 20px;
 }
 
+/* "Alarm" variant — used when every group is archived (the exact failure
+   mode the user reported as "data kayboldu"). Amber border + slightly
+   tinted background so it pops above the generic accent variant. The
+   user should never miss this in scrolling, even on a small screen. */
+.todos-empty-hint--alarm {
+  border-left-color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 10%, transparent);
+}
+
 .todos-empty-hint__title {
   margin: 0 0 6px;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+
+.todos-empty-hint--alarm .todos-empty-hint__title {
+  color: #b45309;
 }
 
 .todos-empty-hint__body {
@@ -2506,6 +2629,98 @@ code {
   color: var(--danger);
 }
 
+/* Inline markdown-details affordance.
+ *
+ * Three visual states:
+ *   1. Closed, empty body   → quiet icon (call to action)
+ *   2. Closed, has body     → tinted accent (this task carries notes)
+ *   3. Open                 → solid accent surface (currently editing)
+ *
+ * Chevron rotation is handled inline so it stays in sync with React
+ * state without an extra CSS class round-trip. */
+.todos-row__details-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--tp-muted);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.todos-row__details-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 30%, transparent);
+}
+
+.todos-row__details-btn--has-body {
+  color: var(--accent-2);
+}
+
+.todos-row__details-btn--open {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 35%, transparent);
+}
+
+/* The expanded details container sits flush against the row above and
+ * inherits its rounded corners on the bottom edge. Padding mirrors
+ * `.todos-row` so the content lines up visually. The editor itself
+ * provides its own internal padding/toolbar — we just give it a frame. */
+.todos-row__details {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--tp-divider);
+}
+
+:root[data-theme='light'] .todos-row__details {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.todos-row__details-loading {
+  padding: 12px;
+}
+
+/* Closed-but-has-body teaser: a small, clickable hint right under the
+ * row showing the first non-empty line of the body. Lets the user spot
+ * tasks with extra context without expanding every one. The button
+ * wraps so long lines don't overflow on narrow screens. */
+.todos-row__details-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--accent-2) 30%, transparent);
+  color: var(--tp-muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  max-width: 100%;
+}
+
+.todos-row__details-hint:hover {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+
+.todos-row__details-hint span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60ch;
+}
+
 .todos-add-task {
   display: inline-flex;
   align-items: center;
@@ -2541,6 +2756,48 @@ code {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  align-items: center;
+}
+
+/* "Add details" toggle inside the new-task form. Sits left of the
+ * primary Add button so the action stays right-anchored, and uses the
+ * same visual language as the per-row details button. We push it to
+ * the left with `margin-right: auto` so Add / Cancel still hug the
+ * right edge regardless of whether the toggle is present. */
+.todos-add-inline__details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed color-mix(in srgb, var(--accent-2) 35%, transparent);
+  background: transparent;
+  color: var(--tp-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.todos-add-inline__details-toggle:hover {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 55%, transparent);
+}
+
+.todos-add-inline__details-toggle[aria-expanded='true'] {
+  border-style: solid;
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+
+.todos-add-inline--expanded .todos-add-inline__body {
+  margin-top: 4px;
+}
+
+.todos-add-inline__body {
+  width: 100%;
 }
 
 .todos-add-inline__textarea {
@@ -6144,6 +6401,42 @@ details summary {
   }
 }
 
+.welcome-tour__presets {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.welcome-tour__preset {
+  appearance: none;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.welcome-tour__preset:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.welcome-tour__preset--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.welcome-tour__preset-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.welcome-tour__preset-desc {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 @media (max-width: 480px) {
   .welcome-tour__card {
     padding: 20px;
@@ -6151,4 +6444,167 @@ details summary {
   .welcome-tour__title {
     font-size: 18px;
   }
+}
+
+/* ─── App profile / feature preset picker ─────────────────────────────────
+ * Used by Settings → "App profile" card. Renders either a 3-card preset
+ * picker (when the user is in charge) or a managed-by-org read-only grid.
+ */
+
+.app-profile__managed {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-profile__meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 12px;
+  row-gap: 4px;
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.app-profile__meta dt {
+  color: var(--muted);
+  font-weight: 500;
+}
+.app-profile__meta dd {
+  margin: 0;
+  color: var(--text);
+}
+.app-profile__meta code {
+  word-break: break-all;
+}
+
+.app-profile__picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.app-profile__presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.app-profile__card {
+  appearance: none;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 14px 12px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+}
+.app-profile__card:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.app-profile__card--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.app-profile__card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.app-profile__card-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+}
+.app-profile__card-badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.app-profile__card-desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.app-profile__chips {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.app-profile__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted, color-mix(in srgb, var(--text) 5%, transparent));
+  color: var(--muted);
+}
+.app-profile__chip--on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.app-profile__chip--off {
+  opacity: 0.65;
+  text-decoration: line-through;
+}
+
+.app-profile__grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.app-profile__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+.app-profile__row--on {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.app-profile__row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.app-profile__row-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--muted);
+}
+.app-profile__row--on .app-profile__row-icon {
+  background: var(--accent);
+  color: #fff;
 }

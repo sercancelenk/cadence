@@ -49,6 +49,7 @@ import {
 import type {
   AISettings,
   AppData,
+  DataShape,
   Item,
   ItemKind,
   Note,
@@ -61,7 +62,7 @@ import type {
   TodoStatus,
   UserProfile,
 } from './model';
-import { normalizeData } from './model';
+import { normalizeData, shapeOfData } from './model';
 
 /**
  * Surfaced save failure. Either:
@@ -78,6 +79,32 @@ export type PersistError = {
   reason?: string;
   error?: string;
   /** ms since epoch of when we observed the failure. */
+  at: number;
+};
+
+/**
+ * Signal that we suspect this boot has loaded a smaller workspace than the
+ * user had at the end of their previous session. Set when the freshly
+ * loaded `shape.total` is meaningfully smaller than the
+ * "last-known-good" fingerprint we wrote to localStorage on the most
+ * recent successful save.
+ *
+ * We don't auto-recover: the right answer might be "the user really did
+ * delete those items themselves", and silently restoring a backup would
+ * be its own data-loss footgun. Instead we surface this state in a
+ * Layout-level banner ("Looks like data may be missing — review backups")
+ * and let the user trigger a restore explicitly.
+ *
+ * The banner is dismissable per-boot; dismissing also clears the
+ * suspicion (i.e. we accept the current state as the new normal). Until
+ * dismissed, the banner persists even if the user starts typing — that's
+ * intentional, because shape changes during the session would otherwise
+ * suppress a real "I just lost my data" warning.
+ */
+export type DataLossSuspicion = {
+  current: DataShape;
+  previous: DataShape;
+  /** ms since epoch of the suspicious boot. */
   at: number;
 };
 
@@ -103,6 +130,19 @@ type Api = {
   /** True while a save is currently in flight. */
   saving: boolean;
   clearSaveError: () => void;
+  /**
+   * If the file loaded at boot is meaningfully smaller than the
+   * last-known-good fingerprint we persisted at the end of the previous
+   * session, this becomes non-null and the Layout-level
+   * DataIntegrityBanner renders. The user can dismiss (= accept the
+   * current state as the new normal) or click through to Backups &
+   * Recovery to restore.
+   */
+  dataLossSuspicion: DataLossSuspicion | null;
+  /** Dismiss the suspicion (also clears the localStorage marker). */
+  dismissDataLossSuspicion: () => void;
+  /** Coarse shape of the current in-memory data; used by the banner + diagnostics UI. */
+  currentShape: DataShape;
   /**
    * Force an immediate flush of the debounced save buffer. Returns when the
    * write has been acknowledged (or rejected). Used by destructive flows
@@ -162,13 +202,18 @@ type Api = {
   clearCompletedInGroup: (groupId: string) => void;
   markAllCompleteInGroup: (groupId: string) => void;
   removeTodoGroup: (groupId: string) => void;
-  addTodoItem: (groupId: string, title: string, extras?: { priority?: Priority; dueAt?: string }) => void;
+  addTodoItem: (
+    groupId: string,
+    title: string,
+    extras?: { priority?: Priority; dueAt?: string; body?: string },
+  ) => void;
   updateTodoItem: (
     id: string,
     patch: Partial<
       Pick<
         TodoItem,
         | 'title'
+        | 'body'
         | 'groupId'
         | 'dueAt'
         | 'done'
@@ -203,6 +248,80 @@ function storageKeyForUser(userId: string) {
 }
 
 /**
+ * Per-user "last seen healthy" workspace shape, persisted to
+ * localStorage at the end of every successful save. The boot-time
+ * integrity check compares the freshly loaded shape against this marker
+ * — if the new total is significantly smaller, we surface the
+ * DataIntegrityBanner.
+ *
+ * localStorage is scoped to (origin, profile-per-Electron-userData), so
+ * this marker is automatically per-machine. We deliberately don't ship
+ * it across devices: a phone that's seeing a smaller dataset than the
+ * desktop is the EXPECTED state when sync is off or in-progress, not a
+ * data-loss event.
+ */
+function shapeKeyForUser(userId: string) {
+  return `${STORAGE_PREFIX}-last-shape-${userId}`;
+}
+
+function readLastShape(userId: string): DataShape | null {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(shapeKeyForUser(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed.teams === 'number' &&
+      typeof parsed.people === 'number' &&
+      typeof parsed.items === 'number' &&
+      typeof parsed.todoGroups === 'number' &&
+      typeof parsed.todoItems === 'number' &&
+      typeof parsed.notes === 'number' &&
+      typeof parsed.total === 'number'
+    ) {
+      return parsed as DataShape;
+    }
+  } catch {
+    /* corrupt marker — treat as missing */
+  }
+  return null;
+}
+
+function writeLastShape(userId: string, shape: DataShape) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(shapeKeyForUser(userId), JSON.stringify(shape));
+  } catch {
+    /* QuotaExceeded etc. — best effort */
+  }
+}
+
+function clearLastShape(userId: string) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.removeItem(shapeKeyForUser(userId));
+  } catch { /* ignore */ }
+}
+
+/**
+ * Decide whether the freshly loaded shape is "much smaller" than the
+ * last-known-good marker. We're deliberately conservative: a few items
+ * less is normal (the user deleted something between sessions). Only
+ * fire when the absolute drop is meaningful AND the relative drop is
+ * large, so a 1-item workspace going to 0 doesn't trip the banner.
+ */
+function isSuspiciousShrink(current: DataShape, previous: DataShape): boolean {
+  if (previous.total <= 0) return false;
+  const drop = previous.total - current.total;
+  if (drop < 3) return false; // ignore tiny diffs (one note + one todo deletion is normal)
+  // Drop must be at least 50% of the previous total, OR the workspace went
+  // from "had content" to "essentially empty" (≤ 1 item left).
+  if (current.total <= 1) return true;
+  return drop / previous.total >= 0.5;
+}
+
+/**
  * Persist the current snapshot to the underlying store (Electron file or
  * browser localStorage) and report success/failure to the caller. Unlike the
  * old fire-and-forget version, every failure path here surfaces to the
@@ -213,7 +332,12 @@ async function persist(userId: string, data: AppData): Promise<{ ok: true } | { 
   const api = window.cadence;
   if (api?.saveData) {
     try {
-      const ok = await api.saveData(data);
+      // Pass the expected user ID so the main process can refuse to
+      // write if the active session has flipped between the moment
+      // this save was queued and the moment we actually invoke the
+      // IPC (see the "fast logout → login race" comment in
+      // electron/main.cjs `data:save`). Defence in depth.
+      const ok = await api.saveData(data, userId);
       if (ok === true) return { ok: true };
       // The main process returns `false` when `writeUserData()` refused to
       // write — either because the existing file is undecipherable, or
@@ -276,6 +400,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [lastSaveError, setLastSaveError] = useState<PersistError | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+  const [dataLossSuspicion, setDataLossSuspicion] = useState<DataLossSuspicion | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The most recent payload pending a debounced save, kept so we can flush it
   // synchronously on tab close / unmount.
@@ -305,6 +430,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (r.ok) {
         setLastSavedAt(Date.now());
         setLastSaveError(null);
+        // Pin the post-save shape as the new last-known-good fingerprint.
+        // We deliberately update on EVERY successful save (not just
+        // session end) so a power loss between saves still leaves a
+        // fingerprint matching the last persisted state.
+        try { writeLastShape(uid, shapeOfData(payload)); } catch { /* best effort */ }
       } else {
         setLastSaveError({ reason: r.reason, error: r.error, at: Date.now() });
       }
@@ -372,11 +502,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (!userId) {
       setData(null);
       setReady(false);
+      setDataLossSuspicion(null);
       return;
     }
     let cancelled = false;
     setReady(false);
     setData(null);
+    setDataLossSuspicion(null);
     void (async () => {
       const next = await loadInitial(userId);
       if (cancelled) return;
@@ -390,6 +522,29 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           merged = updateUserProfileFn(next, { displayName: seed.trim() });
           seeded = true;
         }
+      }
+      // Boot-time data-loss check. Compare the freshly loaded shape with
+      // the last-known-good fingerprint we wrote on the previous save.
+      // We do this BEFORE seeding the profile (because the seed write
+      // would update the fingerprint and erase the very signal we're
+      // looking for).
+      try {
+        const currentShape = shapeOfData(merged);
+        const lastShape = readLastShape(userId);
+        if (lastShape && isSuspiciousShrink(currentShape, lastShape)) {
+          setDataLossSuspicion({
+            current: currentShape,
+            previous: lastShape,
+            at: Date.now(),
+          });
+          // Intentionally DO NOT clear the marker yet — keep it around
+          // until the user dismisses the banner OR restores from a
+          // backup. That way, even if they sign out and back in, the
+          // suspicion fires again (defence against accidentally swiping
+          // the banner away on launch).
+        }
+      } catch (err) {
+        console.warn('[cadence] data integrity check failed (continuing)', err);
       }
       setData(merged);
       setReady(true);
@@ -429,6 +584,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     (next: AppData) => {
       const normalized = normalizeData(next);
       setData(normalized);
+      // A replaceAll is either a sync pull or a backup restore — both
+      // are explicit "I want this snapshot" events. Clear any
+      // data-loss suspicion the boot raised, because the user has now
+      // chosen the authoritative state going forward.
+      setDataLossSuspicion(null);
       const uid = userIdRef.current;
       if (uid) {
         // Bulk replace (sync pull, restore) is a "import" event, not a
@@ -467,7 +627,28 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     // problem that no longer exists. Clearing it prevents the confusing
     // "uyarı çıktı + data yüklendi" stacked state the user reported.
     setLastSaveError(null);
+    // Likewise: a restore is the user's positive acknowledgement that the
+    // file is now what they want. Clear the data-loss suspicion AND
+    // update the fingerprint to the restored shape so the next boot
+    // doesn't re-fire the banner against the older (pre-restore) marker.
+    setDataLossSuspicion(null);
+    try { writeLastShape(uid, shapeOfData(next)); } catch { /* best effort */ }
   }, []);
+
+  const dismissDataLossSuspicion = useCallback(() => {
+    setDataLossSuspicion(null);
+    const uid = userIdRef.current;
+    if (!uid) return;
+    // Dismissing the banner is an explicit "accept current state as the
+    // new normal" gesture. We update the fingerprint so this boot's
+    // shape becomes the new baseline; otherwise the banner would fire
+    // again on the next launch and the dismissal wouldn't stick.
+    if (data) {
+      try { writeLastShape(uid, shapeOfData(data)); } catch { /* ignore */ }
+    } else {
+      clearLastShape(uid);
+    }
+  }, [data]);
 
   const api = useMemo<Api>(() => {
     const empty = normalizeData(null);
@@ -481,6 +662,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       lastSavedAt,
       saving,
       clearSaveError: () => setLastSaveError(null),
+      dataLossSuspicion,
+      dismissDataLossSuspicion,
+      currentShape: shapeOfData(d),
       flushPendingSave,
       rememberTeam: (teamId) => update((x) => setLastTeamIdFn(x, teamId)),
       update,
@@ -528,7 +712,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       removeNote: (id) => update((x) => removeNoteFn(x, id)),
       setNotesLock: (lock) => update((x) => setNotesLockFn(x, lock)),
     };
-  }, [data, ready, update, replaceAll, reload, lastSaveError, lastSavedAt, saving, flushPendingSave]);
+  }, [data, ready, update, replaceAll, reload, lastSaveError, lastSavedAt, saving, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }

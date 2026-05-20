@@ -216,7 +216,20 @@ export async function runSyncCycle(args: {
   return 'pull-error';
 }
 
-export function useSyncAutoSync() {
+export type UseSyncAutoSyncOptions = {
+  /**
+   * Hook is rendered unconditionally for hook-order stability, but the
+   * background polling timer + listeners are skipped entirely when this
+   * flag is false. Enterprise policy uses this to keep sync code paths
+   * dormant on locked-down devices. QR-pair adoption is also gated —
+   * a phone that lands on a `?pair=` URL still won't save the pair if
+   * policy forbids LAN.
+   */
+  enabled?: boolean;
+};
+
+export function useSyncAutoSync(opts: UseSyncAutoSyncOptions = {}) {
+  const enabled = opts.enabled !== false;
   const { replaceAll, data } = useAppData();
 
   // Mirror the latest `data` and `backend` into refs so the effect
@@ -235,6 +248,7 @@ export function useSyncAutoSync() {
   const inFlight = useRef(false);
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
 
     // QR-pair adoption (LAN only). Runs at most once per mount.
@@ -303,5 +317,5 @@ export function useSyncAutoSync() {
       window.removeEventListener('online', onOnline);
       unsubscribe();
     };
-  }, [replaceAll]);
+  }, [replaceAll, enabled]);
 }

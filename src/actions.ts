@@ -581,7 +581,7 @@ export function addTodoItem(
   data: AppData,
   groupId: string,
   title: string,
-  extras: { priority?: Priority; dueAt?: string } = {},
+  extras: { priority?: Priority; dueAt?: string; body?: string } = {},
 ): AppData {
   const gid = data.todoGroups.some((g) => g.id === groupId) ? groupId : data.todoGroups[0]?.id;
   if (!gid) return data;
@@ -592,6 +592,12 @@ export function addTodoItem(
   const minOrder = data.todoItems
     .filter((x) => x.groupId === gid)
     .reduce((acc, x) => Math.min(acc, x.sortOrder ?? 0), 0);
+  // Persist body only when non-empty after trim; same normalisation as
+  // `parseTodoItems` does on load, applied at the write side so a
+  // user that opens-and-closes the markdown editor without typing
+  // doesn't bloat the file with an empty string.
+  const trimmedBody = typeof extras.body === 'string' ? extras.body : undefined;
+  const body = trimmedBody && trimmedBody.trim() ? trimmedBody : undefined;
   const item: TodoItem = {
     id: uuid(),
     groupId: gid,
@@ -603,6 +609,7 @@ export function addTodoItem(
     updatedAt: t,
     ...(extras.priority ? { priority: extras.priority } : {}),
     ...(extras.dueAt ? { dueAt: extras.dueAt } : {}),
+    ...(body ? { body } : {}),
   };
   return { ...data, todoItems: [item, ...data.todoItems] };
 }
@@ -629,6 +636,7 @@ export function updateTodoItem(
     Pick<
       TodoItem,
       | 'title'
+      | 'body'
       | 'groupId'
       | 'dueAt'
       | 'done'
@@ -686,9 +694,22 @@ export function updateTodoItem(
         remindRepeat = undefined;
       }
 
+      // Body patch semantics: omitted = keep existing, empty/whitespace =
+      // clear (we treat both representations as "no body"). This matches
+      // the way the markdown editor signals "user deleted everything" —
+      // it calls `onChange('')` rather than `undefined`, and we want
+      // that to land as a true clear in the file (so syncs propagate
+      // the deletion).
+      let nextBody: string | undefined = x.body;
+      if (patch.body !== undefined) {
+        const trimmed = patch.body.trim();
+        nextBody = trimmed ? patch.body : undefined;
+      }
+
       return {
         ...x,
         title: patch.title !== undefined ? patch.title.trim() || x.title : x.title,
+        body: nextBody,
         groupId,
         dueAt: patch.dueAt !== undefined ? patch.dueAt || undefined : x.dueAt,
         status: nextStatus,
