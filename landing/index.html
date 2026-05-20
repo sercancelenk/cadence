@@ -122,7 +122,7 @@
             <ul class="hero__bullets" aria-label="Highlights">
               <li><span aria-hidden>●</span> macOS desktop · iOS / Android PWA</li>
               <li><span aria-hidden>●</span> Cross-device sync over your own Wi-Fi</li>
-              <li><span aria-hidden>●</span> Auto-snapshots, atomic fsync'ed writes</li>
+              <li><span aria-hidden>●</span> Auto-snapshots + boot integrity checks</li>
               <li><span aria-hidden>●</span> Free and open source</li>
             </ul>
           </div>
@@ -156,10 +156,12 @@
             <p>
               Every keystroke is written to your machine, not to a server.
               Atomic <code>fsync</code>'ed writes, 50 rolling auto-snapshots,
-              refuse-to-overwrite guard, in-app recovery UI. When you want
-              two devices to share a workspace, an <strong>opt-in LAN
-              server</strong> lets them talk directly — your bytes stay
-              between your phone and your laptop.
+              refuse-to-overwrite guard, enriched in-app recovery UI (per-snapshot
+              counts, <em>Reveal in Finder</em>, restore confirmation). If a
+              boot loads meaningfully less than your last save, an amber banner
+              tells you before you panic. When you want two devices to share a
+              workspace, an <strong>opt-in LAN server</strong> lets them talk
+              directly — your bytes stay between your phone and your laptop.
             </p>
           </article>
 
@@ -260,22 +262,26 @@
         <div class="feature feature--reverse">
           <div class="feature__copy">
             <div class="feature__eyebrow">Tasks</div>
-            <h3>Lists that respect priority, not just position.</h3>
+            <h3>Lists that respect priority — with room for real notes.</h3>
             <p>
               Group tasks by project; each group has its own priority
               (P0 / P1 / P2 / P3). Drag items between groups and order them
-              within each. Set recurring reminders (daily / weekly /
-              monthly) that fire as desktop notifications even when the
-              window is in the background.
+              within each. Every task can carry optional
+              <strong>Markdown details</strong> (same Write / Preview editor
+              and formatting toolbar as Notes) — use <em>Add details</em> when
+              you create a task, or the 📝 toggle on any row. Set recurring
+              reminders (daily / weekly / monthly) that fire as desktop
+              notifications even when the window is in the background.
             </p>
             <ul class="checklist">
               <li>Recurring reminders that catch up gracefully after sleep</li>
+              <li>Search matches title <em>and</em> details, not just the one-liner</li>
+              <li>Clear warning when every list is archived but tasks still exist</li>
               <li>Pinned groups float to the top of the sidebar</li>
-              <li>One-click "mark all complete" and "clear completed"</li>
             </ul>
           </div>
           <figure class="feature__media">
-            <img src="./screenshots/todos.png" alt="Cadence to-dos view with priority groups and drag handles" loading="lazy" />
+            <img src="./screenshots/todos.png" alt="Cadence to-dos view with priority groups, status filters and optional Markdown details per task" loading="lazy" />
           </figure>
         </div>
 
@@ -317,10 +323,11 @@
             <h3>⌘K finds whatever you typed, body included.</h3>
             <p>
               The command palette indexes every title <em>and body</em>
-              across notes, tasks, items and people's scratchpads. Matched
-              terms get highlighted with surrounding-context snippets so you
-              know <em>why</em> each result appeared. Press Enter to deep-link
-              straight to the note or task — no scrolling required.
+              across notes, personal to-dos (title + Markdown details), team
+              items and people's scratchpads. Matched terms get highlighted with
+              surrounding-context snippets so you know <em>why</em> each result
+              appeared. Press Enter to deep-link straight to the note or task —
+              no scrolling required.
             </p>
           </div>
           <figure class="feature__media">
@@ -756,8 +763,22 @@
               <code>backups/&lt;userId&gt;/</code>. 50 rolling slots labelled
               <code>launch</code> / <code>post-login</code> /
               <code>pre-save</code> / <code>pre-pwchange</code> /
-              <code>pre-restore</code>. Settings → Backups &amp; recovery
-              previews any of them with one click.
+              <code>pre-restore</code> — oldest pruned automatically so disk
+              use stays bounded. Settings → Backups &amp; recovery shows
+              teams / lists / tasks / notes per snapshot, flags snapshots where
+              every todo list is archived, and restores with a clear
+              "Loaded: …" confirmation.
+            </p>
+          </div>
+
+          <div class="privacy-card">
+            <h3>Integrity check on boot</h3>
+            <p>
+              After each successful save, Cadence remembers how much content
+              you had. If the next launch loads a meaningfully smaller
+              workspace, an amber banner spells out the before/after counts
+              and links straight to recovery — catching "my data vanished"
+              before it becomes a support ticket.
             </p>
           </div>
 

@@ -48,11 +48,11 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 > The top bar carries a Bootstrap-style **global search pill** with a `⌘ K` / `Ctrl K` shortcut badge — clicking it (or pressing the shortcut) opens the command palette that fuzzy-searches across navigation targets, teams, people, items, to-dos **and notes (titles + content)**.
 
-### To-dos — Kanban-shaped status, drag-reorder, priorities, sort modes
+### To-dos — Kanban-shaped status, Markdown details, drag-reorder
 
 ![To-dos page with status filter, sort modes and per-list add row](docs/screenshots/todos.png)
 
-> Each row carries a **status**: *To do · In progress · Done · Cancelled*. Filter by status (All / Open / individual states), sort by **Manual / Priority / Due date / Status (Kanban order)**, and drag rows by the grip handle to reorder manually. Completion rate excludes cancelled rows — dropping a task on purpose shouldn't drag your numbers down. The list still supports hide-closed, archive, per-list priority and cross-list search.
+> Each row carries a **status**: *To do · In progress · Done · Cancelled*. Filter by status (All / Open / individual states), sort by **Manual / Priority / Due date / Status (Kanban order)**, and drag rows by the grip handle to reorder manually. Completion rate excludes cancelled rows — dropping a task on purpose shouldn't drag your numbers down. The list still supports hide-closed, archive, per-list priority and cross-list search. Every task can carry optional **Markdown details** (same Write / Preview editor + formatting toolbar as Notes) — click **Add details** when creating a task, or the 📝 toggle on any row. Search matches **title and details**, not just the one-liner.
 
 ### Notes — resizable sidebar, sort modes, Markdown toolbar
 
@@ -82,7 +82,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 ![Settings page with appearance, PIN protection and application version cards](docs/screenshots/settings.png)
 
-> Theme toggle, PIN lock with rate-limited recovery, rolling backup snapshots with one-click restore, AI assistant (BYO API key for Claude / ChatGPT / Gemini), LAN sync server, storage diagnostics and auto-update controls.
+> Theme toggle, PIN lock with rate-limited recovery, rolling backup snapshots with per-snapshot counts and one-click restore, AI assistant (BYO API key for Claude / ChatGPT / Gemini), LAN sync server, storage diagnostics and auto-update controls.
 
 ---
 
@@ -93,7 +93,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | | |
 |---|---|
 | 📝 **Notes** | macOS-Notes-style two-pane view, **resizable sidebar** (220–560 px), preview-by-default with a one-click flip into a Markdown editor + formatting toolbar (B / I / S / H1–H3 / lists / link / inline code / code block / divider, with `⌘B` / `⌘I` / `⌘K` shortcuts). Five sort modes plus drag-to-reorder inside the pinned tier. Optional per-note passphrase lockbox. |
-| ✅ **To-dos** | Lists grouped by project, each with its own priority (Urgent / High / Normal / Low) and per-row **status** (To do / In progress / Done / Cancelled). Sort by Manual / Priority / Due date / Status (Kanban order). Filter by status. Drag items between groups and within. Recurring reminders (daily / weekly / monthly) fire as desktop notifications. Hide / show closed, archive, search, bulk ops. |
+| ✅ **To-dos** | Lists grouped by project, each with its own priority (Urgent / High / Normal / Low) and per-row **status** (To do / In progress / Done / Cancelled). Optional **Markdown details** per task (Notes-grade editor). Sort by Manual / Priority / Due date / Status (Kanban order). Filter by status. Drag items between groups and within. Recurring reminders (daily / weekly / monthly) fire as desktop notifications. Hide / show closed, archive, search (title **and** details), bulk ops. Clear warnings when every list is archived but tasks still exist on disk. |
 | 📅 **Agenda** | Unified Today / This-week / Overdue view combining reminders + due tasks + personal to-dos. Lives offline; never asks for calendar permission. |
 | 👥 **Teams + People** | Group people into teams, give each a private scratchpad and a running agenda. **1:1 mode** with a persistent markdown meeting agenda + archive of past meetings; unchecked items carry over. **Person Timeline** for review prep. |
 | 🔎 **⌘K command palette** | Global search across notes, tasks, items, people and navigation targets. Indexes **body text** (not just titles), highlights matches with contextual snippets, deep-links straight to the result. Locked notes searchable by title only. |
@@ -105,7 +105,8 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 |---|---|
 | 🔒 **Encrypted at rest** | AES-256-GCM data file keyed via `scrypt(password)`. Notes get an additional PBKDF2 → AES-256-GCM lockbox with a non-extractable `CryptoKey`. |
 | 🛟 **Durable saves** | Atomic `open → write → fsync → close → rename` cycle plus directory fsync. A power loss or kernel panic leaves either the old file or the new file — never a torn one. Worst case: ≤ 400 ms of unflushed typing. |
-| 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Refuse-to-overwrite guard if the live file is undecipherable. |
+| 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Each snapshot shows teams / lists / tasks / notes counts; **Reveal in Finder** for manual inspection. Refuse-to-overwrite guard if the live file is undecipherable. |
+| 🛡️ **Data-integrity guard** | After every successful save, a per-device fingerprint records how much content you had. On the next boot, if the loaded file is meaningfully smaller, an amber banner spells out the before/after counts and links straight to *Backups & recovery* — so "my data vanished" is caught before you panic. |
 | 📡 **Optional LAN sync** | Token-protected **HTTPS** server inside Electron (off by default) with self-signed TLS (RSA 2048 / SHA-256), constant-time token compare, DNS-rebinding resistance, same-LAN CORS, ETag optimistic concurrency and payload-shape validation. The host also serves the PWA itself, so an iPhone can scan the QR code and open `https://<host-ip>:9787/` directly — no cloud round-trip. |
 | 🚫 **No telemetry** | Zero network calls outside of (a) the auto-updater hitting GitHub Releases, and (b) the AI assistant hitting whichever provider you configured. Nothing else dials home. |
 | 🏢 **Enterprise / shared-device ready** | Three onboarding presets (Personal / Work-Standard / Work-Strict) the user picks at first launch, plus an admin-deployable `policy.json` (cross-platform, 5-layer search) that **wins over the user preset** and gates Sync / AI / Export / Updates with defence-in-depth in the Electron main process. A separate "Cadence for Work" build flavor (`npm run build:enterprise`) ships a locked binary with its own app ID and update channel. See [docs/ENTERPRISE.md](docs/ENTERPRISE.md). |
@@ -263,7 +264,7 @@ Arrow keys to move, <kbd>Enter</kbd> to open, <kbd>Esc</kbd> to close.
 
 ### Markdown editing
 
-Notes, item bodies, person scratchpads and 1:1 agendas all use **GitHub-flavored markdown** with a Write / Preview toggle:
+Notes, **personal to-do details**, team-item bodies, person scratchpads and 1:1 agendas all use **GitHub-flavored markdown** with a Write / Preview toggle:
 
 - Headings, bold/italic, lists, blockquotes, code blocks.
 - Checklists (`- [ ]` / `- [x]`).
@@ -345,17 +346,18 @@ The `/todos` page scales as your lists grow:
 - **Hide / show completed** — toggle at the top of the page; persists per-device so you can keep a clean active view by default.
 - **Delete confirmation** — clicking the trash icon arms the row for 3 seconds and turns into a confirm button, so a finger-slip doesn't lose a task.
 - **Multi-line task input** — task title is a proper auto-resizing textarea (Enter inserts a newline, ⌘ / Ctrl + Enter submits). Edit an existing task title the same way.
+- **Markdown details (optional)** — every task can carry a long-form body: click **Add details** in the new-task form, or the 📝 toggle on any row. The editor is the same component as Notes (Write / Preview tabs, formatting toolbar, GFM checklists / tables / links). Existing tasks with a body open in Preview by default; closing the panel commits on blur.
 - **Quick scheduling** — every task row has a `Schedule` chip that opens a popover with **Today 5pm**, **Tomorrow 9am**, **+3h**, **Next Mon 9am** presets, plus a custom datetime picker and a one-tap "Clear schedule" action.
-- **Pin to top / Archive** — star a list to keep it above the rest, or archive it (toggle "Show archived" to bring them back).
+- **Pin to top / Archive** — star a list to keep it above the rest, or archive it (toggle "Show archived" to bring them back). If **every** list in a workspace is archived, the page shows an explicit amber alert ("your data is safe — N items inside archived lists") instead of looking empty; the sidebar badge turns amber too.
 - **Compact / Comfortable toggle** — clearly labelled in the top-right.
 - **Mark all complete** / **Clear completed** — bulk operations with confirmations.
-- **Search** — filter tasks across all lists in real time.
+- **Search** — filter tasks across all lists in real time; matches **title and Markdown details**, not just the one-liner.
 - **Inline rename** — click the list title to edit.
 - **Counts** — every list shows `<open> / <total>` at a glance.
 
 ### AI Assistant (BYO API key)
 
-Every task row has an **Ask AI** button as soon as you connect a provider in *Settings → AI Assistant*. The assistant takes the task title + body + your custom system prompt and returns a structured next-action plan, rendered as Markdown in a side dialog.
+Every task row has an **Ask AI** button as soon as you connect a provider in *Settings → AI Assistant*. The assistant takes the task title + optional Markdown details + your custom system prompt and returns a structured next-action plan, rendered as Markdown in a side dialog.
 
 - **Bring your own key** — pick a provider, paste your API key, optionally override the model name. There is **no proxy**; calls go from this device straight to the provider you chose. The provider sees your task title/body but not your other data.
 - **Providers supported**
@@ -364,7 +366,7 @@ Every task row has an **Ask AI** button as soon as you connect a provider in *Se
   - **Google Gemini** — default `gemini-2.0-flash`. Suggested: `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-pro`. *(Gemini 1.x was retired from `v1beta` in late 2025 and returns HTTP 404; the Settings UI surfaces a one-click fix.)*
 - **Test connection** button — sends a one-token round-trip so you can verify the key + model before relying on it during a real task.
 - **Follow-up turns** — keep chatting in the dialog (Enter sends, Shift+Enter for newlines). Markdown answers render with headings, lists, code blocks and tables.
-- **Append to task** — copy the assistant's answer straight into the task's notes (body) so it sticks around.
+- **Append to task** — copy the assistant's answer straight into the task's Markdown details so it sticks around.
 - **Extract tasks from notes** — open *To-dos → Extract from notes* and paste a brain dump (meeting transcript, voice-memo, Slack thread, weekend wishlist). The assistant returns a structured list with one imperative task per line and a suggested priority. You edit titles inline, pick which list each task goes into, and click **Add** (per row) or **Add all** to drop them into your workspace. Nothing is added automatically — the user is always the final filter. The prompt is constrained to return strict JSON so the picker stays predictable across providers.
 - **Where the key is stored**
   - **Desktop**: inside your encrypted data file (`cadence-data-<userId>.json`, AES-256-GCM, keyed by your account password).
@@ -376,15 +378,17 @@ The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts
 
 `Settings → Backups & recovery` is your safety net when something goes sideways — for example after a major version upgrade, a password rotation hiccup, or registering a fresh account by mistake.
 
-- **Auto-snapshots** — every save, every successful sign-in and every app launch copies the current `cadence-data-<userId>.json` into `backups/<userId>/data-<label>-<timestamp>.json`. A rolling window of 50 snapshots is kept; oldest are pruned automatically.
+- **Auto-snapshots** — every save, every successful sign-in and every app launch copies the current `cadence-data-<userId>.json` into `backups/<userId>/data-<label>-<timestamp>.json`. A rolling window of 50 snapshots is kept; oldest are pruned automatically (~115 KB for a typical workspace — disk use stays bounded).
 - **Refuse-to-overwrite guard** — the data writer refuses to overwrite an existing file when it can't decrypt it with the current session key (instead of silently destroying it). The renderer surfaces this as a red banner pointing at this page.
+- **Boot-time integrity check** — after every successful save, Cadence remembers a coarse fingerprint (teams / tasks / notes counts) in `localStorage`. On the next launch, if the loaded file is meaningfully smaller than that marker, an amber **Looks like data may be missing** banner appears app-wide with exact before/after numbers and a one-click jump here. Dismissing rebases the marker to the current state.
 - **Recovery list** — the page enumerates every candidate source on this machine:
   - **Current data file** (live)
   - **Legacy single-user file** (`leeadman-data.json`, from the pre-accounts era — also picked up by the one-shot rename migration)
   - **Automatic snapshots** (with human-readable "5m ago / 2d ago" times)
   - **Other accounts on this machine** — orphaned `cadence-data-<otherId>.json` files (or pre-rename `leeadman-data-<otherId>.json` files left behind), useful when you registered twice
-- Each row shows the file size, modified time, encryption status, and a sniff of what's inside (number of teams, people, items, lists, tasks).
-- **Restore** is one click. The current state is itself snapshotted as `pre-restore` first, so the operation is reversible.
+- Each row shows the file size, modified time, encryption status, and what's inside: teams, lists (**with archived count**), tasks, notes (**with locked count**). Rows flag common "looks empty but isn't" cases — e.g. **all todo lists archived** or an orphan notes-lock with no locked notes — so you can pick a healthier snapshot before restoring.
+- **Reveal** opens the snapshot in Finder / Explorer for manual diffing (`jq`, a text editor, etc.).
+- **Restore** is one click and reports what you got back (e.g. `Loaded: 1 team, 5 tasks, 2 notes`). The current state is itself snapshotted as `pre-restore` first, so the operation is reversible.
 - **Auto-migrate on login** — if you log in and your per-user data file doesn't exist yet, but the legacy single-user file (`leeadman-data.json` from pre-accounts builds) does, Cadence imports it into your account automatically. No more "I updated and my old data is gone" surprise.
 - **Open data folder** — jumps Finder straight to `~/Library/Application Support/Cadence/` if you want to copy a backup to iCloud / a USB stick.
 
@@ -673,7 +677,7 @@ Standard shortcuts apply (⌘ Q, ⌘ W, ⌘ R, ⌘ F, ⌘ , …). The global **�
 - **Where data lives** (macOS): `~/Library/Application Support/Cadence/`. (Pre-rename installs originally wrote to `~/Library/Application Support/Leeadman/`; that folder is consumed and converted on first launch — see [Dev vs installed app data isolation](#dev-vs-installed-app-data-isolation).)
   - `cadence-accounts.json` — user list (email, salted **scrypt** password hash, per-user `encSalt`).
   - `cadence-session.json` — id of the signed-in user.
-  - `cadence-data-<userId>.json` — your workspace data, per account, **encrypted at rest** (AI key, tasks, lists, people, notes, preferences — everything).
+  - `cadence-data-<userId>.json` — your workspace data, per account, **encrypted at rest** (AI key, tasks + optional Markdown details per task, lists, people, notes, preferences — everything).
   - `leeadman-data.json` — legacy single-user file from pre-accounts versions (only present if you upgraded from an old install). Auto-imported on first login.
   - `backups/<userId>/data-<label>-<timestamp>.json` — rolling auto-snapshots (50 slots; labels include `launch`, `post-login`, `pre-save`, `pre-pwchange`, `pre-restore`).
   - `auth-lock.json` — optional PIN hash.
@@ -695,6 +699,7 @@ The desktop build is engineered so a kernel panic, power loss or kill-9 cannot s
 - **Pre-save snapshots.** Before every write, the *current* file is copied into `backups/<userId>/data-pre-save-<timestamp>.json`. So even a logic bug that writes garbage cannot destroy your previous state — the immediate prior version is one click away in *Settings → Backups & recovery*.
 - **Refuse-to-overwrite undecipherable data.** If the live file exists but cannot be decrypted with the current session key (e.g. you signed in with the wrong password and somehow bypassed the prompt), the writer aborts and the UI shows a banner. You can't accidentally overwrite locked data with one character's worth of state.
 - **Global "autosave failed" banner.** Any save failure — IPC error, refuse-to-overwrite, disk full — is surfaced as a red banner above every page, with a one-click link to *Backups & recovery*. There is no silent failure path.
+- **Boot-time integrity banner.** After each successful save, a coarse fingerprint (teams / tasks / notes counts) is stored in `localStorage`. If the next launch loads a meaningfully smaller workspace, an amber banner spells out the before/after numbers and links to *Backups & recovery* — catching "everything disappeared" before you assume the worst (common when every todo list was archived, or after a bad session resume).
 - **Anonymous `userData` directory, not inside the app bundle.** On macOS your data lives in `~/Library/Application Support/Cadence/`, which is **outside** `Cadence.app`. **Trashing the app does not delete your data.** Reinstalling later picks the data right back up. The same is true on Linux (`~/.config/cadence`) and Windows (`%APPDATA%\Cadence`).
 - **Uninstall-safe backups.** The rolling 50-snapshot history lives next to the live file inside `userData/backups/<userId>/`. As long as you don't manually delete `userData`, every save from the past N days is recoverable.
 
@@ -1169,7 +1174,9 @@ Google retired the Gemini 1.x family from the `v1beta` endpoint in late 2025. Op
 | 1.34 | **Cloud sync — Google Drive (end-to-end encrypted)** — OAuth 2.0 PKCE sign-in with the `drive.appdata` scope, working on both **PWA (popup flow)** and **Electron (loopback HTTP server flow)**; snapshots wrapped with AES-256-GCM (PBKDF2-SHA-256 KDF, fresh salt + IV per upload) before they ever leave the device; Drive sees opaque ciphertext only; provider-agnostic `SyncBackend` interface lets LAN and Drive coexist with a per-user "Auto-sync provider" toggle; sync passphrase lives in sessionStorage (cleared on tab close); Drive `version` field used as the etag for optimistic concurrency (`If-None-Match`-style short-circuit on pull, conflict detection on push) |
 | 1.35 | **Cloud sync — production-ready hardening** — runtime OAuth client ID config (paste your own client ID into Settings, no `.env` or rebuild needed); first-time pull always pulls a baseline (never silently overwrites remote with an empty workspace); `parseRemoteSnapshot` shape guard refuses to apply malformed / empty payloads; `localFingerprint` decouples local dirty-tracking from remote ETag scheme (fixes Drive auto-push loop); retry + full-jitter exponential backoff on 5xx / 429 / network errors; inline conflict resolver with "Pull first / Override remote"; auto-clear passphrase on wrong-password; Settings surfaces the last background sync error so silent failures can't pretend to be "synced N ago" |
 | 1.36 | **First-run welcome tour** — three-card onboarding modal explains the workspace, the two sync paths and the optional setup steps; appears only on first authenticated launch per account; suppressed automatically on returning devices (any device with an existing LAN pair or Drive tokens skips it); dismiss persisted to `localStorage["cadence.tour.completed.v1"]` per account |
-| 1.37 | **Test suite + CI gating** — 87-test Vitest suite under `jsdom` covering snapshot crypto, sync algorithm, Drive backend (fetch-mocked, every path), OAuth token lifecycle, LAN client primitives and the remote-snapshot shape guard; CI workflow runs `npx tsc --noEmit` + `npm test` + `npm run build:web` + `npm run build:pwa` on every push and PR with concurrency cancellation; `npm run check:env` validates the build environment (Node version, required files, `.gitignore` safety, OAuth client-ID shape) as a release gate |
+| 1.37 | **Test suite + CI gating** — Vitest suite under `jsdom` covering snapshot crypto, sync algorithm, Drive backend (fetch-mocked, every path), OAuth token lifecycle, LAN client primitives and the remote-snapshot shape guard; CI workflow runs `npx tsc --noEmit` + `npm test` + `npm run build:web` + `npm run build:pwa` on every push and PR with concurrency cancellation; `npm run check:env` validates the build environment (Node version, required files, `.gitignore` safety, OAuth client-ID shape) as a release gate |
+| 1.38 | **To-do Markdown details** — optional `body` per task with the same editor + toolbar as Notes; **Add details** on create, 📝 toggle per row, search matches title + body, AI assistant reads/writes details |
+| 1.39 | **Data-loss prevention UX** — boot-time integrity banner (fingerprint vs loaded shape), enriched backup viewer (per-snapshot counts, archived-list / orphan-lock warnings, Reveal in Finder, restore confirmation), sidebar badges when tasks are hidden by archive, explicit "all lists archived" alarm on the To-dos page, orphan `notesLock` auto-cleanup on load |
 
 ### Tier 2 — next
 
