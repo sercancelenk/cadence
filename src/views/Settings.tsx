@@ -37,10 +37,13 @@ import {
 } from '../lib/syncEvents';
 import {
   beginAuth,
+  getClientIdSource,
   isClientConfigured,
   loadStoredTokens,
+  setRuntimeClientId,
   signOut,
   type AuthFailureReason,
+  type ClientIdSource,
   type OAuthTokens,
 } from '../lib/syncBackends/gdriveAuth';
 import {
@@ -1031,6 +1034,178 @@ function SyncSection() {
  * close) so a quick "lock" is just closing the tab. Google sees an
  * AES-256-GCM blob — no plaintext anywhere on their servers.
  */
+/**
+ * One-screen "bring your own Google Cloud project" wizard.
+ *
+ * Why this exists
+ * ===============
+ *
+ * The official Cadence build embeds a published Google OAuth client ID
+ * at compile time and the end user clicks "Sign in with Google" without
+ * ever seeing this card. But for users who installed Cadence from a
+ * DMG / portable build that did NOT have a client ID baked in (e.g. a
+ * forked / nightly build), the in-app "Sign in" button has nothing to
+ * call. Forcing them to fork the repo, set an env var, and rebuild is
+ * not a real product experience.
+ *
+ * Solution: this card lets the user paste their own Google Cloud OAuth
+ * client ID into a field. We persist it to localStorage and
+ * `getClientId()` picks it up at runtime — no rebuild, no env var.
+ *
+ * The form is also surfaced (as a sub-section, collapsed by default)
+ * inside the connected-state UI so a user who wants to migrate from a
+ * built-in client ID to their own self-hosted one can do that without
+ * disconnecting first.
+ */
+function GDriveClientIdSetup({
+  onSaved,
+  defaultExpanded,
+}: {
+  onSaved?: () => void;
+  defaultExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState<boolean>(!!defaultExpanded);
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [source, setSource] = useState<ClientIdSource>(() => getClientIdSource());
+
+  const handleSave = (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    const result = setRuntimeClientId(value);
+    setBusy(false);
+    if (result.ok) {
+      setSource(getClientIdSource());
+      setMsg({
+        kind: 'ok',
+        text: 'Client ID saved. You can now click "Sign in with Google" below to connect.',
+      });
+      setValue('');
+      onSaved?.();
+    } else {
+      setMsg({ kind: 'error', text: result.reason });
+    }
+  };
+
+  const handleClear = () => {
+    setRuntimeClientId(null);
+    setSource(getClientIdSource());
+    setMsg({ kind: 'ok', text: 'Custom client ID cleared.' });
+    onSaved?.();
+  };
+
+  return (
+    <div>
+      <p style={{ margin: 0 }}>
+        Google Drive sync is <strong>end-to-end encrypted</strong> — your snapshot is wrapped
+        with AES-256-GCM (key derived from your passphrase) before it ever leaves this device.
+        Google sees opaque bytes only.
+      </p>
+
+      <p className="muted" style={{ marginTop: 10 }}>
+        This build of Cadence does not ship with a Google OAuth client ID, so you need to
+        connect Cadence to your own Google Cloud project before signing in. It is free, takes
+        about 5 minutes, and the project stays under your account.
+      </p>
+
+      <ol className="muted" style={{ marginTop: 10, paddingLeft: 22, lineHeight: 1.6 }}>
+        <li>
+          Open the{' '}
+          <a
+            href="https://console.cloud.google.com/projectcreate"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Google Cloud Console
+          </a>{' '}
+          and create a project (any name).
+        </li>
+        <li>
+          In <strong>APIs &amp; Services → Library</strong>, enable{' '}
+          <strong>Google Drive API</strong>.
+        </li>
+        <li>
+          In <strong>APIs &amp; Services → OAuth consent screen</strong>, choose{' '}
+          <strong>External</strong>, fill the required fields (app name + your email is
+          enough), and add yourself as a <strong>Test user</strong>.
+        </li>
+        <li>
+          In <strong>APIs &amp; Services → Credentials</strong>, create an{' '}
+          <strong>OAuth Client ID</strong> with type{' '}
+          <em>Web application</em> (works for both desktop &amp; PWA). Add{' '}
+          <code>{typeof window !== 'undefined' ? window.location.origin : ''}</code> to{' '}
+          <em>Authorized JavaScript origins</em> and the same URL plus{' '}
+          <code>?oauth=google</code> to <em>Authorized redirect URIs</em>.
+        </li>
+        <li>
+          Copy the resulting client ID (it ends with{' '}
+          <code>.apps.googleusercontent.com</code>) into the field below.
+        </li>
+      </ol>
+
+      {!expanded ? (
+        <div className="row" style={{ marginTop: 12 }}>
+          <Button type="button" variant="primary" onClick={() => setExpanded(true)}>
+            I have my client ID — paste it here
+          </Button>
+          <a
+            href="https://github.com/sercancelenk/cadence/blob/main/README.md#cloud-sync-google-drive-end-to-end-encrypted"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ marginLeft: 'auto', alignSelf: 'center' }}
+          >
+            Full setup guide
+          </a>
+        </div>
+      ) : (
+        <form onSubmit={handleSave} style={{ marginTop: 12 }}>
+          <label className="muted small" style={{ display: 'block', marginBottom: 6 }}>
+            Your Google OAuth Client ID
+          </label>
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="123456789-abcdef.apps.googleusercontent.com"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            style={{ width: '100%', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+            disabled={busy}
+          />
+          <div className="row" style={{ marginTop: 10 }}>
+            <Button type="submit" variant="primary" disabled={busy || !value.trim()}>
+              Save client ID
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setExpanded(false)} disabled={busy}>
+              Cancel
+            </Button>
+            {source === 'runtime' ? (
+              <Button type="button" variant="ghost" onClick={handleClear} disabled={busy}>
+                Clear saved ID
+              </Button>
+            ) : null}
+          </div>
+        </form>
+      )}
+
+      {msg ? (
+        <p className={`muted small ${msg.kind === 'error' ? 'text-danger' : ''}`} style={{ marginTop: 8 }}>
+          {msg.text}
+        </p>
+      ) : null}
+
+      {source === 'runtime' ? (
+        <p className="muted small" style={{ marginTop: 12 }}>
+          Currently using a <strong>user-supplied</strong> client ID. Cadence will use it for
+          every Drive sign-in on this device.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function CloudSyncSection() {
   const { data, replaceAll } = useAppData();
 
@@ -1084,7 +1259,11 @@ function CloudSyncSection() {
     }
   }, [lastEvent]);
 
-  const clientReady = isClientConfigured();
+  // Tracked as state (rather than recomputed each render) because the
+  // runtime-client-ID setup flow can flip this from false → true while
+  // CloudSyncSection is mounted. Bumped by GDriveClientIdSetup via the
+  // onSaved callback below.
+  const [clientReady, setClientReady] = useState<boolean>(() => isClientConfigured());
 
   const handleConnect = async () => {
     setBusy(true);
@@ -1263,17 +1442,12 @@ function CloudSyncSection() {
         defaultOpen={false}
         badge="Setup required"
       >
-        <p className="muted">
-          Google Drive sync is end-to-end encrypted, but it needs an OAuth Client ID before
-          the consent screen can open. If you forked Cadence, follow the{' '}
-          <strong>README → Cloud sync setup</strong> to create your own Google Cloud project
-          (free, ~5 minutes) and set <code>VITE_GOOGLE_OAUTH_CLIENT_ID</code> in your{' '}
-          <code>.env</code>.
-        </p>
-        <p className="muted small" style={{ marginTop: 8 }}>
-          On the official Cadence build, the client ID is baked in and this notice does not
-          appear.
-        </p>
+        <GDriveClientIdSetup
+          onSaved={() => {
+            setClientReady(isClientConfigured());
+            setActiveId(getActiveBackendId());
+          }}
+        />
       </CollapsibleCard>
     );
   }

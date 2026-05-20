@@ -13,10 +13,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearStoredTokens,
+  getClientIdSource,
+  getEffectiveClientId,
   getValidAccessToken,
   loadStoredTokens,
   maybeHandleOAuthRedirect,
   saveTokens,
+  setRuntimeClientId,
   isClientConfigured,
   signOut,
 } from './gdriveAuth';
@@ -40,14 +43,59 @@ afterEach(() => {
 });
 
 describe('client-id configuration', () => {
-  it('reports false when VITE_GOOGLE_OAUTH_CLIENT_ID is empty', () => {
+  it('reports false when VITE_GOOGLE_OAUTH_CLIENT_ID is empty and no runtime override', () => {
     vi.stubEnv('VITE_GOOGLE_OAUTH_CLIENT_ID', '');
+    setRuntimeClientId(null);
     expect(isClientConfigured()).toBe(false);
+    expect(getClientIdSource()).toBe('none');
   });
 
-  it('reports true when VITE_GOOGLE_OAUTH_CLIENT_ID has a value', () => {
+  it('reports true (source: build) when VITE_GOOGLE_OAUTH_CLIENT_ID has a value', () => {
     vi.stubEnv('VITE_GOOGLE_OAUTH_CLIENT_ID', 'foo.apps.googleusercontent.com');
+    setRuntimeClientId(null);
     expect(isClientConfigured()).toBe(true);
+    expect(getClientIdSource()).toBe('build');
+    expect(getEffectiveClientId()).toBe('foo.apps.googleusercontent.com');
+  });
+
+  it('accepts a runtime client ID and treats it as configured', () => {
+    vi.stubEnv('VITE_GOOGLE_OAUTH_CLIENT_ID', '');
+    const result = setRuntimeClientId('123-abc.apps.googleusercontent.com');
+    expect(result.ok).toBe(true);
+    expect(isClientConfigured()).toBe(true);
+    expect(getClientIdSource()).toBe('runtime');
+    expect(getEffectiveClientId()).toBe('123-abc.apps.googleusercontent.com');
+  });
+
+  it('runtime override wins over build-time value', () => {
+    vi.stubEnv('VITE_GOOGLE_OAUTH_CLIENT_ID', 'baked-in.apps.googleusercontent.com');
+    setRuntimeClientId('user-supplied.apps.googleusercontent.com');
+    expect(getEffectiveClientId()).toBe('user-supplied.apps.googleusercontent.com');
+    expect(getClientIdSource()).toBe('runtime');
+  });
+
+  it('rejects a client ID that does not look like a Google OAuth client ID', () => {
+    const result = setRuntimeClientId('not-a-client-id');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason.toLowerCase()).toContain('client id');
+    }
+  });
+
+  it('clears the runtime override when passed null/empty', () => {
+    vi.stubEnv('VITE_GOOGLE_OAUTH_CLIENT_ID', '');
+    setRuntimeClientId('123-abc.apps.googleusercontent.com');
+    expect(isClientConfigured()).toBe(true);
+    setRuntimeClientId(null);
+    expect(isClientConfigured()).toBe(false);
+    expect(getClientIdSource()).toBe('none');
+  });
+
+  it('trims whitespace before validating', () => {
+    setRuntimeClientId(null);
+    const result = setRuntimeClientId('   123-abc.apps.googleusercontent.com   ');
+    expect(result.ok).toBe(true);
+    expect(getEffectiveClientId()).toBe('123-abc.apps.googleusercontent.com');
   });
 });
 

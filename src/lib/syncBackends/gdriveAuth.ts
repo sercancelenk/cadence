@@ -42,13 +42,94 @@
  * see the verifier in memory.
  */
 
-// Vite injects env vars at build time. We read it lazily so unit tests
-// can use `vi.stubEnv('VITE_GOOGLE_OAUTH_CLIENT_ID', ...)` to override
-// the value per-test without rebuilding. In production, this is still
-// effectively a constant — Vite replaces `import.meta.env.X` with a
-// string literal at build time.
+/**
+ * Where the Drive client ID comes from
+ * ====================================
+ *
+ * Two sources, resolved in priority order:
+ *
+ *   1. Runtime override (`localStorage["cadence.sync.gdrive.clientId.v1"]`).
+ *      Set from Settings → "Use my own Google client ID". This is what
+ *      lets DMG / portable-build users enable Drive sync without
+ *      rebuilding — they create their own Google Cloud project, paste
+ *      the client ID into a field, done.
+ *
+ *   2. Build-time env (`VITE_GOOGLE_OAUTH_CLIENT_ID`). Vite replaces
+ *      `import.meta.env.X` with a string literal at build time. This
+ *      is what the official Cadence release ships with: the maintainer
+ *      bakes a published client ID in and the end user just clicks
+ *      "Sign in with Google".
+ *
+ * Either source is fine. The runtime override wins if both are set, so
+ * a user can override an embedded client ID with their own self-hosted
+ * one if they prefer that.
+ */
+
+const RUNTIME_CLIENT_ID_KEY = 'cadence.sync.gdrive.clientId.v1';
+
+function readRuntimeClientId(): string {
+  if (typeof window === 'undefined' || !window.localStorage) return '';
+  try {
+    return window.localStorage.getItem(RUNTIME_CLIENT_ID_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
 function getClientId(): string {
+  const runtime = readRuntimeClientId();
+  if (runtime) return runtime;
   return (import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID as string | undefined) ?? '';
+}
+
+/**
+ * Where this client ID comes from — useful for the Settings UI to show
+ * "(built-in)" vs "(user-supplied)" labels next to the indicator.
+ */
+export type ClientIdSource = 'runtime' | 'build' | 'none';
+
+export function getClientIdSource(): ClientIdSource {
+  if (readRuntimeClientId()) return 'runtime';
+  const env = (import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID as string | undefined) ?? '';
+  return env ? 'build' : 'none';
+}
+
+/**
+ * Persist a user-supplied Google OAuth Client ID. Empty / null clears
+ * the override (falls back to the build-time value, if any).
+ *
+ * We do a shape check here so a typo (e.g. pasting the project name
+ * instead of the client ID) gets caught BEFORE Google rejects the
+ * sign-in attempt — that error round-trip costs the user a popup,
+ * a consent screen flash, and a confusing "invalid_client" message.
+ */
+export function setRuntimeClientId(clientId: string | null): { ok: true } | { ok: false; reason: string } {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return { ok: false, reason: 'No persistent storage available in this runtime.' };
+  }
+  const trimmed = (clientId ?? '').trim();
+  try {
+    if (!trimmed) {
+      window.localStorage.removeItem(RUNTIME_CLIENT_ID_KEY);
+      return { ok: true };
+    }
+    if (!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(trimmed)) {
+      return {
+        ok: false,
+        reason:
+          'That does not look like a Google OAuth client ID. The expected shape is "<digits>-<hash>.apps.googleusercontent.com".',
+      };
+    }
+    window.localStorage.setItem(RUNTIME_CLIENT_ID_KEY, trimmed);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Return the currently effective client ID (runtime override OR build), without revealing the source. */
+export function getEffectiveClientId(): string {
+  return getClientId();
 }
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';

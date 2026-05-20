@@ -197,7 +197,7 @@ code {
   all: unset;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
   padding: 14px 16px;
   cursor: pointer;
@@ -211,8 +211,6 @@ code {
 }
 
 .card__toggle:hover .card__chev {
-  background: var(--surface-hover);
-  border-color: var(--border-strong, var(--border));
   color: var(--text);
 }
 
@@ -223,17 +221,27 @@ code {
 .card--collapsible .card__title {
   margin: 0;
   flex: 1;
+  min-width: 0;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.005em;
+  /* Long titles ("Multi-device sync (no cloud)") still cut neatly instead
+     of pushing the badge + chevron off the row. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Trailing status badge ("Enabled", "0.2.32") sits as a small muted pill so
- * it has its own visual block instead of bleeding into the chevron. */
+/* Trailing status badge ("Enabled", "Running", "Setup required") sits as a
+   small muted pill on the right. We give it a clear right margin from the
+   chevron so a wide badge ("Setup required") never bleeds into the
+   disclosure icon. */
 .card__badge {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   padding: 3px 10px;
+  margin-right: 4px;
   font-size: 12px;
   font-weight: 500;
   color: var(--muted);
@@ -244,25 +252,24 @@ code {
   line-height: 1.4;
 }
 
-/* Disclosure indicator — wrapped in a subtle 28×28 container so it reads as
- * an interactive affordance instead of a stray `>` character next to the
- * badge. Whole row remains clickable; the container is hit-area only when
- * combined with the toggle's hover state above. */
+/* Disclosure indicator — kept visually identical in open AND closed
+   states. Only the rotation changes (rotated -90° when closed; pointing
+   straight down when open). Background + border are intentionally
+   removed so the chevron does not visually "jump" or grow when a card is
+   opened — that was the source of the misaligned look in Settings. */
 .card__chev {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
   background: transparent;
-  border: 1px solid transparent;
+  border: 0;
   color: var(--muted);
   transition:
     transform 200ms ease,
-    background 160ms ease,
-    border-color 160ms ease,
     color 160ms ease;
   transform: rotate(-90deg);
 }
@@ -270,12 +277,10 @@ code {
 .card__chev--open {
   transform: rotate(0);
   color: var(--text);
-  background: var(--surface-hover);
-  border-color: var(--border);
 }
 
 .card__body {
-  padding: 0 18px 16px;
+  padding: 4px 18px 16px;
 }
 
 /* Children that used to have their own top spacing now sit flush. */

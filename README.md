@@ -527,7 +527,24 @@ LAN sync is great when both devices share a network, but the moment you walk out
 
 #### Setup (~5 minutes, free)
 
-You only need to do this if you forked Cadence or are running your own copy. The official build ships with a working client ID baked in.
+You only need to do this if you forked Cadence or are running a build that did not ship with an OAuth client ID embedded. The official build ships with a working client ID baked in; on that build, **Settings → Cloud sync** opens straight to a "Sign in with Google" button and you can skip this section entirely.
+
+There are two ways to wire in your own client ID:
+
+##### A. In-app (recommended — DMG / portable / non-rebuilt installs)
+
+Cadence supports user-supplied client IDs at runtime, so you do **not** have to fork the repo or set environment variables. Just open the app:
+
+1. **Settings → Cloud sync (Google Drive)** — the card shows the "Setup required" banner.
+2. Walk through the 5 numbered steps shown in the card (or follow the same steps below — they're identical) to create a Google Cloud project and an OAuth Web client ID.
+3. Tap **"I have my client ID — paste it here"**, paste the value, **Save client ID**.
+4. The card flips into the connected-state UI. Click **Sign in with Google**.
+
+The client ID is stored in `localStorage` under `cadence.sync.gdrive.clientId.v1`. To clear it later, expand the same card and use **Clear saved ID**.
+
+##### B. Build-time env (fork maintainers)
+
+If you're publishing your own build of Cadence and want every install to come pre-configured, embed the client ID at compile time:
 
 1. Open the [Google Cloud Console](https://console.cloud.google.com/) and create a new project (any name works — "cadence-sync" is fine).
 2. In the new project: **APIs & Services → Library → Google Drive API → Enable**.
