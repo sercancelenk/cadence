@@ -6,6 +6,7 @@ import { AppDataProvider, useAppData, useReminderWatcher } from './AppDataContex
 import { Layout } from './components/Layout';
 import { TeamLayout } from './components/TeamLayout';
 import { ThemeProvider } from './ThemeContext';
+import { ToastProvider } from './components/ui/Toast';
 import { PATH_TEAMS } from './lib/routes';
 import { CommandPalette } from './components/CommandPalette';
 import { NotesUnlockProvider } from './lib/NotesUnlockContext';
@@ -115,20 +116,26 @@ export default function App() {
   return (
     <HistoryRouter basename={routerBasename}>
       <ThemeProvider>
-        {/* FeaturesProvider must wrap AccountProvider — login/register routes
-            also consult the feature flags (e.g. to hide "Sign up" if a strict
-            shared-device policy is in place). */}
-        <FeaturesProvider>
-          <AccountProvider>
-            <Suspense fallback={<BootLoading label="Loading…" />}>
-              <Routes>
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/register" element={<RegisterPage />} />
-                <Route path="*" element={<ProtectedShell />} />
-              </Routes>
-            </Suspense>
-          </AccountProvider>
-        </FeaturesProvider>
+        {/* ToastProvider sits inside ThemeProvider so toasts inherit the
+            active CSS theme variables. It sits OUTSIDE the routed surfaces
+            (Routes / ProtectedShell) so a toast queued by a route can
+            survive a navigation that unmounts that route's tree. */}
+        <ToastProvider>
+          {/* FeaturesProvider must wrap AccountProvider — login/register routes
+              also consult the feature flags (e.g. to hide "Sign up" if a strict
+              shared-device policy is in place). */}
+          <FeaturesProvider>
+            <AccountProvider>
+              <Suspense fallback={<BootLoading label="Loading…" />}>
+                <Routes>
+                  <Route path="/login" element={<LoginPage />} />
+                  <Route path="/register" element={<RegisterPage />} />
+                  <Route path="*" element={<ProtectedShell />} />
+                </Routes>
+              </Suspense>
+            </AccountProvider>
+          </FeaturesProvider>
+        </ToastProvider>
       </ThemeProvider>
     </HistoryRouter>
   );

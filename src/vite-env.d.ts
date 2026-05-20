@@ -172,6 +172,33 @@ interface CadenceApi {
       }) => Promise<{ ok: boolean; error?: string }>;
       accountVerifyPassword: (payload: { password: string }) => Promise<{ ok: boolean; error?: string }>;
       /**
+       * Inspect the per-user "stay signed in" preference and whether the
+       * OS keychain on this machine can actually back it. The renderer
+       * uses this to render the Settings toggle in the correct initial
+       * state and to surface a hint when the platform cannot persist a
+       * session key (Linux without libsecret).
+       *
+       * `signedIn=false` when there is no active account session — the
+       * caller should treat this as "no preference yet".
+       */
+      accountGetRememberMe: () => Promise<{
+        available: boolean;
+        enabled: boolean;
+        signedIn: boolean;
+      }>;
+      /**
+       * Flip the per-user "stay signed in" preference. Enabling requires
+       * an active session because we persist the current in-memory data
+       * key into the OS keychain at the same time; if that step fails
+       * the flag is NOT set so the user's expectations stay accurate.
+       */
+      accountSetRememberMe: (payload: { value: boolean }) => Promise<{
+        ok: boolean;
+        available: boolean;
+        enabled?: boolean;
+        error?: string;
+      }>;
+      /**
        * Reads the enterprise / shared-device policy file from disk (5-layer
        * search; see `loadPolicy` in `electron/main.cjs`). Returns `null`
        * when no valid policy is found, in which case the renderer falls

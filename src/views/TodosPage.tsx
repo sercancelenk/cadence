@@ -4,7 +4,6 @@ import {
   IcCalendar,
   IcCheck,
   IcChevronDown,
-  IcChevronRight,
   IcClock,
   IcGrip,
   IcLayoutGrid,
@@ -225,37 +224,72 @@ function TodoTaskRow({
   onDragEnd,
 }: TodoTaskRowProps) {
   const [editing, setEditing] = useState(false);
-  const [draftTitle, setDraftTitle] = useState(item.title);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // Markdown details: open by default if the task already has a body
-  // (otherwise hide it so the row stays compact for the 80% of tasks
-  // that are quick one-liners). The toggle button switches modes and
-  // the editor lazy-loads on first open, same chunk Notes uses.
-  const [detailsOpen, setDetailsOpen] = useState<boolean>(!!item.body);
-  // Inline draft so the textarea is responsive (we don't want every
-  // keystroke to round-trip through the global store before it shows
-  // up). Patches are pushed on blur and on detail-close so the live
-  // file stays in step with what the user sees — matches Notes-page
-  // semantics.
-  const [draftBody, setDraftBody] = useState<string>(item.body ?? '');
-  // Track the most recently committed body so an external change (sync
-  // pull, another window) re-syncs the local draft. We only adopt the
-  // upstream value when our draft equals the previously seen one — that
-  // way we never clobber un-committed typing in the editor.
-  const lastCommittedBodyRef = useRef<string>(item.body ?? '');
-  useEffect(() => {
-    const upstream = item.body ?? '';
-    if (upstream !== lastCommittedBodyRef.current && upstream !== draftBody) {
-      setDraftBody(upstream);
+  // Click-to-expand for long titles. Resting state clamps to 2 lines;
+  // single click toggles the clamp; double click enters edit mode.
+  const [titleExpanded, setTitleExpanded] = useState(false);
+  // Which inline chip-menu is open. We use one state for all three chips
+  // because only one menu can be open at a time — clicking a different
+  // chip should swap menus, clicking outside should close. The outside-
+  // click handler below scopes to the chips wrapper so this works even
+  // though the menus render inside their own chip containers.
+  const [openChip, setOpenChip] = useState<null | 'status' | 'priority' | 'group'>(null);
+  const statusChipRef = useRef<HTMLDivElement | null>(null);
+  const priorityChipRef = useRef<HTMLDivElement | null>(null);
+  const groupChipRef = useRef<HTMLDivElement | null>(null);
+  // Combined edit buffer: title + body in a single markdown document.
+  // The first non-empty line becomes the title on save (stripped of any
+  // leading `#` if the user wrote it as a heading), the rest becomes
+  // the body. Initialised when entering edit mode via the helper below
+  // so we always start from the current upstream state.
+  const buildEditContent = (it: TodoItem): string => {
+    const body = it.body ?? '';
+    return body ? `${it.title}\n\n${body}` : it.title;
+  };
+  const [draftEdit, setDraftEdit] = useState<string>(() => buildEditContent(item));
+
+  const beginEdit = () => {
+    setDraftEdit(buildEditContent(item));
+    setEditing(true);
+  };
+
+  const parseEdit = (content: string): { title: string; body: string } => {
+    const lines = content.split('\n');
+    let titleIdx = -1;
+    let title = '';
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      if (trimmed) {
+        title = trimmed.replace(/^#+\s+/, '');
+        titleIdx = i;
+        break;
+      }
     }
-    lastCommittedBodyRef.current = upstream;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.body]);
-  const commitBody = () => {
-    if (draftBody !== (item.body ?? '')) {
-      onPatch(item.id, { body: draftBody });
-    }
+    const body =
+      titleIdx >= 0
+        ? lines
+            .slice(titleIdx + 1)
+            .join('\n')
+            .replace(/^\n+/, '')
+            .replace(/\n+$/, '')
+        : '';
+    return { title, body };
+  };
+
+  const saveEdit = () => {
+    const { title, body } = parseEdit(draftEdit);
+    const patch: Parameters<typeof onPatch>[1] = {};
+    // Fall back to the existing title if the user cleared everything —
+    // we never want to leave a task with an empty title.
+    if (title && title !== item.title) patch.title = title;
+    if (body !== (item.body ?? '')) patch.body = body;
+    if (Object.keys(patch).length > 0) onPatch(item.id, patch);
+    setEditing(false);
+  };
+  const cancelEdit = () => {
+    setDraftEdit(buildEditContent(item));
+    setEditing(false);
   };
   // The schedule trigger ref is forwarded to the popover so the popover's
   // outside-click detection ignores re-clicks on the trigger itself
@@ -269,6 +303,33 @@ function TodoTaskRow({
   // either with an "Overdue" warning would just add noise.
   const overdue = item.dueAt && isPast(item.dueAt) && isTodoOpen(item.status);
   const reminderArmed = !!item.remindAt && isTodoOpen(item.status);
+
+  // Close the currently open chip menu when the user clicks outside its
+  // container or hits Escape. Clicking ANOTHER chip's button counts as
+  // "outside" the current one — that mousedown closes the old menu,
+  // then the new chip's onClick opens the new one in the next tick.
+  useEffect(() => {
+    if (!openChip) return;
+    const ref =
+      openChip === 'status'
+        ? statusChipRef
+        : openChip === 'priority'
+          ? priorityChipRef
+          : groupChipRef;
+    const onClick = (e: MouseEvent) => {
+      const node = ref.current;
+      if (node && !node.contains(e.target as Node)) setOpenChip(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenChip(null);
+    };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [openChip]);
 
   // 3-second "click-to-confirm" delete. We auto-revert the confirm state so
   // the trash button doesn't sit in a dangerous mode after the user navigates
@@ -353,193 +414,225 @@ function TodoTaskRow({
       </button>
 
       <div className="todos-row__mid">
-        <div className="todos-row__topline">
-          {editing ? (
-            <AutoResizeTextarea
-              className="todos-row__title-input todos-row__title-input--multi"
-              value={draftTitle}
-              autoFocus
-              minRows={2}
-              maxRows={8}
-              ariaLabel="Edit task"
-              onChange={setDraftTitle}
-              onSubmit={() => {
-                const t = draftTitle.trim();
-                if (t && t !== item.title) onPatch(item.id, { title: t });
-                else setDraftTitle(item.title);
-                setEditing(false);
-              }}
-              onCancel={() => {
-                setDraftTitle(item.title);
-                setEditing(false);
-              }}
-              onBlur={() => {
-                const t = draftTitle.trim();
-                if (t && t !== item.title) onPatch(item.id, { title: t });
-                else setDraftTitle(item.title);
-                setEditing(false);
-              }}
-            />
-          ) : (
+        {editing ? (
+          // Unified edit mode: ONE markdown editor that holds both the
+          // task title (first line) and the body. Save parses the first
+          // non-empty line as the title (stripping leading `#` if the
+          // user wrote it as a heading) and the rest as the body.
+          <div className="todos-row__edit">
+            <Suspense
+              fallback={
+                <div className="todos-row__details-loading muted small">Loading editor…</div>
+              }
+            >
+              <MarkdownEditor
+                value={draftEdit}
+                onChange={setDraftEdit}
+                placeholder="First line is the title — Markdown supported below."
+                rows={8}
+                initialMode="edit"
+              />
+            </Suspense>
+            <div className="todos-row__edit-actions">
+              <button type="button" className="btn btn--small" onClick={cancelEdit}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn--small btn--primary"
+                onClick={saveEdit}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="todos-row__topline">
             <button
               type="button"
-              className="todos-row__title"
-              onDoubleClick={() => {
-                setDraftTitle(item.title);
-                setEditing(true);
+              className={`todos-row__title${titleExpanded ? ' todos-row__title--expanded' : ''}`}
+              onClick={(e) => {
+                // Skip the toggle when this is the first click of a
+                // dblclick (detail >= 2 fires for the second click; the
+                // first click still toggles once before dblclick lands —
+                // that flicker isn't visible because edit mode replaces
+                // the title display immediately afterwards).
+                if (e.detail >= 2) return;
+                setTitleExpanded((v) => !v);
               }}
+              onDoubleClick={beginEdit}
             >
               {item.title}
             </button>
-          )}
-
-          {item.status !== 'todo' ? (
-            <span
-              className={`todos-row__status todos-row__status--${item.status}`}
-              data-tone={statusTone}
-              title={`Status: ${statusMeta?.label ?? item.status}`}
-            >
-              {statusShort}
-            </span>
-          ) : null}
-
-          {item.priority ? (
-            <span className={`todos-row__prio todos-row__prio--${item.priority}`} title={`Priority: ${item.priority}`}>
-              {priorityShort(item.priority)}
-            </span>
-          ) : null}
-
-          <div className="todos-row__tag">
-            <span className="todos-row__tag-name">{group.name}</span>
-            <span className="todos-row__hash" style={{ color: tagColor(item.groupId) }}>
-              #
-            </span>
           </div>
-        </div>
+        )}
 
+        {!editing ? (
+        /* ---- Sub row ----
+         * Single horizontal strip below the title that combines, in
+         * order: group · priority · status · schedule, then a hover-
+         * only action toolbar pushed to the right. Each chip is a
+         * button that opens a small popover — replacing the three
+         * <select>s that used to crowd the toolbar. */
         <div className="todos-row__sub">
-          <div className="todos-row__meta">
-            {item.dueAt ? (
-              <>
-                <span className={`todos-row__meta-ic${overdue ? ' todos-row__meta-ic--warn' : ''}`} title="Due">
-                  <IcCalendar size={14} />
-                </span>
-                <span className={overdue ? 'todos-row__meta-warn' : undefined}>
-                  {dueDateShort}
-                  {dueLabel ? ` · ${dueLabel}` : ''}
-                </span>
-                <span className="todos-row__meta-ic todos-row__meta-ic--muted" title="Time">
-                  <IcClock size={14} />
-                </span>
-              </>
-            ) : (
-              <span className="todos-row__meta-placeholder">Not scheduled</span>
-            )}
-          </div>
-          <div className="todos-row__toolbar">
-            <div className="todos-row__sched">
-              <button
-                ref={scheduleTriggerRef}
-                type="button"
-                className={`todos-row__sched-btn${item.dueAt ? ' todos-row__sched-btn--set' : ''}${
-                  reminderArmed ? ' todos-row__sched-btn--reminder' : ''
-                }`}
-                aria-haspopup="dialog"
-                aria-expanded={scheduleOpen}
-                title={
-                  item.dueAt
-                    ? `Scheduled for ${formatDateShort(item.dueAt)} ${formatTimeOnly(item.dueAt)}${
-                        reminderArmed ? ' · reminder set' : ''
-                      }`
-                    : 'Schedule'
-                }
-                onClick={() => setScheduleOpen((o) => !o)}
-              >
-                <IcCalendar size={16} />
-              </button>
-              {scheduleOpen ? (
-                <SchedulePopover
-                  anchorRef={scheduleTriggerRef}
-                  dueAt={item.dueAt}
-                  remindAt={item.remindAt}
-                  remindRepeat={item.remindRepeat}
-                  onPatch={(patch) => onPatch(item.id, schedulePatchToTodoPatch(patch))}
-                  onClose={() => setScheduleOpen(false)}
-                />
-              ) : null}
-            </div>
-            <select
-              className={`todos-row__move todos-row__status-select todos-row__status-select--${item.status}`}
-              value={item.status}
-              onChange={(e) => onPatch(item.id, { status: e.target.value as TodoStatus })}
-              aria-label="Set status"
-              title="Status"
-            >
-              {TODO_STATUS_OPTIONS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-            <select
-              className="todos-row__move"
-              value={item.priority ?? ''}
-              onChange={(e) =>
-                onPatch(item.id, { priority: (e.target.value || undefined) as Priority | undefined })
-              }
-              aria-label="Set priority"
-              title="Priority"
-            >
-              <option value="">No priority</option>
-              {PRIORITY_OPTIONS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-            <select
-              className="todos-row__move"
-              value={item.groupId}
-              onChange={(e) => onPatch(item.id, { groupId: e.target.value })}
-              aria-label="Move to list"
-            >
-              {groups.map((gr) => (
-                <option key={gr.id} value={gr.id}>
-                  {gr.name}
-                </option>
-              ))}
-            </select>
+          <div className="todos-row__chip-wrap" ref={groupChipRef}>
             <button
               type="button"
-              className={`todos-row__details-btn${detailsOpen ? ' todos-row__details-btn--open' : ''}${
-                item.body ? ' todos-row__details-btn--has-body' : ''
-              }`}
-              title={
-                detailsOpen
-                  ? 'Hide details'
-                  : item.body
-                  ? 'Show details (this task has notes)'
-                  : 'Add details'
-              }
-              aria-label={detailsOpen ? 'Hide details' : 'Show details'}
-              aria-expanded={detailsOpen}
-              onClick={() => {
-                // Closing the panel commits the draft body so anything the
-                // user typed but never blurred out of doesn't get lost
-                // when the editor unmounts.
-                if (detailsOpen) commitBody();
-                setDetailsOpen((o) => !o);
-              }}
+              className="todos-row__tag todos-row__chip-btn"
+              title={`List: ${group.name} — click to move`}
+              aria-haspopup="menu"
+              aria-expanded={openChip === 'group'}
+              onClick={() => setOpenChip((cur) => (cur === 'group' ? null : 'group'))}
             >
-              <IcStickyNote size={14} />
-              <IcChevronRight
-                size={10}
-                style={{
-                  transform: detailsOpen ? 'rotate(90deg)' : 'none',
-                  transition: 'transform 120ms ease',
-                }}
-              />
+              <span className="todos-row__tag-name">{group.name}</span>
+              <span className="todos-row__hash" style={{ color: tagColor(item.groupId) }}>
+                #
+              </span>
             </button>
+            {openChip === 'group' ? (
+              <div className="todos-row__chip-menu" role="menu">
+                {groups.map((gr) => (
+                  <button
+                    key={gr.id}
+                    type="button"
+                    role="menuitem"
+                    className={`todos-row__chip-menu-item${item.groupId === gr.id ? ' is-active' : ''}`}
+                    onClick={() => {
+                      if (gr.id !== item.groupId) onPatch(item.id, { groupId: gr.id });
+                      setOpenChip(null);
+                    }}
+                  >
+                    {gr.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="todos-row__chip-wrap" ref={priorityChipRef}>
+            <button
+              type="button"
+              className={`todos-row__prio${
+                item.priority ? ` todos-row__prio--${item.priority}` : ' todos-row__prio--none'
+              } todos-row__chip-btn`}
+              title={`Priority: ${item.priority ?? 'none'} — click to change`}
+              aria-haspopup="menu"
+              aria-expanded={openChip === 'priority'}
+              onClick={() => setOpenChip((cur) => (cur === 'priority' ? null : 'priority'))}
+            >
+              {item.priority ? priorityShort(item.priority) : '— Priority'}
+            </button>
+            {openChip === 'priority' ? (
+              <div className="todos-row__chip-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={`todos-row__chip-menu-item${!item.priority ? ' is-active' : ''}`}
+                  onClick={() => {
+                    onPatch(item.id, { priority: undefined });
+                    setOpenChip(null);
+                  }}
+                >
+                  No priority
+                </button>
+                {PRIORITY_OPTIONS.map((p) => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    role="menuitem"
+                    className={`todos-row__chip-menu-item${item.priority === p.value ? ' is-active' : ''}`}
+                    onClick={() => {
+                      onPatch(item.id, { priority: p.value as Priority });
+                      setOpenChip(null);
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="todos-row__chip-wrap" ref={statusChipRef}>
+            <button
+              type="button"
+              className={`todos-row__status todos-row__status--${item.status} todos-row__chip-btn`}
+              data-tone={statusTone}
+              title={`Status: ${statusMeta?.label ?? item.status} — click to change`}
+              aria-haspopup="menu"
+              aria-expanded={openChip === 'status'}
+              onClick={() => setOpenChip((cur) => (cur === 'status' ? null : 'status'))}
+            >
+              {statusShort}
+            </button>
+            {openChip === 'status' ? (
+              <div className="todos-row__chip-menu" role="menu">
+                {TODO_STATUS_OPTIONS.map((s) => (
+                  <button
+                    key={s.value}
+                    type="button"
+                    role="menuitem"
+                    className={`todos-row__chip-menu-item${item.status === s.value ? ' is-active' : ''}`}
+                    onClick={() => {
+                      onPatch(item.id, { status: s.value });
+                      setOpenChip(null);
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="todos-row__sched">
+            <button
+              ref={scheduleTriggerRef}
+              type="button"
+              className={`todos-row__date-trigger${item.dueAt ? ' todos-row__date-trigger--set' : ''}${
+                overdue ? ' todos-row__date-trigger--warn' : ''
+              }${reminderArmed ? ' todos-row__date-trigger--reminder' : ''}`}
+              aria-haspopup="dialog"
+              aria-expanded={scheduleOpen}
+              title={
+                item.dueAt
+                  ? `Scheduled for ${formatDateShort(item.dueAt)} ${formatTimeOnly(item.dueAt)}${
+                      reminderArmed ? ' · reminder set' : ''
+                    } — click to change`
+                  : 'Schedule a due date'
+              }
+              onClick={() => setScheduleOpen((o) => !o)}
+            >
+              <span className="todos-row__meta-ic" aria-hidden>
+                <IcCalendar size={14} />
+              </span>
+              {item.dueAt ? (
+                <>
+                  <span>
+                    {dueDateShort}
+                    {dueLabel ? ` · ${dueLabel}` : ''}
+                  </span>
+                  {reminderArmed ? (
+                    <span className="todos-row__meta-ic todos-row__meta-ic--muted" aria-hidden title="Reminder set">
+                      <IcClock size={13} />
+                    </span>
+                  ) : null}
+                </>
+              ) : null}
+            </button>
+            {scheduleOpen ? (
+              <SchedulePopover
+                anchorRef={scheduleTriggerRef}
+                dueAt={item.dueAt}
+                remindAt={item.remindAt}
+                remindRepeat={item.remindRepeat}
+                onPatch={(patch) => onPatch(item.id, schedulePatchToTodoPatch(patch))}
+                onClose={() => setScheduleOpen(false)}
+              />
+            ) : null}
+          </div>
+
+          <div className="todos-row__toolbar">
             {aiEnabled ? (
               <button
                 type="button"
@@ -566,52 +659,23 @@ function TodoTaskRow({
             </button>
           </div>
         </div>
+        ) : null}
 
-        {detailsOpen ? (
-          // Lazy-mounted markdown editor + preview. We render the
-          // Suspense fallback as a thin skeleton because the editor
-          // chunk is small enough that the swap is usually instant on
-          // a warm cache — a heavier loader would feel like a hitch.
-          //
-          // The editor lives INSIDE the row (not as a popover or modal)
-          // so the surrounding context (status pills, due date, group
-          // tag) stays visible while the user writes. That's the same
-          // reason the Notes page picked an inline editor over a
-          // separate "Edit" view.
-          <div className="todos-row__details" role="region" aria-label="Task details">
-            <Suspense
-              fallback={
-                <div className="todos-row__details-loading muted small">Loading editor…</div>
-              }
-            >
-              <MarkdownEditor
-                value={draftBody}
-                onChange={setDraftBody}
-                onBlur={commitBody}
-                placeholder="Add details — notes, links, checklists, code… markdown supported."
-                rows={6}
-                initialMode={item.body ? 'preview' : 'edit'}
-              />
-            </Suspense>
-          </div>
-        ) : item.body ? (
+        {!editing && item.body ? (
           // Closed-but-has-body summary: a one-line "this task has
           // notes" hint so the user can see at a glance which rows
-          // carry hidden context. Click anywhere on the hint to open
-          // the editor — saves the precise icon-click on touch screens.
+          // carry hidden context. Click drops straight into edit mode
+          // since the dedicated "details" toggle is gone — editing now
+          // covers both title and body.
           <button
             type="button"
             className="todos-row__details-hint"
-            onClick={() => setDetailsOpen(true)}
-            title="Show details"
+            onClick={beginEdit}
+            title="Edit details"
           >
             <IcStickyNote size={12} />
             <span>
               {(() => {
-                // First non-empty line, capped to ~80 chars so the row
-                // doesn't grow unbounded. We strip markdown syntax for
-                // the inline tease — full rendering happens when the
-                // user expands the panel.
                 const firstLine = (item.body ?? '')
                   .split('\n')
                   .map((s) => s.trim())

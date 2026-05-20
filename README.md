@@ -52,7 +52,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 ![To-dos page with status filter, sort modes and per-list add row](docs/screenshots/todos.png)
 
-> Each row carries a **status**: *To do · In progress · Done · Cancelled*. Filter by status (All / Open / individual states), sort by **Manual / Priority / Due date / Status (Kanban order)**, and drag rows by the grip handle to reorder manually. Completion rate excludes cancelled rows — dropping a task on purpose shouldn't drag your numbers down. The list still supports hide-closed, archive, per-list priority and cross-list search. Every task can carry optional **Markdown details** (same Write / Preview editor + formatting toolbar as Notes) — click **Add details** when creating a task, or the 📝 toggle on any row. Search matches **title and details**, not just the one-liner.
+> Each row carries a **status**: *To do · In progress · Done · Cancelled*. Filter by status (All / Open / individual states), sort by **Manual / Priority / Due date / Status (Kanban order)**, and drag rows by the grip handle to reorder manually. Completion rate excludes cancelled rows — dropping a task on purpose shouldn't drag your numbers down. The list still supports hide-closed, archive, per-list priority and cross-list search. Quick-add a task with the **`+` icon next to each list title** or via the floating **Quick add** button (bottom-right) for "Add task / Add note" anywhere in the app. Every task can carry optional **Markdown details** — double-click the title to switch the row into a unified Markdown editor (same Write / Preview affordances as Notes). Search matches **title and details**, not just the one-liner.
 
 ### Notes — resizable sidebar, sort modes, Markdown toolbar
 
@@ -78,11 +78,11 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 > Completion rate, a daily / weekly / monthly / yearly created-vs-completed SVG chart, per-team performance bars and a top-contributors table. The dedicated **To-do status breakdown** section adds counts for *To do / In progress / Done / Cancelled* plus a horizontal stacked bar that visualises the proportions. Completion rate excludes cancelled. Nothing leaves your device — the chart is rendered as inline SVG.
 
-### Settings — appearance, PIN, backups, AI, LAN sync
+### Settings — grouped by relationship: security, data, sync, integrations, about
 
-![Settings page with appearance, PIN protection and application version cards](docs/screenshots/settings.png)
+![Settings page with Stay-signed-in and PIN protection cards under the Account & security group](docs/screenshots/settings.png)
 
-> Theme toggle, PIN lock with rate-limited recovery, rolling backup snapshots with per-snapshot counts and one-click restore, AI assistant (BYO API key for Claude / ChatGPT / Gemini), LAN sync server, storage diagnostics and auto-update controls.
+> Cards are organised into five named groups: **Account & security** (Stay-signed-in via OS keychain + PIN lock with rate-limited recovery), **Data & backup** (JSON export/import, rolling snapshot recovery with per-snapshot counts, storage diagnostics), **Sync** (LAN + Cloud), **Integrations** (AI assistant — BYO API key for Claude / ChatGPT / Gemini — and OS notifications) and **About** (app profile / policy, version info, auto-update controls). The theme toggle has moved to the top bar — one click instead of two.
 
 ---
 
@@ -104,6 +104,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | | |
 |---|---|
 | 🔒 **Encrypted at rest** | AES-256-GCM data file keyed via `scrypt(password)`. Notes get an additional PBKDF2 → AES-256-GCM lockbox with a non-extractable `CryptoKey`. |
+| 🔑 **Stay signed in (opt-out)** | After your first login, Cadence wraps the data-encryption key with Electron's `safeStorage` and persists it in your OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). Restarts skip the password prompt; **Logout** always purges the cached key, and Settings → *Stay signed in* gives you a one-click "ask on every launch" toggle. On Linux without libsecret we refuse to cache rather than fall back to a hardcoded-obfuscation key — same security promise on every platform. |
 | 🛟 **Durable saves** | Atomic `open → write → fsync → close → rename` cycle plus directory fsync. A power loss or kernel panic leaves either the old file or the new file — never a torn one. Worst case: ≤ 400 ms of unflushed typing. |
 | 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Each snapshot shows teams / lists / tasks / notes counts; **Reveal in Finder** for manual inspection. Refuse-to-overwrite guard if the live file is undecipherable. |
 | 🛡️ **Data-integrity guard** | After every successful save, a per-device fingerprint records how much content you had. On the next boot, if the loaded file is meaningfully smaller, an amber banner spells out the before/after counts and links straight to *Backups & recovery* — so "my data vanished" is caught before you panic. |
@@ -1200,11 +1201,27 @@ Google retired the Gemini 1.x family from the `v1beta` endpoint in late 2025. Op
 | 3.6 | Bulk operations on items (multi-select → mass reschedule / move / delete) |
 | 3.7 | Per-team / per-person filter on the Analytics page |
 
+### Tier 4 — engineering polish (post-v1)
+
+Small, well-scoped follow-ups surfaced by the v1 production-readiness
+review. None block the MVP — they're listed here so the audit trail
+doesn't get lost between releases.
+
+| # | Item | Why it matters |
+|---|---|---|
+| 4.1 | **Toast action button support** (e.g. "Undo" after a destructive action) | The `Toast` provider in `src/components/ui/Toast.tsx` already owns the lifecycle, an `action?: { label, onClick }` slot would let destructive flows replace `window.confirm` while still being safely reversible. |
+| 4.2 | **Settings bundle split** | `dist/assets/Settings-*.js` is ~68 kB / 20 kB gzip — Sync, Cloud Sync and AI sub-sections could be lazy-loaded as siblings of the main page, dropping the initial Settings chunk by roughly half. |
+| 4.3 | **LAN sync "remember passphrase on this device" toggle** | Cleans up the `TODO` in `src/lib/syncSession.ts` (line 45). The passphrase already lives in `sessionStorage` — exposing the policy as a Settings toggle just makes it discoverable. |
+| 4.4 | **Auto-updater TLS pinning (defence-in-depth)** | `electron-updater` already verifies the Apple-signed binary; pinning a GitHub Releases certificate fingerprint at the IPC boundary would catch a hypothetical MITM at the download step even if the signature check were ever bypassed. |
+| 4.5 | **Toast queue position preference** | Bottom-right is sensible default, but power users might want top-right (closer to where they typically focus). One-line addition to the toast container. |
+| 4.6 | **`window.alert` → toast migration sweep** | Done for v1 in Settings + RegisterPage; spot-check other route surfaces (TodosPage, NotesPage, dialogs) for any remaining native dialogs that should be toasts. |
+
 ### Long-term
 
 - Per-person reminders with timezone-aware scheduling
-- Windows MSI + Linux AppImage signed builds
+- Windows MSI + Linux AppImage signed builds (promote from "experimental local build" to CI-released)
 - i18n framework (English is the primary language; community translations welcome)
+- Per-field merge in sync (overlaps with Tier 2.5; full CRDT or operational-transform layer would let two phones edit the same note offline and reconcile cleanly)
 
 ---
 

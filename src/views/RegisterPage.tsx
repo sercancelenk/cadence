@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { IcPlus } from '../components/icons';
 import { Button } from '../components/ui/Button';
+import { useToast } from '../components/ui/Toast';
 import { useAccount } from '../AccountContext';
 import { STORAGE_PREFIX } from '../lib/appBranding';
 
@@ -15,6 +16,7 @@ export function RegisterPage() {
   const [displayName, setDisplayName] = useState('');
   const [migrateLegacy, setMigrateLegacy] = useState(false);
   const [err, setErr] = useState('');
+  const toast = useToast();
 
   useEffect(() => {
     void refreshLegacyHint();
@@ -55,7 +57,7 @@ export function RegisterPage() {
               if (displayName.trim()) sessionStorage.setItem(`${STORAGE_PREFIX}-profile-seed`, displayName.trim());
               navigate('/', { replace: true });
             } else setErr(r.error ?? 'Sign-up failed.');
-            if (r.warn) window.alert(r.warn);
+            if (r.warn) toast.showWarning('Account created with a caveat', r.warn);
           }}
         >
           <label className="field">

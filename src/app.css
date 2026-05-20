@@ -171,6 +171,186 @@ code {
   font-size: 12px;
 }
 
+/* ─── Toast notifications ──────────────────────────────────────────────
+ *
+ * Fixed bottom-right stack of non-blocking notifications. Replaces the
+ * old `window.alert()` calls so the UI no longer freezes for an OS
+ * modal whenever Settings has something to say. Each toast auto-dismisses
+ * (the React provider owns the timer) — these styles only handle the
+ * presentation.
+ *
+ * Theming: uses theme variables only, so the toasts blend with both
+ * light + dark modes. Kind-specific accents (success / error / warning
+ * / info) come from a coloured side-bar inside the card, NOT from
+ * recolouring the whole panel — keeping the contrast against the
+ * background consistent regardless of theme.
+ */
+.toast-stack {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 12px;
+  padding: 12px 12px 12px 14px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--toast-accent, var(--accent));
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  pointer-events: auto;
+  animation: toast-in 180ms ease-out;
+  min-width: 280px;
+}
+.toast--success {
+  --toast-accent: #16a34a;
+}
+.toast--error {
+  --toast-accent: #dc2626;
+}
+.toast--warning {
+  --toast-accent: #d97706;
+}
+.toast--info {
+  --toast-accent: var(--accent);
+}
+.toast__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--toast-accent);
+  margin-top: 1px;
+}
+.toast__body {
+  min-width: 0;
+}
+.toast__title {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+}
+.toast__desc {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--text) 72%, transparent);
+  word-wrap: break-word;
+}
+.toast__close {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  margin-top: 1px;
+  transition: background 140ms ease, color 140ms ease;
+}
+.toast__close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.toast__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  color: var(--text);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@media (max-width: 600px) {
+  .toast-stack {
+    bottom: 16px;
+    right: 12px;
+    left: 12px;
+    max-width: none;
+  }
+  .toast {
+    min-width: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+/* ─── Settings page: modernised group rhythm ──────────────────────────
+ *
+ * The Settings screen used to be ~14 collapsible cards stacked
+ * vertically with identical visual weight. To make that scannable we
+ * organise the cards into named groups ("Account & security", "Data
+ * & backup", "Sync", "Integrations", "About") with a small uppercase
+ * eyebrow heading and a tightened gap between members of the same
+ * group. The cards themselves keep their existing CollapsibleCard
+ * styling — this layer is purely the structural overlay.
+ */
+.settings-page__head {
+  margin-bottom: 28px;
+}
+.settings-group {
+  margin-top: 32px;
+}
+.settings-group:first-of-type {
+  margin-top: 12px;
+}
+.settings-group__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 4px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  margin: 0 0 14px;
+}
+.settings-group__eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.settings-group__desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text) 65%, transparent);
+}
+.settings-group__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* Inside a group, cards sit flush with `gap` instead of their default
+   16px top margin — keeps related items visually anchored together
+   while letting the inter-group rhythm breathe. */
+.settings-group__body > .card {
+  margin-top: 0;
+}
+
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -2205,11 +2385,17 @@ code {
   top: calc(100% + 4px);
   min-width: 168px;
   padding: 6px;
+  /* Solid panel background so the popover never bleeds-through to the
+   * next list section beneath it. `var(--panel)` resolves to #22262f in
+   * dark theme and #ffffff in light — both fully opaque. */
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-md);
-  z-index: 20;
+  /* Sits above siblings within this section's stacking context; the
+   * section itself is elevated via :has(...) above so the panel also
+   * paints above neighbouring sections. */
+  z-index: 30;
 }
 
 .todos-section__menu-item {
@@ -2442,6 +2628,95 @@ code {
   gap: 12px;
 }
 
+/* Chips (status / priority / group) live in `.todos-row__sub` alongside
+ * the schedule trigger and the hover-only toolbar. The title spans full
+ * width on the line above so the chips never fight with it for room. */
+.todos-row__chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.todos-row__chip-btn {
+  cursor: pointer;
+  font: inherit;
+  /* Reset default <button> chrome so the chip-specific styles below
+   * (e.g. .todos-row__status--in_progress) define the look entirely. */
+  border: 1px solid transparent;
+  background: none;
+  padding: 0;
+  line-height: 1;
+  transition: filter 120ms ease, transform 100ms ease, background 120ms ease;
+}
+
+.todos-row__chip-btn:hover {
+  filter: brightness(1.1);
+}
+
+.todos-row__chip-btn:active {
+  transform: scale(0.97);
+}
+
+.todos-row__chip-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Popover that appears below a chip. Solid panel background so it
+ * never bleeds through to subsequent rows. The parent row is
+ * elevated via :has(...) below to dodge stacking-context issues. */
+.todos-row__chip-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 150px;
+  max-width: min(280px, 92vw);
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 30;
+}
+
+.todos-row__chip-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.todos-row__chip-menu-item:hover,
+.todos-row__chip-menu-item:focus-visible {
+  background: var(--tp-hover);
+  outline: none;
+}
+
+.todos-row__chip-menu-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Lift the row stacking context while any chip menu is open so its
+ * absolutely-positioned panel paints above the next row, even if that
+ * row has opacity / filter / transform creating its own context. */
+.todos-row:has(.todos-row__chip-menu) {
+  position: relative;
+  z-index: 30;
+}
+
 .todos-row__title {
   flex: 1;
   min-width: 0;
@@ -2453,14 +2728,45 @@ code {
   background: none;
   border: none;
   padding: 0;
-  cursor: default;
+  cursor: pointer;
   border-radius: 4px;
-  white-space: pre-wrap;
   word-break: break-word;
+  /* Clamp to 2 lines by default. Longer titles get an ellipsis; a
+   * single click toggles the clamp off (.--expanded) so the user can
+   * read the full text without entering edit mode. Double click drops
+   * straight into the markdown editor. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.todos-row__title--expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
 }
 
 .todos-row__title:hover {
   color: var(--accent);
+}
+
+/* ---- Unified edit form ----
+ * Mounted in place of the title + sub-row when the user double-clicks
+ * a task. Contains an autoresizing title input, a markdown editor for
+ * the body, and explicit Save / Cancel buttons. Replaces the older
+ * "title-only inline edit + separate details toggle" flow. */
+.todos-row__edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.todos-row__edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .todos-row__title-input {
@@ -2509,9 +2815,12 @@ code {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px 12px;
-  margin-top: 5px;
+  /* Chips + schedule hug the left; the toolbar grows to fill the rest
+   * (flex: 1 1 0) and right-aligns its own children. We deliberately
+   * drop `space-between` here so individual chips stay close together
+   * — the toolbar's flex-grow handles the right-side push. */
+  gap: 6px 8px;
+  margin-top: 6px;
 }
 
 .todos-row__meta {
@@ -2565,6 +2874,31 @@ code {
    * a wrap when the inline content would have fit in <220 px. */
   flex: 1 1 0;
   min-width: 0;
+  /* Hover-only secondary actions. Resting rows show only the schedule
+   * trigger on the left so the row reads as just "title + chips +
+   * date". The action buttons (details, AI, delete) fade in when the
+   * row is hovered or focused. On touch devices (no hover capability)
+   * we keep them visible so the UI stays usable. */
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.todos-row:hover .todos-row__toolbar,
+.todos-row:focus-within .todos-row__toolbar {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .todos-row__toolbar {
+    opacity: 1;
+  }
+}
+
+/* While confirming a delete, force the toolbar visible regardless of
+ * hover state — otherwise the "Sure?" affordance vanishes if the user
+ * happens to move the cursor off the row between clicks. */
+.todos-row:has(.todos-row__icon-btn--confirm) .todos-row__toolbar {
+  opacity: 1;
 }
 
 .todos-row__date-lbl {
@@ -3927,7 +4261,28 @@ code {
 }
 
 .todos-section--archived {
-  opacity: 0.7;
+  /* Avoid `opacity` here — it creates a new stacking context, which
+   * trapped the section's <details> menu (z-index: 20) inside the card
+   * and let the next archived list paint on top of the menu panel.
+   * Dim by colour/border tone instead so the popover stays on top. */
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--muted);
+}
+
+.todos-section--archived .todos-section__title,
+.todos-section--archived .todos-row,
+.todos-section--archived .todos-section__counts {
+  color: var(--muted);
+}
+
+/* Elevate the whole section while its <details> menu is open so the
+ * absolutely-positioned panel (z-index: 20 within this section) always
+ * paints above the next list, regardless of whether the neighbouring
+ * sections create their own stacking contexts. */
+.todos-section:has(.todos-section__menu[open]) {
+  position: relative;
+  z-index: 30;
 }
 
 .todos-section__pin {
@@ -4149,6 +4504,61 @@ code {
 .todos-row__sched {
   position: relative;
   display: inline-flex;
+}
+
+/* ---- Combined date + schedule trigger ----
+ * Replaces the separate "calendar icon button + date label" pair with a
+ * single clickable button. Resting state shows the due date (or "+
+ * Schedule" prompt when none); clicking opens the SchedulePopover
+ * anchored to the same element. */
+.todos-row__date-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Empty state (no due date) is icon-only — the calendar glyph alone
+   * is enough cue that this is the "set a schedule" affordance. We
+   * scale up to a roomier pill once a date is set so the date label
+   * has space to breathe. */
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px dashed color-mix(in srgb, var(--tp-muted) 35%, transparent);
+  background: transparent;
+  color: var(--tp-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.todos-row__date-trigger:hover {
+  background: var(--tp-hover);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.todos-row__date-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.todos-row__date-trigger--set {
+  padding: 4px 10px;
+  color: var(--tp-schedule, var(--accent));
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--tp-schedule, var(--accent)) 35%, transparent);
+  background: color-mix(in srgb, var(--tp-schedule, var(--accent)) 8%, transparent);
+}
+
+.todos-row__date-trigger--warn {
+  color: var(--tp-warn);
+  border-color: color-mix(in srgb, var(--tp-warn) 45%, transparent);
+  background: color-mix(in srgb, var(--tp-warn) 8%, transparent);
+}
+
+.todos-row__date-trigger__placeholder {
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 
 .todos-row__sched-btn {
@@ -5362,6 +5772,26 @@ code {
 .todos-row__prio--normal { color: #7eb0ff; }
 .todos-row__prio--low    { color: #93a4b8; }
 
+/* "No priority" chip — used as a click target so the user has somewhere
+ * to set a priority from. Visually subdued so it doesn't compete with
+ * real chips. Shrinks margin since it doesn't follow a status pill. */
+.todos-row__prio--none {
+  color: var(--tp-muted);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--tp-muted) 35%, transparent);
+  border-style: dashed;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  padding: 0 8px;
+  margin-left: 0;
+}
+
+.todos-row__prio--none:hover {
+  background: var(--tp-hover);
+  color: var(--text);
+}
+
 .todos-row--prio-urgent { border-left: 3px solid rgba(255, 115, 115, 0.6); }
 .todos-row--prio-high   { border-left: 3px solid rgba(255, 178, 74, 0.55); }
 
@@ -5775,12 +6205,30 @@ details summary {
      only a sensible fallback when JS hasn't applied state yet. */
   grid-template-columns: minmax(0, 320px) 6px minmax(0, 1fr);
   gap: 0;
-  min-height: calc(100vh - 120px);
+  /* The route shell (`.main--scroll`, flex: 1 inside `.app-shell__body`)
+     already gives us the exact remaining viewport. Filling it with
+     `height: 100%` makes the Notes pane edge-to-edge — eliminating the
+     old "panel floating in space with a chunk of empty canvas beneath
+     it" look produced by `min-height: calc(100vh - 120px)`, which
+     under-counted when the top bar shrank or the user opened the dev
+     tools. The two inner panes (sidebar + editor) handle their own
+     scroll via `flex: 1 + min-height: 0`, so nothing inside breaks. */
+  height: 100%;
+  min-height: 0;
   background: var(--panel);
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
+}
+
+/* Notes is a "sub-app" route — it owns its full viewport. Drop the
+   global `.main--scroll` top breathing room so the Notes panel sits
+   flush with the top bar instead of floating beneath a 12px gap.
+   The other routes (Settings, Teams, etc.) still get the breathing
+   room because they don't trigger this `:has` selector. */
+.main--scroll:has(> .notes-page) {
+  padding-top: 0;
 }
 
 @media (max-width: 800px) {
@@ -5794,10 +6242,9 @@ details summary {
      container; CSS just shows/hides the right pane accordingly. */
   .notes-page {
     grid-template-columns: 1fr !important;
-    min-height: auto;
-    /* Make the active pane fill the visible viewport so the user isn't
-       scrolling past a half-rendered editor that lives off-screen. */
-    min-height: calc(100vh - 120px);
+    /* Mobile keeps the same "fill the route shell" behaviour as desktop. */
+    height: 100%;
+    min-height: 0;
   }
   .notes-page__resize-handle {
     display: none;
@@ -6686,11 +7133,13 @@ details summary {
   gap: 6px;
   padding: 6px;
   border-radius: 12px;
-  background: var(--surface, var(--tp-input-bg, #1f2330));
-  border: 1px solid var(--border, color-mix(in srgb, var(--text) 12%, transparent));
-  box-shadow:
-    0 18px 40px -10px rgba(0, 0, 0, 0.55),
-    0 4px 10px -2px rgba(0, 0, 0, 0.3);
+  /* `--panel` flips white/dark with the theme; the older fallback chain
+   * resolved to `--tp-input-bg` which is only defined inside `.todos-route`,
+   * so in light mode the FAB ended up with a dark panel and dark text. */
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  box-shadow: var(--shadow-md);
   min-width: 180px;
   animation: quickFabPop 140ms ease-out;
 }
@@ -6767,8 +7216,9 @@ details summary {
   max-height: calc(100vh - 48px);
   display: flex;
   flex-direction: column;
-  background: var(--surface, var(--tp-input-bg, #1f2330));
-  border: 1px solid var(--border, color-mix(in srgb, var(--text) 14%, transparent));
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 14px;
   box-shadow:
     0 28px 60px -12px rgba(0, 0, 0, 0.6),
@@ -6793,7 +7243,7 @@ details summary {
   align-items: center;
   gap: 10px;
   padding: 14px 16px;
-  border-bottom: 1px solid var(--border, color-mix(in srgb, var(--text) 10%, transparent));
+  border-bottom: 1px solid var(--border);
 }
 
 .quick-add-dialog__icon {
@@ -6827,7 +7277,7 @@ details summary {
 
 .quick-add-dialog__close:hover {
   color: var(--text);
-  background: var(--tp-input-bg, color-mix(in srgb, var(--text) 8%, transparent));
+  background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 .quick-add-dialog__body {
@@ -6871,7 +7321,7 @@ details summary {
 
 .quick-add-dialog__loading {
   padding: 10px;
-  border: 1px dashed var(--border, color-mix(in srgb, var(--text) 14%, transparent));
+  border: 1px dashed var(--border);
   border-radius: 8px;
 }
 
@@ -6885,7 +7335,7 @@ details summary {
   justify-content: space-between;
   gap: 8px;
   padding: 12px 16px;
-  border-top: 1px solid var(--border, color-mix(in srgb, var(--text) 10%, transparent));
+  border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--text) 3%, transparent);
 }
 

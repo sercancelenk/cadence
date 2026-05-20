@@ -1,9 +1,11 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { IcDownload, IcLock, IcMoon, IcRefresh, IcSparkles, IcSun, IcTrash, IcUpload, IcWifi } from '../components/icons';
+import { IcDownload, IcLock, IcRefresh, IcSparkles, IcTrash, IcUpload, IcWifi } from '../components/icons';
 import { Button } from '../components/ui/Button';
+import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import { useSession } from '../AuthContext';
+import { useToast } from '../components/ui/Toast';
 import { askAI, AIError, defaultModel } from '../lib/ai';
 import {
   APP_SLUG,
@@ -13,7 +15,6 @@ import {
 } from '../lib/appBranding';
 import type { AIProvider, AppData } from '../model';
 import { AI_PROVIDER_OPTIONS } from '../model';
-import { useTheme } from '../ThemeContext';
 import type { CacheBreakdownEntry, CacheStats, DataFileInfo, DataSources, SaveError } from '../vite-env';
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
 import {
@@ -71,8 +72,8 @@ import {
 
 export function Settings() {
   const { data, replaceAll } = useAppData();
-  const { theme, setTheme } = useTheme();
   const { pinEnabled, refresh: refreshSession, lockSession } = useSession();
+  const toast = useToast();
   const { features, managed, source, setPreset } = useFeatures();
   const [path, setPath] = useState<string>('');
   const [appVersion, setAppVersion] = useState<string>('');
@@ -103,42 +104,20 @@ export function Settings() {
   };
 
   return (
-    <div className="page">
-      <header className="page-head">
+    <div className="page settings-page">
+      <header className="page-head settings-page__head">
         <h1>Settings</h1>
-        <p className="muted">Your data lives on this computer. Export a backup to keep it elsewhere.</p>
+        <p className="muted">
+          Everything about Cadence lives on your device. Grouped here by what each setting controls.
+        </p>
       </header>
 
-      <CollapsibleCard id="appearance" title="Appearance">
-        <p className="muted small">You can also toggle the theme from the top bar.</p>
-        <div className="row">
-          <Button
-            type="button"
-            variant={theme === 'dark' ? 'primary' : 'secondary'}
-            icon={<IcMoon size={17} />}
-            onClick={() => setTheme('dark')}
-          >
-            Dark
-          </Button>
-          <Button
-            type="button"
-            variant={theme === 'light' ? 'primary' : 'secondary'}
-            icon={<IcSun size={17} />}
-            onClick={() => setTheme('light')}
-          >
-            Light
-          </Button>
-        </div>
-      </CollapsibleCard>
-
-      <AppProfileSection
-        features={features}
-        managed={managed}
-        source={source}
-        setPreset={setPreset}
-      />
-
-      <CollapsibleCard id="pin" title="PIN protection" badge={pinEnabled ? 'Enabled' : 'Disabled'}>
+      <SettingsGroup
+        eyebrow="Account & security"
+        description="Who can open Cadence on this device, and how your data file is protected."
+      >
+        <StaySignedInSection />
+        <CollapsibleCard id="pin" title="PIN protection" badge={pinEnabled ? 'Enabled' : 'Disabled'}>
         <p className="muted">
           Adds a quick lock screen when Cadence starts and when you choose <em>Lock now</em>. Useful when you step away from your desk so a passer-by can't open the app and read 1:1 notes.
         </p>
@@ -163,7 +142,10 @@ export function Settings() {
               const a = newPin.trim();
               const b = newPin2.trim();
               if (a.length < 4 || a !== b) {
-                window.alert('PIN must be at least 4 characters and both fields must match.');
+                toast.showError(
+                  'Invalid PIN',
+                  'It must be at least 4 characters and both fields must match.',
+                );
                 return;
               }
               // setPin runs a round-trip self-verify in the main process and
@@ -178,11 +160,12 @@ export function Settings() {
                 // current session stays unlocked). The next launch — or an
                 // explicit "Lock now" click — is when the PIN screen appears.
                 await refreshSession();
-                window.alert(
-                  'PIN saved. You will stay signed in for this session; the PIN screen appears the next time you launch the app (or if you click "Lock now"). If you ever lose it, you can reset it from the lock screen with your account password.',
+                toast.showSuccess(
+                  'PIN saved',
+                  'It\u2019ll appear at next launch or when you click \u201cLock now\u201d. Forgot it later? Reset from the lock screen with your account password.',
                 );
               } else {
-                window.alert(r?.error ?? 'Could not save PIN.');
+                toast.showError('Could not save PIN', r?.error);
               }
             }}
           >
@@ -202,9 +185,9 @@ export function Settings() {
               if (r?.ok) {
                 setClearPin('');
                 await refreshSession();
-                window.alert('PIN removed.');
+                toast.showSuccess('PIN removed', 'The lock screen will no longer appear at launch.');
               } else {
-                window.alert(r?.error ?? 'Incorrect PIN.');
+                toast.showError('Incorrect PIN', r?.error);
               }
             }}
           >
@@ -220,99 +203,159 @@ export function Settings() {
             </Button>
           </form>
         )}
-      </CollapsibleCard>
+        </CollapsibleCard>
+      </SettingsGroup>
 
-      <CollapsibleCard id="version" title="Application version" defaultOpen={false} badge={appVersion || '—'}>
-        <p>
-          Installed version: <strong>{appVersion || '—'}</strong> · Data schema: v{data.version}
-        </p>
-      </CollapsibleCard>
-
-      {features.updateCheck ? (
-        <>
-          <CollapsibleCard id="updates" title="Auto updates (GitHub Releases)" defaultOpen={false}>
-            <p className="muted">
-              When the packaged app launches, it checks GitHub Releases for a newer version. You can also check on demand below — a dialog will guide you through download and restart.
-            </p>
-            <div className="row" style={{ marginTop: 12 }}>
-              <Button
-                type="button"
-                variant="secondary"
-                icon={<IcRefresh size={17} />}
-                onClick={() => setUpdaterOpen(true)}
-              >
-                Check for updates
+      <SettingsGroup
+        eyebrow="Data & backup"
+        description="Where your workspace lives on disk, how to copy it elsewhere, and how to restore an earlier state."
+      >
+        {features.dataExport ? (
+          <CollapsibleCard id="backup" title="Backup">
+            <div className="row">
+              <Button type="button" variant="primary" icon={<IcDownload size={17} />} onClick={exportJson}>
+                Export JSON
               </Button>
-            </div>
-          </CollapsibleCard>
-
-          <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
-        </>
-      ) : null}
-
-      <CollapsibleCard id="data-location" title="Data location (Electron)" defaultOpen={false}>
-        {path ? <pre className="pre">{path}</pre> : <p className="muted">No Electron data path available; in the browser preview, data lives in localStorage.</p>}
-        <p className="muted small">File name pattern: {DATA_FILE_PREFIX}-data-&lt;userId&gt;.json</p>
-      </CollapsibleCard>
-
-      {features.dataExport ? (
-        <CollapsibleCard id="backup" title="Backup">
-          <div className="row">
-            <Button type="button" variant="primary" icon={<IcDownload size={17} />} onClick={exportJson}>
-              Export JSON
-            </Button>
-            <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={() => fileRef.current?.click()}>
-              Import JSON
-            </Button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/json,.json"
-              hidden
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
-                e.target.value = '';
-                if (!f) return;
+              <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={() => fileRef.current?.click()}>
+                Import JSON
+              </Button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="application/json,.json"
+                hidden
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!f) return;
                 try {
                   const text = await f.text();
                   const parsed = JSON.parse(text) as AppData;
                   replaceAll(parsed);
+                  toast.showSuccess('Backup imported', 'Your workspace was replaced with the contents of the file.');
                 } catch {
-                  window.alert('Could not read the file or the JSON is invalid.');
+                  toast.showError(
+                    'Could not import that file',
+                    'It is unreadable or the JSON is malformed. Your existing workspace was not touched.',
+                  );
                 }
-              }}
-            />
-          </div>
-          <p className="muted small" style={{ marginTop: 8 }}>
-            Importing replaces your existing data. Always export a backup first. Backups exported by older
-            builds (file name <code>leeadman-backup-*.json</code>) work too — the importer reads the JSON
-            contents, not the filename.
-          </p>
+                }}
+              />
+            </div>
+            <p className="muted small" style={{ marginTop: 8 }}>
+              Importing replaces your existing data. Always export a backup first. Backups exported by older
+              builds (file name <code>leeadman-backup-*.json</code>) work too — the importer reads the JSON
+              contents, not the filename.
+            </p>
+          </CollapsibleCard>
+        ) : null}
+
+        {/* Backups & Recovery is the IN-APP restore flow (snapshots stored on
+            disk by the main process). It does NOT exfiltrate data — even on
+            work-strict, IT typically wants users to be able to recover their
+            own workspace. We keep this visible regardless of the dataExport
+            flag, which only governs file-out / file-in. */}
+        <BackupsRecoverySection />
+
+        <CollapsibleCard id="data-location" title="Data location" defaultOpen={false}>
+          {path ? <pre className="pre">{path}</pre> : <p className="muted">No Electron data path available; in the browser preview, data lives in localStorage.</p>}
+          <p className="muted small">File name pattern: {DATA_FILE_PREFIX}-data-&lt;userId&gt;.json</p>
         </CollapsibleCard>
+
+        <StorageCacheSection />
+      </SettingsGroup>
+
+      {features.sync.lan || features.sync.cloud ? (
+        <SettingsGroup
+          eyebrow="Sync"
+          description="Keep this workspace in step with your other devices."
+        >
+          {features.sync.lan ? <SyncSection /> : null}
+          {features.sync.cloud ? <CloudSyncSection /> : null}
+        </SettingsGroup>
       ) : null}
 
-      {/* Backups & Recovery is the IN-APP restore flow (snapshots stored on
-          disk by the main process). It does NOT exfiltrate data — even on
-          work-strict, IT typically wants users to be able to recover their
-          own workspace. We keep this visible regardless of the dataExport
-          flag, which only governs file-out / file-in. */}
-      <BackupsRecoverySection />
+      <SettingsGroup
+        eyebrow="Integrations"
+        description="Optional services and OS-level features Cadence can talk to."
+      >
+        {features.ai ? <AISettingsSection /> : null}
+        <CollapsibleCard id="reminders" title="Reminders" defaultOpen={false}>
+          <p className="muted">
+            The OS will request notification permission. Fill in the &quot;Reminder&quot; field on a task or note; a desktop notification will fire at the scheduled time
+            (the same reminder will not repeat — adjusting the time can re-trigger it).
+          </p>
+        </CollapsibleCard>
+      </SettingsGroup>
 
-      <StorageCacheSection />
+      <SettingsGroup
+        eyebrow="About"
+        description="Version info, update channel, and the workspace profile (personal / work)."
+      >
+        <AppProfileSection
+          features={features}
+          managed={managed}
+          source={source}
+          setPreset={setPreset}
+        />
+        <CollapsibleCard id="version" title="Application version" defaultOpen={false} badge={appVersion || '—'}>
+          <p>
+            Installed version: <strong>{appVersion || '—'}</strong> · Data schema: v{data.version}
+          </p>
+        </CollapsibleCard>
+        {features.updateCheck ? (
+          <>
+            <CollapsibleCard id="updates" title="Auto updates (GitHub Releases)" defaultOpen={false}>
+              <p className="muted">
+                When the packaged app launches, it checks GitHub Releases for a newer version. You can also check on demand below — a dialog will guide you through download and restart.
+              </p>
+              <div className="row" style={{ marginTop: 12 }}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  icon={<IcRefresh size={17} />}
+                  onClick={() => setUpdaterOpen(true)}
+                >
+                  Check for updates
+                </Button>
+              </div>
+            </CollapsibleCard>
 
-      {features.sync.lan ? <SyncSection /> : null}
-
-      {features.sync.cloud ? <CloudSyncSection /> : null}
-
-      {features.ai ? <AISettingsSection /> : null}
-
-      <CollapsibleCard id="reminders" title="Reminders" defaultOpen={false}>
-        <p className="muted">
-          The OS will request notification permission. Fill in the &quot;Reminder&quot; field on a task or note; a desktop notification will fire at the scheduled time
-          (the same reminder will not repeat — adjusting the time can re-trigger it).
-        </p>
-      </CollapsibleCard>
+            <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
+          </>
+        ) : null}
+      </SettingsGroup>
     </div>
+  );
+}
+
+/**
+ * Visual grouping wrapper for Settings cards. Renders a small "eyebrow"
+ * heading + short description, then the cards as a flex column with a
+ * tighter rhythm than the page-level default. The cards themselves keep
+ * their CollapsibleCard styling — this is purely a structural overlay.
+ *
+ * Using a real <section> with a labelled <header> means assistive tech
+ * announces "Account & security, section" before stepping into the
+ * individual cards, which matches the visual hierarchy.
+ */
+function SettingsGroup({
+  eyebrow,
+  description,
+  children,
+}: {
+  eyebrow: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="settings-group" aria-label={eyebrow}>
+      <header className="settings-group__head">
+        <h2 className="settings-group__eyebrow">{eyebrow}</h2>
+        {description ? <p className="settings-group__desc">{description}</p> : null}
+      </header>
+      <div className="settings-group__body">{children}</div>
+    </section>
   );
 }
 
@@ -334,6 +377,7 @@ type SyncStatus = {
 
 function SyncSection() {
   const { data, replaceAll } = useAppData();
+  const toast = useToast();
   const isElectronHost = typeof window !== 'undefined' && !!window.cadence?.syncStatus;
 
   const [status, setStatus] = useState<SyncStatus | null>(null);
@@ -354,7 +398,7 @@ function SyncSection() {
     setBusy(true);
     try {
       const r = await window.cadence!.syncEnable();
-      if (!r?.ok) window.alert(r?.error ?? 'Could not start sync server.');
+      if (!r?.ok) toast.showError('Could not start sync server', r?.error);
       await refreshStatus();
     } finally {
       setBusy(false);
@@ -375,7 +419,8 @@ function SyncSection() {
     setBusy(true);
     try {
       const r = await window.cadence!.syncRotateToken();
-      if (!r?.ok) window.alert('Could not rotate token.');
+      if (!r?.ok) toast.showError('Could not rotate token', 'The previous token is still valid until you try again.');
+      else toast.showSuccess('Sync token rotated', 'Paired devices need the new token to reconnect.');
       await refreshStatus();
     } finally {
       setBusy(false);
@@ -1839,6 +1884,7 @@ type UpdaterPhase =
 function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [phase, setPhase] = useState<UpdaterPhase>({ kind: 'checking' });
   const [installing, setInstalling] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
     if (!open) return;
@@ -1901,7 +1947,7 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
     const r = await window.cadence?.installUpdate?.();
     if (!r?.ok) {
       setInstalling(false);
-      window.alert(r?.error ?? 'Could not install the update.');
+      toast.showError('Could not install the update', r?.error);
     }
   };
 
@@ -2856,6 +2902,122 @@ function formatRelativeTime(iso: string | undefined) {
   const days = Math.round(h / 24);
   if (days < 14) return `${days}d ago`;
   return d.toLocaleString();
+}
+
+// ─── Stay-signed-in (OS keychain session resume) ───────────────────────────────
+//
+// Persists the user's data-encryption key in the OS keychain (Electron's
+// `safeStorage`: macOS Keychain, Windows DPAPI, Linux libsecret) so the
+// next app launch can resume the workspace without asking for the
+// password again. The PIN screen still appears if the user enabled one,
+// which is the intended UX — PIN is a fast presence check; the password
+// is the heavy "I want to set up this device" credential.
+//
+// Defaults ON for new accounts (see `account:register`); old accounts
+// are backfilled to ON on next login. The toggle here lets the user
+// flip back to the previous "ask me on every launch" behaviour at any
+// time — useful on shared / kiosk machines.
+//
+// In the browser PWA there is no Electron IPC, so this card hides
+// itself entirely (no Keychain available, the question is moot).
+
+function StaySignedInSection() {
+  const { user } = useAccount();
+  const [loading, setLoading] = useState(true);
+  const [available, setAvailable] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const hasElectron = typeof window !== 'undefined' && !!window.cadence?.accountGetRememberMe;
+
+  useEffect(() => {
+    if (!hasElectron) {
+      setLoading(false);
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await window.cadence!.accountGetRememberMe!();
+        if (!alive) return;
+        setAvailable(!!r?.available);
+        setEnabled(!!r?.enabled);
+      } catch {
+        if (!alive) return;
+        setAvailable(false);
+        setEnabled(false);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [hasElectron, user]);
+
+  if (!hasElectron) return null;
+
+  const toggle = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await window.cadence!.accountSetRememberMe!({ value: next });
+      if (r?.ok) {
+        setEnabled(!!r.enabled);
+        setAvailable(!!r.available);
+      } else {
+        setError(r?.error ?? 'Could not update this setting.');
+        if (typeof r?.available === 'boolean') setAvailable(r.available);
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const badge = loading
+    ? '…'
+    : !available
+      ? 'Unavailable'
+      : enabled
+        ? 'Enabled'
+        : 'Disabled';
+
+  return (
+    <CollapsibleCard id="stay-signed-in" title="Stay signed in" badge={badge}>
+      <p className="muted">
+        Skip the password prompt on every app launch. Your encryption key is stored in your operating system's keychain (macOS Keychain, Windows Credential Manager, or Linux libsecret) and never written to disk in clear text.
+      </p>
+      <p className="muted small">
+        Logging out always clears the cached key, so the next launch will ask for your password again until you sign in once more. The PIN lock (below) is independent and keeps protecting the app at launch even when this is on.
+      </p>
+      {!available ? (
+        <p className="muted small" style={{ marginTop: 8 }}>
+          This computer does not expose a secure keychain to Cadence (common on Linux without libsecret). The setting is disabled — you'll be asked for your password on every restart, as before.
+        </p>
+      ) : null}
+      <div className="row" style={{ marginTop: 10 }}>
+        <Button
+          type="button"
+          variant={enabled ? 'primary' : 'secondary'}
+          onClick={() => void toggle(true)}
+          disabled={!available || busy || enabled}
+        >
+          {enabled ? 'On' : 'Turn on'}
+        </Button>
+        <Button
+          type="button"
+          variant={!enabled ? 'primary' : 'secondary'}
+          onClick={() => void toggle(false)}
+          disabled={busy || !enabled}
+        >
+          {!enabled ? 'Off' : 'Turn off'}
+        </Button>
+      </div>
+      {error ? <p className="muted small" style={{ color: 'var(--danger, #d93025)', marginTop: 8 }}>{error}</p> : null}
+    </CollapsibleCard>
+  );
 }
 
 // ─── App profile (feature presets / enterprise policy) ─────────────────────────

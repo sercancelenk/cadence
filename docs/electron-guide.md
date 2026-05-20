@@ -426,16 +426,63 @@ Changing the password (`account:changePassword`):
    (re-encrypted with the new key).
 5. Update the in-memory `dataKeys` entry. Old key is GC'd.
 
-A logout wipes the key from memory:
+A logout wipes the key from memory (and the OS-keychain cache below):
 
 ```js
 ipcMain.handle('account:logout', () => {
   const uid = readSessionUserId();
-  if (uid) dataKeys.delete(uid);
+  if (uid) {
+    dataKeys.delete(uid);
+    clearPersistedDataKey(uid);
+  }
   clearSession();
   return { ok: true };
 });
 ```
+
+### 7.1 "Stay signed in" — OS-keychain key cache
+
+By default, the in-memory key is lost when the Electron process exits.
+Before this feature, that meant every app restart looked like a logout
+because `account:session` could not decrypt the data file without
+asking the user for their password again.
+
+We now wrap the 32-byte AES key with Electron's `safeStorage` and
+persist it next to the per-user data file:
+
+```js
+function persistDataKey(userId, keyBuffer) {
+  if (!isKeyCacheAvailable()) return false;       // libsecret missing → refuse
+  const wrapped = safeStorage.encryptString(keyBuffer.toString('hex'));
+  fs.writeFileSync(`${userData}/cadence-keycache-${userId}.bin`, wrapped, { mode: 0o600 });
+  return true;
+}
+```
+
+`safeStorage` delegates to:
+
+- **macOS** — the user's Login Keychain (`security` framework).
+- **Windows** — DPAPI scoped to the current user.
+- **Linux** — libsecret / GNOME Keyring / KWallet.
+
+On Linux without libsecret, `safeStorage.isEncryptionAvailable()` returns
+false. We treat that as "the OS cannot keep a secret for us" and **refuse
+to persist the key at all** — better to keep asking the user for their
+password than to write a hardcoded-obfuscation key to disk.
+
+On the resume path (`account:session`), we:
+
+1. Try `loadPersistedDataKey(uid)` if the user opted in.
+2. **Validate** the loaded key against the actual data file by decrypting
+   one block. A mismatch (password rotated on another device, file
+   restored from backup, etc.) deletes the stale cache and surfaces
+   `requiresAuth=true` to the renderer.
+
+The per-user `rememberMe` flag lives in `accounts.json` and defaults to
+`true`. Users can flip it from Settings → "Stay signed in"; turning it
+off both clears the cached key and persists the preference so future
+sessions don't re-cache. PIN protection is independent and continues to
+gate the launch UI.
 
 ---
 

@@ -19,10 +19,14 @@
  *     userData at `appData/Leeadman/`. To keep upgrading users on their
  *     existing data we explicitly point `userData` at that legacy folder
  *     whenever it exists, regardless of the new productName "Cadence".
- *   - The macOS `appId` (`com.leeadman.app`) is intentionally NOT changed.
- *     `electron-updater` keys updates by appId, so changing it would make
- *     every installed user think the new version is a different app and
- *     they'd never see an update prompt.
+ *   - As of v1 the macOS `appId` is `com.cadence.app` (see `package.json`
+ *     and `electron-builder.enterprise.json`). The pre-v1 builds shipped
+ *     `com.leeadman.app`; users of that build need a one-time manual
+ *     download of the new Cadence DMG. The data-migration code below
+ *     copies their `Leeadman/` userData into `Cadence/` automatically
+ *     on first launch so they don't lose anything in the move. After
+ *     v1 the appId is frozen — every subsequent release stays on
+ *     `com.cadence.app` so `electron-updater` can hand out updates.
  */
 
 const {
@@ -33,6 +37,7 @@ const {
   ipcMain,
   shell,
   session,
+  safeStorage,
 } = require('electron');
 const crypto = require('crypto');
 const path = require('path');
@@ -165,6 +170,23 @@ const SESSION_FILENAME = `${DATA_FILE_PREFIX}-session.json`;
 const AUTH_FILENAME = 'auth-lock.json';
 const BACKUPS_DIRNAME = 'backups';
 /**
+ * Per-user file holding the data-encryption key wrapped by Electron's
+ * `safeStorage` (which delegates to the OS Keychain on macOS, DPAPI on
+ * Windows, and libsecret on Linux). Lets us resume an encrypted session
+ * across app restarts without asking the user for their password again —
+ * the original "every restart logs me out" UX bug.
+ *
+ * Threat model: the bytes on disk are useless without the OS-protected
+ * key, so taking just the data files off the device leaks nothing extra.
+ * On Linux without libsecret `safeStorage.isEncryptionAvailable()`
+ * returns false; we refuse to persist a plaintext key in that case and
+ * the user falls back to the previous behaviour (re-login on restart).
+ *
+ * Filename uses the user id (uuid) so multiple accounts on the same
+ * machine each have their own opt-in/out without leaking state.
+ */
+const KEY_CACHE_FILENAME_PREFIX = `${DATA_FILE_PREFIX}-keycache-`;
+/**
  * Tiny sidecar file that remembers when the auto-updater last successfully
  * pinged GitHub Releases. Lives next to the other user-data files so it
  * roams with the rest of the workspace state. Schema:
@@ -206,6 +228,100 @@ function authPath() {
 
 function backupsDirForUser(userId) {
   return path.join(app.getPath('userData'), BACKUPS_DIRNAME, userId || '_anon');
+}
+
+function keyCachePath(userId) {
+  return path.join(app.getPath('userData'), `${KEY_CACHE_FILENAME_PREFIX}${userId}.bin`);
+}
+
+/**
+ * Whether `safeStorage` can actually wrap secrets on this machine. False
+ * on Linux installs that lack a libsecret-backed keyring; in that state
+ * we MUST NOT persist the data-encryption key on disk because the only
+ * remaining "encryption" `safeStorage` offers there is a hardcoded
+ * obfuscation key which is no protection at all.
+ */
+function isKeyCacheAvailable() {
+  try {
+    return !!safeStorage && typeof safeStorage.isEncryptionAvailable === 'function' && safeStorage.isEncryptionAvailable();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read-and-decrypt the previously persisted data-encryption key for `userId`.
+ * Returns a 32-byte Buffer on success, or null if the file is missing,
+ * unreadable, or no longer decryptable (e.g. the OS keyring was reset).
+ *
+ * Callers are expected to validate the returned key by attempting to
+ * decrypt the user's actual data file with it. A mismatch means the cache
+ * is stale (e.g. the password was rotated on another device + sync'd) and
+ * the caller should `clearPersistedDataKey(userId)` and fall back to
+ * password-based re-auth.
+ */
+function loadPersistedDataKey(userId) {
+  if (!userId || !isKeyCacheAvailable()) return null;
+  const file = keyCachePath(userId);
+  if (!fs.existsSync(file)) return null;
+  try {
+    const wrapped = fs.readFileSync(file);
+    const hex = safeStorage.decryptString(wrapped);
+    if (typeof hex !== 'string' || hex.length !== 64) return null;
+    const buf = Buffer.from(hex, 'hex');
+    if (buf.length !== 32) return null;
+    return buf;
+  } catch (err) {
+    console.warn('[cadence] could not load persisted data key', err);
+    return null;
+  }
+}
+
+/**
+ * Wrap `keyBuffer` with `safeStorage` and persist it for `userId`.
+ * Returns true if the key was successfully persisted, false otherwise
+ * (e.g. `safeStorage` unavailable, fs error). NEVER falls back to
+ * writing a plaintext or weakly-obfuscated key — better to keep
+ * asking the user for their password than to leak a key at rest.
+ */
+function persistDataKey(userId, keyBuffer) {
+  if (!userId || !Buffer.isBuffer(keyBuffer) || keyBuffer.length !== 32) return false;
+  if (!isKeyCacheAvailable()) return false;
+  const file = keyCachePath(userId);
+  try {
+    const wrapped = safeStorage.encryptString(keyBuffer.toString('hex'));
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, wrapped, { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    // Tighten permissions on platforms that honor them.
+    try { fs.chmodSync(file, 0o600); } catch { /* best effort */ }
+    return true;
+  } catch (err) {
+    console.warn('[cadence] could not persist data key', err);
+    return false;
+  }
+}
+
+function clearPersistedDataKey(userId) {
+  if (!userId) return;
+  try {
+    const p = keyCachePath(userId);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  } catch (err) {
+    console.warn('[cadence] could not clear persisted data key', err);
+  }
+}
+
+/**
+ * Per-user opt-in flag for the OS-keychain cache. Default ON: a brand-new
+ * account that never touched the toggle will be remembered after restart
+ * (because that's what users overwhelmingly expect from a desktop app and
+ * what the previous version of this app silently failed to do). The user
+ * can opt out from Settings → "Stay signed in".
+ */
+function getUserRememberMe(u) {
+  if (!u) return true;
+  return u.rememberMe !== false;
 }
 
 // ---------- JSON utilities -----------------------------------------------------
@@ -1461,13 +1577,13 @@ function buildMenu() {
         {
           label: 'Project on GitHub',
           click: () => {
-            shell.openExternal('https://github.com/sercancelenk/leeadman');
+            shell.openExternal('https://github.com/sercancelenk/cadence');
           },
         },
         {
           label: 'Report an Issue',
           click: () => {
-            shell.openExternal('https://github.com/sercancelenk/leeadman/issues/new');
+            shell.openExternal('https://github.com/sercancelenk/cadence/issues/new');
           },
         },
       ],
@@ -2688,10 +2804,11 @@ ipcMain.handle('account:session', () => {
   if (accountIsEncrypted && !dataKeys.has(uid)) {
     const file = dataPathForUser(u.id);
     let dataFileIsEncrypted = false;
+    let encryptedHead = null;
     if (fs.existsSync(file)) {
       try {
-        const head = fs.readFileSync(file, 'utf8');
-        dataFileIsEncrypted = isEncryptedFile(head);
+        encryptedHead = fs.readFileSync(file, 'utf8');
+        dataFileIsEncrypted = isEncryptedFile(encryptedHead);
       } catch (err) {
         console.warn('[cadence] account:session could not probe data file', err);
         // Conservative: if we can't tell, assume encrypted → require re-auth.
@@ -2703,6 +2820,28 @@ ipcMain.handle('account:session', () => {
       // workspace they can populate.
       dataFileIsEncrypted = false;
     }
+
+    // "Stay signed in": try to rehydrate the in-memory data key from the
+    // OS-protected key cache. This is the entire point of that feature —
+    // without it, every Electron restart routes the user back to the
+    // login screen even though their PIN already gates the workspace.
+    //
+    // We deliberately VALIDATE the cached key against the actual data
+    // file before declaring success. A stale cache (e.g. password was
+    // rotated on another device) must surface as re-auth, not as silent
+    // data corruption.
+    if (dataFileIsEncrypted && getUserRememberMe(u)) {
+      const cached = loadPersistedDataKey(u.id);
+      if (cached && encryptedHead && decryptPayload(encryptedHead, cached) != null) {
+        dataKeys.set(u.id, cached);
+        dataFileIsEncrypted = false; // Resumed — no re-auth needed.
+      } else if (cached) {
+        // The cache is unusable for this file. Drop it so the next
+        // successful login can rewrite a valid one.
+        clearPersistedDataKey(u.id);
+      }
+    }
+
     if (dataFileIsEncrypted) {
       return {
         user: null,
@@ -2744,12 +2883,22 @@ ipcMain.handle('account:register', (_evt, { email, password, migrateLegacy, disp
     salt,
     hash,
     encSalt,
+    // Default ON: new accounts opt into "stay signed in across restarts"
+    // until the user explicitly disables it from Settings. See
+    // `getUserRememberMe` for why this matches user expectations.
+    rememberMe: true,
     createdAt: new Date().toISOString(),
     displayName: typeof displayName === 'string' && displayName.trim() ? displayName.trim() : undefined,
   });
   writeAccounts(accounts);
   writeSession(id);
-  dataKeys.set(id, deriveDataKey(password, encSalt));
+  const newKey = deriveDataKey(password, encSalt);
+  dataKeys.set(id, newKey);
+  // Persist the freshly derived key so the next launch can resume without
+  // asking for the password again. Silently no-ops if `safeStorage` is
+  // unavailable (Linux without libsecret) — that user falls back to the
+  // pre-existing "re-login on restart" behaviour.
+  persistDataKey(id, newKey);
 
   const userPath = dataPathForUser(id);
   if (migrateLegacy === true) {
@@ -2800,8 +2949,22 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
       u.encSalt = crypto.randomBytes(16).toString('hex');
       mutated = true;
     }
+    // Backfill the `rememberMe` flag for legacy accounts that pre-date the
+    // OS-keychain feature. Default ON matches the new-account behaviour.
+    if (typeof u.rememberMe !== 'boolean') {
+      u.rememberMe = true;
+      mutated = true;
+    }
     if (mutated) writeAccounts(accounts);
-    dataKeys.set(u.id, deriveDataKey(password, u.encSalt));
+    const derivedKey = deriveDataKey(password, u.encSalt);
+    dataKeys.set(u.id, derivedKey);
+    // Refresh the OS-keychain cache on every successful login so a future
+    // restart can skip the password prompt. Honours the user's opt-out.
+    if (getUserRememberMe(u)) {
+      persistDataKey(u.id, derivedKey);
+    } else {
+      clearPersistedDataKey(u.id);
+    }
 
     // Auto-migrate legacy single-user file (`leeadman-data.json`) into this
     // account if the per-user file is missing. This is the most common cause
@@ -2855,7 +3018,15 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
 
 ipcMain.handle('account:logout', () => {
   const uid = readSessionUserId();
-  if (uid) dataKeys.delete(uid);
+  if (uid) {
+    dataKeys.delete(uid);
+    // Explicit logout means "don't auto-resume next time". Clearing the
+    // cached key here is what makes Logout actually feel like a logout
+    // even with "Stay signed in" turned on for the next session — the
+    // user has to enter their password again at next launch. The
+    // rememberMe preference itself is preserved for the NEXT login.
+    clearPersistedDataKey(uid);
+  }
   clearSession();
   return { ok: true };
 });
@@ -2944,6 +3115,16 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
     writeUserData(uid, plaintextPayload, { allowOverwriteUnreadable: true });
   }
 
+  // Refresh the OS-keychain cache with the rotated key. Without this the
+  // next restart would try to decrypt the newly-rotated data file with
+  // the OLD cached key, fail validation, and bounce the user back to
+  // the login screen — exactly the UX bug "Stay signed in" exists to fix.
+  if (getUserRememberMe(u)) {
+    persistDataKey(uid, newKey);
+  } else {
+    clearPersistedDataKey(uid);
+  }
+
   return { ok: true };
 });
 
@@ -2996,6 +3177,88 @@ ipcMain.handle('account:verifyPassword', (_evt, { password } = {}) => {
   } catch {
     return { ok: false, error: 'Could not verify account password.' };
   }
+});
+
+/**
+ * Report whether the OS-keychain "stay signed in" cache is available on
+ * this machine AND whether the currently signed-in user has opted into
+ * using it. The renderer uses this to render the Settings toggle and
+ * decide whether to hint "not available on Linux without libsecret".
+ *
+ * Defaults to `enabled: true` when the user record exists but pre-dates
+ * the feature flag — matching the backfill in `account:login`.
+ */
+ipcMain.handle('account:getRememberMe', () => {
+  const available = isKeyCacheAvailable();
+  const uid = readSessionUserId();
+  if (!uid) return { available, enabled: false, signedIn: false };
+  const { users } = readAccounts();
+  const u = users.find((x) => x.id === uid);
+  if (!u) return { available, enabled: false, signedIn: false };
+  return { available, enabled: getUserRememberMe(u), signedIn: true };
+});
+
+/**
+ * Toggle the per-user "stay signed in" preference.
+ *
+ * Enabling: persist the current in-memory data key under the OS keychain
+ * so the next launch can resume without a password prompt. If the key
+ * cannot be persisted (no `safeStorage`, fs error) we DO NOT flip the
+ * preference — better to keep the user's mental model accurate than to
+ * silently leave them with a toggle that says "on" but doesn't work.
+ *
+ * Disabling: clear the cached key and flip the flag. The current session
+ * stays unlocked (we don't kick the user out of their open workspace),
+ * but the next restart will require their password again.
+ */
+ipcMain.handle('account:setRememberMe', (_evt, { value } = {}) => {
+  const desired = value !== false;
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.', available: isKeyCacheAvailable() };
+  const accounts = readAccounts();
+  const u = accounts.users.find((x) => x.id === uid);
+  if (!u) return { ok: false, error: 'Account not found.', available: isKeyCacheAvailable() };
+
+  const available = isKeyCacheAvailable();
+  if (desired) {
+    if (!available) {
+      return {
+        ok: false,
+        available: false,
+        enabled: false,
+        error: 'This system does not provide a secure keychain. Cadence will keep asking for your password on every launch.',
+      };
+    }
+    const key = dataKeys.get(uid);
+    if (!key) {
+      // Defence-in-depth: we should only get here if `account:session`
+      // somehow handed control back without populating the key map. In
+      // practice that means the user is in the "needs re-auth" branch
+      // already, so we surface a clear error instead of writing a
+      // preference that points at nothing.
+      return { ok: false, available, enabled: false, error: 'Session expired. Please sign in again.' };
+    }
+    if (!persistDataKey(uid, key)) {
+      return {
+        ok: false,
+        available,
+        enabled: false,
+        error: 'Could not store the session key in your OS keychain. Try unlocking your login keyring and retry.',
+      };
+    }
+    if (u.rememberMe !== true) {
+      u.rememberMe = true;
+      writeAccounts(accounts);
+    }
+    return { ok: true, available, enabled: true };
+  }
+
+  clearPersistedDataKey(uid);
+  if (u.rememberMe !== false) {
+    u.rememberMe = false;
+    writeAccounts(accounts);
+  }
+  return { ok: true, available, enabled: false };
 });
 
 // ---------- IPC: sync ---------------------------------------------------------
