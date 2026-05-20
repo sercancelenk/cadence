@@ -370,6 +370,39 @@ export function IcArrowRight(p: IconProps) {
   );
 }
 
+export function IcArrowLeft(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path d="M19 12H5M11 18l-6-6 6-6" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function IcChevronLeft(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path d="M15 18l-6-6 6-6" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function IcBell(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path
+        d="M6 8a6 6 0 0 1 12 0c0 4 1.5 5.5 2.5 6.5H3.5C4.5 13.5 6 12 6 8Z"
+        strokeWidth={sw}
+        strokeLinejoin="round"
+      />
+      <path d="M10 19a2 2 0 0 0 4 0" strokeWidth={sw} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+
 export function IcStar(p: IconProps) {
   const { s, cn, sw, rest } = split(p);
   return (

@@ -625,7 +625,19 @@ export function addTodoItem(
 export function updateTodoItem(
   data: AppData,
   id: string,
-  patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done' | 'status' | 'priority'>>,
+  patch: Partial<
+    Pick<
+      TodoItem,
+      | 'title'
+      | 'groupId'
+      | 'dueAt'
+      | 'done'
+      | 'status'
+      | 'priority'
+      | 'remindAt'
+      | 'remindRepeat'
+    >
+  >,
 ): AppData {
   return {
     ...data,
@@ -654,6 +666,26 @@ export function updateTodoItem(
 
       const priority =
         patch.priority !== undefined ? (patch.priority || undefined) : x.priority;
+
+      // Reminder fields. `undefined` in the patch means "clear" (a small
+      // ergonomic departure from spread semantics — but matches how the
+      // rest of this function treats `dueAt` clearing). Repeating a
+      // reminder past its `dueAt` doesn't make sense, but we leave that
+      // policing to the watcher — here we just persist the user's intent.
+      let remindAt =
+        patch.remindAt !== undefined ? patch.remindAt || undefined : x.remindAt;
+      let remindRepeat =
+        patch.remindRepeat !== undefined ? patch.remindRepeat || undefined : x.remindRepeat;
+      // Status-driven cleanup: once a todo leaves the OPEN states the
+      // reminder is logically void. Leaving `remindAt` set would cause a
+      // surprise ping the moment the user re-opens the row (the watcher
+      // checks the field on every tick, but a past timestamp would fire
+      // immediately when status flips back to `todo`).
+      if (nextStatus === 'done' || nextStatus === 'cancelled') {
+        remindAt = undefined;
+        remindRepeat = undefined;
+      }
+
       return {
         ...x,
         title: patch.title !== undefined ? patch.title.trim() || x.title : x.title,
@@ -663,6 +695,8 @@ export function updateTodoItem(
         done: nextDone,
         doneAt: nextDoneAt,
         priority,
+        remindAt,
+        remindRepeat,
         updatedAt,
       };
     }),

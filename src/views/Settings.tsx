@@ -19,6 +19,7 @@ import { CollapsibleCard } from '../components/ui/CollapsibleCard';
 import {
   buildPairUrl,
   clearPair,
+  computeLocalEtag,
   formatRelativeSync,
   loadPair,
   normalizeHostUrl,
@@ -28,6 +29,36 @@ import {
   savePair,
   type LanSyncPair,
 } from '../lib/lanSyncClient';
+import { parseRemoteSnapshot } from '../lib/syncSnapshotGuard';
+import {
+  getLastSyncEvent,
+  subscribeSyncEvents,
+  type SyncEvent,
+} from '../lib/syncEvents';
+import {
+  beginAuth,
+  isClientConfigured,
+  loadStoredTokens,
+  signOut,
+  type AuthFailureReason,
+  type OAuthTokens,
+} from '../lib/syncBackends/gdriveAuth';
+import {
+  createGDriveBackend,
+  disconnectGDrive,
+} from '../lib/syncBackends/gdrive';
+import {
+  getActiveBackendId,
+  setActiveBackendId,
+  subscribeActiveBackend,
+  type SyncBackendId,
+} from '../lib/syncBackends';
+import {
+  clearSyncPassphrase,
+  hasSyncPassphrase,
+  setSyncPassphrase,
+  subscribeSyncPassphrase,
+} from '../lib/syncSession';
 
 export function Settings() {
   const { data, replaceAll } = useAppData();
@@ -242,6 +273,8 @@ export function Settings() {
       <StorageCacheSection />
 
       <SyncSection />
+
+      <CloudSyncSection />
 
       <AISettingsSection />
 
@@ -969,6 +1002,629 @@ function SyncSection() {
       </details>
     </CollapsibleCard>
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Cloud sync (Google Drive)                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cloud sync via Google Drive (end-to-end encrypted).
+ *
+ * Sits beside the LAN sync card. Both can be configured independently
+ * — only one drives auto-sync at a time, picked by the user via the
+ * radio toggle at the top of this card. LAN is faster on the same
+ * Wi-Fi; Drive works anywhere with an internet connection and acts as
+ * an off-site backup.
+ *
+ * Security model
+ * ==============
+ *
+ * The browser uses Google's OAuth 2.0 popup flow (PKCE — no client
+ * secret on disk). We request only the `drive.appdata` scope, so
+ * Cadence cannot see anything else in the user's Drive and the
+ * snapshot file is invisible in their Drive UI.
+ *
+ * Snapshots are passed through `snapshotCrypto.wrapSnapshot` before
+ * upload using a "sync passphrase" the user sets the first time they
+ * connect. The passphrase lives in `sessionStorage` (cleared on tab
+ * close) so a quick "lock" is just closing the tab. Google sees an
+ * AES-256-GCM blob — no plaintext anywhere on their servers.
+ */
+function CloudSyncSection() {
+  const { data, replaceAll } = useAppData();
+
+  const [tokens, setTokens] = useState<OAuthTokens | null>(() => loadStoredTokens());
+  const [activeId, setActiveId] = useState<SyncBackendId | null>(() => getActiveBackendId());
+  const [hasPassphrase, setHasPassphrase] = useState<boolean>(() => hasSyncPassphrase());
+  // The last conflict etag returned by Drive — drives the "Resolve
+  // conflict" inline UI. Cleared on successful resolution.
+  const [conflictEtag, setConflictEtag] = useState<string | null>(null);
+  // Most recent background sync event (success or error). Surfaces
+  // failures the user wouldn't otherwise see because auto-sync is
+  // silent by design.
+  const [lastEvent, setLastEvent] = useState<SyncEvent | null>(() => getLastSyncEvent());
+
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'info' | 'error'; text: string } | null>(null);
+
+  // Passphrase form state. We keep three fields so we can branch the
+  // UI between "first-time set" (two confirm inputs) and "unlock"
+  // (single input).
+  const [ppNew1, setPpNew1] = useState('');
+  const [ppNew2, setPpNew2] = useState('');
+  const [ppUnlock, setPpUnlock] = useState('');
+  const [showSetup, setShowSetup] = useState(false);
+
+  // Re-render whenever the backend selection changes (could be flipped
+  // from elsewhere, e.g. the user re-pairs LAN).
+  useEffect(() => {
+    return subscribeActiveBackend(() => setActiveId(getActiveBackendId()));
+  }, []);
+  // Same for the passphrase — kept in sessionStorage so other tabs
+  // might toggle it.
+  useEffect(() => {
+    return subscribeSyncPassphrase(() => setHasPassphrase(hasSyncPassphrase()));
+  }, []);
+  // Subscribe to background sync outcomes so "Drive token expired"
+  // and similar errors don't sit silently in the void.
+  useEffect(() => {
+    return subscribeSyncEvents((event) => setLastEvent(event));
+  }, []);
+  // If Drive auto-pull says the passphrase doesn't open the remote
+  // snapshot, automatically lock so the unlock form re-appears with a
+  // clear explanation. (B3 — smart recovery.)
+  useEffect(() => {
+    if (
+      lastEvent?.backendId === 'gdrive' &&
+      lastEvent.kind === 'error' &&
+      lastEvent.code === 'wrong-password'
+    ) {
+      clearSyncPassphrase();
+    }
+  }, [lastEvent]);
+
+  const clientReady = isClientConfigured();
+
+  const handleConnect = async () => {
+    setBusy(true);
+    setMsg(null);
+    const result = await beginAuth();
+    setBusy(false);
+    if (result.ok) {
+      setTokens(result.tokens);
+      setActiveBackendId('gdrive');
+      setMsg({
+        kind: 'ok',
+        text: `Signed in${result.tokens.email ? ` as ${result.tokens.email}` : ''}. Set a sync passphrase below to start syncing.`,
+      });
+    } else {
+      setMsg({ kind: 'error', text: describeAuthError(result.reason, result.detail) });
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (
+      !window.confirm(
+        'Sign out of Google Drive on this device? Your encrypted snapshot stays on Drive — you can sign back in later to restore it.',
+      )
+    )
+      return;
+    setBusy(true);
+    await signOut();
+    disconnectGDrive();
+    if (getActiveBackendId() === 'gdrive') setActiveBackendId(null);
+    setTokens(null);
+    setBusy(false);
+    setMsg({ kind: 'info', text: 'Signed out of Google Drive.' });
+  };
+
+  const handleSetPassphrase = (e: FormEvent) => {
+    e.preventDefault();
+    if (ppNew1.length < 8) {
+      setMsg({ kind: 'error', text: 'Sync passphrase must be at least 8 characters.' });
+      return;
+    }
+    if (ppNew1 !== ppNew2) {
+      setMsg({ kind: 'error', text: 'The two passphrases do not match.' });
+      return;
+    }
+    setSyncPassphrase(ppNew1);
+    setPpNew1('');
+    setPpNew2('');
+    setShowSetup(false);
+    setMsg({
+      kind: 'ok',
+      text: 'Sync passphrase set. Background sync will start within a minute.',
+    });
+  };
+
+  const handleUnlock = (e: FormEvent) => {
+    e.preventDefault();
+    if (!ppUnlock) return;
+    setSyncPassphrase(ppUnlock);
+    setPpUnlock('');
+    setMsg({ kind: 'ok', text: 'Sync passphrase unlocked for this session.' });
+  };
+
+  const handleLock = () => {
+    clearSyncPassphrase();
+    setMsg({ kind: 'info', text: 'Sync passphrase cleared from this tab.' });
+  };
+
+  // Manual push/pull lets the user force a sync round-trip without
+  // waiting for the background scheduler. Useful for testing and for
+  // "I just made an important edit, sync it now" moments.
+  //
+  // We update BOTH `etag` (remote concurrency token) and
+  // `localFingerprint` (content hash) on every successful round-trip
+  // so the next auto-sync sees a consistent baseline. Otherwise the
+  // background hook would re-pull immediately because its dirty
+  // check expects a fingerprint we haven't recorded.
+  const runManualSync = async (mode: 'push' | 'pull' | 'push-force') => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const backend = createGDriveBackend();
+      if (!backend) {
+        setMsg({ kind: 'error', text: 'Drive is not connected. Sign in first.' });
+        return;
+      }
+      const record = backend.getRecord();
+      if (mode === 'push' || mode === 'push-force') {
+        // `push-force` skips the If-Match header so the upload always
+        // wins — used by the conflict UI's "Override remote" button.
+        const ifMatch = mode === 'push-force' ? undefined : record?.etag;
+        const out = await backend.push(data, ifMatch);
+        if (out.kind === 'ok') {
+          const fp = await computeLocalEtag(data);
+          backend.setRecord({
+            etag: out.etag,
+            localFingerprint: fp,
+            lastSyncedAt: new Date().toISOString(),
+          });
+          setMsg({
+            kind: 'ok',
+            text:
+              mode === 'push-force'
+                ? 'Override pushed — your local snapshot is now the Drive copy.'
+                : 'Encrypted snapshot pushed to Drive.',
+          });
+          setConflictEtag(null);
+        } else if (out.kind === 'conflict') {
+          setConflictEtag(out.currentEtag ?? null);
+          setMsg({
+            kind: 'error',
+            text:
+              'Conflict: someone else pushed since your last pull. Choose how to resolve below.',
+          });
+        } else {
+          setMsg({ kind: 'error', text: describePushOutcome(out) });
+        }
+      } else {
+        const out = await backend.pull(record?.etag);
+        if (out.kind === 'ok') {
+          const parsed = parseRemoteSnapshot(out.data);
+          if (parsed.kind !== 'ok') {
+            setMsg({
+              kind: 'error',
+              text:
+                'Drive returned a snapshot with an unrecognised shape — refusing to overwrite local data.',
+            });
+            return;
+          }
+          replaceAll(parsed.data);
+          const fp = await computeLocalEtag(parsed.data);
+          backend.setRecord({
+            etag: out.etag,
+            localFingerprint: fp,
+            lastSyncedAt: new Date().toISOString(),
+          });
+          setMsg({ kind: 'ok', text: 'Pulled encrypted snapshot from Drive.' });
+          setConflictEtag(null);
+        } else if (out.kind === 'not-modified') {
+          backend.setRecord({
+            etag: record?.etag,
+            localFingerprint: record?.localFingerprint,
+            lastSyncedAt: new Date().toISOString(),
+          });
+          setMsg({ kind: 'info', text: 'Drive copy matches local — nothing to pull.' });
+        } else if (out.kind === 'no-snapshot') {
+          setMsg({
+            kind: 'info',
+            text: 'No snapshot on Drive yet. Push to create one.',
+          });
+        } else if (out.kind === 'wrong-password') {
+          // Smart recovery (B3): clear the stale passphrase so the
+          // user doesn't have to remember to "Lock" before re-entering
+          // the right one.
+          clearSyncPassphrase();
+          setMsg({
+            kind: 'error',
+            text:
+              'Sync passphrase does not open the Drive snapshot. Enter the passphrase you used when first connecting Drive.',
+          });
+        } else {
+          setMsg({ kind: 'error', text: describePullOutcome(out) });
+        }
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Render — branching by configuration state so the user always sees
+  // the most relevant call to action first.
+  if (!clientReady) {
+    return (
+      <CollapsibleCard
+        id="cloud-sync"
+        title="Cloud sync (Google Drive)"
+        defaultOpen={false}
+        badge="Setup required"
+      >
+        <p className="muted">
+          Google Drive sync is end-to-end encrypted, but it needs an OAuth Client ID before
+          the consent screen can open. If you forked Cadence, follow the{' '}
+          <strong>README → Cloud sync setup</strong> to create your own Google Cloud project
+          (free, ~5 minutes) and set <code>VITE_GOOGLE_OAUTH_CLIENT_ID</code> in your{' '}
+          <code>.env</code>.
+        </p>
+        <p className="muted small" style={{ marginTop: 8 }}>
+          On the official Cadence build, the client ID is baked in and this notice does not
+          appear.
+        </p>
+      </CollapsibleCard>
+    );
+  }
+
+  return (
+    <CollapsibleCard
+      id="cloud-sync"
+      title="Cloud sync (Google Drive)"
+      defaultOpen={false}
+      badge={tokens ? (activeId === 'gdrive' ? 'Active' : 'Connected') : undefined}
+    >
+      <p className="muted">
+        End-to-end encrypted backup to your own Google Drive. Cadence wraps your snapshot
+        with AES-256-GCM (PBKDF2-derived key) <strong>before</strong> it leaves the device —
+        Google sees opaque ciphertext only. The snapshot lives in Drive&apos;s hidden{' '}
+        <code>appData</code> folder, so it does not clutter your file list and survives a
+        reinstall.
+      </p>
+
+      {!tokens ? (
+        <div className="row" style={{ marginTop: 10 }}>
+          <Button type="button" variant="primary" onClick={handleConnect} disabled={busy}>
+            Sign in with Google
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="card" style={{ marginTop: 10 }}>
+            <p style={{ margin: 0 }}>
+              Signed in: <strong>{tokens.email || 'Google account'}</strong>
+            </p>
+            <p className="muted small" style={{ margin: '6px 0 10px' }}>
+              Drive scope: <code>drive.appdata</code> (single hidden folder, no other access).
+            </p>
+            <Button type="button" variant="ghost" onClick={handleDisconnect} disabled={busy}>
+              Sign out
+            </Button>
+          </div>
+
+          {hasPassphrase ? (
+            <div className="card" style={{ marginTop: 10 }}>
+              <p style={{ margin: 0 }}>
+                Sync passphrase: <strong style={{ color: 'var(--ok)' }}>Unlocked this session</strong>
+              </p>
+              <p className="muted small" style={{ margin: '6px 0 10px' }}>
+                Closing this tab clears it. You&apos;ll re-enter it next time.
+              </p>
+              <Button type="button" variant="ghost" onClick={handleLock} icon={<IcLock size={16} />}>
+                Lock now
+              </Button>
+            </div>
+          ) : showSetup ? (
+            <form className="card" style={{ marginTop: 10 }} onSubmit={handleSetPassphrase}>
+              <p style={{ margin: '0 0 8px' }}>Set a sync passphrase</p>
+              <p className="muted small" style={{ margin: '0 0 10px' }}>
+                This passphrase encrypts everything before upload. If you lose it, the
+                snapshot on Drive becomes unrecoverable — there is no reset.
+              </p>
+              <div className="col" style={{ gap: 8 }}>
+                <input
+                  type="password"
+                  className="input"
+                  placeholder="Passphrase (8+ characters)"
+                  value={ppNew1}
+                  onChange={(e) => setPpNew1(e.target.value)}
+                  autoFocus
+                />
+                <input
+                  type="password"
+                  className="input"
+                  placeholder="Confirm passphrase"
+                  value={ppNew2}
+                  onChange={(e) => setPpNew2(e.target.value)}
+                />
+              </div>
+              <div className="row" style={{ marginTop: 10 }}>
+                <Button type="submit" variant="primary">
+                  Set passphrase
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setShowSetup(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <form className="card" style={{ marginTop: 10 }} onSubmit={handleUnlock}>
+              <p style={{ margin: '0 0 8px' }}>Unlock sync passphrase</p>
+              <p className="muted small" style={{ margin: '0 0 10px' }}>
+                Enter the passphrase you set when first connecting Drive. New device? Use{' '}
+                <em>First-time setup</em> below.
+              </p>
+              <input
+                type="password"
+                className="input"
+                placeholder="Sync passphrase"
+                value={ppUnlock}
+                onChange={(e) => setPpUnlock(e.target.value)}
+              />
+              <div className="row" style={{ marginTop: 10 }}>
+                <Button type="submit" variant="primary" disabled={!ppUnlock}>
+                  Unlock
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setShowSetup(true)}>
+                  First-time setup
+                </Button>
+              </div>
+            </form>
+          )}
+
+          <div className="card" style={{ marginTop: 10 }}>
+            <p style={{ margin: '0 0 8px' }}>Auto-sync provider</p>
+            <p className="muted small" style={{ margin: '0 0 10px' }}>
+              Only one provider drives background sync at a time. Switch any time.
+              Greyed-out options need to be configured first.
+            </p>
+            <div className="col" style={{ gap: 6 }}>
+              {(() => {
+                const driveReady = !!tokens;
+                const lanReady = !!loadPair();
+                return (
+                  <>
+                    <label
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'center',
+                        opacity: driveReady ? 1 : 0.55,
+                        cursor: driveReady ? 'pointer' : 'not-allowed',
+                      }}
+                      title={driveReady ? 'Use Google Drive for background sync' : 'Sign in to Google Drive first'}
+                    >
+                      <input
+                        type="radio"
+                        name="active-sync-backend"
+                        checked={activeId === 'gdrive'}
+                        onChange={() => setActiveBackendId('gdrive')}
+                        disabled={!driveReady}
+                      />
+                      <span>
+                        Google Drive (encrypted, anywhere)
+                        {!driveReady ? <em className="muted small"> — sign in first</em> : null}
+                      </span>
+                    </label>
+                    <label
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'center',
+                        opacity: lanReady ? 1 : 0.55,
+                        cursor: lanReady ? 'pointer' : 'not-allowed',
+                      }}
+                      title={lanReady ? 'Use the paired LAN host for background sync' : 'Pair a host in the Multi-device sync card above'}
+                    >
+                      <input
+                        type="radio"
+                        name="active-sync-backend"
+                        checked={activeId === 'lan'}
+                        onChange={() => setActiveBackendId('lan')}
+                        disabled={!lanReady}
+                      />
+                      <span>
+                        LAN host (fast, same Wi-Fi)
+                        {!lanReady ? <em className="muted small"> — pair a host first</em> : null}
+                      </span>
+                    </label>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input
+                        type="radio"
+                        name="active-sync-backend"
+                        checked={activeId === null}
+                        onChange={() => setActiveBackendId(null)}
+                      />
+                      <span>Off (no background sync)</span>
+                    </label>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+
+          <div className="row" style={{ marginTop: 10 }}>
+            <Button
+              type="button"
+              variant="secondary"
+              icon={<IcUpload size={16} />}
+              onClick={() => runManualSync('push')}
+              disabled={busy || !hasPassphrase}
+              title={!hasPassphrase ? 'Unlock the sync passphrase first' : 'Push now'}
+            >
+              Push now
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              icon={<IcDownload size={16} />}
+              onClick={() => runManualSync('pull')}
+              disabled={busy || !hasPassphrase}
+              title={!hasPassphrase ? 'Unlock the sync passphrase first' : 'Pull now'}
+            >
+              Pull now
+            </Button>
+          </div>
+
+          {conflictEtag ? (
+            <div
+              className="card"
+              role="alert"
+              style={{
+                marginTop: 10,
+                borderColor: 'var(--err)',
+                background: 'color-mix(in oklab, var(--err) 10%, transparent)',
+              }}
+            >
+              <p style={{ margin: '0 0 8px', color: 'var(--err)' }}>
+                <strong>Conflict</strong>: another device pushed to Drive after your last
+                pull. Pick how to resolve:
+              </p>
+              <ul className="muted small" style={{ margin: '0 0 10px', paddingLeft: 18 }}>
+                <li>
+                  <strong>Pull first</strong>: download the newer Drive copy onto this
+                  device, losing whatever you edited locally since the last sync.
+                </li>
+                <li>
+                  <strong>Override remote</strong>: overwrite Drive with your local copy.
+                  Other devices will pick up your version on their next sync.
+                </li>
+              </ul>
+              <div className="row">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  icon={<IcDownload size={16} />}
+                  onClick={() => runManualSync('pull')}
+                  disabled={busy}
+                >
+                  Pull first
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  icon={<IcUpload size={16} />}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        'Override the Drive copy with your local snapshot? Other devices will see your version on next sync.',
+                      )
+                    ) {
+                      void runManualSync('push-force');
+                    }
+                  }}
+                  disabled={busy}
+                >
+                  Override remote
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setConflictEtag(null)}>
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {lastEvent && lastEvent.backendId === 'gdrive' && lastEvent.kind === 'error' ? (
+            <p
+              className="muted small"
+              role="status"
+              style={{ marginTop: 10, color: 'var(--err)' }}
+            >
+              Last background sync: {lastEvent.text}
+            </p>
+          ) : null}
+        </>
+      )}
+
+      {msg ? (
+        <p
+          className="muted small"
+          role="status"
+          style={{
+            marginTop: 10,
+            color:
+              msg.kind === 'error' ? 'var(--err)' : msg.kind === 'ok' ? 'var(--ok)' : undefined,
+          }}
+        >
+          {msg.text}
+        </p>
+      ) : null}
+    </CollapsibleCard>
+  );
+}
+
+function describeAuthError(reason: AuthFailureReason, detail?: string): string {
+  switch (reason) {
+    case 'no-client-id':
+      return detail ?? 'OAuth client ID not configured. See README → Cloud sync setup.';
+    case 'popup-blocked':
+      return 'Your browser blocked the consent popup. Allow popups for this site and try again.';
+    case 'user-cancelled':
+      return 'Sign-in cancelled.';
+    case 'electron-unsupported':
+      return detail ?? 'Drive sync currently requires the browser PWA.';
+    case 'network-error':
+      return `Network error during sign-in${detail ? ` (${detail})` : ''}.`;
+    case 'token-exchange-failed':
+      return `Google rejected the sign-in${detail ? `: ${detail}` : ''}.`;
+    default:
+      return detail ?? 'Unexpected error during sign-in.';
+  }
+}
+
+function describePullOutcome(
+  outcome: Exclude<
+    Awaited<ReturnType<NonNullable<ReturnType<typeof createGDriveBackend>>['pull']>>,
+    { kind: 'ok' } | { kind: 'not-modified' } | { kind: 'no-snapshot' } | { kind: 'wrong-password' }
+  >,
+): string {
+  switch (outcome.kind) {
+    case 'auth-required':
+      return 'Google session expired. Sign out and back in.';
+    case 'unsupported-version':
+      return 'Drive holds a snapshot from a newer Cadence build. Update this device first.';
+    case 'mixed-content':
+      return 'This page is HTTPS but the chosen sync host is HTTP. Use HTTPS.';
+    case 'timeout':
+      return 'Drive request timed out. Check your connection.';
+    case 'http-error':
+      return `Drive returned HTTP ${outcome.status}${outcome.message ? `: ${outcome.message}` : ''}.`;
+    case 'network-error':
+      return `Network error: ${outcome.message}`;
+  }
+}
+
+function describePushOutcome(
+  outcome: Exclude<
+    Awaited<ReturnType<NonNullable<ReturnType<typeof createGDriveBackend>>['push']>>,
+    { kind: 'ok' } | { kind: 'conflict' }
+  >,
+): string {
+  switch (outcome.kind) {
+    case 'auth-required':
+      return 'Google session expired. Sign out and back in.';
+    case 'too-large':
+      return 'Snapshot is too large to upload. Trim attachments and try again.';
+    case 'mixed-content':
+      return 'This page is HTTPS but the chosen sync host is HTTP. Use HTTPS.';
+    case 'timeout':
+      return 'Drive request timed out. Check your connection.';
+    case 'http-error':
+      return `Drive returned HTTP ${outcome.status}${outcome.message ? `: ${outcome.message}` : ''}.`;
+    case 'network-error':
+      return `Network error: ${outcome.message}`;
+  }
 }
 
 type UpdaterPhase =

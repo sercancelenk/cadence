@@ -20,11 +20,16 @@ function shouldRegister(): boolean {
   // Electron and a service worker is neither useful nor compatible.
   const w = window as unknown as { cadence?: unknown; leeadman?: unknown };
   if (w.cadence || w.leeadman) return false;
-  // file:// protocol cannot host a SW.
-  if (window.location.protocol === 'file:') return false;
-  // Only register when the bundle was built with CADENCE_PWA=1 (or the
-  // legacy LEEADMAN_PWA flag, which `vite.config.ts` still honours).
-  if (!import.meta.env.CADENCE_PWA && !import.meta.env.LEEADMAN_PWA) return false;
+  // file:// and chrome:// scopes cannot host a SW.
+  if (window.location.protocol !== 'http:' && window.location.protocol !== 'https:') return false;
+  // We used to gate SW registration on the explicit `CADENCE_PWA=1` build
+  // flag (GitHub Pages bundle only). That left the LAN sync host blind:
+  // the *Electron-style* bundle that the desktop serves at
+  // `https://<lan-ip>:9787/` was missing the SW and so iOS couldn't install
+  // it as a real PWA — only as a stale shortcut without offline cache.
+  // Now we register whenever the runtime is an actual browser (http/https
+  // + no Electron bridge). The manifest is bundled in dist/ for both build
+  // targets, and `sw.js` is too, so the install flow works either way.
   return true;
 }
 

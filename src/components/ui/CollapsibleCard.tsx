@@ -70,7 +70,7 @@ export function CollapsibleCard({
         <h2 className="card__title">{title}</h2>
         {badge ? <span className="card__badge">{badge}</span> : null}
         <span className={`card__chev${open ? ' card__chev--open' : ''}`} aria-hidden>
-          <IcChevronDown size={16} />
+          <IcChevronDown size={18} strokeWidth={2.25} />
         </span>
       </button>
       {open ? (

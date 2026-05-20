@@ -1,24 +1,35 @@
-# CI does not run on its own from pushes or pull requests.
-# It is invoked as a dependency by the Release and Pages workflows
-# (via `workflow_call`) and can also be launched manually from the
-# Actions tab if you want to sanity-check a branch without triggering a
-# release or a deploy.
+# CI runs on every push and PR to keep `main` releasable. The same
+# job is also invoked as a dependency by the Release and Pages
+# workflows (via `workflow_call`) so a deploy never goes out without
+# the type-check + tests + build all having passed.
 
 name: CI
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_call:
   workflow_dispatch:
+
+# Avoid wasting minutes on superseded commits — keep only the latest
+# run per ref. Released builds (workflow_call from release.yml) get
+# their own concurrency group so they never get cancelled by a push.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_call' }}
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    # CI only needs to type-check and build the web bundle. The electron
-    # postinstall otherwise tries to download the platform-specific Electron
-    # binary (~120 MB) from GitHub Releases and intermittently fails with
-    # "RequestError: socket hang up" on Ubuntu runners. Skipping the binary
-    # is safe here because we never actually run the desktop app in CI; the
-    # Release workflow (which packages Electron) keeps the default behaviour.
+    # CI only needs to type-check, test, and build the web bundle. The
+    # electron postinstall otherwise tries to download the platform-
+    # specific Electron binary (~120 MB) from GitHub Releases and
+    # intermittently fails with "RequestError: socket hang up" on
+    # Ubuntu runners. Skipping the binary is safe here because we never
+    # actually run the desktop app in CI; the Release workflow (which
+    # packages Electron) keeps the default behaviour.
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       # Harden npm against transient registry timeouts on Ubuntu runners.
@@ -26,6 +37,10 @@ jobs:
       NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: '20000'
       NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
       NPM_CONFIG_FETCH_TIMEOUT: '600000'
+      # CI uses a placeholder client ID so the Google Drive backend
+      # treats itself as configured (and the relevant tests exercise
+      # the configured path). Production builds inject a real value.
+      VITE_GOOGLE_OAUTH_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,5 +49,11 @@ jobs:
           cache: 'npm'
       - name: Install dependencies (no electron binary)
         run: npm ci --no-audit --no-fund
-      - run: npx tsc --noEmit
-      - run: npm run build:web
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
+      - name: Build web bundle
+        run: npm run build:web
+      - name: Build PWA bundle
+        run: npm run build:pwa

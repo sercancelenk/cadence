@@ -188,6 +188,25 @@ export interface TodoItem {
   dueAt?: string;
   /** Per-item priority (urgent / high / normal / low). */
   priority?: Priority;
+  /**
+   * When to fire a desktop / browser reminder for this todo.
+   *
+   * Schema-wise this is independent from `dueAt` (you can have a
+   * reminder without a deadline, e.g. "ping me at 10am about this
+   * open-ended task"), but the schedule popover currently mirrors
+   * `dueAt` whenever the user toggles reminders on — that's the most
+   * common case and avoids a separate "pick a reminder date" UI.
+   * Power-users (or sync from another device) can still write the
+   * fields independently.
+   */
+  remindAt?: string;
+  /**
+   * Optional recurrence for the reminder ('daily' | 'weekly' | 'monthly').
+   * When the reminder fires and a repeat is set, `useReminderWatcher`
+   * advances `remindAt` to the next occurrence instead of marking it as
+   * notified once.
+   */
+  remindRepeat?: ReminderRepeat;
   /** Order index within the group. Lower comes first. */
   sortOrder?: number;
   createdAt: string;
@@ -526,6 +545,12 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
       // if someone manually edits status to 'done' but leaves done:false,
       // we still want the row to behave as completed.
       const resolvedDone = status === 'done';
+      const repeatRaw = x.remindRepeat;
+      const repeats: ReminderRepeat[] = ['daily', 'weekly', 'monthly'];
+      const remindRepeat =
+        typeof repeatRaw === 'string' && repeats.includes(repeatRaw as ReminderRepeat)
+          ? (repeatRaw as ReminderRepeat)
+          : undefined;
       return {
         id: typeof x.id === 'string' ? x.id : uuid(),
         groupId: typeof x.groupId === 'string' ? x.groupId : '',
@@ -535,6 +560,8 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
         doneAt: typeof x.doneAt === 'string' ? x.doneAt : undefined,
         dueAt: typeof x.dueAt === 'string' ? x.dueAt : undefined,
         priority: parsePriority(x.priority),
+        remindAt: typeof x.remindAt === 'string' ? x.remindAt : undefined,
+        remindRepeat,
         sortOrder: typeof x.sortOrder === 'number' ? x.sortOrder : i,
         createdAt: typeof x.createdAt === 'string' ? x.createdAt : nowIso(),
         updatedAt: typeof x.updatedAt === 'string' ? x.updatedAt : nowIso(),

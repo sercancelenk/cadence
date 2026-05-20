@@ -513,6 +513,65 @@ On a trusted home network, self-signed HTTPS + the bearer token + the hardening 
 
 ---
 
+### Cloud sync (Google Drive, end-to-end encrypted)
+
+LAN sync is great when both devices share a network, but the moment you walk out the door your phone is on its own. **Cloud sync** plugs Cadence into your own Google Drive so the same encrypted snapshot is reachable from anywhere — without giving Google the ability to read your notes.
+
+#### What you get
+
+- **End-to-end encryption.** Snapshots are wrapped with AES-256-GCM (PBKDF2-SHA-256 KDF, 200 000 iterations, fresh salt + IV per upload) **on your device** before they leave it. Google sees an opaque ~1 MB blob and nothing else. The decryption passphrase never touches Google's servers.
+- **Drive `appData` scope.** Cadence stores its snapshot in the hidden per-app data folder that Drive provides specifically for this purpose. The file is invisible in your Drive UI, isolated from every other app you connect, and counts against your normal Drive quota.
+- **Optimistic concurrency.** Every push compares the file's `version` against what you last saw — a conflict triggers a clear prompt instead of clobbering remote edits.
+- **OAuth PKCE.** No client secret ships in the bundle. The browser proves possession of a random code verifier at token-exchange time, so an intercepted auth code is useless to an attacker.
+- **Workspace shared drives** (advanced). Power users can carry the same model into Google Workspace shared drives by extending the backend in `src/lib/syncBackends/gdrive.ts` — the appData design already isolates per-user data, and shared drives just slot in as scoped parents.
+
+#### Setup (~5 minutes, free)
+
+You only need to do this if you forked Cadence or are running your own copy. The official build ships with a working client ID baked in.
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com/) and create a new project (any name works — "cadence-sync" is fine).
+2. In the new project: **APIs & Services → Library → Google Drive API → Enable**.
+3. **APIs & Services → OAuth consent screen**. Choose "External" (for personal use) or "Internal" (only your Google Workspace organisation will sign in). Fill in:
+   - App name: anything you'll recognise
+   - User support email: your email
+   - Developer contact: your email
+   - Scopes: add `…/auth/drive.appdata` (no other scopes — keeps the consent screen lean)
+   - Test users (External only): add the Google accounts you want to sign in with, until you publish
+4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
+   - Application type: **Web application**
+   - Authorized JavaScript origins: every PWA host you'll use, for example:
+     - `https://<your-github-user>.github.io`
+     - `http://localhost:5173` (dev)
+   - Authorized redirect URIs (same origins with the PWA path):
+     - `https://<your-github-user>.github.io/cadence/app/?oauth=google`
+     - `http://localhost:5173/?oauth=google`
+   - Copy the resulting **Client ID** (looks like `1234567890-abcdef.apps.googleusercontent.com`).
+5. Drop it into your `.env`:
+   ```bash
+   # .env (or .env.local — both are git-ignored)
+   VITE_GOOGLE_OAUTH_CLIENT_ID=1234567890-abcdef.apps.googleusercontent.com
+   ```
+6. Rebuild (`npm run build:pwa`) and deploy. The new build picks up the client ID at import time.
+
+> The client ID is **public information**, not a secret. The PKCE flow is what proves it's your app each time — see [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636) if you're curious. Don't commit a service-account JSON file or an OAuth client *secret* — Cadence doesn't need either.
+
+#### Using it
+
+1. Open the PWA, **Settings → Cloud sync (Google Drive)**.
+2. Tap **Sign in with Google**. The OAuth popup opens; consent on the screen Google shows.
+3. Set a **sync passphrase** the first time. 8+ characters. Cadence uses it to derive the encryption key — write it down, because losing it makes the Drive snapshot unrecoverable. (There is no recovery — that's the whole point of E2E encryption.)
+4. Use **Auto-sync provider** to pick LAN, Drive, or Off. The provider you pick drives the background sync loop; the other one stays available for manual push/pull.
+
+On a new device (same Google account, same passphrase): sign in to Drive, enter the passphrase, hit **Pull now**. Cadence reads the encrypted blob, decrypts it locally, and seeds the workspace.
+
+#### Limitations (today)
+
+- **Desktop Electron build**: Drive sync is browser-only for now. The desktop card shows a placeholder. The LAN card keeps doing its job and a future release will add Drive sign-in via a custom protocol callback so the Electron app gets the same flow.
+- **One snapshot per Drive**: Versioned restore points are on the roadmap (Drive keeps history on its side, but we don't surface it in the UI yet). For belt-and-braces redundancy, use **Settings → Export backup** alongside cloud sync — that's a fully decrypted JSON, on your own disk.
+- **Conflict resolution is manual**: if two devices push at the same time, one wins on the server, the other sees a conflict banner and chooses whether to pull-first or override. Future work will offer field-level merge for the obvious cases (different teams edited on different devices).
+
+---
+
 ## Mobile / PWA
 
 Cadence ships as a **Progressive Web App** in addition to the desktop Electron build. The same React bundle is deployed to GitHub Pages and installable on iOS/Android.
@@ -1062,6 +1121,7 @@ Google retired the Gemini 1.x family from the `v1beta` endpoint in late 2025. Op
 | 1.31 | **LAN sync — HTTPS by default** — Electron server now runs TLS 1.2+ over a self-signed cert (RSA 2048 / SHA-256) persisted in `cadence-sync-tls.json`; auto-regenerated when the LAN IP list changes or expiry nears, 800-day validity to stay within Apple's hard cap. Fixes mixed-content / HTTPS-Only blockers between the GitHub Pages PWA and the desktop host. |
 | 1.32 | **LAN sync — QR-code pairing** — host card renders a scannable QR encoding `https://<lan-ip>:9787/?pair=<token>`; on the phone the camera URL opens the bundled PWA from the host, the `?pair=` handler stores the URL + token in `localStorage` and the device is paired with zero typing |
 | 1.33 | **LAN sync — bidirectional auto-sync + ETag conflicts** — paired devices keep both sides in step in the background (push first, pull after) on launch / focus / online / visibilitychange; `If-None-Match` gives a free 304 when nothing changed, `If-Match` triggers a 412 when the host moved on, and a "Connected · synced X ago" badge with a Disconnect button shows live state in Settings |
+| 1.34 | **Cloud sync — Google Drive (end-to-end encrypted)** — PWA-side OAuth 2.0 PKCE sign-in with the `drive.appdata` scope; snapshots wrapped with AES-256-GCM (PBKDF2-SHA-256 KDF, fresh salt + IV per upload) before they ever leave the device; Drive sees opaque ciphertext only; provider-agnostic `SyncBackend` interface lets LAN and Drive coexist with a per-user "Auto-sync provider" toggle; sync passphrase lives in sessionStorage (cleared on tab close); Drive `version` field used as the etag for optimistic concurrency (`If-None-Match`-style short-circuit on pull, conflict detection on push) |
 
 ### Tier 2 — next
 
@@ -1123,6 +1183,13 @@ If you have data from a pre-rename build on the same machine:
 </details>
 
 ---
+
+## Legal
+
+- **Privacy Policy** — [PRIVACY.md](./PRIVACY.md). What data Cadence stores, where it lives, what gets sent over the network and to whom. Short version: local-first, no telemetry, opt-in integrations only.
+- **Terms of Use** — [TERMS.md](./TERMS.md). Conditions for using the distributed binaries and the GitHub Pages PWA. Source code is governed by `LICENSE`.
+
+Cadence is not affiliated with or endorsed by Google, Anthropic, OpenAI, or Microsoft. Mentioned trademarks belong to their respective owners.
 
 ## License
 

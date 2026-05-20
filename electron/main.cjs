@@ -2640,6 +2640,195 @@ ipcMain.handle('sync:rotateToken', async () => {
   return { ok: true, token: cfg.token };
 });
 
+// ---------- Google Drive OAuth (loopback) ---------------------------------------
+//
+// The PWA path uses a popup + same-origin redirect (`gdriveAuth.ts`). That
+// can't work in Electron because the renderer doesn't have an `https://...`
+// origin to redirect back to — `file://` URLs aren't accepted by Google as
+// redirect targets, and we don't ship a hosted callback page.
+//
+// The standard alternative for desktop apps (recommended by Google's own
+// guides for installed apps) is the **loopback redirect**: spin up a tiny
+// localhost HTTP server, set the redirect URI to `http://127.0.0.1:<port>/oauth`,
+// and capture the `?code=…` query when the user finishes the consent flow.
+//
+// Security notes
+// --------------
+//
+// - PKCE is mandatory. We compute `code_verifier` + `code_challenge` here in
+//   the main process, return the verifier to the renderer alongside the code,
+//   and let the renderer exchange both with Google for tokens. The renderer
+//   then stores tokens the same way the PWA does — single code path for
+//   refresh, revoke and snapshot fetch.
+//
+// - The loopback server binds to 127.0.0.1 (not 0.0.0.0). Other devices on
+//   the LAN can't reach it.
+//
+// - The server runs for at most 5 minutes and only accepts a single
+//   callback. We don't keep a long-lived listener; any leftover socket is
+//   closed with the response.
+//
+// - The redirect URI Google needs is registered against a *Desktop App*
+//   OAuth client (Google Cloud Console → Credentials → OAuth client ID →
+//   Application type: Desktop app). On a Desktop client, Google accepts any
+//   loopback port — no need to pre-register a specific port number.
+
+const GDRIVE_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
+
+ipcMain.handle('gdrive:beginAuth', async (_evt, payload = {}) => {
+  const { clientId, scopes } = payload;
+  if (typeof clientId !== 'string' || !clientId) {
+    return { ok: false, reason: 'no-client-id', detail: 'Client ID is required.' };
+  }
+  if (!Array.isArray(scopes) || scopes.length === 0) {
+    return { ok: false, reason: 'unexpected', detail: 'At least one scope is required.' };
+  }
+
+  // PKCE helpers — equivalent to the renderer-side versions in
+  // `gdriveAuth.ts`, but mirrored here so the main process never trusts
+  // a renderer-supplied verifier (which would defeat PKCE).
+  const codeVerifier = base64url(crypto.randomBytes(64));
+  const codeChallenge = base64url(
+    crypto.createHash('sha256').update(codeVerifier).digest(),
+  );
+  const state = base64url(crypto.randomBytes(16));
+
+  try {
+    const http = require('http');
+    const result = await new Promise((resolve) => {
+      let server;
+      let timer;
+      let settled = false;
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        try {
+          if (server) server.close();
+        } catch {
+          /* swallow */
+        }
+      };
+      const settle = (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      };
+
+      server = http.createServer((req, res) => {
+        try {
+          const url = new URL(req.url, 'http://127.0.0.1');
+          if (url.pathname !== '/oauth') {
+            res.writeHead(404).end('not found');
+            return;
+          }
+          const incomingState = url.searchParams.get('state');
+          const code = url.searchParams.get('code');
+          const error = url.searchParams.get('error');
+          // Always respond with a friendly HTML page so the user sees a
+          // confirmation in their browser before flipping back to the app.
+          if (error || !code || incomingState !== state) {
+            res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(buildLoopbackResponseHtml(false, error || 'cancelled'));
+            settle({ ok: false, reason: 'user-cancelled', detail: error || 'cancelled' });
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(buildLoopbackResponseHtml(true));
+          settle({ ok: true, code, codeVerifier, redirectUri: getRedirectUri(server.address().port) });
+        } catch (err) {
+          try {
+            res.writeHead(500).end('error');
+          } catch {
+            /* swallow */
+          }
+          settle({ ok: false, reason: 'unexpected', detail: String(err) });
+        }
+      });
+
+      server.on('error', (err) => {
+        settle({ ok: false, reason: 'network-error', detail: String(err) });
+      });
+
+      // Bind to 127.0.0.1 with an OS-picked free port. Avoiding 0.0.0.0
+      // keeps the listener invisible to anything off this machine.
+      server.listen(0, '127.0.0.1', () => {
+        const port = server.address().port;
+        const redirectUri = getRedirectUri(port);
+        const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+        authUrl.searchParams.set('client_id', clientId);
+        authUrl.searchParams.set('redirect_uri', redirectUri);
+        authUrl.searchParams.set('response_type', 'code');
+        authUrl.searchParams.set('scope', scopes.join(' '));
+        authUrl.searchParams.set('code_challenge', codeChallenge);
+        authUrl.searchParams.set('code_challenge_method', 'S256');
+        authUrl.searchParams.set('state', state);
+        authUrl.searchParams.set('access_type', 'offline');
+        // `prompt=consent` forces re-emission of the refresh token on
+        // repeated sign-ins. Same rationale as the PWA path.
+        authUrl.searchParams.set('prompt', 'consent');
+        authUrl.searchParams.set('include_granted_scopes', 'true');
+
+        shell.openExternal(authUrl.toString()).catch((err) => {
+          settle({ ok: false, reason: 'unexpected', detail: String(err) });
+        });
+
+        timer = setTimeout(() => {
+          settle({
+            ok: false,
+            reason: 'user-cancelled',
+            detail: 'OAuth flow timed out — no callback received in 5 minutes.',
+          });
+        }, GDRIVE_AUTH_TIMEOUT_MS);
+      });
+    });
+    return result;
+  } catch (err) {
+    return { ok: false, reason: 'unexpected', detail: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+function getRedirectUri(port) {
+  return `http://127.0.0.1:${port}/oauth`;
+}
+
+function base64url(buf) {
+  return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function buildLoopbackResponseHtml(success, errorDetail) {
+  const title = success ? 'Cadence — Signed in' : 'Cadence — Sign-in failed';
+  const body = success
+    ? 'You\'re signed in. You can close this tab and return to Cadence.'
+    : `Sign-in did not complete${errorDetail ? ` (${errorDetail})` : ''}. You can close this tab and try again from Cadence.`;
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${escapeHtml(title)}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+         color: #1d1d1f; background: #f5f5f7; margin: 0;
+         min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         padding: 24px; box-sizing: border-box; }
+  .card { max-width: 480px; background: #fff; border-radius: 14px; padding: 32px;
+          box-shadow: 0 16px 40px rgba(0,0,0,.06); text-align: center; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  p  { font-size: 15px; color: #4a4a4f; line-height: 1.5; margin: 0; }
+  .ok { color: #1f8a3b; }
+  .err { color: #c0392b; }
+</style></head>
+<body><div class="card">
+  <h1 class="${success ? 'ok' : 'err'}">${escapeHtml(title)}</h1>
+  <p>${escapeHtml(body)}</p>
+</div></body></html>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]),
+  );
+}
+
 // ---------- App lifecycle ------------------------------------------------------
 
 app.on('web-contents-created', (_e, contents) => {

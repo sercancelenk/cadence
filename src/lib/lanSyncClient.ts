@@ -30,6 +30,14 @@ export interface LanSyncPair {
   url: string;
   token: string;
   etag?: string;
+  /**
+   * Fingerprint of local data at the last successful sync. Used by the
+   * provider-agnostic auto-sync hook to detect "dirty since last push"
+   * INDEPENDENTLY of whatever scheme the remote uses for its etag. For
+   * LAN the two are likely identical (both are content hashes), but
+   * keeping them separate avoids cross-coupling.
+   */
+  localFingerprint?: string;
   /** ISO timestamp of the last successful pull or push. */
   lastSyncedAt?: string;
   /** ISO timestamp when this pair was first stored. */
@@ -53,6 +61,8 @@ export function loadPair(): LanSyncPair | null {
       url: parsed.url,
       token: parsed.token,
       etag: typeof parsed.etag === 'string' ? parsed.etag : undefined,
+      localFingerprint:
+        typeof parsed.localFingerprint === 'string' ? parsed.localFingerprint : undefined,
       lastSyncedAt: typeof parsed.lastSyncedAt === 'string' ? parsed.lastSyncedAt : undefined,
       pairedAt: typeof parsed.pairedAt === 'string' ? parsed.pairedAt : new Date().toISOString(),
     };
@@ -72,6 +82,7 @@ export function savePair(pair: Partial<LanSyncPair> & Pick<LanSyncPair, 'url' | 
     url: pair.url,
     token: pair.token,
     etag: pair.etag ?? existing?.etag,
+    localFingerprint: pair.localFingerprint ?? existing?.localFingerprint,
     lastSyncedAt: pair.lastSyncedAt ?? existing?.lastSyncedAt,
     pairedAt: pair.pairedAt ?? existing?.pairedAt ?? new Date().toISOString(),
   };

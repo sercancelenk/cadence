@@ -1,4 +1,4 @@
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
   IcCalendar,
@@ -26,10 +26,28 @@ const AITaskExtractorDialog = lazy(() =>
   import('../components/AITaskExtractorDialog').then((m) => ({ default: m.AITaskExtractorDialog })),
 );
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
+import { SchedulePopover, type SchedulePatch } from '../components/ui/SchedulePopover';
 import { isAIConfigured } from '../lib/ai';
-import { formatDateShort, formatTimeOnly, fromLocalDatetimeValue, isPast, toLocalDatetimeValue } from '../lib/datetime';
+import { formatDateShort, formatTimeOnly, isPast } from '../lib/datetime';
 import { PRIORITY_OPTIONS, priorityRank, TODO_STATUS_OPTIONS, isTodoOpen, todoStatusRank } from '../model';
 import type { Priority, TodoGroup, TodoItem, TodoStatus } from '../model';
+
+/**
+ * Bridge from the popover's tri-state patch shape (`undefined` =
+ * untouched, `null` = clear, string = set) to our action layer's
+ * shape, which treats `undefined` as "clear" already. We only spread
+ * fields the popover explicitly touched, so a patch that only changes
+ * `remindRepeat` doesn't accidentally wipe `dueAt`.
+ */
+function schedulePatchToTodoPatch(
+  patch: SchedulePatch,
+): Partial<Pick<TodoItem, 'dueAt' | 'remindAt' | 'remindRepeat'>> {
+  const out: Partial<Pick<TodoItem, 'dueAt' | 'remindAt' | 'remindRepeat'>> = {};
+  if (patch.dueAt !== undefined) out.dueAt = patch.dueAt ?? undefined;
+  if (patch.remindAt !== undefined) out.remindAt = patch.remindAt ?? undefined;
+  if (patch.remindRepeat !== undefined) out.remindRepeat = patch.remindRepeat ?? undefined;
+  return out;
+}
 
 function hashHue(seed: string): number {
   let h = 0;
@@ -166,7 +184,9 @@ type TodoTaskRowProps = {
   onAskAI: (item: TodoItem) => void;
   onPatch: (
     id: string,
-    patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'priority' | 'status'>>,
+    patch: Partial<
+      Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'priority' | 'status' | 'remindAt' | 'remindRepeat'>
+    >,
   ) => void;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
@@ -175,56 +195,6 @@ type TodoTaskRowProps = {
   onDrop: (itemId: string) => void;
   onDragEnd: () => void;
 };
-
-/**
- * A few common quick-schedule presets relative to "now". The labels are short
- * so they fit in the inline toolbar without wrapping.
- */
-function quickPresets(): { key: string; label: string; getDate: () => Date }[] {
-  return [
-    {
-      key: 'today',
-      label: 'Today 5pm',
-      getDate: () => {
-        const d = new Date();
-        d.setHours(17, 0, 0, 0);
-        return d;
-      },
-    },
-    {
-      key: 'tomorrow',
-      label: 'Tomorrow 9am',
-      getDate: () => {
-        const d = new Date();
-        d.setDate(d.getDate() + 1);
-        d.setHours(9, 0, 0, 0);
-        return d;
-      },
-    },
-    {
-      key: 'in-3h',
-      label: '+3h',
-      getDate: () => {
-        const d = new Date();
-        d.setMinutes(0, 0, 0);
-        d.setHours(d.getHours() + 3);
-        return d;
-      },
-    },
-    {
-      key: 'next-mon',
-      label: 'Next Mon 9am',
-      getDate: () => {
-        const d = new Date();
-        const day = d.getDay();
-        const offset = ((1 + 7 - day) % 7) || 7;
-        d.setDate(d.getDate() + offset);
-        d.setHours(9, 0, 0, 0);
-        return d;
-      },
-    },
-  ];
-}
 
 function TodoTaskRow({
   item,
@@ -248,6 +218,10 @@ function TodoTaskRow({
   const [draftTitle, setDraftTitle] = useState(item.title);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // The schedule trigger ref is forwarded to the popover so the popover's
+  // outside-click detection ignores re-clicks on the trigger itself
+  // (otherwise close+immediate-reopen ping-pongs around setState batching).
+  const scheduleTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const dueLabel = item.dueAt ? formatTimeOnly(item.dueAt) : '';
   const dueDateShort = formatDateShort(item.dueAt);
@@ -255,12 +229,7 @@ function TodoTaskRow({
   // pending anymore, and cancelled ones were explicitly dropped — flagging
   // either with an "Overdue" warning would just add noise.
   const overdue = item.dueAt && isPast(item.dueAt) && isTodoOpen(item.status);
-  const presets = useMemo(() => quickPresets(), []);
-
-  const applyPreset = (when: Date) => {
-    onPatch(item.id, { dueAt: when.toISOString() });
-    setScheduleOpen(false);
-  };
+  const reminderArmed = !!item.remindAt && isTodoOpen(item.status);
 
   // 3-second "click-to-confirm" delete. We auto-revert the confirm state so
   // the trash button doesn't sit in a dangerous mode after the user navigates
@@ -431,60 +400,33 @@ function TodoTaskRow({
           <div className="todos-row__toolbar">
             <div className="todos-row__sched">
               <button
+                ref={scheduleTriggerRef}
                 type="button"
-                className={`todos-row__sched-btn${item.dueAt ? ' todos-row__sched-btn--set' : ''}`}
-                aria-haspopup="true"
+                className={`todos-row__sched-btn${item.dueAt ? ' todos-row__sched-btn--set' : ''}${
+                  reminderArmed ? ' todos-row__sched-btn--reminder' : ''
+                }`}
+                aria-haspopup="dialog"
                 aria-expanded={scheduleOpen}
-                title={item.dueAt ? 'Reschedule' : 'Schedule'}
+                title={
+                  item.dueAt
+                    ? `Scheduled for ${formatDateShort(item.dueAt)} ${formatTimeOnly(item.dueAt)}${
+                        reminderArmed ? ' · reminder set' : ''
+                      }`
+                    : 'Schedule'
+                }
                 onClick={() => setScheduleOpen((o) => !o)}
               >
-                <IcCalendar size={14} />
-                <span>{item.dueAt ? 'Reschedule' : 'Schedule'}</span>
+                <IcCalendar size={16} />
               </button>
               {scheduleOpen ? (
-                <div
-                  className="todos-row__sched-pop"
-                  role="dialog"
-                  onMouseLeave={() => setScheduleOpen(false)}
-                >
-                  <div className="todos-row__sched-presets">
-                    {presets.map((p) => (
-                      <button
-                        type="button"
-                        key={p.key}
-                        className="todos-row__sched-preset"
-                        onClick={() => applyPreset(p.getDate())}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                  <label className="todos-row__sched-custom">
-                    <span className="muted small">Custom date &amp; time</span>
-                    <input
-                      type="datetime-local"
-                      className="todos-row__date"
-                      defaultValue={toLocalDatetimeValue(item.dueAt)}
-                      key={`due-${item.id}-${item.updatedAt}`}
-                      onChange={(e) => {
-                        const v = fromLocalDatetimeValue(e.target.value);
-                        onPatch(item.id, { dueAt: v });
-                      }}
-                    />
-                  </label>
-                  {item.dueAt ? (
-                    <button
-                      type="button"
-                      className="todos-row__sched-clear"
-                      onClick={() => {
-                        onPatch(item.id, { dueAt: undefined });
-                        setScheduleOpen(false);
-                      }}
-                    >
-                      Clear schedule
-                    </button>
-                  ) : null}
-                </div>
+                <SchedulePopover
+                  anchorRef={scheduleTriggerRef}
+                  dueAt={item.dueAt}
+                  remindAt={item.remindAt}
+                  remindRepeat={item.remindRepeat}
+                  onPatch={(patch) => onPatch(item.id, schedulePatchToTodoPatch(patch))}
+                  onClose={() => setScheduleOpen(false)}
+                />
               ) : null}
             </div>
             <select
@@ -802,6 +744,42 @@ export function TodosPage() {
           </button>
         ) : null}
       </section>
+
+      {visibleGroups.length === 0 && allGroupsSorted.length > 0 ? (
+        // The user has lists but they're all filtered out — most often
+        // every group is archived (common after a LAN-sync pull from a
+        // device that finished a project) or the search/status filters
+        // are too tight. Spell that out and offer the one-click fix so
+        // they don't think their data was lost.
+        <section className="card todos-empty-hint">
+          <h3 className="todos-empty-hint__title">
+            {(() => {
+              const archived = allGroupsSorted.filter((g) => g.archived).length;
+              if (archived > 0 && archived === allGroupsSorted.length) {
+                const itemsInArchived = data.todoItems.filter((it) =>
+                  allGroupsSorted.some((g) => g.id === it.groupId && g.archived),
+                ).length;
+                return `All ${archived} of your lists are archived (${itemsInArchived} items inside).`;
+              }
+              return 'No lists match the current filters.';
+            })()}
+          </h3>
+          <p className="muted small todos-empty-hint__body">
+            {allGroupsSorted.every((g) => g.archived)
+              ? 'Turn on "Show archived" in the toolbar above to see them, or create a new list below.'
+              : 'Adjust the status filter or search box above, or create a new list below.'}
+          </p>
+          {allGroupsSorted.some((g) => g.archived) && !showArchived ? (
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => setShowArchived(true)}
+            >
+              Show archived lists
+            </button>
+          ) : null}
+        </section>
+      ) : null}
 
       {visibleGroups.map((g, idx) => {
         const list = itemsByGroup.get(g.id) ?? [];

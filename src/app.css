@@ -14,6 +14,10 @@
   --accent: #859aaf;
   --accent-2: #677d96;
   --accent-soft: rgba(133, 154, 175, 0.18);
+  /* Foreground colour for chips/badges painted on `--accent`. Dark text
+     pairs better with our slate-blue accent in dark mode (WCAG AAA ≈ 9:1).
+     Light theme overrides this below. */
+  --accent-contrast: #0a1020;
   --danger: #f87171;
   --ok: #4ade80;
   --radius: 10px;
@@ -193,9 +197,9 @@ code {
   all: unset;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   width: 100%;
-  padding: 14px 18px;
+  padding: 14px 16px;
   cursor: pointer;
   border-radius: var(--radius);
   outline: none;
@@ -206,6 +210,12 @@ code {
   background: var(--surface-hover);
 }
 
+.card__toggle:hover .card__chev {
+  background: var(--surface-hover);
+  border-color: var(--border-strong, var(--border));
+  color: var(--text);
+}
+
 .card__toggle:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
@@ -213,25 +223,55 @@ code {
 .card--collapsible .card__title {
   margin: 0;
   flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
+/* Trailing status badge ("Enabled", "0.2.32") sits as a small muted pill so
+ * it has its own visual block instead of bleeding into the chevron. */
 .card__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
   font-size: 12px;
-  color: var(--muted);
   font-weight: 500;
+  color: var(--muted);
+  background: var(--surface-hover);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  white-space: nowrap;
+  line-height: 1.4;
 }
 
+/* Disclosure indicator — wrapped in a subtle 28×28 container so it reads as
+ * an interactive affordance instead of a stray `>` character next to the
+ * badge. Whole row remains clickable; the container is hit-area only when
+ * combined with the toggle's hover state above. */
 .card__chev {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--muted);
-  transition: transform 160ms ease;
+  transition:
+    transform 200ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
   transform: rotate(-90deg);
 }
 
 .card__chev--open {
   transform: rotate(0);
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--border);
 }
 
 .card__body {
@@ -473,6 +513,52 @@ code {
   border-radius: 8px;
   background: var(--bg);
 }
+
+/* HomeTeams row layout — keep the rich desktop row (info + status select +
+ * fav + open + rename + delete all on one line) but collapse cleanly on
+ * narrow screens. The default `flex-wrap: nowrap` on the actions cluster
+ * shoved a 5-button toolbar off-screen on phones, which is what the user
+ * meant by "birbirine karismis". On <=720px we stack info above actions
+ * and let the actions wrap into two natural rows. */
+.home-teams__row {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.home-teams__actions {
+  flex-wrap: nowrap;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 720px) {
+  .home-teams__row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .home-teams__row > div:first-child {
+    /* "Team title + members count" block — let it own the full width
+       instead of competing with the actions cluster. */
+    flex: 0 0 auto !important;
+  }
+  .home-teams__actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    width: 100%;
+  }
+  .home-teams__actions .select--compact {
+    flex: 1 1 110px;
+    min-width: 100px;
+  }
+  /* Rename / Delete carry text + icon and would overflow if kept on the
+     same row as the status select on phones. Letting them wrap gives a
+     clean two-row layout: [select · ★ · → · rename] / [delete]. */
+  .home-teams__actions .btn {
+    flex: 0 1 auto;
+    white-space: nowrap;
+  }
+}
 .list__block {
   padding: 12px;
   border: 1px solid var(--border);
@@ -662,6 +748,10 @@ code {
   --accent: #547292;
   --accent-2: #3d5d80;
   --accent-soft: rgba(84, 114, 146, 0.12);
+  /* Inverse of the dark-theme contrast: white text on the deeper light-mode
+     accent (#547292) gives WCAG AA at small sizes and AAA at the large
+     pills/badges we use here. */
+  --accent-contrast: #ffffff;
   --danger: #dc2626;
   --ok: #15803d;
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
@@ -2023,6 +2113,27 @@ code {
   margin: 10px 0 0;
   font-size: 14px;
   color: var(--tp-muted);
+}
+
+.todos-empty-hint {
+  margin-bottom: 14px;
+  border-left: 3px solid var(--accent);
+  padding: 18px 20px;
+}
+
+.todos-empty-hint__title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.todos-empty-hint__body {
+  margin: 0 0 14px;
+}
+
+.todos-empty-hint .btn {
+  align-self: flex-start;
 }
 
 .todos-list {
@@ -3756,22 +3867,32 @@ code {
 }
 
 .todos-row__sched-btn {
+  /* Icon-only schedule trigger. Wider buttons with the word "Schedule"
+   * were eating horizontal space in a row that already balances title +
+   * status + delete + move; squaring the affordance down to a 32×32
+   * icon button lets the toolbar breathe and matches how other row
+   * actions present themselves. */
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
+  justify-content: center;
+  gap: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   font-size: 12px;
   font-weight: 600;
-  border-radius: var(--radius-sm);
-  background: rgba(126, 176, 255, 0.1);
-  border: 1px solid rgba(126, 176, 255, 0.2);
-  color: var(--text);
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
   cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
 .todos-row__sched-btn:hover {
-  background: rgba(126, 176, 255, 0.16);
-  border-color: rgba(126, 176, 255, 0.35);
+  background: var(--surface-hover);
+  border-color: var(--border-strong, var(--border));
+  color: var(--text);
 }
 
 .todos-row__sched-btn--set {
@@ -3780,64 +3901,362 @@ code {
   color: var(--ok);
 }
 
-.todos-row__sched-pop {
+.todos-row__sched-btn--reminder {
+  position: relative;
+}
+
+.todos-row__sched-btn--reminder::after {
+  /* Small bell-dot in the top-right corner when a reminder is armed —
+   * tells the user this row will actually ping without needing them to
+   * open the popover. */
+  content: '';
   position: absolute;
-  top: calc(100% + 4px);
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* —— SchedulePopover (Todos & elsewhere) ————————————————————— */
+
+.sched-pop {
+  position: absolute;
   right: 0;
-  z-index: 10;
-  min-width: 240px;
+  z-index: 30;
+  width: 320px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  user-select: none;
+  /* Allow scroll on very short viewports (mobile landscape) */
+  max-height: min(560px, calc(100vh - 32px));
+  overflow-y: auto;
 }
 
-.todos-row__sched-presets {
+/* Default placement: below the trigger.
+   `data-placement` is set by SchedulePopover on mount based on viewport
+   collision detection. Flipping is a pure CSS swap of top/bottom anchor,
+   no transforms needed. */
+.sched-pop[data-placement='below'],
+.sched-pop:not([data-placement]) {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
+.sched-pop[data-placement='above'] {
+  bottom: calc(100% + 6px);
+  top: auto;
+}
+
+.sched-pop__header {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.sched-pop__month {
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  text-align: center;
+  color: var(--text);
+}
+
+.sched-pop__nav,
+.sched-pop__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.sched-pop__nav:hover,
+.sched-pop__close:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.sched-pop__weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.sched-pop__weekday {
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--muted);
+  padding: 4px 0;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sched-pop__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.sched-pop__day {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease, transform 100ms ease;
+}
+
+.sched-pop__day:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+.sched-pop__day--dim {
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.sched-pop__day--today {
+  font-weight: 700;
+  color: var(--accent);
+  /* Subtle ring around today to differentiate it from regular days even
+   * when it isn't the selected one. */
+  border-color: var(--accent);
+  background: rgba(126, 176, 255, 0.06);
+}
+
+.sched-pop__day--selected,
+.sched-pop__day--selected:hover {
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  border-color: var(--accent);
+}
+
+.sched-pop__day--selected.sched-pop__day--today {
+  color: var(--accent-contrast, #fff);
+}
+
+.sched-pop__time-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-hover);
+}
+
+.sched-pop__time-ic {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.sched-pop__time-input {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+}
+
+.sched-pop__time-chips {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sched-pop__chip {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.sched-pop__chip:hover {
+  color: var(--text);
+  border-color: var(--border-strong, var(--border));
+}
+
+.sched-pop__chip--active {
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  border-color: var(--accent);
+}
+
+.sched-pop__presets {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.todos-row__sched-preset {
-  padding: 6px 10px;
+.sched-pop__preset {
+  padding: 5px 10px;
   font-size: 12px;
   font-weight: 600;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.04);
+  background: transparent;
   color: var(--text);
   cursor: pointer;
 }
 
-.todos-row__sched-preset:hover {
-  border-color: rgba(126, 176, 255, 0.4);
+.sched-pop__preset:hover {
+  border-color: var(--accent);
   background: rgba(126, 176, 255, 0.08);
 }
 
-.todos-row__sched-custom {
+.sched-pop__reminder {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px dashed var(--border);
+}
+
+.sched-pop__remind-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.sched-pop__remind-toggle:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.sched-pop__remind-toggle--on {
+  background: rgba(126, 176, 255, 0.12);
+  border-color: rgba(126, 176, 255, 0.35);
+  color: var(--accent);
+}
+
+.sched-pop__repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.sched-pop__footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.sched-pop__footer-meta {
+  flex: 1;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 4px;
 }
 
-.todos-row__sched-clear {
-  align-self: flex-start;
-  padding: 4px 8px;
+.sched-pop__footer-meta .muted {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sched-pop__clear {
+  padding: 6px 10px;
   font-size: 12px;
   font-weight: 600;
+  border-radius: 8px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--danger);
   cursor: pointer;
 }
 
-.todos-row__sched-clear:hover {
-  border-color: rgba(248, 113, 113, 0.4);
+.sched-pop__clear:hover {
+  border-color: rgba(248, 113, 113, 0.35);
   background: rgba(248, 113, 113, 0.08);
+}
+
+.btn--compact {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+/* On phones we abandon row-anchored positioning entirely and dock the
+ * popover as a bottom sheet pinned to the viewport. This avoids the
+ * overflow case where the trigger sits near a viewport edge and the
+ * 320-pixel popover spills off-screen. Bonus: matches the native
+ * "tap → modal from bottom" interaction iOS users expect. */
+@media (max-width: 480px) {
+  .sched-pop {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 16px;
+    top: auto;
+    width: auto;
+    transform: none;
+    /* Slightly larger max-height so the day grid still has comfortable
+     * tap targets above the on-screen keyboard. */
+    max-height: min(540px, calc(100vh - 80px));
+  }
+  /* On mobile the above/below placement attribute set by the popover's
+   * useLayoutEffect is overridden — we're always at the bottom of the
+   * viewport. */
+  .sched-pop[data-placement='above'],
+  .sched-pop[data-placement='below'] {
+    top: auto;
+    bottom: 16px;
+  }
+  .sched-pop__time-chips {
+    margin-left: 0;
+  }
 }
 
 /* —— Analytics dashboard —— */
@@ -5080,15 +5499,63 @@ details summary {
 }
 
 @media (max-width: 800px) {
+  /* Phones use a drill-down navigation instead of side-by-side panes:
+     - In list view we show ONLY the sidebar (full screen).
+     - Tapping a note flips us into detail view — sidebar collapses,
+       editor takes the full screen, with a "← Notes" back button in
+       the header to return to the list.
+     The component owns the active-view state via the
+     .notes-page--mobile-list / --mobile-detail modifier on the root
+     container; CSS just shows/hides the right pane accordingly. */
   .notes-page {
-    /* Stack on phones — the resize handle is collapsed to 0 so it stops
-       eating layout space (we also hide it visually below). */
     grid-template-columns: 1fr !important;
     min-height: auto;
+    /* Make the active pane fill the visible viewport so the user isn't
+       scrolling past a half-rendered editor that lives off-screen. */
+    min-height: calc(100vh - 120px);
   }
   .notes-page__resize-handle {
     display: none;
   }
+  .notes-page--mobile-list .notes-page__main {
+    display: none;
+  }
+  .notes-page--mobile-detail .notes-page__sidebar {
+    display: none;
+  }
+  /* Back button is the primary navigation handle on phones, but on
+     desktop it would clash with the sidebar (we already have the list
+     visible there). Show only when the layout is stacked. */
+  .notes-page__back {
+    display: inline-flex;
+  }
+}
+
+/* Drill-down "← Notes" affordance. CSS-only "compound button" style: a
+ * subtle pill with the arrow + label that mirrors iOS's native back
+ * button feel without bringing in extra icons. */
+.notes-page__back {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px 6px 6px;
+  margin-right: 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.notes-page__back:hover,
+.notes-page__back:focus-visible {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  outline: none;
 }
 
 /* Thin vertical handle between sidebar and main pane. We give it real
@@ -5543,4 +6010,129 @@ details summary {
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--tp-divider, var(--border));
+}
+
+/* ------------------------------------------------------------------ */
+/* Welcome tour                                                        */
+/* ------------------------------------------------------------------ */
+/* First-run modal. Lives outside the normal layout so it overlays
+   everything (including the topbar) without inheriting any container
+   constraints. */
+
+.welcome-tour__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: welcome-tour-fade 200ms ease-out;
+}
+
+.welcome-tour__card {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px;
+  max-width: 520px;
+  width: 100%;
+  box-shadow: var(--shadow-md);
+  animation: welcome-tour-pop 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.welcome-tour__progress {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.welcome-tour__dot {
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 200ms;
+}
+
+.welcome-tour__dot--active {
+  background: var(--accent);
+}
+
+.welcome-tour__title {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.welcome-tour__body {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted);
+  margin-bottom: 24px;
+}
+
+.welcome-tour__body p {
+  margin: 0 0 12px;
+}
+
+.welcome-tour__body strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.welcome-tour__body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.welcome-tour__bullets {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.welcome-tour__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@keyframes welcome-tour-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes welcome-tour-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 480px) {
+  .welcome-tour__card {
+    padding: 20px;
+  }
+  .welcome-tour__title {
+    font-size: 18px;
+  }
 }

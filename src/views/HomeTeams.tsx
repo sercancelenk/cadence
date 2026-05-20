@@ -66,9 +66,9 @@ export function HomeTeams() {
         {cards.length === 0 ? (
           <p className="muted">No teams yet.</p>
         ) : (
-          <ul className="list">
+          <ul className="list home-teams__list">
             {cards.map(({ team, members, openTasks }) => (
-              <li key={team.id} className="list__row">
+              <li key={team.id} className="list__row home-teams__row">
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {renameId === team.id ? (
                     <form
@@ -103,7 +103,7 @@ export function HomeTeams() {
                   )}
                 </div>
                 {renameId === team.id ? null : (
-                  <div className="row" style={{ flexWrap: 'nowrap' }}>
+                  <div className="row home-teams__actions">
                     <select
                       className="select select--compact"
                       value={team.status ?? 'active'}

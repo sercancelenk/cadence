@@ -4,6 +4,7 @@ import { useAppData } from '../AppDataContext';
 import { useAccount } from '../AccountContext';
 import { MarkdownEditor } from '../components/ui/MarkdownEditor';
 import {
+  IcArrowLeft,
   IcEyeOff,
   IcGrip,
   IcKey,
@@ -247,10 +248,35 @@ export function NotesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  // On narrow viewports (phones) we intentionally do NOT auto-select a
+  // note — the user lands on the list and drills into a detail screen by
+  // tapping a row, which the .notes-page--mobile-{list,detail} CSS classes
+  // below render as a single full-screen view at a time. Auto-selecting
+  // would dump them straight into the *first* note's editor, which is
+  // exactly the "I have 50 notes, jumping back is torture" complaint.
+  const [isNarrowViewport, setIsNarrowViewport] = useState(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia('(max-width: 800px)').matches;
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(max-width: 800px)');
+    const onChange = (e: MediaQueryListEvent) => setIsNarrowViewport(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
   useEffect(() => {
     if (selectedId && notes.some((n) => n.id === selectedId)) return;
+    // Keep the previous auto-select behaviour on desktop (so an empty
+    // editor pane is never shown next to a populated list) but skip it on
+    // phones, where we want the user to deliberately tap into a note.
+    if (isNarrowViewport) {
+      if (selectedId && !notes.some((n) => n.id === selectedId)) setSelectedId(null);
+      return;
+    }
     setSelectedId(notes[0]?.id ?? null);
-  }, [notes, selectedId]);
+  }, [notes, selectedId, isNarrowViewport]);
 
   /**
    * Whenever the user picks a note we stamp `lastOpenedAt`. This is the
@@ -855,7 +881,7 @@ export function NotesPage() {
 
   return (
     <div
-      className="notes-page"
+      className={`notes-page${selected ? ' notes-page--mobile-detail' : ' notes-page--mobile-list'}`}
       style={{ gridTemplateColumns: `minmax(0, ${sidebarWidth}px) 6px minmax(0, 1fr)` }}
     >
       <aside className="notes-page__sidebar">
@@ -1030,6 +1056,21 @@ export function NotesPage() {
         ) : (
           <>
             <header className="notes-page__main-header">
+              {/* Drill-down "Back" affordance — hidden on desktop via
+                  CSS (the list and editor live side-by-side there) and
+                  shown as the first element on phones. Clears selection
+                  which collapses .notes-page--mobile-detail back into
+                  the list view. */}
+              <button
+                type="button"
+                className="notes-page__back"
+                onClick={() => setSelectedId(null)}
+                aria-label="Back to notes list"
+                title="Back to notes list"
+              >
+                <IcArrowLeft size={18} />
+                <span>Notes</span>
+              </button>
               <input
                 className="notes-page__title-input"
                 value={selected.title}

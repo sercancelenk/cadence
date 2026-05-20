@@ -48,6 +48,14 @@ const api = {
   syncEnable: () => ipcRenderer.invoke('sync:enable'),
   syncDisable: () => ipcRenderer.invoke('sync:disable'),
   syncRotateToken: () => ipcRenderer.invoke('sync:rotateToken'),
+  gdriveAuth: {
+    // Loopback OAuth flow for Electron. Main process spins up a
+    // localhost HTTP server, opens the system browser, captures the
+    // `?code=` callback and returns it to the renderer. Token
+    // exchange happens in the renderer like in the PWA — keeps the
+    // crypto code path single-sourced.
+    start: (payload) => ipcRenderer.invoke('gdrive:beginAuth', payload),
+  },
 };
 
 contextBridge.exposeInMainWorld('cadence', api);

@@ -165,7 +165,19 @@ type Api = {
   addTodoItem: (groupId: string, title: string, extras?: { priority?: Priority; dueAt?: string }) => void;
   updateTodoItem: (
     id: string,
-    patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done' | 'status' | 'priority'>>,
+    patch: Partial<
+      Pick<
+        TodoItem,
+        | 'title'
+        | 'groupId'
+        | 'dueAt'
+        | 'done'
+        | 'status'
+        | 'priority'
+        | 'remindAt'
+        | 'remindRepeat'
+      >
+    >,
   ) => void;
   reorderTodoItem: (itemId: string, targetGroupId: string, beforeItemId: string | null) => void;
   updateTodoGroupPriority: (groupId: string, priority: Priority | undefined) => void;
@@ -326,13 +338,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   // Best-effort: flush before the browser/Electron tab actually goes away so
   // the user never loses the last 400ms of typing on an abrupt close.
+  //
+  // Mobile Safari is the picky one here: it frequently freezes a page on
+  // `visibilitychange → hidden` (background tab, home button, app switcher)
+  // and only later fires `pagehide` when the OS actually tears the process
+  // down — long after our 400 ms save timer would have lost the chance.
+  // Adding the visibility listener makes the persistence path defensive
+  // against PWA suspensions where pagehide never arrives in time.
   useEffect(() => {
     const onPageHide = () => flushPendingSaveSync();
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushPendingSaveSync();
+    };
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('beforeunload', onPageHide);
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('beforeunload', onPageHide);
+      document.removeEventListener('visibilitychange', onVisibility);
       flushPendingSaveSync();
     };
   }, [flushPendingSaveSync]);
@@ -399,9 +423,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const normalized = normalizeData(next);
       setData(normalized);
       const uid = userIdRef.current;
-      if (uid) scheduleSave(normalized);
+      if (uid) {
+        // Bulk replace (sync pull, restore) is a "import" event, not a
+        // typing event — there's no debounce benefit and a high cost if
+        // the user backgrounds the app before the 400 ms timer fires.
+        // Mobile Safari is especially aggressive about freezing pages on
+        // visibility change, so we persist immediately and clear any
+        // pending debounced save that would otherwise overwrite us.
+        if (saveTimer.current) {
+          clearTimeout(saveTimer.current);
+          saveTimer.current = null;
+        }
+        pendingSave.current = null;
+        void runPersist(uid, normalized);
+      }
     },
-    [scheduleSave],
+    [runPersist],
   );
 
   const reload = useCallback(async () => {
@@ -526,61 +563,104 @@ export function useReminderWatcher() {
     const tick = () => {
       const { data: d, update: up } = latest.current;
       const now = Date.now();
-      const dueIds: string[] = [];
+
+      // Two parallel "due" pools: the legacy team-scoped `items` (1:1
+      // assigned tasks / coaching prompts) and the personal `todoItems`
+      // (to-do list). Both gained `remindAt` independently; surface them
+      // in one notification batch so a user with both kinds of reminders
+      // doesn't get hammered twice in a single tick.
+      const dueItemIds: string[] = [];
       for (const it of d.items) {
         if (!it.remindAt || it.done) continue;
         const t = Date.parse(it.remindAt);
         if (Number.isNaN(t) || t > now) continue;
         if (d.notifiedReminderIds.includes(it.id)) continue;
-        dueIds.push(it.id);
+        dueItemIds.push(it.id);
       }
-      if (dueIds.length === 0) return;
+      const dueTodoIds: string[] = [];
+      for (const t of d.todoItems) {
+        if (!t.remindAt) continue;
+        // Skip rows that are no longer pending — completing / cancelling a
+        // todo silently dismisses its reminder, no extra UI needed.
+        if (t.status === 'done' || t.status === 'cancelled') continue;
+        const ts = Date.parse(t.remindAt);
+        if (Number.isNaN(ts) || ts > now) continue;
+        if (d.notifiedReminderIds.includes(t.id)) continue;
+        dueTodoIds.push(t.id);
+      }
+      if (dueItemIds.length === 0 && dueTodoIds.length === 0) return;
 
       if (!askedPermission.current && 'Notification' in window && Notification.permission === 'default') {
         askedPermission.current = true;
         void Notification.requestPermission();
       }
 
-      // Index people/teams once for O(1) lookups instead of O(n) per due id.
+      // Index people/teams/groups once for O(1) lookups instead of O(n) per due id.
       const peopleById = new Map(d.people.map((p) => [p.id, p]));
       const teamsById = new Map(d.teams.map((t) => [t.id, t]));
+      const todoGroupsById = new Map(d.todoGroups.map((g) => [g.id, g]));
 
-      const recurringAdvances: Record<string, string> = {};
-      for (const id of dueIds) {
-        const it = d.items.find((x) => x.id === id);
-        if (!it) continue;
-        const person = peopleById.get(it.personId);
-        const team = person ? teamsById.get(person.teamId) : undefined;
-        const label = [team?.name, person?.name].filter(Boolean).join(' · ') || 'Item';
-        const title = it.kind === 'task' ? 'Task reminder' : 'Reminder';
-        const body = `${label}: ${it.title || '(untitled)'}`;
-
+      const recurringItemAdvances: Record<string, string> = {};
+      const recurringTodoAdvances: Record<string, string> = {};
+      const fire = (title: string, body: string) => {
         if ('Notification' in window && Notification.permission === 'granted') {
           // eslint-disable-next-line no-new
           new Notification(title, { body });
         } else {
           void window.cadence?.showNotification?.({ title, body });
         }
+      };
 
+      for (const id of dueItemIds) {
+        const it = d.items.find((x) => x.id === id);
+        if (!it) continue;
+        const person = peopleById.get(it.personId);
+        const team = person ? teamsById.get(person.teamId) : undefined;
+        const label = [team?.name, person?.name].filter(Boolean).join(' · ') || 'Item';
+        const title = it.kind === 'task' ? 'Task reminder' : 'Reminder';
+        fire(title, `${label}: ${it.title || '(untitled)'}`);
         if (it.remindRepeat && it.remindAt) {
           const next = advanceReminder(it.remindAt, it.remindRepeat);
-          if (next) recurringAdvances[id] = next;
+          if (next) recurringItemAdvances[id] = next;
         }
       }
 
-      const advanceIds = new Set(Object.keys(recurringAdvances));
-      const oneShotDueIds = dueIds.filter((id) => !advanceIds.has(id));
+      for (const id of dueTodoIds) {
+        const t = d.todoItems.find((x) => x.id === id);
+        if (!t) continue;
+        const group = todoGroupsById.get(t.groupId);
+        const label = group?.name || 'Todo';
+        fire('Todo reminder', `${label}: ${t.title || '(untitled)'}`);
+        if (t.remindRepeat && t.remindAt) {
+          const next = advanceReminder(t.remindAt, t.remindRepeat);
+          if (next) recurringTodoAdvances[id] = next;
+        }
+      }
+
+      const advanceItemIds = new Set(Object.keys(recurringItemAdvances));
+      const advanceTodoIds = new Set(Object.keys(recurringTodoAdvances));
+      const oneShotDueIds = [
+        ...dueItemIds.filter((id) => !advanceItemIds.has(id)),
+        ...dueTodoIds.filter((id) => !advanceTodoIds.has(id)),
+      ];
 
       up((prev) => ({
         ...prev,
         notifiedReminderIds: [...new Set([...prev.notifiedReminderIds, ...oneShotDueIds])],
-        items: advanceIds.size
+        items: advanceItemIds.size
           ? prev.items.map((x) =>
-              recurringAdvances[x.id]
-                ? { ...x, remindAt: recurringAdvances[x.id], updatedAt: new Date().toISOString() }
+              recurringItemAdvances[x.id]
+                ? { ...x, remindAt: recurringItemAdvances[x.id], updatedAt: new Date().toISOString() }
                 : x,
             )
           : prev.items,
+        todoItems: advanceTodoIds.size
+          ? prev.todoItems.map((x) =>
+              recurringTodoAdvances[x.id]
+                ? { ...x, remindAt: recurringTodoAdvances[x.id], updatedAt: new Date().toISOString() }
+                : x,
+            )
+          : prev.todoItems,
       }));
     };
 

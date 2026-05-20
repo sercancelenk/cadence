@@ -15,7 +15,7 @@
  * does (main.tsx checks CADENCE_PWA flag + presence of `serviceWorker` API).
  */
 
-const CACHE_VERSION = 'v26-cadence-app-subpath';
+const CACHE_VERSION = 'v27-lan-pwa-v1-passthrough';
 const CACHE_NAME = `cadence-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -59,6 +59,13 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+
+  // Never cache the LAN sync server's data endpoints. When this PWA is
+  // installed from the desktop's host (`https://<lan-ip>:9787/`) the
+  // worker shares an origin with `/v1/snapshot` and `/v1/ping`, and a
+  // cache-first hit on `/v1/snapshot` would freeze the device on a stale
+  // workspace forever. Skip the SW entirely for those paths.
+  if (url.pathname.startsWith('/v1/')) return;
 
   // Navigation requests: network-first, fallback to cached index.html for offline.
   if (req.mode === 'navigate') {
