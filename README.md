@@ -195,14 +195,15 @@ The official Releases DMG never needs this.
 
 1. Launch Cadence.
 2. Click **Create one** under the sign-in card. Pick an email, display name and a password (8+ chars). The account exists **only on this device**.
-3. You land on the Home screen. From there you can:
+3. A **three-card welcome tour** appears on first launch — it explains the workspace, the two optional sync paths (LAN / Drive) and where to go for AI key + sync setup. Hit *Skip* if you already know what you're doing; *Get started* if you want the orientation. Cadence remembers you've seen it (`localStorage["cadence.tour.completed.v1"]`) and won't show it again on this device. Returning devices (anything with an existing LAN pair or Drive tokens) skip the tour automatically.
+4. You land on the Home screen. From there you can:
    - Open the auto-created **My first team**.
    - Create new teams from the *Teams* page.
    - Manage personal lists in *To-dos*.
    - See everything due today/this week in *Agenda*.
-4. Press <kbd>⌘ K</kbd> (or <kbd>Ctrl K</kbd>) anywhere to jump to people, items or pages instantly.
+5. Press <kbd>⌘ K</kbd> (or <kbd>Ctrl K</kbd>) anywhere to jump to people, items or pages instantly.
 
-> Tip: install Cadence on a second machine and use *Settings → Backup → Export JSON / Import JSON* to move your data.
+> Tip: install Cadence on a second machine and use *Settings → Backup → Export JSON / Import JSON* to move your data — or skip the manual step entirely with **Settings → Cloud sync (Google Drive)** for end-to-end-encrypted background sync between every device.
 
 ---
 
@@ -521,8 +522,10 @@ LAN sync is great when both devices share a network, but the moment you walk out
 
 - **End-to-end encryption.** Snapshots are wrapped with AES-256-GCM (PBKDF2-SHA-256 KDF, 200 000 iterations, fresh salt + IV per upload) **on your device** before they leave it. Google sees an opaque ~1 MB blob and nothing else. The decryption passphrase never touches Google's servers.
 - **Drive `appData` scope.** Cadence stores its snapshot in the hidden per-app data folder that Drive provides specifically for this purpose. The file is invisible in your Drive UI, isolated from every other app you connect, and counts against your normal Drive quota.
-- **Optimistic concurrency.** Every push compares the file's `version` against what you last saw — a conflict triggers a clear prompt instead of clobbering remote edits.
+- **Optimistic concurrency.** Every push compares the file's `version` against what you last saw — a conflict triggers a clear prompt with explicit "Pull first" / "Override remote" buttons instead of clobbering remote edits silently.
+- **Resilient HTTP.** Transient Drive errors (5xx, 429 rate-limit, network blips) are retried automatically — three attempts with full-jitter exponential backoff before the UI sees a failure. Persistent errors surface as a clear banner in Settings rather than dying silently.
 - **OAuth PKCE.** No client secret ships in the bundle. The browser proves possession of a random code verifier at token-exchange time, so an intercepted auth code is useless to an attacker.
+- **Self-defending pulls.** The remote snapshot is validated by `parseRemoteSnapshot` before it can replace local data — a malformed or empty blob is rejected and the user keeps editing locally instead of waking up to an empty workspace.
 - **Workspace shared drives** (advanced). Power users can carry the same model into Google Workspace shared drives by extending the backend in `src/lib/syncBackends/gdrive.ts` — the appData design already isolates per-user data, and shared drives just slot in as scoped parents.
 
 #### Setup (~5 minutes, free)
@@ -759,6 +762,30 @@ npm install
 | `npm run build:release` | `build:web` + `electron-builder --publish always` (used by the release workflow). |
 | `npm run icons` | Regenerates PWA icons from `public/icon.svg` (uses `sharp`). |
 | `npm run preview` | Vite preview server for the last build. |
+| `npm test` | Runs the [Vitest](https://vitest.dev) unit + integration suite (87 tests today — snapshot crypto, sync algorithm, Drive backend with fetch mocked, OAuth token flow, LAN client primitives). Fast, no network, runs under `jsdom`. |
+| `npm run test:watch` | Same suite in watch mode, for TDD-style iteration. |
+| `npm run check:env` | Pre-deploy sanity check: Node version, required source files (`README.md`, `PRIVACY.md`, `TERMS.md`, `.env.example`), `.gitignore` safety (no `.env` leaks), and the shape of `VITE_GOOGLE_OAUTH_CLIENT_ID`. Returns non-zero if anything critical is wrong, useful as a release-pipeline gate. |
+
+### Testing
+
+```bash
+# One-shot
+npm test
+
+# Watch (re-runs on file change)
+npm run test:watch
+```
+
+The suite covers the parts of the codebase that have the highest blast radius if they regress:
+
+- **`src/lib/snapshotCrypto.test.ts`** — round-trip encrypt/decrypt, wrong passphrase, tampering detection, unsupported-version branch.
+- **`src/lib/syncSnapshotGuard.test.ts`** — `parseRemoteSnapshot` accepts every valid shape and refuses every invalid one (defends against an empty/garbled remote overwriting your local data).
+- **`src/lib/lanSyncClient.test.ts`** — URL normalisation, content-hash computation, relative-time formatting.
+- **`src/lib/useSyncAutoSync.test.ts`** — the full sync state machine (first-time pull, first-time seed, dirty push, clean pull, not-modified, conflict, auth-required, corrupt-remote) against a scripted `FakeBackend`.
+- **`src/lib/syncBackends/gdrive.test.ts`** — 19 integration scenarios against a `fetch`-mocked Drive (auth, pull-ok, no-snapshot, wrong-password, not-modified, file-create, file-update, conflict, 401, network-error, 5xx retry-loop, 413 too-large, status, disconnect).
+- **`src/lib/syncBackends/gdriveAuth.test.ts`** — OAuth token persistence, silent refresh-on-expiry, `signOut` revoke, redirect broker handling, runtime client-ID override priority.
+
+Everything runs under `jsdom`, so no real network and no Drive credentials are needed — CI runs the same suite on every push.
 
 ### Local DMG without Apple credentials
 
@@ -1138,7 +1165,10 @@ Google retired the Gemini 1.x family from the `v1beta` endpoint in late 2025. Op
 | 1.31 | **LAN sync — HTTPS by default** — Electron server now runs TLS 1.2+ over a self-signed cert (RSA 2048 / SHA-256) persisted in `cadence-sync-tls.json`; auto-regenerated when the LAN IP list changes or expiry nears, 800-day validity to stay within Apple's hard cap. Fixes mixed-content / HTTPS-Only blockers between the GitHub Pages PWA and the desktop host. |
 | 1.32 | **LAN sync — QR-code pairing** — host card renders a scannable QR encoding `https://<lan-ip>:9787/?pair=<token>`; on the phone the camera URL opens the bundled PWA from the host, the `?pair=` handler stores the URL + token in `localStorage` and the device is paired with zero typing |
 | 1.33 | **LAN sync — bidirectional auto-sync + ETag conflicts** — paired devices keep both sides in step in the background (push first, pull after) on launch / focus / online / visibilitychange; `If-None-Match` gives a free 304 when nothing changed, `If-Match` triggers a 412 when the host moved on, and a "Connected · synced X ago" badge with a Disconnect button shows live state in Settings |
-| 1.34 | **Cloud sync — Google Drive (end-to-end encrypted)** — PWA-side OAuth 2.0 PKCE sign-in with the `drive.appdata` scope; snapshots wrapped with AES-256-GCM (PBKDF2-SHA-256 KDF, fresh salt + IV per upload) before they ever leave the device; Drive sees opaque ciphertext only; provider-agnostic `SyncBackend` interface lets LAN and Drive coexist with a per-user "Auto-sync provider" toggle; sync passphrase lives in sessionStorage (cleared on tab close); Drive `version` field used as the etag for optimistic concurrency (`If-None-Match`-style short-circuit on pull, conflict detection on push) |
+| 1.34 | **Cloud sync — Google Drive (end-to-end encrypted)** — OAuth 2.0 PKCE sign-in with the `drive.appdata` scope, working on both **PWA (popup flow)** and **Electron (loopback HTTP server flow)**; snapshots wrapped with AES-256-GCM (PBKDF2-SHA-256 KDF, fresh salt + IV per upload) before they ever leave the device; Drive sees opaque ciphertext only; provider-agnostic `SyncBackend` interface lets LAN and Drive coexist with a per-user "Auto-sync provider" toggle; sync passphrase lives in sessionStorage (cleared on tab close); Drive `version` field used as the etag for optimistic concurrency (`If-None-Match`-style short-circuit on pull, conflict detection on push) |
+| 1.35 | **Cloud sync — production-ready hardening** — runtime OAuth client ID config (paste your own client ID into Settings, no `.env` or rebuild needed); first-time pull always pulls a baseline (never silently overwrites remote with an empty workspace); `parseRemoteSnapshot` shape guard refuses to apply malformed / empty payloads; `localFingerprint` decouples local dirty-tracking from remote ETag scheme (fixes Drive auto-push loop); retry + full-jitter exponential backoff on 5xx / 429 / network errors; inline conflict resolver with "Pull first / Override remote"; auto-clear passphrase on wrong-password; Settings surfaces the last background sync error so silent failures can't pretend to be "synced N ago" |
+| 1.36 | **First-run welcome tour** — three-card onboarding modal explains the workspace, the two sync paths and the optional setup steps; appears only on first authenticated launch per account; suppressed automatically on returning devices (any device with an existing LAN pair or Drive tokens skips it); dismiss persisted to `localStorage["cadence.tour.completed.v1"]` per account |
+| 1.37 | **Test suite + CI gating** — 87-test Vitest suite under `jsdom` covering snapshot crypto, sync algorithm, Drive backend (fetch-mocked, every path), OAuth token lifecycle, LAN client primitives and the remote-snapshot shape guard; CI workflow runs `npx tsc --noEmit` + `npm test` + `npm run build:web` + `npm run build:pwa` on every push and PR with concurrency cancellation; `npm run check:env` validates the build environment (Node version, required files, `.gitignore` safety, OAuth client-ID shape) as a release gate |
 
 ### Tier 2 — next
 

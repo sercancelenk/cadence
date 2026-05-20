@@ -649,6 +649,72 @@
                 <p class="sync-card__hint">Refresh tokens · One-tap sign-out</p>
               </article>
             </div>
+
+            <!-- ─── Setup how-to: dispel the "do I need to fork?" doubt ── -->
+            <div class="sync-howto" aria-label="How to enable Cloud sync">
+              <h3 class="sync-howto__title">Five minutes, in-app, no rebuild.</h3>
+              <p class="sync-howto__lede">
+                Cadence does not run a hosted Google project for you, so
+                you connect <em>your own</em> Google Cloud project once
+                — it stays under your account and keeps your data
+                isolated from every other Cadence user. After that
+                first connect, it's transparent.
+              </p>
+              <ol class="sync-howto__steps">
+                <li>
+                  <span class="sync-howto__num">1</span>
+                  <div>
+                    <strong>Create a free Google Cloud project</strong>
+                    and enable the Drive API. Cadence asks for the
+                    <code>drive.appdata</code> scope only — a hidden
+                    per-app folder, not your real Drive.
+                  </div>
+                </li>
+                <li>
+                  <span class="sync-howto__num">2</span>
+                  <div>
+                    <strong>Create an OAuth Web client ID</strong> in
+                    that project. Copy the value that ends with
+                    <code>.apps.googleusercontent.com</code>.
+                  </div>
+                </li>
+                <li>
+                  <span class="sync-howto__num">3</span>
+                  <div>
+                    <strong>Open Cadence → Settings → Cloud sync</strong>,
+                    paste the client ID, click <em>Save</em>. The card
+                    flips to "Sign in with Google" — sign in with the
+                    Google account that holds the project.
+                  </div>
+                </li>
+                <li>
+                  <span class="sync-howto__num">4</span>
+                  <div>
+                    <strong>Pick a sync passphrase</strong> (8+ chars).
+                    This is what derives the AES key. Cadence never
+                    sees it, Google never sees it. Write it down — it's
+                    the only way to decrypt your backup, which is
+                    exactly the point of end-to-end encryption.
+                  </div>
+                </li>
+                <li>
+                  <span class="sync-howto__num">5</span>
+                  <div>
+                    <strong>Repeat steps 3–4 on every other device</strong>
+                    you want to sync (mobile PWA, second laptop). Same
+                    client ID, same Google account, same passphrase.
+                    Background auto-sync handles the rest.
+                  </div>
+                </li>
+              </ol>
+              <p class="sync-howto__hint">
+                Everything happens inside the app. No <code>.env</code>,
+                no rebuild, no command-line — the client ID is stored
+                in <code>localStorage</code> and used at runtime. If you
+                ever want to revoke it, expand the same card and click
+                <em>Clear saved ID</em>.
+              </p>
+            </div>
           </div>
         </div>
       </section>
