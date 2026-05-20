@@ -1058,6 +1058,20 @@ export function TodosPage() {
                 }}
               />
 
+              <button
+                type="button"
+                className={`todos-section__add${addingGroupId === g.id ? ' todos-section__add--active' : ''}`}
+                title="Add task"
+                aria-label={`Add task to ${g.name}`}
+                aria-expanded={addingGroupId === g.id}
+                onClick={() => {
+                  setSectionOpenMap((prev) => ({ ...prev, [g.id]: true }));
+                  setAddingGroupId(g.id);
+                }}
+              >
+                <IcPlus size={18} strokeWidth={2.5} />
+              </button>
+
               <span className="todos-section__counts" title="Open · Total">
                 {totalActive}
                 <span className="muted"> / {totalActive + totalClosed}</span>
@@ -1182,80 +1196,7 @@ export function TodosPage() {
 
             {sectionOpen ? (
               <>
-                {active.length === 0 && (hideDone || closed.length === 0) ? (
-                  <p className="todos-section__empty">
-                    {q
-                      ? 'No matching tasks in this list.'
-                      : statusFilter !== 'all'
-                        ? 'No tasks match this status filter.'
-                        : hideDone && closed.length > 0
-                          ? `${closed.length} closed task${closed.length === 1 ? '' : 's'} hidden.`
-                          : 'No tasks in this list.'}
-                  </p>
-                ) : (
-                  <ul className="todos-list">
-                    {active.map((it) => (
-                      <TodoTaskRow
-                        key={it.id}
-                        item={it}
-                        group={groupById.get(it.groupId) ?? g}
-                        groups={allGroupsSorted}
-                        compact={compact}
-                        aiEnabled={aiEnabled}
-                        allowDrag={sortMode === 'manual'}
-                        isDragSrc={dragItemId === it.id}
-                        isDropTgt={dropItemTargetId === it.id && dragItemId !== it.id}
-                        onAskAI={setAiTask}
-                        onPatch={(id, patch) => updateTodoItem(id, patch)}
-                        onToggle={toggleTodoItem}
-                        onRemove={removeTodoItem}
-                        onDragStart={setDragItemId}
-                        onDragOver={setDropItemTargetId}
-                        onDrop={(targetId) => {
-                          if (dragItemId && dragItemId !== targetId) {
-                            reorderTodoItem(dragItemId, g.id, targetId);
-                          }
-                          setDragItemId(null);
-                          setDropItemTargetId(null);
-                        }}
-                        onDragEnd={() => {
-                          setDragItemId(null);
-                          setDropItemTargetId(null);
-                        }}
-                      />
-                    ))}
-                    {!hideDone &&
-                      closed.map((it) => (
-                        <TodoTaskRow
-                          key={it.id}
-                          item={it}
-                          group={groupById.get(it.groupId) ?? g}
-                          groups={allGroupsSorted}
-                          compact={compact}
-                          aiEnabled={aiEnabled}
-                          allowDrag={false}
-                          isDragSrc={false}
-                          isDropTgt={false}
-                          onAskAI={setAiTask}
-                          onPatch={(id, patch) => updateTodoItem(id, patch)}
-                          onToggle={toggleTodoItem}
-                          onRemove={removeTodoItem}
-                          onDragStart={() => {}}
-                          onDragOver={() => {}}
-                          onDrop={() => {}}
-                          onDragEnd={() => {}}
-                        />
-                      ))}
-                  </ul>
-                )}
-
                 {addingGroupId === g.id ? (() => {
-                  // Local helper bound to this group so the form is a
-                  // single submission path no matter whether the user
-                  // confirmed with Enter, ⌘/Ctrl+Enter, the Add button,
-                  // or onBlur. Cancellation cleans up BOTH drafts and
-                  // collapses the details panel so the next add starts
-                  // from a clean slate.
                   const bodyDraft = bodyDraftByGroup[g.id] ?? '';
                   const submitAdd = () => {
                     const title = draft.trim();
@@ -1338,11 +1279,73 @@ export function TodosPage() {
                       </div>
                     </form>
                   );
-                })() : (
-                  <button type="button" className="todos-add-task" onClick={() => setAddingGroupId(g.id)}>
-                    <IcPlus size={18} className="todos-add-task__plus" strokeWidth={2.5} />
-                    Add task
-                  </button>
+                })() : null}
+
+                {active.length === 0 && (hideDone || closed.length === 0) ? (
+                  <p className="todos-section__empty">
+                    {q
+                      ? 'No matching tasks in this list.'
+                      : statusFilter !== 'all'
+                        ? 'No tasks match this status filter.'
+                        : hideDone && closed.length > 0
+                          ? `${closed.length} closed task${closed.length === 1 ? '' : 's'} hidden.`
+                          : 'No tasks in this list.'}
+                  </p>
+                ) : (
+                  <ul className="todos-list">
+                    {active.map((it) => (
+                      <TodoTaskRow
+                        key={it.id}
+                        item={it}
+                        group={groupById.get(it.groupId) ?? g}
+                        groups={allGroupsSorted}
+                        compact={compact}
+                        aiEnabled={aiEnabled}
+                        allowDrag={sortMode === 'manual'}
+                        isDragSrc={dragItemId === it.id}
+                        isDropTgt={dropItemTargetId === it.id && dragItemId !== it.id}
+                        onAskAI={setAiTask}
+                        onPatch={(id, patch) => updateTodoItem(id, patch)}
+                        onToggle={toggleTodoItem}
+                        onRemove={removeTodoItem}
+                        onDragStart={setDragItemId}
+                        onDragOver={setDropItemTargetId}
+                        onDrop={(targetId) => {
+                          if (dragItemId && dragItemId !== targetId) {
+                            reorderTodoItem(dragItemId, g.id, targetId);
+                          }
+                          setDragItemId(null);
+                          setDropItemTargetId(null);
+                        }}
+                        onDragEnd={() => {
+                          setDragItemId(null);
+                          setDropItemTargetId(null);
+                        }}
+                      />
+                    ))}
+                    {!hideDone &&
+                      closed.map((it) => (
+                        <TodoTaskRow
+                          key={it.id}
+                          item={it}
+                          group={groupById.get(it.groupId) ?? g}
+                          groups={allGroupsSorted}
+                          compact={compact}
+                          aiEnabled={aiEnabled}
+                          allowDrag={false}
+                          isDragSrc={false}
+                          isDropTgt={false}
+                          onAskAI={setAiTask}
+                          onPatch={(id, patch) => updateTodoItem(id, patch)}
+                          onToggle={toggleTodoItem}
+                          onRemove={removeTodoItem}
+                          onDragStart={() => {}}
+                          onDragOver={() => {}}
+                          onDrop={() => {}}
+                          onDragEnd={() => {}}
+                        />
+                      ))}
+                  </ul>
                 )}
               </>
             ) : null}

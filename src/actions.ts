@@ -410,11 +410,11 @@ export function toggleFavoriteTeam(data: AppData, teamId: string): AppData {
   return { ...data, profile: { ...p, favoriteTeamIds: next } };
 }
 
-export function addTodoGroup(data: AppData, name: string): AppData {
+export function addTodoGroup(data: AppData, name: string, id?: string): AppData {
   const t = nowIso();
   const maxOrder = Math.max(0, ...data.todoGroups.map((g) => g.sortOrder));
   const g: TodoGroup = {
-    id: uuid(),
+    id: id ?? uuid(),
     name: name.trim() || 'New list',
     sortOrder: maxOrder + 1,
     createdAt: t,

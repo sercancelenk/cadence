@@ -811,6 +811,7 @@ export function normalizeData(raw: unknown): AppData {
     aiSettings: parseAISettings(o.aiSettings),
     notes,
     notesLock,
+    profile: parseProfile(o.profile),
   };
 
   data = ensureTeamsHaveSelf(data);
@@ -941,6 +942,37 @@ function parseNotesLock(raw: unknown): NotesLock | undefined {
     verifierIvB64: o.verifierIvB64,
     verifierCipherB64: o.verifierCipherB64,
     ...(recovery ? { recovery } : {}),
+  };
+}
+
+/**
+ * Parse the workspace `profile` object from on-disk JSON.
+ *
+ * This MUST run inside `normalizeData` — without it, every launch would
+ * call `ensureProfile` on an object that never copied `o.profile` off the
+ * wire, so `displayName` (and avatar, job title, etc.) would silently
+ * reset to the scaffold defaults even though the file on disk still
+ * contained the user's edits. That was the "Profile'da kaydettim, restart
+ * sonrası Me'ye döndü / sağ üst eski isim" bug.
+ */
+function parseProfile(raw: unknown): UserProfile | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const fav = Array.isArray(o.favoriteTeamIds)
+    ? o.favoriteTeamIds.filter((x): x is string => typeof x === 'string')
+    : [];
+  const avatar =
+    typeof o.avatarDataUrl === 'string' && o.avatarDataUrl.startsWith('data:')
+      ? o.avatarDataUrl
+      : undefined;
+  return {
+    displayName: typeof o.displayName === 'string' && o.displayName.trim() ? o.displayName.trim() : 'Me',
+    favoriteTeamIds: fav,
+    jobTitle: typeof o.jobTitle === 'string' && o.jobTitle.trim() ? o.jobTitle.trim() : undefined,
+    department: typeof o.department === 'string' && o.department.trim() ? o.department.trim() : undefined,
+    phone: typeof o.phone === 'string' && o.phone.trim() ? o.phone.trim() : undefined,
+    bio: typeof o.bio === 'string' && o.bio.trim() ? o.bio.trim() : undefined,
+    avatarDataUrl: avatar,
   };
 }
 

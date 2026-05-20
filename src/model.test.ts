@@ -105,6 +105,40 @@ describe('normalizeData — notesLock orphan cleanup', () => {
   });
 });
 
+describe('normalizeData — profile round-trip', () => {
+  it('preserves displayName and profile fields loaded from disk JSON', () => {
+    const raw = {
+      version: 3,
+      teams: [{ id: 't1', name: 'Team', createdAt: '2026-01-01T00:00:00.000Z', status: 'active' }],
+      people: [],
+      items: [],
+      notifiedReminderIds: [],
+      todoGroups: [{ id: 'g1', name: 'General', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+      todoItems: [],
+      profile: {
+        displayName: 'Sercan Çelenk',
+        favoriteTeamIds: ['t1'],
+        jobTitle: 'Engineer',
+        department: 'Platform',
+        phone: '+90 555',
+        bio: 'About me',
+      },
+    };
+    const norm = normalizeData(raw);
+    expect(norm.profile?.displayName).toBe('Sercan Çelenk');
+    expect(norm.profile?.jobTitle).toBe('Engineer');
+    expect(norm.profile?.department).toBe('Platform');
+    expect(norm.profile?.phone).toBe('+90 555');
+    expect(norm.profile?.bio).toBe('About me');
+    expect(norm.profile?.favoriteTeamIds).toEqual(['t1']);
+  });
+
+  it('does not reset displayName to Me when profile object is absent', () => {
+    const norm = normalizeData({ version: 3 });
+    expect(norm.profile?.displayName).toBe('Me');
+  });
+});
+
 describe('shapeOfData — last-known-good fingerprint', () => {
   it('returns zeroed shape for null / undefined', () => {
     expect(shapeOfData(null)).toEqual({

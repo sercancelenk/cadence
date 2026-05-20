@@ -192,7 +192,7 @@ type Api = {
   ) => void;
   toggleItemDone: (id: string) => void;
   removeItem: (id: string) => void;
-  addTodoGroup: (name: string) => void;
+  addTodoGroup: (name: string) => string;
   updateTodoGroup: (
     groupId: string,
     patch: Partial<Pick<TodoGroup, 'name' | 'sortOrder' | 'pinned' | 'archived'>>,
@@ -681,7 +681,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       updateItem: (id, patch) => update((x) => updateItemFn(x, id, patch)),
       toggleItemDone: (id) => update((x) => toggleItemDoneFn(x, id)),
       removeItem: (id) => update((x) => removeItemFn(x, id)),
-      addTodoGroup: (name) => update((x) => addTodoGroupFn(x, name)),
+      addTodoGroup: (name) => {
+        const id = uuid();
+        update((x) => addTodoGroupFn(x, name, id));
+        return id;
+      },
       updateTodoGroup: (groupId, patch) => update((x) => updateTodoGroupFn(x, groupId, patch)),
       moveTodoGroup: (groupId, direction) => update((x) => moveTodoGroupFn(x, groupId, direction)),
       reorderTodoGroup: (groupId, beforeGroupId) =>

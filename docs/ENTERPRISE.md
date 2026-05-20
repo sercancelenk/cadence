@@ -8,6 +8,9 @@ the device controls what the app exposes.
 > TL;DR — drop a `policy.json` at the right path, restart Cadence, done.
 > Sync, AI, export and update features can each be disabled independently,
 > and the user cannot bypass the policy from the app UI.
+>
+> **Updates vs fresh installs vs self-restriction on the public build:**
+> see [DEPLOYMENT-AND-POLICY.md](./DEPLOYMENT-AND-POLICY.md).
 
 ---
 
