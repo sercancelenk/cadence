@@ -14,6 +14,20 @@ type Props = {
   onClose: () => void;
   /** Pre-selected target list. Falls back to the first available group. */
   defaultGroupId?: string;
+  /**
+   * When the extractor is launched from a specific note, every task
+   * we create gets a `sourceNoteId` pointing back at it. The note
+   * then surfaces a "Tasks from this note" backlink panel and each
+   * task gets a clickable 📝 chip in the row view.
+   */
+  sourceNoteId?: string;
+  /**
+   * Optional pre-filled notes content. When the extractor is opened
+   * from a note we seed the textarea with that note's body so the
+   * user can review/trim before running extraction instead of pasting
+   * it themselves.
+   */
+  initialNotes?: string;
 };
 
 type Row = {
@@ -39,7 +53,13 @@ type Row = {
  *   - We reuse the .ai-dialog backdrop/dialog CSS to keep the look consistent
  *     with the existing per-task AI assistant.
  */
-export function AITaskExtractorDialog({ open, onClose, defaultGroupId }: Props) {
+export function AITaskExtractorDialog({
+  open,
+  onClose,
+  defaultGroupId,
+  sourceNoteId,
+  initialNotes,
+}: Props) {
   const { data, addTodoItem, updateAISettings } = useAppData();
   const { features } = useFeatures();
   const aiSettings = data.aiSettings;
@@ -56,9 +76,12 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId }: Props) 
 
   // Each time the dialog reopens we want a clean slate — except for the
   // persisted user guidance, which is restored from the last extraction.
+  // When the host passes `initialNotes` (e.g. opening the extractor from
+  // a specific note) we pre-fill the textarea so the user can review
+  // before running extraction.
   useEffect(() => {
     if (!open) return;
-    setNotes('');
+    setNotes(initialNotes ?? '');
     setRows([]);
     setBusy(false);
     setError('');
@@ -67,7 +90,7 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId }: Props) 
     setGuidanceOpen(remembered.trim().length > 0);
     abortRef.current?.abort();
     abortRef.current = null;
-  }, [open, aiSettings?.extractionGuidance]);
+  }, [open, aiSettings?.extractionGuidance, initialNotes]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -140,9 +163,23 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId }: Props) 
     setRows((cur) => cur.filter((r) => r.rowId !== rowId));
   };
 
+  /**
+   * Build the `extras` blob passed to `addTodoItem`. We intentionally
+   * include `sourceNoteId` here (and not at the call site) so that the
+   * single-row and bulk paths can't drift out of sync — the moment
+   * extractor was launched from a note, EVERY new task it creates is
+   * linked to it.
+   */
+  const extrasFor = (row: Row): Parameters<typeof addTodoItem>[2] => {
+    const out: NonNullable<Parameters<typeof addTodoItem>[2]> = {};
+    if (row.priority) out.priority = row.priority;
+    if (sourceNoteId) out.sourceNoteId = sourceNoteId;
+    return Object.keys(out).length ? out : undefined;
+  };
+
   const addRow = (row: Row) => {
     if (!row.groupId || row.added || !row.title.trim()) return;
-    addTodoItem(row.groupId, row.title.trim(), row.priority ? { priority: row.priority } : undefined);
+    addTodoItem(row.groupId, row.title.trim(), extrasFor(row));
     patchRow(row.rowId, { added: true });
   };
 
@@ -150,7 +187,7 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId }: Props) 
     const target = rows.filter((r) => !r.added && r.title.trim() && r.groupId);
     if (target.length === 0) return;
     for (const r of target) {
-      addTodoItem(r.groupId, r.title.trim(), r.priority ? { priority: r.priority } : undefined);
+      addTodoItem(r.groupId, r.title.trim(), extrasFor(r));
     }
     setRows((cur) => cur.map((r) => (target.includes(r) ? { ...r, added: true } : r)));
   };
@@ -173,8 +210,16 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId }: Props) 
           <div className="ai-dialog__titlewrap">
             <h2 className="ai-dialog__title">Extract tasks from notes</h2>
             <p className="ai-dialog__sub">
-              Paste a brain dump, meeting transcript or Slack thread. The assistant turns it into a list of crisp tasks
-              you can drop into any of your lists.
+              {sourceNoteId
+                ? (() => {
+                    // When opened from a specific note, surface that
+                    // context up-front and explain the link behaviour so
+                    // the user knows what to expect after "Add".
+                    const linkedNote = data.notes.find((n) => n.id === sourceNoteId);
+                    const noteTitle = linkedNote?.title?.trim() || 'Untitled note';
+                    return `Extracting from "${noteTitle}". Every task you add will keep a link back to this note.`;
+                  })()
+                : 'Paste a brain dump, meeting transcript or Slack thread. The assistant turns it into a list of crisp tasks you can drop into any of your lists.'}
             </p>
           </div>
           <button type="button" className="ai-dialog__close" aria-label="Close" onClick={onClose}>

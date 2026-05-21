@@ -205,7 +205,7 @@ type Api = {
   addTodoItem: (
     groupId: string,
     title: string,
-    extras?: { priority?: Priority; dueAt?: string; body?: string },
+    extras?: { priority?: Priority; dueAt?: string; body?: string; sourceNoteId?: string },
   ) => void;
   updateTodoItem: (
     id: string,

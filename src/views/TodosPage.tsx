@@ -1,5 +1,6 @@
 import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   IcCalendar,
   IcCheck,
@@ -19,6 +20,7 @@ import {
 } from '../components/icons';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
+import { useToast } from '../components/ui/Toast';
 // AI dialogs are lazy-loaded: they pull in react-markdown (~125 kB) plus
 // lib/ai.ts (~9 kB) and the vast majority of users open them only
 // occasionally. Keeping them out of the initial TodosPage chunk meaningfully
@@ -35,6 +37,12 @@ const AITaskExtractorDialog = lazy(() =>
 // row for editing or starts a new task with `+`.
 const MarkdownEditor = lazy(() =>
   import('../components/ui/MarkdownEditor').then((m) => ({ default: m.MarkdownEditor })),
+);
+// Same chunk as the editor — pulling MarkdownView via the existing
+// lazy wrapper keeps the markdown-vendor cost out of the Todos initial
+// payload until the user actually expands a body preview.
+const MarkdownView = lazy(() =>
+  import('../components/ui/MarkdownEditor').then((m) => ({ default: m.MarkdownView })),
 );
 import { SchedulePopover, type SchedulePatch } from '../components/ui/SchedulePopover';
 import { isAIConfigured } from '../lib/ai';
@@ -141,6 +149,26 @@ function matchesStatusFilter(status: TodoStatus, filter: StatusFilter): boolean 
 }
 
 /**
+ * Strip any orphan markdown separators (`---`) that ended up at the
+ * very end of a body, along with the blank lines surrounding them.
+ *
+ * Background: an earlier version of the "Save to notes" flow always
+ * appended `\n\n---\n\n${aiContent}` to the existing body, even when
+ * `aiContent` was empty (e.g. a click before the assistant finished
+ * streaming). That left tasks with a dangling `---` separator and no
+ * AI content below it — the user would open the body and see their
+ * notes followed by a lonely horizontal rule, which read like data
+ * loss. We normalise that here so the row preview and edit surface
+ * both look clean even on tasks that were touched by the old code.
+ */
+function stripTrailingSeparators(body: string): string {
+  // Drop runs of `---` (optionally with surrounding blank lines) at
+  // the very end of the body. We keep separators in the middle of
+  // the body intact — they're meaningful when followed by content.
+  return body.replace(/(?:\s*\n)+\s*-{3,}\s*$/g, '').replace(/\s+$/g, '');
+}
+
+/**
  * Parse a single markdown blob into a title + body pair. The first
  * non-empty line becomes the title (with any leading `#` stripped so
  * users can write headings naturally); everything after it is the body,
@@ -225,7 +253,24 @@ type TodoTaskRowProps = {
   allowDrag: boolean;
   isDragSrc: boolean;
   isDropTgt: boolean;
+  /**
+   * Optional metadata about the note this task was extracted from.
+   * `title` is the canonical note title at render time; if the note
+   * has been deleted we pass `undefined` and render a "(deleted note)"
+   * affordance instead of a link. Kept as a flat prop to avoid
+   * threading the entire notes collection into every row.
+   */
+  sourceNote?: { id: string; title: string } | { id: string; title?: undefined };
+  /**
+   * When set, the row is rendered with a brief flash animation so a
+   * user who arrived via "open this task" from another route can
+   * spot it. The parent owns the lifetime — passing `false` removes
+   * the highlight class.
+   */
+  isFocused?: boolean;
   onAskAI: (item: TodoItem) => void;
+  /** Clicking the source-note chip routes to the linked note. */
+  onOpenSourceNote?: (noteId: string) => void;
   onPatch: (
     id: string,
     patch: Partial<
@@ -249,7 +294,10 @@ function TodoTaskRow({
   allowDrag,
   isDragSrc,
   isDropTgt,
+  sourceNote,
+  isFocused,
   onAskAI,
+  onOpenSourceNote,
   onPatch,
   onToggle,
   onRemove,
@@ -261,8 +309,19 @@ function TodoTaskRow({
   const [editing, setEditing] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // Click-to-expand for long titles. Resting state clamps to 2 lines;
-  // single click toggles the clamp; double click enters edit mode.
+  /**
+   * Single "row is expanded" toggle. When true:
+   *   - The title's 2-line clamp is removed so the full text is
+   *     visible (the trailing `…` on the clamped text is the
+   *     affordance the user clicks).
+   *   - If the task has a Markdown body, it is rendered inline
+   *     beneath the meta sub-row.
+   *
+   * One state, one gesture, every row: single-click on the title
+   * toggles expand; double-click drops into edit mode. There is no
+   * separate body chip — body content surfaces automatically as
+   * part of the same expand action.
+   */
   const [titleExpanded, setTitleExpanded] = useState(false);
   // Which inline chip-menu is open. We use one state for all three chips
   // because only one menu can be open at a time — clicking a different
@@ -279,7 +338,9 @@ function TodoTaskRow({
   // the body. Initialised when entering edit mode via the helper below
   // so we always start from the current upstream state.
   const buildEditContent = (it: TodoItem): string => {
-    const body = it.body ?? '';
+    // Strip any dangling `---` separators left behind by older
+    // "Save to notes" appends so the editor opens on a clean buffer.
+    const body = stripTrailingSeparators(it.body ?? '');
     return body ? `${it.title}\n\n${body}` : it.title;
   };
   const [draftEdit, setDraftEdit] = useState<string>(() => buildEditContent(item));
@@ -291,11 +352,15 @@ function TodoTaskRow({
 
   const saveEdit = () => {
     const { title, body } = parseTitleAndBody(draftEdit);
+    // Persist the cleaned version so dangling `---` separators left
+    // behind by older "Save to notes" passes get fixed on the next
+    // edit — the user only has to open the row once.
+    const normalisedBody = stripTrailingSeparators(body);
     const patch: Parameters<typeof onPatch>[1] = {};
     // Fall back to the existing title if the user cleared everything —
     // we never want to leave a task with an empty title.
     if (title && title !== item.title) patch.title = title;
-    if (body !== (item.body ?? '')) patch.body = body;
+    if (normalisedBody !== (item.body ?? '')) patch.body = normalisedBody;
     if (Object.keys(patch).length > 0) onPatch(item.id, patch);
     setEditing(false);
   };
@@ -379,11 +444,14 @@ function TodoTaskRow({
 
   return (
     <li
+      data-todo-id={item.id}
       className={`todos-row${compact ? ' todos-row--compact' : ''}${isTerminal ? ' todos-row--done' : ''}${
         item.status === 'cancelled' ? ' todos-row--cancelled' : ''
       }${item.status === 'in_progress' ? ' todos-row--wip' : ''}${
         item.priority ? ` todos-row--prio-${item.priority}` : ''
-      }${isDragSrc ? ' todos-row--dragging' : ''}${isDropTgt ? ' todos-row--drop-target' : ''}`}
+      }${isDragSrc ? ' todos-row--dragging' : ''}${isDropTgt ? ' todos-row--drop-target' : ''}${
+        isFocused ? ' todos-row--focused' : ''
+      }`}
       style={ringStyle(item.groupId)}
       draggable={allowDrag}
       onDragStart={(e) => {
@@ -463,6 +531,12 @@ function TodoTaskRow({
             <button
               type="button"
               className={`todos-row__title${titleExpanded ? ' todos-row__title--expanded' : ''}`}
+              // Native tooltip surfaces the FULL title on hover even
+              // when the visible row is line-clamped. Cheap a11y win
+              // for users who paste long single-line content (e.g.
+              // SSH prompts or stack traces) into the title field.
+              title={item.title}
+              aria-expanded={titleExpanded}
               onClick={(e) => {
                 // Skip the toggle when this is the first click of a
                 // dblclick (detail >= 2 fires for the second click; the
@@ -479,9 +553,36 @@ function TodoTaskRow({
           </div>
         )}
 
+        {!editing && titleExpanded && item.body ? (
+          // Inline Markdown render of the body. Sits BETWEEN the title
+          // and the meta sub-row so the row reads top-to-bottom as
+          // "what is this task → what's in it → its attributes". Meta
+          // (list / priority / status / schedule + actions) is always
+          // the last thing in the row, regardless of whether the body
+          // is expanded — that keeps the visual rhythm identical for
+          // every task whether it has body content or not.
+          //
+          // Lazy-loaded so the markdown-vendor chunk only lands when
+          // at least one user actually expands a body. Dangling `---`
+          // separators left over from old "Save to notes" appends are
+          // stripped so the preview reads clean.
+          <div
+            className="todos-row__body-preview"
+            onDoubleClick={beginEdit}
+            title="Double-click to edit"
+          >
+            <Suspense
+              fallback={<div className="muted small">Loading preview…</div>}
+            >
+              <MarkdownView value={stripTrailingSeparators(item.body)} />
+            </Suspense>
+          </div>
+        ) : null}
+
         {!editing ? (
         /* ---- Sub row ----
-         * Single horizontal strip below the title that combines, in
+         * Single horizontal strip ALWAYS rendered last in the row
+         * (below title and any expanded body preview). Combines, in
          * order: group · priority · status · schedule, then a hover-
          * only action toolbar pushed to the right. Each chip is a
          * button that opens a small popover — replacing the three
@@ -644,6 +745,40 @@ function TodoTaskRow({
             ) : null}
           </div>
 
+          {item.sourceNoteId ? (() => {
+            // Source-note backlink chip. We branch on whether the
+            // note actually exists in the workspace: live → clickable
+            // link with the note title in the tooltip; deleted →
+            // muted, non-interactive chip explaining what happened.
+            // Keeping the orphan visible is intentional — it makes
+            // backup recovery obvious ("oh, that note was deleted,
+            // let me restore it") instead of silently hiding the
+            // reference.
+            const exists = !!sourceNote?.title;
+            const targetId = item.sourceNoteId;
+            return (
+              <button
+                type="button"
+                className={`todos-row__note-chip${exists ? '' : ' todos-row__note-chip--orphan'}`}
+                title={
+                  exists
+                    ? `From note: ${sourceNote!.title}`
+                    : 'The source note has been deleted. Restoring it from a backup will re-link this task automatically.'
+                }
+                aria-label={
+                  exists ? `Open source note: ${sourceNote!.title}` : 'Source note has been deleted'
+                }
+                disabled={!exists}
+                onClick={() => {
+                  if (!exists || !onOpenSourceNote) return;
+                  onOpenSourceNote(targetId);
+                }}
+              >
+                <IcStickyNote size={13} />
+              </button>
+            );
+          })() : null}
+
           <div className="todos-row__toolbar">
             {aiEnabled ? (
               <button
@@ -673,31 +808,6 @@ function TodoTaskRow({
         </div>
         ) : null}
 
-        {!editing && item.body ? (
-          // Closed-but-has-body summary: a one-line "this task has
-          // notes" hint so the user can see at a glance which rows
-          // carry hidden context. Click drops straight into edit mode
-          // since the dedicated "details" toggle is gone — editing now
-          // covers both title and body.
-          <button
-            type="button"
-            className="todos-row__details-hint"
-            onClick={beginEdit}
-            title="Edit details"
-          >
-            <IcStickyNote size={12} />
-            <span>
-              {(() => {
-                const firstLine = (item.body ?? '')
-                  .split('\n')
-                  .map((s) => s.trim())
-                  .find((s) => s.length > 0) ?? '';
-                const stripped = firstLine.replace(/[#>*_`~\-]/g, '').trim();
-                return stripped.length > 80 ? `${stripped.slice(0, 80)}…` : stripped;
-              })()}
-            </span>
-          </button>
-        ) : null}
       </div>
     </li>
   );
@@ -706,6 +816,9 @@ function TodoTaskRow({
 export function TodosPage() {
   const { user } = useAccount();
   const userId = user?.id ?? '';
+  const toast = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
   const {
     data,
     addTodoGroup,
@@ -826,6 +939,79 @@ export function TodosPage() {
       /* ignore */
     }
   }, [hideDone, sortMode, statusFilter, sectionsHydrated, userId]);
+
+  // Index of notes by id so source-note chips can render the live
+  // title without forcing every TodoTaskRow to re-scan `data.notes`.
+  // Recomputed only when the notes collection changes.
+  const noteTitleById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const n of data.notes) {
+      if (n?.id) m.set(n.id, (n.title || '').trim() || 'Untitled note');
+    }
+    return m;
+  }, [data.notes]);
+
+  /**
+   * Open a task's linked source note on the Notes route. We pass the
+   * note id as a `?focus=` query string so NotesPage's existing
+   * search-params bridge can pick it up and select / scroll to that
+   * note on arrival — same hand-off shape the Notes → Todos backlinks
+   * use in the other direction.
+   */
+  const openSourceNote = (noteId: string) => {
+    navigate(`/notes?focus=${encodeURIComponent(noteId)}`);
+  };
+
+  /**
+   * When the route lands on `/todos?focus=<id>`, scroll the matching
+   * task into view and flash the row briefly so the user can spot it
+   * after navigating in from a note's backlinks panel.
+   *
+   * Cleanup strips the query parameter once we've consumed it (via
+   * `navigate(..., { replace: true })`) so a refresh or Back doesn't
+   * re-trigger the highlight every time the user revisits the page.
+   *
+   * The flash class is removed after the animation finishes (1.6s) to
+   * avoid re-paint churn during scroll-heavy interactions.
+   */
+  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const focusId = params.get('focus');
+    if (!focusId) return;
+    setFocusedTaskId(focusId);
+    // Strip the param NOW (replace history) so we don't re-fire on
+    // every render. The state above keeps the highlight alive.
+    params.delete('focus');
+    const next = params.toString();
+    navigate({ pathname: location.pathname, search: next ? `?${next}` : '' }, { replace: true });
+  }, [location.search, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!focusedTaskId) return;
+    // Defer one frame so the row has time to mount, especially when
+    // the section was collapsed and we expanded it via the effect
+    // below.
+    const frame = window.requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(`[data-todo-id="${focusedTaskId}"]`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    const clear = window.setTimeout(() => setFocusedTaskId(null), 1800);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(clear);
+    };
+  }, [focusedTaskId]);
+
+  // If the focused task lives in a collapsed section, open that
+  // section so the scroll target actually exists in the DOM.
+  useEffect(() => {
+    if (!focusedTaskId) return;
+    const target = data.todoItems.find((t) => t.id === focusedTaskId);
+    if (!target) return;
+    setSectionOpenMap((prev) => (prev[target.groupId] === false ? { ...prev, [target.groupId]: true } : prev));
+  }, [focusedTaskId, data.todoItems]);
 
   const itemsByGroup = useMemo(() => {
     const m = new Map<string, TodoItem[]>();
@@ -1487,7 +1673,16 @@ export function TodosPage() {
                         allowDrag={sortMode === 'manual'}
                         isDragSrc={dragItemId === it.id}
                         isDropTgt={dropItemTargetId === it.id && dragItemId !== it.id}
+                        sourceNote={
+                          it.sourceNoteId
+                            ? noteTitleById.has(it.sourceNoteId)
+                              ? { id: it.sourceNoteId, title: noteTitleById.get(it.sourceNoteId)! }
+                              : { id: it.sourceNoteId }
+                            : undefined
+                        }
+                        isFocused={focusedTaskId === it.id}
                         onAskAI={setAiTask}
+                        onOpenSourceNote={openSourceNote}
                         onPatch={(id, patch) => updateTodoItem(id, patch)}
                         onToggle={toggleTodoItem}
                         onRemove={removeTodoItem}
@@ -1518,7 +1713,16 @@ export function TodosPage() {
                           allowDrag={false}
                           isDragSrc={false}
                           isDropTgt={false}
+                          sourceNote={
+                            it.sourceNoteId
+                              ? noteTitleById.has(it.sourceNoteId)
+                                ? { id: it.sourceNoteId, title: noteTitleById.get(it.sourceNoteId)! }
+                                : { id: it.sourceNoteId }
+                              : undefined
+                          }
+                          isFocused={focusedTaskId === it.id}
                           onAskAI={setAiTask}
+                          onOpenSourceNote={openSourceNote}
                           onPatch={(id, patch) => updateTodoItem(id, patch)}
                           onToggle={toggleTodoItem}
                           onRemove={removeTodoItem}
@@ -1581,7 +1785,41 @@ export function TodosPage() {
             <AIAssistantDialog
               open={!!aiTask}
               onClose={() => setAiTask(null)}
-              task={{ title: aiTask.title }}
+              // Pass BOTH the title and the markdown body of the task —
+              // the body is where the user typically captures the real
+              // intent (links, requirements, context). Sending only the
+              // title used to give the assistant a one-line prompt and
+              // generic, unhelpful advice. The lib-level prompt builder
+              // already wraps the body in a clearly delimited section.
+              task={{ title: aiTask.title, body: aiTask.body }}
+              onAppendToBody={(markdown) => {
+                // "Save to notes" round-trips the answer into the
+                // task's own body so the user has the recommendation
+                // alongside the task they were asking about. Existing
+                // notes are preserved with a soft separator so the
+                // user can keep both their own context and the AI's.
+                //
+                // We snapshot the id/body BEFORE calling setState
+                // because `setAiTask(null)` (further down) clears the
+                // closure variable on the next render — without the
+                // snapshot, a re-click would re-read stale data.
+                const targetId = aiTask.id;
+                const existing = (aiTask.body ?? '').trim();
+                const incoming = markdown.trim();
+                if (!incoming) return;
+                const next = existing ? `${existing}\n\n---\n\n${incoming}` : incoming;
+                updateTodoItem(targetId, { body: next });
+                // The previous build wired the callback but did
+                // nothing else — the dialog stayed open and there was
+                // no confirmation, so the click felt like a no-op.
+                // Closing the dialog and showing a toast turns the
+                // action into a clear, finished UX moment.
+                toast.showSuccess(
+                  'Saved to task notes',
+                  'The assistant\u2019s reply was appended to this task\u2019s details.',
+                );
+                setAiTask(null);
+              }}
             />
           ) : null}
           {extractorOpen ? (

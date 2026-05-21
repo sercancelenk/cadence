@@ -1,20 +1,31 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppData } from '../AppDataContext';
 import { useAccount } from '../AccountContext';
 import { MarkdownEditor } from '../components/ui/MarkdownEditor';
 import {
   IcArrowLeft,
+  IcCheck,
   IcEyeOff,
   IcGrip,
   IcKey,
+  IcListTodo,
   IcLock,
   IcLockOff,
   IcPlus,
+  IcSparkles,
   IcStar,
   IcTrash,
   IcUnlock,
 } from '../components/icons';
+import { isAIConfigured } from '../lib/ai';
+import { useFeatures } from '../lib/features';
+import { isTodoOpen } from '../model';
+// AITaskExtractorDialog drags in react-markdown + ai libs — lazy-load it
+// so the notes payload stays light for users who never extract tasks.
+const AITaskExtractorDialog = lazy(() =>
+  import('../components/AITaskExtractorDialog').then((m) => ({ default: m.AITaskExtractorDialog })),
+);
 import { useNotesUnlock } from '../lib/NotesUnlockContext';
 import {
   createNotesLock,
@@ -24,7 +35,7 @@ import {
   unwrapPassphraseFromRecovery,
   wrapPassphraseForRecovery,
 } from '../lib/notesCrypto';
-import type { Note, NotesLock } from '../model';
+import type { Note, NotesLock, TodoGroup, TodoItem } from '../model';
 
 const PLACEHOLDER_TITLE = 'New note';
 
@@ -121,6 +132,25 @@ export function NotesPage() {
   const unlock = useNotesUnlock();
   const account = useAccount();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { features } = useFeatures();
+  const aiEnabled = features.ai && isAIConfigured(data.aiSettings);
+  /**
+   * Snapshot of the note we launched the AI extractor against.
+   *
+   * We INTENTIONALLY freeze `{ noteId, notes }` at click-time instead of
+   * threading the live `selected.id` / `editorBody` into the dialog
+   * every render. Without this snapshot, clicking another note in the
+   * sidebar while the extractor is open would change the dialog's
+   * `initialNotes` prop, and the dialog's own reset effect would then
+   * wipe the textarea + already-extracted rows mid-flow.
+   *
+   * `null` means "extractor is closed". Set on ✨ click, cleared on
+   * dialog close.
+   */
+  const [extractorContext, setExtractorContext] = useState<{ noteId: string; notes: string } | null>(
+    null,
+  );
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** Visible width of the left sidebar in px. Reset per session — we don't
@@ -277,6 +307,28 @@ export function NotesPage() {
     }
     setSelectedId(notes[0]?.id ?? null);
   }, [notes, selectedId, isNarrowViewport]);
+
+  /**
+   * Deep-link selection. When the user lands on `/notes?focus=<id>`
+   * (e.g. by clicking the source-note chip on a todo row) we:
+   *   1. Select that note id, expanding it in the editor pane.
+   *   2. Strip the `focus` param so refreshes / back navigations don't
+   *      re-trigger the effect.
+   *
+   * If the target id doesn't match any note (e.g. the note was deleted
+   * between the navigation event and the load) we silently fall back to
+   * the default selection effect above.
+   */
+  useEffect(() => {
+    const focusId = searchParams.get('focus');
+    if (!focusId) return;
+    if (data.notes.some((n) => n.id === focusId)) {
+      setSelectedId(focusId);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('focus');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, data.notes, setSearchParams]);
 
   /**
    * Whenever the user picks a note we stamp `lastOpenedAt`. This is the
@@ -1079,6 +1131,25 @@ export function NotesPage() {
                 disabled={selected.locked && !editorReady}
               />
               <div className="notes-page__main-actions">
+                {aiEnabled ? (
+                  // Launch the task extractor pre-loaded with THIS
+                  // note's body. Disabled while the note is still
+                  // locked (no content to extract from) — the user
+                  // unlocks first, then extracts. Tasks created
+                  // through the dialog auto-link back to this note
+                  // via `sourceNoteId`. We snapshot the body at
+                  // click-time so subsequent sidebar navigation
+                  // doesn't reset the dialog state.
+                  <IconButton
+                    onClick={() => setExtractorContext({ noteId: selected.id, notes: editorBody })}
+                    disabled={selected.locked && !editorReady}
+                    label="Extract tasks from this note"
+                    tooltip="Extract tasks from this note"
+                  >
+                    <IcSparkles size={16} />
+                  </IconButton>
+                ) : null}
+
                 <IconButton
                   onClick={onTogglePinned}
                   label={selected.pinned ? 'Unpin' : 'Pin to top'}
@@ -1189,11 +1260,42 @@ export function NotesPage() {
                   rows={18}
                   initialMode="preview"
                 />
+
+                <NoteBacklinks
+                  noteId={selected.id}
+                  todoItems={data.todoItems}
+                  todoGroups={data.todoGroups}
+                  onOpenTask={(taskId) => {
+                    // Navigate to the Todos route and pass the target
+                    // task id through the URL so TodosPage can scroll
+                    // and flash it on arrival. We deliberately push a
+                    // new history entry (not replace) so the user can
+                    // hit Back to return to the note.
+                    navigate(`/todos?focus=${encodeURIComponent(taskId)}`);
+                  }}
+                />
               </div>
             )}
           </>
         )}
       </section>
+
+      {extractorContext ? (
+        // Lazy-loaded so the AI bundle stays out of the Notes initial
+        // payload. The {noteId, notes} pair was snapshotted at the
+        // moment the user clicked ✨ — so even if they switch to
+        // another note while the dialog is open, we keep extracting
+        // from the original note's body and continue linking tasks
+        // back to its id.
+        <Suspense fallback={null}>
+          <AITaskExtractorDialog
+            open
+            onClose={() => setExtractorContext(null)}
+            sourceNoteId={extractorContext.noteId}
+            initialNotes={extractorContext.notes}
+          />
+        </Suspense>
+      ) : null}
 
       {setupOpen ? (
         <NotesDialog
@@ -1726,5 +1828,97 @@ function NotesDialog({
         <div className="notes-dialog__footer">{footer}</div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Compact "Tasks extracted from this note" panel rendered beneath the
+ * note's markdown editor.
+ *
+ * Renders nothing when the note has no inbound task links — this keeps
+ * the editor surface clean for notes that aren't acting as a task
+ * source. Once the user runs the AI extractor with this note as
+ * `sourceNoteId`, each created task surfaces here as a clickable row.
+ *
+ * Each row shows:
+ *   - a status indicator (open / done / cancelled),
+ *   - the task's title,
+ *   - the list it lives in (so the user can mentally locate it),
+ *   - a hover-only "open" hint.
+ *
+ * Clicking a row navigates to `/todos?focus=<id>` — TodosPage reads
+ * that query string and scrolls/highlights the matching row.
+ */
+function NoteBacklinks({
+  noteId,
+  todoItems,
+  todoGroups,
+  onOpenTask,
+}: {
+  noteId: string;
+  todoItems: TodoItem[];
+  todoGroups: TodoGroup[];
+  onOpenTask: (taskId: string) => void;
+}) {
+  const linked = useMemo(
+    () =>
+      todoItems
+        .filter((t) => t.sourceNoteId === noteId)
+        // Open tasks first, then most-recently-updated. This puts
+        // the actionable work at the top of the panel and pushes
+        // finished/cancelled rows to the bottom.
+        .sort((a, b) => {
+          const ao = isTodoOpen(a.status) ? 0 : 1;
+          const bo = isTodoOpen(b.status) ? 0 : 1;
+          if (ao !== bo) return ao - bo;
+          return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
+        }),
+    [todoItems, noteId],
+  );
+  if (linked.length === 0) return null;
+
+  const groupName = (gid: string) => todoGroups.find((g) => g.id === gid)?.name ?? 'Unknown list';
+
+  return (
+    <section className="note-backlinks" aria-label="Tasks extracted from this note">
+      <header className="note-backlinks__head">
+        <IcListTodo size={14} />
+        <h3 className="note-backlinks__title">
+          {linked.length === 1
+            ? '1 task from this note'
+            : `${linked.length} tasks from this note`}
+        </h3>
+      </header>
+      <ul className="note-backlinks__list">
+        {linked.map((t) => {
+          const open = isTodoOpen(t.status);
+          const cancelled = t.status === 'cancelled';
+          return (
+            <li key={t.id}>
+              <button
+                type="button"
+                className={`note-backlinks__row${open ? '' : ' note-backlinks__row--closed'}${
+                  cancelled ? ' note-backlinks__row--cancelled' : ''
+                }`}
+                onClick={() => onOpenTask(t.id)}
+                // Tooltip shows the full title + list name — the
+                // rendered row truncates with ellipsis on narrow
+                // editor panes so hover discoverability matters.
+                title={`${t.title} — ${groupName(t.groupId)}`}
+              >
+                <span
+                  className={`note-backlinks__status note-backlinks__status--${t.status}`}
+                  aria-label={`Status: ${t.status}`}
+                >
+                  {t.status === 'done' ? <IcCheck size={11} strokeWidth={2.5} /> : null}
+                </span>
+                <span className="note-backlinks__title-text">{t.title}</span>
+                <span className="note-backlinks__group muted small">{groupName(t.groupId)}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

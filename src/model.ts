@@ -223,6 +223,24 @@ export interface TodoItem {
   remindRepeat?: ReminderRepeat;
   /** Order index within the group. Lower comes first. */
   sortOrder?: number;
+  /**
+   * Optional reference to the note this task was derived from.
+   *
+   * Today this gets set automatically when the user runs the AI task
+   * extractor on a specific note (Notes sidebar → ✨ Extract tasks).
+   * Manual link/unlink can be added later — the field is just a
+   * note `id`, so any UI that wants to manage it later is free to.
+   *
+   * If the referenced note gets deleted the field is intentionally
+   * NOT cleared on the task: keeping the orphan id is harmless (the
+   * UI renders it as "(deleted note)" with no link), and the moment
+   * the user undoes the delete from a backup the link is restored
+   * automatically. Wiping the field would lose that recovery hook
+   * and would require migrating every linked task on every note
+   * delete — both bad trade-offs for a back-reference that's already
+   * only advisory.
+   */
+  sourceNoteId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -571,11 +589,50 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
       // mean the same thing in UI terms, so we normalise to one
       // representation here and keep the file lean for sync diffs.
       const rawBody = typeof x.body === 'string' ? x.body : undefined;
-      const body = rawBody && rawBody.trim() ? rawBody : undefined;
+      const initialBody = rawBody && rawBody.trim() ? rawBody : undefined;
+      const sourceNoteId =
+        typeof x.sourceNoteId === 'string' && x.sourceNoteId.trim() ? x.sourceNoteId : undefined;
+      // Multi-line title repair. Older builds (and any future paste-into-
+      // title accident) could land a multi-line blob into the `title`
+      // field with the actual body trapped inside it after newlines.
+      // The closed-view CSS uses `white-space: pre-wrap` and a 2-line
+      // clamp, which makes those rows look "broken" (the title gets
+      // truncated mid-content with no body chip), and once expanded
+      // the body lines render in title typography instead of through
+      // MarkdownView. We split on the first newline here on every load
+      // so the row matches the same shape as a freshly-created task:
+      // single-line title + Markdown body. Any pre-existing body is
+      // preserved by appending it after the rescued lines.
+      const rawTitle = typeof x.title === 'string' ? x.title : '';
+      let title = rawTitle;
+      let body = initialBody;
+      if (rawTitle.includes('\n')) {
+        const titleLines = rawTitle.split('\n');
+        let firstNonEmpty = -1;
+        for (let li = 0; li < titleLines.length; li++) {
+          if (titleLines[li].trim()) {
+            firstNonEmpty = li;
+            break;
+          }
+        }
+        if (firstNonEmpty >= 0) {
+          title = titleLines[firstNonEmpty].trim().replace(/^#+\s+/, '');
+          const trailing = titleLines
+            .slice(firstNonEmpty + 1)
+            .join('\n')
+            .replace(/^\n+/, '')
+            .replace(/\n+$/, '');
+          if (trailing) {
+            body = initialBody && initialBody.trim()
+              ? `${trailing}\n\n${initialBody}`
+              : trailing;
+          }
+        }
+      }
       return {
         id: typeof x.id === 'string' ? x.id : uuid(),
         groupId: typeof x.groupId === 'string' ? x.groupId : '',
-        title: typeof x.title === 'string' ? x.title : '',
+        title,
         body,
         status,
         done: resolvedDone,
@@ -585,6 +642,7 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
         remindAt: typeof x.remindAt === 'string' ? x.remindAt : undefined,
         remindRepeat,
         sortOrder: typeof x.sortOrder === 'number' ? x.sortOrder : i,
+        sourceNoteId,
         createdAt: typeof x.createdAt === 'string' ? x.createdAt : nowIso(),
         updatedAt: typeof x.updatedAt === 'string' ? x.updatedAt : nowIso(),
       };

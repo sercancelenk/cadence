@@ -3046,36 +3046,41 @@ code {
   padding: 12px;
 }
 
-/* Closed-but-has-body teaser: a small, clickable hint right under the
- * row showing the first non-empty line of the body. Lets the user spot
- * tasks with extra context without expanding every one. The button
- * wraps so long lines don't overflow on narrow screens. */
-.todos-row__details-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  padding: 4px 8px;
+/* Inline body preview rendered beneath the meta sub-row when the row
+ * is expanded (single-click on the title). Quiet container, indented
+ * so it reads as belonging to this task. Double-click anywhere inside
+ * drops into edit mode (handler lives on the wrapper in TSX). */
+.todos-row__body-preview {
+  margin-top: 8px;
+  padding: 10px 12px;
   border-radius: var(--radius-sm);
-  background: transparent;
-  border: 1px dashed color-mix(in srgb, var(--accent-2) 30%, transparent);
-  color: var(--tp-muted);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: text;
+  /* The MarkdownView ships its own list / heading styles. We only
+   * compress a couple of vertical margins so the preview doesn't
+   * look like a full Notes page inside a row. */
+}
+.todos-row__body-preview > *:first-child { margin-top: 0; }
+.todos-row__body-preview > *:last-child { margin-bottom: 0; }
+.todos-row__body-preview p { margin: 4px 0; }
+.todos-row__body-preview ul,
+.todos-row__body-preview ol { margin: 4px 0; padding-left: 22px; }
+.todos-row__body-preview h1,
+.todos-row__body-preview h2,
+.todos-row__body-preview h3 { margin: 8px 0 4px; font-size: 14px; }
+.todos-row__body-preview pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
   font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-  max-width: 100%;
+  background: color-mix(in srgb, var(--panel) 60%, var(--bg));
 }
-
-.todos-row__details-hint:hover {
-  background: var(--accent-soft);
-  color: var(--accent-2);
-}
-
-.todos-row__details-hint span {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 60ch;
+.todos-row__body-preview code {
+  font-size: 12px;
 }
 
 .todos-section__add {
@@ -5405,6 +5410,15 @@ code {
   border: 1px solid var(--border);
   border-radius: 14px;
   width: min(640px, 96vw);
+  /* Both bounds matter for the flex layout inside:
+   *   - `min-height` guarantees the dialog never collapses around a
+   *     tiny intro state, which was happening after we added
+   *     `min-height: 0` to the scroll child (parent had no floor to
+   *     stand on, so the flex child shrank to ~0 and dragged the
+   *     dialog down with it).
+   *   - `max-height` caps the dialog at the viewport so long
+   *     conversations scroll internally rather than off-screen. */
+  min-height: min(480px, 90vh);
   max-height: min(720px, 92vh);
   display: flex;
   flex-direction: column;
@@ -5415,6 +5429,7 @@ code {
 
 .ai-dialog--wide {
   width: min(880px, 96vw);
+  min-height: min(560px, 92vh);
   max-height: min(820px, 94vh);
 }
 
@@ -5472,11 +5487,49 @@ code {
 .ai-dialog__scroll {
   padding: 14px 16px;
   overflow-y: auto;
-  flex: 1;
+  /* Reserve a stable gutter for the scrollbar so the dialog content
+   * doesn't jitter horizontally when scrollbars appear/disappear. */
+  scrollbar-gutter: stable;
+  flex: 1 1 0;
+  /* Critical for the assistant turn — without an explicit `min-height: 0`
+   * a flex child with `overflow: auto` refuses to shrink past its
+   * content size in Chromium, which is what was hiding the bottom of
+   * long AI responses behind the follow-up form. */
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
   scroll-behavior: smooth;
+}
+
+/* Make the scroll affordance visible by default. macOS hides overlay
+ * scrollbars unless the user is actively scrolling, which left users
+ * thinking long AI replies were truncated even when there was more
+ * content below the fold. A thin always-visible track makes the
+ * scroll affordance discoverable without dominating the layout. */
+.ai-dialog__scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--tp-muted) 40%, transparent) transparent;
+}
+
+.ai-dialog__scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.ai-dialog__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ai-dialog__scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--tp-muted) 35%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.ai-dialog__scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--tp-muted) 60%, transparent);
+  background-clip: padding-box;
 }
 
 .ai-dialog__intro p {
@@ -5783,6 +5836,32 @@ code {
 .ai-turn--assistant .md-prose ol { margin: 6px 0 6px 22px; }
 .ai-turn--assistant .md-prose li { margin: 2px 0; }
 
+.ai-turn__truncated {
+  /* Inline note shown beneath an assistant turn when the provider
+   * reported it ran out of tokens. We use an amber accent (not red)
+   * because the answer is incomplete but not erroneous — the user
+   * just needs to click Continue to get the rest. */
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #f5a524;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ai-turn__truncated svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.ai-turn__truncated strong {
+  color: inherit;
+}
+
 .ai-turn--busy .ai-turn__text {
   display: inline-flex;
   gap: 6px;
@@ -5834,6 +5913,156 @@ code {
 }
 .todos-row__ai-btn:hover { background: rgba(126, 176, 255, 0.12); }
 .todos-row__ai-btn:active { transform: scale(0.97); }
+
+/* Source-note backlink chip on a todo row.
+ *
+ * The chip is intentionally tiny and tonal — it sits inline with the
+ * schedule/priority pills and shouldn't compete with them visually.
+ * On hover we lift it just enough to read as interactive; the orphan
+ * variant (note deleted) gets a muted, non-interactive treatment so
+ * the user sees the link existed without being able to click into a
+ * dead reference.
+ */
+.todos-row__note-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--tp-divider);
+  background: var(--tp-input-bg);
+  color: color-mix(in srgb, var(--accent) 90%, var(--text));
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.08s ease, color 0.12s ease;
+}
+.todos-row__note-chip:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.todos-row__note-chip:active { transform: scale(0.94); }
+.todos-row__note-chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+}
+.todos-row__note-chip--orphan {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.todos-row__note-chip--orphan:hover { background: var(--tp-input-bg); }
+
+/* Brief flash applied to a row when the user navigates here from a
+ * note's backlinks panel (e.g. "open this task" from /notes). The
+ * keyframe just blooms a tinted glow and fades it out. Class is
+ * removed after ~1.6s by the page-level effect. */
+.todos-row--focused {
+  animation: todos-row-focus-flash 1.6s ease-out;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+@keyframes todos-row-focus-flash {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
+  20%  { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .todos-row--focused { animation: none; }
+}
+
+/* "Tasks from this note" backlinks panel rendered beneath a note's
+ * markdown editor. Quiet container, dense rows; each row is a button
+ * so it gets native focus / keyboard activation.
+ */
+.note-backlinks {
+  margin-top: 18px;
+  padding: 14px 16px 14px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--tp-divider);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+}
+.note-backlinks__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.note-backlinks__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.note-backlinks__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.note-backlinks__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.note-backlinks__row:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.note-backlinks__row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+}
+.note-backlinks__row--closed .note-backlinks__title-text {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.note-backlinks__row--cancelled .note-backlinks__title-text {
+  color: var(--muted);
+  opacity: 0.7;
+}
+.note-backlinks__status {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--tp-divider);
+  background: var(--panel);
+}
+.note-backlinks__status--in_progress { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.note-backlinks__status--done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.note-backlinks__status--cancelled {
+  border-style: dashed;
+  border-color: var(--muted);
+}
+.note-backlinks__title-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+.note-backlinks__group {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
 
 .todos-row__icon-btn--confirm {
   background: linear-gradient(180deg, rgba(255, 99, 99, 0.2), rgba(255, 99, 99, 0.3));

@@ -21,13 +21,17 @@ export function BackToTopFab() {
 
   useEffect(() => {
     // The main scroll surface in this app is `<main class="main--scroll">`
-    // (see Layout.tsx). We look it up once and reattach if the layout
-    // remounts the element — defensive against future structural moves.
+    // (see Layout.tsx). We resolve it once on mount and bind a single
+    // scroll listener; if the element hasn't committed to the DOM yet
+    // we retry one tick later. Cleanup unbinds whichever path took
+    // hold — the earlier version leaked the deferred listener because
+    // its cleanup only cleared the timer.
     const findMain = (): HTMLElement | null =>
       document.querySelector<HTMLElement>('main.main--scroll');
 
-    let target = findMain();
+    let target: HTMLElement | null = null;
     let frame = 0;
+    let timer = 0;
 
     const update = () => {
       frame = 0;
@@ -40,23 +44,28 @@ export function BackToTopFab() {
       frame = window.requestAnimationFrame(update);
     };
 
-    if (!target) {
+    const bind = (el: HTMLElement) => {
+      target = el;
+      el.addEventListener('scroll', onScroll, { passive: true });
+      update();
+    };
+
+    const initial = findMain();
+    if (initial) {
+      bind(initial);
+    } else {
       // Wait one tick for React to commit the layout before binding.
-      const t = window.setTimeout(() => {
-        target = findMain();
-        if (target) {
-          target.addEventListener('scroll', onScroll, { passive: true });
-          update();
-        }
+      timer = window.setTimeout(() => {
+        timer = 0;
+        const late = findMain();
+        if (late) bind(late);
       }, 0);
-      return () => window.clearTimeout(t);
     }
 
-    target.addEventListener('scroll', onScroll, { passive: true });
-    update();
     return () => {
-      target?.removeEventListener('scroll', onScroll);
+      if (timer) window.clearTimeout(timer);
       if (frame) window.cancelAnimationFrame(frame);
+      target?.removeEventListener('scroll', onScroll);
     };
   }, []);
 

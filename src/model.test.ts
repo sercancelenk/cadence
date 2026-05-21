@@ -270,3 +270,186 @@ describe('shapeOfData — last-known-good fingerprint', () => {
     expect(shapeOfData(big).total).toBeGreaterThan(shapeOfData(small).total);
   });
 });
+
+/**
+ * `sourceNoteId` is the cross-link that lets a todo show a 📝 backlink
+ * chip and a note show a "Tasks from this note" panel. The migration
+ * has to preserve it through a normalize round-trip without leaking
+ * empty strings or non-string junk into the persisted file (any of
+ * those would corrupt the backlinks panel's filter).
+ */
+describe('TodoItem — sourceNoteId migration', () => {
+  it('preserves a valid sourceNoteId across a normalize round-trip', () => {
+    const norm = normalizeData({
+      version: 3,
+      todoGroups: [{ id: 'g1', name: 'G', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+      todoItems: [
+        {
+          id: 'i1',
+          groupId: 'g1',
+          title: 'extracted',
+          status: 'todo',
+          done: false,
+          sourceNoteId: 'note-42',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    expect(norm.todoItems[0]?.sourceNoteId).toBe('note-42');
+  });
+
+  it('drops empty / non-string sourceNoteId so empty pills never render', () => {
+    const norm = normalizeData({
+      version: 3,
+      todoGroups: [{ id: 'g1', name: 'G', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+      todoItems: [
+        {
+          id: 'i1',
+          groupId: 'g1',
+          title: 'a',
+          status: 'todo',
+          done: false,
+          sourceNoteId: '   ',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'i2',
+          groupId: 'g1',
+          title: 'b',
+          status: 'todo',
+          done: false,
+          sourceNoteId: 12345 as unknown as string,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    expect(norm.todoItems[0]?.sourceNoteId).toBeUndefined();
+    expect(norm.todoItems[1]?.sourceNoteId).toBeUndefined();
+  });
+
+  it('older items without the field load with sourceNoteId left undefined', () => {
+    const norm = normalizeData({
+      version: 3,
+      todoGroups: [{ id: 'g1', name: 'G', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+      todoItems: [
+        {
+          id: 'i1',
+          groupId: 'g1',
+          title: 'legacy',
+          status: 'todo',
+          done: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    expect(norm.todoItems[0]).toBeDefined();
+    // Field is undefined (not omitted) — the UI branches on truthy
+    // string ID, so undefined renders no chip / no backlink, which is
+    // the legacy behaviour we need to preserve.
+    expect(norm.todoItems[0]!.sourceNoteId).toBeUndefined();
+  });
+});
+
+/**
+ * Multi-line `title` repair. Older builds (and stray paste-into-title
+ * accidents) could land a multi-line blob in `title` with the body
+ * trapped after newline characters. The closed-view CSS uses
+ * `white-space: pre-wrap` and a 2-line clamp, which makes those rows
+ * look broken (truncated mid-content, no body chip), and once
+ * expanded the trailing lines render in title typography rather than
+ * through MarkdownView. parseTodoItems splits the title on the first
+ * non-empty line on every load so the row reaches the renderer in
+ * the same shape as a freshly-typed task.
+ */
+describe('TodoItem — multi-line title rescue', () => {
+  it('splits a multi-line title into single-line title + body', () => {
+    const norm = normalizeData({
+      version: 3,
+      todoGroups: [{ id: 'g1', name: 'G', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+      todoItems: [
+        {
+          id: 'i1',
+          groupId: 'g1',
+          title: "Enter passphrase for key '/Users/me/.ssh/id_rsa':\n\nEnumerating objects: 31, done.\nCounting objects: 100% (31/31), done.",
+          status: 'todo',
+          done: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const it = norm.todoItems[0]!;
+    expect(it.title).toBe("Enter passphrase for key '/Users/me/.ssh/id_rsa':");
+    expect(it.title).not.toContain('\n');
+    expect(it.body).toBe('Enumerating objects: 31, done.\nCounting objects: 100% (31/31), done.');
+  });
+
+  it('prepends rescued lines to a pre-existing body so nothing is lost', () => {
+    const norm = normalizeData({
+      version: 3,
+      todoGroups: [{ id: 'g1', name: 'G', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+      todoItems: [
+        {
+          id: 'i1',
+          groupId: 'g1',
+          title: 'Plan the launch\nFollow-up notes from Maria',
+          body: 'Existing markdown body',
+          status: 'todo',
+          done: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const it = norm.todoItems[0]!;
+    expect(it.title).toBe('Plan the launch');
+    expect(it.body).toBe('Follow-up notes from Maria\n\nExisting markdown body');
+  });
+
+  it('leaves a leading-#-style heading title clean', () => {
+    const norm = normalizeData({
+      version: 3,
+      todoGroups: [{ id: 'g1', name: 'G', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+      todoItems: [
+        {
+          id: 'i1',
+          groupId: 'g1',
+          title: '# Onboarding plan\n\nSchedule kickoff with the team',
+          status: 'todo',
+          done: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const it = norm.todoItems[0]!;
+    expect(it.title).toBe('Onboarding plan');
+    expect(it.body).toBe('Schedule kickoff with the team');
+  });
+
+  it('leaves single-line titles untouched', () => {
+    const norm = normalizeData({
+      version: 3,
+      todoGroups: [{ id: 'g1', name: 'G', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+      todoItems: [
+        {
+          id: 'i1',
+          groupId: 'g1',
+          title: 'Buy groceries',
+          body: 'milk, eggs',
+          status: 'todo',
+          done: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const it = norm.todoItems[0]!;
+    expect(it.title).toBe('Buy groceries');
+    expect(it.body).toBe('milk, eggs');
+  });
+});

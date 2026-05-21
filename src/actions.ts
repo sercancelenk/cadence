@@ -581,7 +581,7 @@ export function addTodoItem(
   data: AppData,
   groupId: string,
   title: string,
-  extras: { priority?: Priority; dueAt?: string; body?: string } = {},
+  extras: { priority?: Priority; dueAt?: string; body?: string; sourceNoteId?: string } = {},
 ): AppData {
   const gid = data.todoGroups.some((g) => g.id === groupId) ? groupId : data.todoGroups[0]?.id;
   if (!gid) return data;
@@ -598,6 +598,17 @@ export function addTodoItem(
   // doesn't bloat the file with an empty string.
   const trimmedBody = typeof extras.body === 'string' ? extras.body : undefined;
   const body = trimmedBody && trimmedBody.trim() ? trimmedBody : undefined;
+  // Source-note linking: only stamp the field when the caller actually
+  // points at a note that exists. Defensive against stale UI state
+  // (e.g. user deletes the note between opening the extractor and
+  // clicking "Add all"); silently dropping the ref is safer than
+  // creating a task that links nowhere.
+  const sourceNoteId =
+    typeof extras.sourceNoteId === 'string' && extras.sourceNoteId.trim()
+      ? data.notes.some((n) => n.id === extras.sourceNoteId)
+        ? extras.sourceNoteId
+        : undefined
+      : undefined;
   const item: TodoItem = {
     id: uuid(),
     groupId: gid,
@@ -610,6 +621,7 @@ export function addTodoItem(
     ...(extras.priority ? { priority: extras.priority } : {}),
     ...(extras.dueAt ? { dueAt: extras.dueAt } : {}),
     ...(body ? { body } : {}),
+    ...(sourceNoteId ? { sourceNoteId } : {}),
   };
   return { ...data, todoItems: [item, ...data.todoItems] };
 }

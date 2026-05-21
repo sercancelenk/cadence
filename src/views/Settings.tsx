@@ -2116,7 +2116,7 @@ function AISettingsSection() {
     if (!provider || apiKey.trim().length < 8) return;
     setTestStatus({ kind: 'running' });
     try {
-      const reply = await askAI({
+      const result = await askAI({
         settings: {
           provider: provider as AIProvider,
           apiKey: apiKey.trim(),
@@ -2132,7 +2132,7 @@ function AISettingsSection() {
       });
       setTestStatus({
         kind: 'ok',
-        message: `Connection works. Provider answered: "${reply.replace(/\s+/g, ' ').slice(0, 80)}"`,
+        message: `Connection works. Provider answered: "${result.text.replace(/\s+/g, ' ').slice(0, 80)}"`,
       });
     } catch (err) {
       const message = err instanceof AIError ? err.message : (err as Error)?.message ?? String(err);

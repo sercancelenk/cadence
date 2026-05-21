@@ -6,7 +6,7 @@ import { useFeatures } from '../lib/features';
 import { Button } from './ui/Button';
 import { MarkdownView } from './ui/MarkdownEditor';
 import { AutoResizeTextarea } from './ui/AutoResizeTextarea';
-import { IcRefresh, IcSparkles, IcX } from './icons';
+import { IcAlertTriangle, IcRefresh, IcSparkles, IcX } from './icons';
 
 type Props = {
   open: boolean;
@@ -29,7 +29,17 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
   const { features } = useFeatures();
   const aiSettings = data.aiSettings;
 
-  type Turn = { id: number; role: 'user' | 'assistant'; content: string };
+  type Turn = {
+    id: number;
+    role: 'user' | 'assistant';
+    content: string;
+    /**
+     * Only meaningful on assistant turns. Captures whether the model
+     * was cut off by our `maxOutputTokens` budget so the UI can offer
+     * a "Continue" affordance without guessing from the trailing text.
+     */
+    stopReason?: 'stop' | 'length' | 'other';
+  };
   const [turns, setTurns] = useState<Turn[]>([]);
   const [followup, setFollowup] = useState('');
   const [busy, setBusy] = useState(false);
@@ -91,12 +101,28 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
     abortRef.current = ctrl;
 
     try {
-      const reply = await askAI({
+      const result = await askAI({
         settings: aiSettings,
         messages: nextTurns.map((t) => ({ role: t.role, content: t.content })),
         signal: ctrl.signal,
+        // 4000 is the lib-level upper bound. Coaching answers fit
+        // comfortably under this; the only path that genuinely chews
+        // through the budget is "show me the comprehensive code" style
+        // follow-ups (which used to get cut off mid-XML at 2000). When
+        // even 4000 isn't enough the provider tells us via
+        // `stopReason === 'length'` and we light up the Continue
+        // button below — no more silent truncation.
+        maxOutputTokens: 4000,
       });
-      setTurns((cur) => [...cur, { id: ++turnIdRef.current, role: 'assistant', content: reply }]);
+      setTurns((cur) => [
+        ...cur,
+        {
+          id: ++turnIdRef.current,
+          role: 'assistant',
+          content: result.text,
+          stopReason: result.stopReason,
+        },
+      ]);
     } catch (err) {
       if ((err as DOMException)?.name === 'AbortError') {
         // Cancelled by the user; no error message.
@@ -126,6 +152,29 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
 
   const lastAssistant = [...turns].reverse().find((t) => t.role === 'assistant');
   const canSaveToNotes = !!onAppendToBody && !!lastAssistant?.content;
+
+  /**
+   * The latest assistant turn was cut off by the token budget — the
+   * provider explicitly reported `stop_reason: 'max_tokens'` (or the
+   * provider-specific equivalent). When this is true we show the
+   * Continue button, which sends a follow-up asking the model to
+   * resume exactly where it left off without repeating itself.
+   *
+   * We deliberately do NOT trust heuristics on the trailing text any
+   * more — code blocks legitimately end with `>` or `}` characters
+   * that string-pattern checks would mis-classify, and clean prose
+   * answers can end on a bullet that lacks final punctuation. The
+   * provider flag is the only signal that catches mid-XML truncation
+   * (the bug that surfaced with "give me the comprehensive code").
+   */
+  const lastWasTruncated = !busy && lastAssistant?.stopReason === 'length';
+
+  const continueGeneration = () => {
+    if (busy) return;
+    void send(
+      'Please continue from exactly where you left off — do not repeat anything you already wrote, just resume the next character.',
+    );
+  };
 
   return (
     <div className="ai-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
@@ -176,6 +225,19 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
                       ) : (
                         <p className="ai-turn__text">{t.content}</p>
                       )}
+                      {t.role === 'assistant' && t.stopReason === 'length' ? (
+                        // Inline truncation note. Pairs with the Continue
+                        // button below the follow-up input; we surface it
+                        // here too because the actions row sits behind the
+                        // input and is easy to miss on long answers.
+                        <p className="ai-turn__truncated muted small">
+                          <IcAlertTriangle size={12} />
+                          <span>
+                            Response hit the token limit and was cut off — click{' '}
+                            <strong>Continue</strong> below to resume from where it stopped.
+                          </span>
+                        </p>
+                      ) : null}
                     </li>
                   ))}
                   {busy ? (
@@ -211,6 +273,16 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
                   ariaLabel="Follow-up question"
                 />
                 <div className="ai-dialog__actions">
+                  {lastWasTruncated ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={continueGeneration}
+                      title="The provider reported it cut the reply off at the token budget — click to resume."
+                    >
+                      Continue
+                    </Button>
+                  ) : null}
                   {busy ? (
                     <Button type="button" variant="ghost" onClick={() => abortRef.current?.abort()}>
                       Stop

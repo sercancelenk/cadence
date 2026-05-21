@@ -30,6 +30,23 @@ export type AskAIInput = {
   signal?: AbortSignal;
 };
 
+/**
+ * Normalised reason the provider stopped generating.
+ *
+ *   - 'stop'   → the model finished its turn cleanly (end_turn / STOP / etc.).
+ *   - 'length' → the model hit our `maxOutputTokens` budget and was cut off
+ *                mid-stream; the UI should offer a "Continue" affordance.
+ *   - 'other'  → safety filters, tool calls, recitation refusals, or any
+ *                provider-specific reason we don't have a UX for yet. Treated
+ *                as "we got something but don't presume more is coming".
+ */
+export type AIStopReason = 'stop' | 'length' | 'other';
+
+export type AskAIResult = {
+  text: string;
+  stopReason: AIStopReason;
+};
+
 export class AIError extends Error {
   status?: number;
   provider?: AIProvider;
@@ -53,13 +70,20 @@ export function isAIConfigured(
 }
 
 const DEFAULT_SYSTEM = `You are an embedded coaching assistant inside a personal task manager called Cadence.
-The user will share a single task they are trying to make progress on. Reply with:
+The user will share a single task — including any markdown notes they already wrote — and you will help them ship it. Reply with:
 - a 1–2 sentence framing of what the task really needs,
 - 3 to 5 concrete next actions, ordered by leverage,
-- 1 risk / common mistake to avoid.
-Keep the whole answer under 200 words. Use plain Markdown.`;
+- 1 risk / common mistake to avoid,
+- (optional) a final "Want me to go deeper on X?" line when the topic has obvious follow-ups.
 
-export async function askAI(input: AskAIInput): Promise<string> {
+Use the user's notes as the primary source of truth: if they specified a stack, tools, or constraints, plan around them — never propose alternatives unless asked.
+
+Style:
+- Plain Markdown. Headings/bullets are encouraged.
+- Aim for ~250 words. NEVER stop mid-sentence; if you're approaching your output budget, wrap up cleanly instead of cutting off.
+- No filler ("Of course!", "Great question!"). Start with the answer.`;
+
+export async function askAI(input: AskAIInput): Promise<AskAIResult> {
   const { settings, messages } = input;
   if (!isAIConfigured(settings)) {
     throw new AIError('AI is not configured. Add a provider and API key in Settings.', {
@@ -95,7 +119,14 @@ type ProviderArgs = {
   signal?: AbortSignal;
 };
 
-async function callAnthropic({ apiKey, model, system, messages, maxTokens, signal }: ProviderArgs): Promise<string> {
+async function callAnthropic({
+  apiKey,
+  model,
+  system,
+  messages,
+  maxTokens,
+  signal,
+}: ProviderArgs): Promise<AskAIResult> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     signal,
@@ -114,17 +145,36 @@ async function callAnthropic({ apiKey, model, system, messages, maxTokens, signa
     }),
   });
   if (!res.ok) throw await providerError('anthropic', res);
-  const json = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
+  const json = (await res.json()) as {
+    content?: Array<{ type: string; text?: string }>;
+    stop_reason?: string;
+  };
   const text = (json.content ?? [])
     .filter((b) => b.type === 'text' && typeof b.text === 'string')
     .map((b) => b.text!)
     .join('\n')
     .trim();
   if (!text) throw new AIError('Anthropic returned an empty response.', { provider: 'anthropic' });
-  return text;
+  // Anthropic stop reasons: 'end_turn' | 'max_tokens' | 'stop_sequence' |
+  // 'tool_use'. We only map 'max_tokens' to 'length'; 'stop_sequence' is
+  // a clean stop driven by user-supplied stop strings.
+  const stopReason: AIStopReason =
+    json.stop_reason === 'max_tokens'
+      ? 'length'
+      : json.stop_reason === 'end_turn' || json.stop_reason === 'stop_sequence'
+        ? 'stop'
+        : 'other';
+  return { text, stopReason };
 }
 
-async function callOpenAI({ apiKey, model, system, messages, maxTokens, signal }: ProviderArgs): Promise<string> {
+async function callOpenAI({
+  apiKey,
+  model,
+  system,
+  messages,
+  maxTokens,
+  signal,
+}: ProviderArgs): Promise<AskAIResult> {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     signal,
@@ -143,14 +193,28 @@ async function callOpenAI({ apiKey, model, system, messages, maxTokens, signal }
   });
   if (!res.ok) throw await providerError('openai', res);
   const json = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string | null } }>;
+    choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
   };
   const text = (json.choices?.[0]?.message?.content ?? '').trim();
   if (!text) throw new AIError('OpenAI returned an empty response.', { provider: 'openai' });
-  return text;
+  const finishReason = json.choices?.[0]?.finish_reason;
+  // OpenAI finish reasons: 'stop' | 'length' | 'content_filter' |
+  // 'tool_calls' | 'function_call'. Anything that isn't an explicit
+  // clean stop becomes 'other' — only 'length' lights up the
+  // Continue affordance.
+  const stopReason: AIStopReason =
+    finishReason === 'length' ? 'length' : finishReason === 'stop' ? 'stop' : 'other';
+  return { text, stopReason };
 }
 
-async function callGemini({ apiKey, model, system, messages, maxTokens, signal }: ProviderArgs): Promise<string> {
+async function callGemini({
+  apiKey,
+  model,
+  system,
+  messages,
+  maxTokens,
+  signal,
+}: ProviderArgs): Promise<AskAIResult> {
   // Gemini doesn't have an explicit "system" role at the top level; it uses
   // `systemInstruction`. We put user/assistant turns in `contents`.
   const url =
@@ -184,7 +248,10 @@ async function callGemini({ apiKey, model, system, messages, maxTokens, signal }
     throw await providerError('gemini', res);
   }
   const json = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
+    }>;
   };
   const parts = json.candidates?.[0]?.content?.parts ?? [];
   const text = parts
@@ -192,7 +259,12 @@ async function callGemini({ apiKey, model, system, messages, maxTokens, signal }
     .join('')
     .trim();
   if (!text) throw new AIError('Gemini returned an empty response.', { provider: 'gemini' });
-  return text;
+  // Gemini finish reasons: 'STOP' | 'MAX_TOKENS' | 'SAFETY' | 'RECITATION'
+  // | 'OTHER' (and a few newer ones that we lump into 'other').
+  const finishReason = json.candidates?.[0]?.finishReason;
+  const stopReason: AIStopReason =
+    finishReason === 'MAX_TOKENS' ? 'length' : finishReason === 'STOP' ? 'stop' : 'other';
+  return { text, stopReason };
 }
 
 async function providerError(provider: AIProvider, res: Response): Promise<AIError> {
@@ -348,7 +420,7 @@ export async function extractTasksFromNotes(input: {
     `\nNOTES TO EXTRACT FROM:\n"""\n${notes.slice(0, 16_000)}\n"""\n\n` +
     `Now return the JSON array. Output ONLY the JSON, starting with [ and ending with ]. No markdown, no commentary.`;
 
-  const raw = await askAI({
+  const result = await askAI({
     settings: { ...input.settings, systemPrompt: undefined },
     fallbackSystem: EXTRACT_SYSTEM,
     messages: [{ role: 'user', content: userPrompt }],
@@ -358,7 +430,7 @@ export async function extractTasksFromNotes(input: {
     signal: input.signal,
   });
 
-  return parseExtractedTasks(raw);
+  return parseExtractedTasks(result.text);
 }
 
 function parseExtractedTasks(raw: string): ExtractedTask[] {
