@@ -118,14 +118,27 @@ function todoStatusFilterKey(userId: string) {
  *   - 'due'       → soonest due date first; undated items last
  *   - 'status'    → Kanban order: todo → in_progress → done → cancelled,
  *                   ties broken by manual order
+ *   - 'created'   → newest createdAt first (when did I add this?)
+ *   - 'updated'   → newest updatedAt first (which task did I just touch?)
+ *   - 'completed' → newest doneAt first; rows that never reached a
+ *                   terminal state sink to the bottom. Useful for
+ *                   "what did I ship this week?" reviews.
+ *
+ * Date modes all sort newest-first because that's what "history" means
+ * to most users (the freshest entry is the most relevant); ties on
+ * missing dates fall to the end so the list never shuffles around
+ * when a row is missing the field.
  */
-type SortMode = 'manual' | 'priority' | 'due' | 'status';
+type SortMode = 'manual' | 'priority' | 'due' | 'status' | 'created' | 'updated' | 'completed';
 
 const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: 'manual', label: 'Manual order' },
   { value: 'priority', label: 'By priority' },
   { value: 'due', label: 'By due date' },
   { value: 'status', label: 'By status' },
+  { value: 'created', label: 'By created date (newest)' },
+  { value: 'updated', label: 'By updated date (newest)' },
+  { value: 'completed', label: 'By completed date (newest)' },
 ];
 
 /**
@@ -901,8 +914,20 @@ export function TodosPage() {
       const hideDoneRaw = localStorage.getItem(todoHideDoneKey(userId));
       setHideDone(hideDoneRaw === '1');
       const sortRaw = localStorage.getItem(todoSortModeKey(userId));
+      // Whitelist parse — any unknown / older value (or a removed mode)
+      // falls back to 'manual' so we never end up with a sort mode the
+      // sort function doesn't know how to honour.
+      const allowedSortModes: SortMode[] = [
+        'manual',
+        'priority',
+        'due',
+        'status',
+        'created',
+        'updated',
+        'completed',
+      ];
       setSortMode(
-        sortRaw === 'priority' || sortRaw === 'due' || sortRaw === 'status' ? sortRaw : 'manual',
+        allowedSortModes.includes(sortRaw as SortMode) ? (sortRaw as SortMode) : 'manual',
       );
       setStatusFilter(parseStatusFilter(localStorage.getItem(todoStatusFilterKey(userId))));
     } catch {
@@ -1023,6 +1048,24 @@ export function TodosPage() {
     }
     const orderOf = (x: TodoItem) => x.sortOrder ?? 0;
     const dueOf = (x: TodoItem) => (x.dueAt ? Date.parse(x.dueAt) : Infinity);
+    /**
+     * Compare two ISO timestamps newest-first. Missing / unparseable
+     * dates sort to the END of the list — for `createdAt` / `updatedAt`
+     * this is rare (we always stamp them) but for `completedAt` it is
+     * the common case (open tasks have no `doneAt`) and "open rows
+     * fall to the bottom of a completion-history view" is the right
+     * default.
+     */
+    const cmpDateDesc = (a?: string, b?: string): number => {
+      const ta = a ? Date.parse(a) : NaN;
+      const tb = b ? Date.parse(b) : NaN;
+      const aBad = Number.isNaN(ta);
+      const bBad = Number.isNaN(tb);
+      if (aBad && bBad) return 0;
+      if (aBad) return 1;
+      if (bBad) return -1;
+      return tb - ta;
+    };
 
     for (const arr of m.values()) {
       arr.sort((a, b) => {
@@ -1042,6 +1085,21 @@ export function TodosPage() {
           // the result is stable when the user toggles back to manual.
           const ds = todoStatusRank(a.status) - todoStatusRank(b.status);
           if (ds !== 0) return ds;
+          return orderOf(a) - orderOf(b);
+        }
+        if (sortMode === 'created') {
+          const d = cmpDateDesc(a.createdAt, b.createdAt);
+          if (d !== 0) return d;
+          return orderOf(a) - orderOf(b);
+        }
+        if (sortMode === 'updated') {
+          const d = cmpDateDesc(a.updatedAt, b.updatedAt);
+          if (d !== 0) return d;
+          return orderOf(a) - orderOf(b);
+        }
+        if (sortMode === 'completed') {
+          const d = cmpDateDesc(a.doneAt, b.doneAt);
+          if (d !== 0) return d;
           return orderOf(a) - orderOf(b);
         }
         // manual

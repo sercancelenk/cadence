@@ -145,6 +145,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 - [Mobile / PWA](#mobile--pwa)
 - [Keyboard & native menus](#keyboard--native-menus)
 - [Data, privacy and backups](#data-privacy-and-backups)
+  - [Importing a big batch of notes (or todos) safely](#importing-a-big-batch-of-notes-or-todos-safely)
 - [Auto-updates](#auto-updates)
 
 **For developers**
@@ -711,6 +712,42 @@ Atomic writes + 50 rolling snapshots survive crashes, bad updates and accidental
 For total peace of mind, periodically run *Settings → Backup → Export JSON* and copy the resulting `cadence-backup-YYYY-MM-DD.json` to iCloud Drive, Dropbox, a USB stick, or another machine. The export is a fully decrypted, version-tagged JSON dump — diff-friendly and migration-friendly. Importing it later restores everything (and snapshots the existing state to `pre-restore` first, so the import itself is reversible).
 
 A monthly export is plenty for typical use; weekly if you treat the app as a primary system of record.
+
+### Importing a big batch of notes (or todos) safely
+
+If you're moving everything from another app into Cadence in one sitting,
+the engine handles you (atomic writes, 50 pre-save snapshots, refuse-to-
+overwrite, autosave-failed banner) — but a few habits make the import
+itself more forgiving:
+
+1. **Take a "before" export first.** *Settings → Backup → Export JSON*
+   even on an empty workspace. That single file is your "I started here"
+   anchor — if anything goes weird later you can diff against it.
+2. **Paste in moderate batches.** Multi-line content pasted into the
+   *title* field is auto-rescued (the first non-empty line becomes the
+   title, the rest moves to the Markdown body) but each save consumes
+   one of the 50 rolling snapshot slots. Dropping 200 notes in 30
+   seconds can age a previous snapshot off the back of the queue, so
+   space large pastes out (or take an Export JSON between batches).
+3. **Don't lock notes until you've verified the passphrase.** If you
+   plan to enable the notes passphrase, write the passphrase down
+   *first* — locked content can be recovered from a snapshot, but
+   there's no recovery for the passphrase itself. (Optional recovery
+   key in *Settings → Notes lock* is the supported fallback.)
+4. **Take an "after" export when you're done.** A second
+   `cadence-backup-YYYY-MM-DD.json` after the migration gives you a
+   clean "known good" reference and is the file you'd hand to *Import
+   JSON* if you ever need to fully redo a restore.
+5. **Watch the banners.** Any save failure surfaces as a red autosave
+   banner above every page, and a meaningful drop in totals between
+   launches surfaces as an amber data-loss banner. Both link straight
+   to *Settings → Backups & recovery*. Don't dismiss them without
+   resolving — they are the single source of truth that something went
+   wrong.
+
+If you're migrating from a previous Leeadman install, see also
+[Migration notes (from Leeadman)](#migration-notes-from-leeadman) — the
+data-folder rename is consumed automatically on first launch.
 
 ---
 
