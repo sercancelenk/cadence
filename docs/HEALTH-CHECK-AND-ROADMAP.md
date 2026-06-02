@@ -1,6 +1,6 @@
 # Cadence — Health Check & Product Roadmap
 
-**Document version:** 1.0  
+**Document version:** 1.1  
 **Date:** 2026-05-31  
 **App version reviewed:** `0.2.0`  
 **Scope:** Static architecture review, data/security audit, test & CI assessment, mobile/PWA UX gap analysis  
@@ -20,12 +20,12 @@ The main gaps are not in the core data path — they are in **sustainability** (
 |---|---:|---|
 | Data reliability | **9.0 / 10** | Atomic writes, rolling snapshots, refuse-to-overwrite — production-grade |
 | Security (desktop) | **8.0 / 10** | contextIsolation + CSP + IPC whitelist; sandbox disabled |
-| Architecture clarity | **7.0 / 10** | Clean layers exist; god files emerging |
+| Architecture clarity | **7.5 / 10** | Layered core + providers in place; god files still emerging |
 | Test & CI | **6.5 / 10** | Critical libs well tested; UI/E2E missing |
 | Documentation | **9.0 / 10** | README + operator docs unusually thorough |
 | Mobile / PWA UX | **6.0 / 10** | Works; not yet a curated lite experience |
-| Maintainability | **6.5 / 10** | Fine for solo/small team today; painful at scale |
-| **Composite** | **7.8 / 10** | **Ship-ready for personal use; not yet "flawless"** |
+| Maintainability | **7.0 / 10** | Root clutter reduced; page-level files still oversized |
+| **Composite** | **7.9 / 10** | **Ship-ready for personal use; not yet "flawless"** |
 
 **Bottom line:** Safe to migrate notes and todos into Cadence **if** you follow the backup habits documented in README (`Export JSON` before/after bulk import, watch save banners). The app will not silently lose acknowledged writes on desktop. PWA data is separate, unencrypted, and browser-scoped — treat it accordingly.
 
@@ -61,11 +61,14 @@ Be skeptical of claims outside these boundaries:
 **1. Unidirectional data flow**
 
 ```
-model.ts          → schema, migrations, normalizeData (single front door)
-actions.ts        → pure state mutations (no I/O)
-AppDataContext    → React state + debounced persist + integrity banners
+src/core/model/   → schema, migrations, normalizeData (single front door)
+src/core/actions/ → pure state mutations (no I/O)
+src/providers/    → React contexts (auth, account, theme, app data, notes unlock)
 views/components  → UI only
+src/lib/          → cross-cutting infra (sync, crypto, rich-text, features)
 ```
+
+Legacy import paths (`src/model.ts`, `src/actions.ts`, `src/AppDataContext.tsx`, …) remain as **thin re-export shims** so existing imports keep working during migration.
 
 `normalizeData()` is the canonical loader for disk, import, and sync pull. Version chain v1 → v2 → v3 is explicit. Optional fields (`sourceNoteId`, multi-line title rescue) are backward-compatible.
 
@@ -94,6 +97,17 @@ Heavy chunks (Markdown editor, People views) split via `React.lazy`. Important f
 
 These sizes are manageable for one developer **today**. They become the primary source of fear-and-regression within 6–12 months of active feature work.
 
+**Source layout (post-refactor, May 2026)**
+
+| Path | Role |
+|---|---|
+| `src/providers/` | Auth, Account, Theme, AppData, NotesUnlock contexts + barrel `index.ts` |
+| `src/core/model/` | Types, parsers, `normalizeData`, migrations |
+| `src/core/actions/` | Pure `AppData` mutations (single module today; split by domain later) |
+| `src/views/` | Route-level pages (still oversized — next split target) |
+| `src/lib/` | Sync, crypto, rich-text, features, utilities |
+| `src/*.tsx` shims | Backward-compatible re-exports from old root paths |
+
 **Duplicated branding**
 
 `electron/branding.cjs` and `src/lib/appBranding.ts` must stay in sync manually. Drift risk is real.
@@ -109,8 +123,8 @@ These sizes are manageable for one developer **today**. They become the primary 
 Reference implementations in:
 
 - `electron/main.cjs` — `writeJsonText()`, `writeUserData()`, `snapshotCurrentDataFile()`
-- `src/AppDataContext.tsx` — debounced save, flush-on-exit, fingerprint shrink detection
-- `src/model.ts` — `normalizeData()`, migrations, defensive parsers
+- `src/providers/AppDataContext.tsx` — debounced save, flush-on-exit, fingerprint shrink detection
+- `src/core/model/index.ts` — `normalizeData()`, migrations, defensive parsers
 
 ### Desktop durability guarantees
 
@@ -130,6 +144,32 @@ Reference implementations in:
 - **`sourceNoteId`** — optional field; old JSON loads fine (`undefined`, not dropped)
 - **Multi-line title rescue** — splits pasted blob in `title` into title + body on load; **0-byte loss** (rescued lines prepended to existing body); idempotent after first save
 - **Sort modes (created/updated/completed)** — UI-only; does not mutate persisted `sortOrder`
+- **Rich-text (Tiptap / ProseMirror)** — legacy markdown bodies load unchanged until first edit; `bodyFormat` optional; sidecar attachments are additive (inline `data:image` in old markdown unaffected by orphan GC)
+- **Notes list stability** — editor mount no longer bumps `updatedAt` via no-op patch guard + onChange dedupe
+- **Global search → todos** — palette deep-links with `?focus=`; filters relax so the row is visible
+
+### Recent delivery log (since v1.0 health check)
+
+*Completed work that improves ship-readiness or maintainability.*
+
+| Area | Done |
+|---|---|
+| **Rich text** | `RichTextEditor` (Tiptap) in Notes, Todos, QuickAdd; ProseMirror JSON + `bodyPlainText`; markdown import on read |
+| **Attachments** | Sidecar files, `cadence-attachment://`, orphan GC, backup folder copy, LAN manifest sync, export/import bundle |
+| **Stability** | Notes reorder-on-click fix; CommandPalette todo focus; filter reveal on deep-link |
+| **Architecture (Phase B0)** | `src/providers/`, `src/core/model/`, `src/core/actions/`; root re-export shims (zero runtime impact) |
+
+*Not done yet — still on the roadmap below.*
+
+| Area | Status |
+|---|---|
+| Split `TodosPage` / `NotesPage` / `Settings` | Planned (B1, B2) |
+| Split `core/actions/` by domain | Planned (B7, after A5 tests) |
+| `actions.ts` unit tests | Planned (A5) |
+| Mobile lite nav + hide desktop-only Settings | Planned (A1–A3) |
+| Smoke E2E | Planned (A4) |
+| GDrive attachment blobs | Out of scope v1; JSON sync only |
+| ESLint / Prettier, CSS split, `main.cjs` modularize | Planned (B3–B6) |
 
 ### PWA caveats (by design, documented)
 
@@ -187,7 +227,7 @@ CI (`.github/workflows/ci.yml`) on every push/PR: `tsc` → `npm test` → `buil
 |---|---|---|
 | No E2E / smoke tests | **High** | Login → create todo → reload → assert persist untested automatically |
 | No UI/component tests (except AccountContext) | Medium | Regressions in TodosPage/NotesPage undetected |
-| `actions.ts` untested | Medium | Pure functions — cheap to test, high leverage |
+| `actions.ts` untested | Medium | Pure functions — cheap to test, high leverage; lives in `src/core/actions/` |
 | `electron/main.cjs` untested | Medium | Expected; IPC contract tests would help |
 | No coverage gate in CI | Low | `@vitest/coverage-v8` present but unused |
 | No ESLint / Prettier | Low | Style/consistency relies on author discipline |
@@ -262,7 +302,7 @@ Prioritized by **risk reduction × user impact × effort**. Each item has an ID 
 | **A3** | **Context-aware error banners** | S | Medium | PWA: "Export backup" → `#backup`; desktop: "Open Backups" → `#backups`. |
 | **A4** | **Smoke E2E test (1 scenario)** | M | High | Playwright: register/login → add todo → reload → assert title persists. Run in CI (web or Electron headless). |
 | **A5** | **`actions.ts` unit tests** | M | Medium | Cover add/update/delete for todos, notes, groups; status transitions set `doneAt`. |
-| **A6** | **CI coverage gate (lib/)** | S | Medium | `--coverage` on `src/lib/**`, `src/model.ts`, `src/actions.ts`; fail below 70%. |
+| **A6** | **CI coverage gate (lib/)** | S | Medium | `--coverage` on `src/lib/**`, `src/core/**`; fail below 70%. |
 
 **Exit criteria for Phase A:** A new user on iPhone PWA sees no link that leads to "desktop only" text. CI blocks PRs that break the smoke path.
 
@@ -272,18 +312,19 @@ Prioritized by **risk reduction × user impact × effort**. Each item has an ID 
 
 *Goal: Change velocity stays high as features accumulate.*
 
-| ID | Item | Effort | Impact | Notes |
-|---|---|---|---|---|
-| **B1** | **Split `Settings.tsx`** | L | Medium | `src/views/settings/*.tsx` — one file per section; thin orchestrator in `Settings.tsx`. |
-| **B2** | **Split `TodosPage.tsx`** | L | Medium | Extract `TodoTaskRow`, filter bar, section header into components + hooks. |
-| **B3** | **Modularize `main.cjs`** | L | High | `electron/data/`, `electron/sync/`, `electron/auth/` — keep IPC table in one registry file. |
-| **B4** | **CSS architecture** | L | Medium | Split `app.css` by domain (`shell`, `todos`, `notes`, `settings`) or CSS modules for new code. |
-| **B5** | **Unify branding** | S | Low | Generate renderer constants from `branding.cjs` at build time, or shared JSON. |
-| **B6** | **ESLint + Prettier** | S | Medium | `@typescript-eslint`, React hooks rules; format on CI. |
+| ID | Item | Effort | Impact | Status | Notes |
+|---|---|---|---|---|---|
+| **B0** | **`src/providers/` + `src/core/` layout** | S | Medium | **Done** | Contexts + model/actions moved; root shims preserve old import paths |
+| **B1** | **Split `Settings.tsx`** | L | Medium | Planned | `src/views/settings/*.tsx` — one file per section; thin orchestrator in `Settings.tsx`. |
+| **B2** | **Split `TodosPage.tsx` / `NotesPage.tsx`** | L | Medium | Planned | Extract rows, toolbars, hooks into `src/features/todos/` & `src/features/notes/`. |
+| **B3** | **Modularize `main.cjs`** | L | High | Planned | `electron/data/`, `electron/sync/`, `electron/auth/` — keep IPC table in one registry file. |
+| **B4** | **CSS architecture** | L | Medium | Planned | Split `app.css` by domain (`shell`, `todos`, `notes`, `settings`) or CSS modules for new code. |
+| **B5** | **Unify branding** | S | Low | Planned | Generate renderer constants from `branding.cjs` at build time, or shared JSON. |
+| **B6** | **ESLint + Prettier** | S | Medium | Planned | `@typescript-eslint`, React hooks rules; format on CI. |
+| **B7** | **Split `core/actions/` by domain** | M | Medium | Planned | `todos.ts`, `notes.ts`, `teams.ts` + barrel; after A5 test coverage. |
+| **B8** | **Remove root re-export shims** | S | Low | Planned | Once all imports point at `providers/` and `core/`; optional codemod. |
 
 **Exit criteria for Phase B:** No source file >1,500 lines without explicit exception. New features don't require editing `app.css` past line 6000.
-
----
 
 ### Phase C — Product depth (ongoing, aligns with README Tier 2–3)
 
@@ -343,10 +384,13 @@ Use this doc as the agenda. Recommended order:
 
 | Concern | Primary files |
 |---|---|
-| Data persist | `src/AppDataContext.tsx`, `electron/main.cjs` (`writeUserData`, `writeJsonText`) |
-| Schema / migration | `src/model.ts`, `src/model.test.ts` |
-| Mutations | `src/actions.ts` |
+| Data persist | `src/providers/AppDataContext.tsx`, `electron/main.cjs` (`writeUserData`, `writeJsonText`) |
+| Schema / migration | `src/core/model/index.ts`, `src/core/model/model.test.ts` |
+| Mutations | `src/core/actions/index.ts` (shim: `src/actions.ts`) |
+| React providers | `src/providers/index.ts` (barrel), individual `*Context.tsx` |
 | Feature flags | `src/lib/features.tsx` |
+| Rich text | `src/components/ui/RichTextEditor.tsx`, `src/lib/richTextBody.ts` |
+| Attachments | `electron/main.cjs` (GC, backup), `src/lib/richTextAttachmentStore.ts`, `src/lib/lanAttachmentSync.ts` |
 | Sync safety | `src/lib/syncSnapshotGuard.ts`, `src/lib/useSyncAutoSync.ts` |
 | Mobile shell | `src/components/Layout.tsx`, `src/app.css` (`@media max-width: 700px`) |
 | Settings surface | `src/views/Settings.tsx` |
@@ -360,4 +404,5 @@ Use this doc as the agenda. Recommended order:
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
+| 1.1 | 2026-05-31 | Architecture refactor session | B0 layout (`providers/`, `core/`); rich-text & attachment delivery log; updated scores & appendix |
 | 1.0 | 2026-05-31 | Health check session | Initial analysis + phased roadmap |

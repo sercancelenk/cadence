@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeData, shapeOfData, type AppData } from './model';
+import { normalizeData, shapeOfData, type AppData } from './index';
 
 /**
  * Regression coverage for the data-loss-prevention work that landed after
