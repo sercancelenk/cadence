@@ -1,6 +1,6 @@
 # Cadence — Health Check & Product Roadmap
 
-**Document version:** 1.1  
+**Document version:** 1.2  
 **Date:** 2026-05-31  
 **App version reviewed:** `0.2.0`  
 **Scope:** Static architecture review, data/security audit, test & CI assessment, mobile/PWA UX gap analysis  
@@ -20,12 +20,12 @@ The main gaps are not in the core data path — they are in **sustainability** (
 |---|---:|---|
 | Data reliability | **9.0 / 10** | Atomic writes, rolling snapshots, refuse-to-overwrite — production-grade |
 | Security (desktop) | **8.0 / 10** | contextIsolation + CSP + IPC whitelist; sandbox disabled |
-| Architecture clarity | **7.5 / 10** | Layered core + providers in place; god files still emerging |
+| Architecture clarity | **7.5 / 10** | Layered core + providers; todos feature module started |
 | Test & CI | **6.5 / 10** | Critical libs well tested; UI/E2E missing |
 | Documentation | **9.0 / 10** | README + operator docs unusually thorough |
 | Mobile / PWA UX | **6.0 / 10** | Works; not yet a curated lite experience |
-| Maintainability | **7.0 / 10** | Root clutter reduced; page-level files still oversized |
-| **Composite** | **7.9 / 10** | **Ship-ready for personal use; not yet "flawless"** |
+| Maintainability | **7.5 / 10** | TodosPage slimmed; Settings/Notes still oversized |
+| **Composite** | **8.0 / 10** | **Ship-ready for personal use; not yet "flawless"** |
 
 **Bottom line:** Safe to migrate notes and todos into Cadence **if** you follow the backup habits documented in README (`Export JSON` before/after bulk import, watch save banners). The app will not silently lose acknowledged writes on desktop. PWA data is separate, unencrypted, and browser-scoped — treat it accordingly.
 
@@ -93,7 +93,8 @@ Heavy chunks (Markdown editor, People views) split via `React.lazy`. Important f
 | `electron/main.cjs` | 3,657 | IPC, auth, crypto, sync HTTPS server, updater, menu — monolith |
 | `src/app.css` | 7,804 | Global stylesheet; high merge/regression risk |
 | `src/views/Settings.tsx` | 3,245 | Dozens of sections in one component tree |
-| `src/views/TodosPage.tsx` | 1,894 | Row UI + filters + AI + linking in one file |
+| `src/views/TodosPage.tsx` | ~1,165 | Was ~1,958; row UI extracted to `features/todos/` — toolbar/sections still inline |
+| `src/views/NotesPage.tsx` | ~1,998 | Editor + backlinks + sort/filter in one file |
 
 These sizes are manageable for one developer **today**. They become the primary source of fear-and-regression within 6–12 months of active feature work.
 
@@ -104,7 +105,8 @@ These sizes are manageable for one developer **today**. They become the primary 
 | `src/providers/` | Auth, Account, Theme, AppData, NotesUnlock contexts + barrel `index.ts` |
 | `src/core/model/` | Types, parsers, `normalizeData`, migrations |
 | `src/core/actions/` | Pure `AppData` mutations (single module today; split by domain later) |
-| `src/views/` | Route-level pages (still oversized — next split target) |
+| `src/views/` | Route-level pages (Todos slimmed; Notes/Settings still oversized) |
+| `src/features/todos/` | Todo row component, body helpers, preferences constants, UI utils |
 | `src/lib/` | Sync, crypto, rich-text, features, utilities |
 | `src/*.tsx` shims | Backward-compatible re-exports from old root paths |
 
@@ -158,12 +160,15 @@ Reference implementations in:
 | **Attachments** | Sidecar files, `cadence-attachment://`, orphan GC, backup folder copy, LAN manifest sync, export/import bundle |
 | **Stability** | Notes reorder-on-click fix; CommandPalette todo focus; filter reveal on deep-link |
 | **Architecture (Phase B0)** | `src/providers/`, `src/core/model/`, `src/core/actions/`; root re-export shims (zero runtime impact) |
+| **Architecture (Phase B2, partial)** | `src/features/todos/` — `TodoTaskRow`, body/preferences/utils; `TodosPage` ~800 lines slimmer |
 
 *Not done yet — still on the roadmap below.*
 
 | Area | Status |
 |---|---|
-| Split `TodosPage` / `NotesPage` / `Settings` | Planned (B1, B2) |
+| Todos toolbar / section / inline-add extract | Planned (B2 remainder) |
+| Split `NotesPage` | Planned (B2) |
+| Split `Settings.tsx` | Planned (B1) |
 | Split `core/actions/` by domain | Planned (B7, after A5 tests) |
 | `actions.ts` unit tests | Planned (A5) |
 | Mobile lite nav + hide desktop-only Settings | Planned (A1–A3) |
@@ -316,7 +321,7 @@ Prioritized by **risk reduction × user impact × effort**. Each item has an ID 
 |---|---|---|---|---|---|
 | **B0** | **`src/providers/` + `src/core/` layout** | S | Medium | **Done** | Contexts + model/actions moved; root shims preserve old import paths |
 | **B1** | **Split `Settings.tsx`** | L | Medium | Planned | `src/views/settings/*.tsx` — one file per section; thin orchestrator in `Settings.tsx`. |
-| **B2** | **Split `TodosPage.tsx` / `NotesPage.tsx`** | L | Medium | Planned | Extract rows, toolbars, hooks into `src/features/todos/` & `src/features/notes/`. |
+| **B2** | **Split `TodosPage.tsx` / `NotesPage.tsx`** | L | Medium | **In progress** | `TodoTaskRow` + helpers → `src/features/todos/` (~1,165 lines remain in page). Next: toolbar, sections, hooks. |
 | **B3** | **Modularize `main.cjs`** | L | High | Planned | `electron/data/`, `electron/sync/`, `electron/auth/` — keep IPC table in one registry file. |
 | **B4** | **CSS architecture** | L | Medium | Planned | Split `app.css` by domain (`shell`, `todos`, `notes`, `settings`) or CSS modules for new code. |
 | **B5** | **Unify branding** | S | Low | Planned | Generate renderer constants from `branding.cjs` at build time, or shared JSON. |
@@ -393,6 +398,7 @@ Use this doc as the agenda. Recommended order:
 | Attachments | `electron/main.cjs` (GC, backup), `src/lib/richTextAttachmentStore.ts`, `src/lib/lanAttachmentSync.ts` |
 | Sync safety | `src/lib/syncSnapshotGuard.ts`, `src/lib/useSyncAutoSync.ts` |
 | Mobile shell | `src/components/Layout.tsx`, `src/app.css` (`@media max-width: 700px`) |
+| Todos UI | `src/views/TodosPage.tsx`, `src/features/todos/` |
 | Settings surface | `src/views/Settings.tsx` |
 | CI | `.github/workflows/ci.yml`, `.github/workflows/release.yml` |
 | Operator docs | `README.md`, `docs/DEPLOYMENT-AND-POLICY.md`, `docs/ENTERPRISE.md` |
@@ -404,5 +410,6 @@ Use this doc as the agenda. Recommended order:
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
+| 1.2 | 2026-05-31 | B2 partial — `features/todos/`, TodosPage slimmed; scores bumped |
 | 1.1 | 2026-05-31 | Architecture refactor session | B0 layout (`providers/`, `core/`); rich-text & attachment delivery log; updated scores & appendix |
 | 1.0 | 2026-05-31 | Health check session | Initial analysis + phased roadmap |
