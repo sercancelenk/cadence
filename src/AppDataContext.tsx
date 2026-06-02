@@ -233,7 +233,12 @@ type Api = {
   replaceNote: (note: Note) => void;
   patchNote: (
     id: string,
-    patch: Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'sortOrder' | 'lastOpenedAt'>>,
+    patch: Partial<
+      Pick<
+        Note,
+        'title' | 'body' | 'bodyFormat' | 'bodyPlainText' | 'pinned' | 'sortOrder' | 'lastOpenedAt'
+      >
+    >,
   ) => void;
   removeNote: (id: string) => void;
   setNotesLock: (lock: NotesLock | undefined) => void;

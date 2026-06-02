@@ -11,6 +11,7 @@ import {
   PATH_TEAMS,
   PATH_TODOS,
 } from '../lib/routes';
+import { plainTextFromBodyFields } from '../lib/richTextBody';
 import { teamBase, teamPeople, teamPerson } from '../lib/teamPaths';
 import type { Item, Note, Person, Team, TodoItem } from '../model';
 import {
@@ -343,7 +344,9 @@ function buildCommands(
   }
 
   for (const t of data.todoItems as TodoItem[]) {
-    if (!t.title) continue;
+    const bodyPlain = (plainTextFromBodyFields(t) || t.body || '').trim();
+    const title = (t.title || '').trim();
+    if (!title && !bodyPlain) continue;
     // Status hint mirrors the To-dos page label so the palette and the
     // page agree on phrasing. Fall back to "Open" for the default `todo`
     // status — that's the most natural one-word verb for "still pending".
@@ -358,10 +361,11 @@ function buildCommands(
     cmds.push({
       id: `todo-${t.id}`,
       group: 'To-dos',
-      label: t.title,
+      label: title || (bodyPlain.length > 80 ? `${bodyPlain.slice(0, 77)}…` : bodyPlain) || 'Untitled task',
       hint,
+      searchText: bodyPlain || undefined,
       icon: <IcListTodo size={16} />,
-      run: () => navigate(PATH_TODOS),
+      run: () => navigate(`${PATH_TODOS}?focus=${encodeURIComponent(t.id)}`),
     });
   }
 
@@ -373,7 +377,8 @@ function buildCommands(
   // remembers typing finds the right note even when its title is generic.
   // Clicking a hit navigates to /notes?id=<id>; the NotesPage selects
   // that note on mount and strips the query so a refresh doesn't keep
-  // re-selecting.
+  // re-selecting. To-do hits use /todos?focus=<id> for the same deep-link
+  // scroll + highlight behaviour TodosPage already implements for backlinks.
   for (const n of data.notes as Note[]) {
     const title = (n.title || '').trim();
     if (!title && n.locked) continue; // nothing to search/show
@@ -382,7 +387,7 @@ function buildCommands(
       group: 'Notes',
       label: title || 'Untitled note',
       hint: n.locked ? 'Locked' : undefined,
-      searchText: n.locked ? undefined : n.body,
+      searchText: n.locked ? undefined : plainTextFromBodyFields(n) || n.body,
       icon: n.locked ? <IcLock size={16} /> : <IcStickyNote size={16} />,
       run: () => navigate(`${PATH_NOTES}?id=${encodeURIComponent(n.id)}`),
     });

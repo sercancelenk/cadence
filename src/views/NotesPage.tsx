@@ -2,7 +2,20 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppData } from '../AppDataContext';
 import { useAccount } from '../AccountContext';
-import { MarkdownEditor } from '../components/ui/MarkdownEditor';
+import {
+  noteBodyPatchIsNoOp,
+  plainTextFromBodyFields,
+  richTextPayloadToBodyFields,
+  type RichTextBodyFields,
+} from '../lib/richTextBody';
+import type { RichTextPayload } from '../lib/richText';
+const RichTextEditor = lazy(() =>
+  import('../components/ui/RichTextEditor').then((m) => ({ default: m.RichTextEditor })),
+);
+
+function prefetchRichTextEditor() {
+  void import('../components/ui/RichTextEditor');
+}
 import {
   IcArrowLeft,
   IcCheck,
@@ -129,6 +142,7 @@ const FORCE_RESET_PHRASE = 'DELETE LOCKED NOTES';
  */
 export function NotesPage() {
   const { data, addNote, patchNote, replaceNote, removeNote, setNotesLock, update } = useAppData();
+  const { user } = useAccount();
   const unlock = useNotesUnlock();
   const account = useAccount();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -207,10 +221,16 @@ export function NotesPage() {
 
   /** Plaintext for the currently-displayed note (keyed by id to survive our
    *  own re-encryption re-renders). */
-  const [decrypted, setDecrypted] = useState<{ noteId: string; body: string } | null>(null);
+  const [decrypted, setDecrypted] = useState<
+    ({ noteId: string } & RichTextBodyFields) | null
+  >(null);
   /** Monotonic counter that lets a slow encrypt completion drop out if a
    *  newer keystroke already started a more recent encrypt. */
   const encryptGen = useRef(0);
+
+  useEffect(() => {
+    prefetchRichTextEditor();
+  }, []);
 
   // ----- DERIVED ---------------------------------------------------------
 
@@ -331,42 +351,52 @@ export function NotesPage() {
   }, [searchParams, data.notes, setSearchParams]);
 
   /**
-   * Whenever the user picks a note we stamp `lastOpenedAt`. This is the
-   * single source of truth feeding the "Last opened" sort mode — every
-   * other path (deep-link, list click, keyboard nav) ends up going through
-   * `selectedId`, so we don't have to hook each call-site individually.
-   *
-   * We intentionally do NOT touch `updatedAt` here: opening a note is not
-   * an edit and shouldn't bubble that note to the top of the default
-   * (Last updated) view.
+   * Stamp `lastOpenedAt` only while "Last opened" sort is active — otherwise
+   * we'd churn the store on every selection without affecting list order.
    */
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId || sortMode !== 'opened') return;
     const n = data.notes.find((x) => x.id === selectedId);
     if (!n) return;
     const now = new Date().toISOString();
-    // Cheap throttle: don't churn the store if we just stamped this note.
     if (n.lastOpenedAt && now.slice(0, 16) === n.lastOpenedAt.slice(0, 16)) return;
     patchNote(selectedId, { lastOpenedAt: now });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+  }, [selectedId, sortMode]);
 
   const selected = useMemo(
     () => (selectedId ? notes.find((n) => n.id === selectedId) ?? null : null),
     [notes, selectedId],
   );
 
+  /** Plaintext cache for the selected note only — never read `decrypted` without this guard. */
+  const decryptedForSelected = useMemo(() => {
+    if (!selected || !decrypted || decrypted.noteId !== selected.id) return null;
+    return decrypted;
+  }, [selected, decrypted]);
+
   /** True when the editor has plaintext for the selected note. */
   const editorReady =
-    !!selected && (!selected.locked || decrypted?.noteId === selected.id);
+    !!selected && (!selected.locked || !!decryptedForSelected);
+
+  const editorBodyFormat =
+    selected?.bodyFormat ?? decryptedForSelected?.bodyFormat ?? 'auto';
 
   const editorBody = !selected
     ? ''
     : selected.locked
-      ? decrypted?.noteId === selected.id
-        ? decrypted.body
-        : ''
-      : selected.body;
+      ? decryptedForSelected?.body ?? ''
+      : selected.body ?? '';
+
+  const notePlainText = (n: Note, decryptedBody?: RichTextBodyFields | null) => {
+    if (n.locked) {
+      if (decryptedBody?.noteId === n.id) {
+        return plainTextFromBodyFields(decryptedBody);
+      }
+      return '';
+    }
+    return plainTextFromBodyFields(n);
+  };
 
   // ----- CLEAR CACHED PLAINTEXT WHEN SELECTION CHANGES ------------------
   //
@@ -413,7 +443,12 @@ export function NotesPage() {
                 setPendingIntent('view');
                 return;
               }
-              setDecrypted({ noteId: targetNote.id, body });
+              setDecrypted({
+                noteId: targetNote.id,
+                body,
+                bodyFormat: targetNote.bodyFormat,
+                bodyPlainText: targetNote.bodyPlainText,
+              });
             } finally {
               setBusy(false);
             }
@@ -430,7 +465,14 @@ export function NotesPage() {
                 : targetNote.body
               : targetNote.body;
             const cipher = await encryptBodyWithMaster(key, bodyToLock);
-            replaceNote({ ...targetNote, body: '', locked: true, cipher });
+            replaceNote({
+              ...targetNote,
+              body: '',
+              locked: true,
+              cipher,
+              bodyFormat: targetNote.bodyFormat ?? decrypted?.bodyFormat,
+              bodyPlainText: undefined,
+            });
             // CRITICAL for the strict-lock UX: drop the cached plaintext
             // immediately so the editor re-renders the "🔒 Locked" screen
             // instead of continuing to show the body the user just locked.
@@ -457,8 +499,20 @@ export function NotesPage() {
               setPendingIntent('unlock-selected');
               return;
             }
-            replaceNote({ ...targetNote, body, locked: false, cipher: undefined });
-            setDecrypted({ noteId: targetNote.id, body });
+            replaceNote({
+              ...targetNote,
+              body,
+              locked: false,
+              cipher: undefined,
+              bodyFormat: targetNote.bodyFormat,
+              bodyPlainText: targetNote.bodyPlainText,
+            });
+            setDecrypted({
+              noteId: targetNote.id,
+              body,
+              bodyFormat: targetNote.bodyFormat,
+              bodyPlainText: targetNote.bodyPlainText,
+            });
           } finally {
             setBusy(false);
           }
@@ -681,21 +735,33 @@ export function NotesPage() {
     patchNote(selected.id, { title: next });
   };
 
-  const onChangeBody = (next: string) => {
+  const onChangeBody = (payload: RichTextPayload) => {
     if (!selected) return;
+    const fields = payload.plainText.trim()
+      ? richTextPayloadToBodyFields(payload)
+      : { body: '', bodyFormat: undefined, bodyPlainText: undefined };
+    if (noteBodyPatchIsNoOp(selected, fields)) return;
     if (!selected.locked) {
-      setDecrypted({ noteId: selected.id, body: next });
-      patchNote(selected.id, { body: next });
+      setDecrypted({ noteId: selected.id, ...fields });
+      patchNote(selected.id, fields);
       return;
     }
-    setDecrypted({ noteId: selected.id, body: next });
+    setDecrypted({ noteId: selected.id, ...fields });
     const key = unlock.read();
     if (!key) return;
+    if (!payload.plainText.trim()) return;
     const myGen = ++encryptGen.current;
     void (async () => {
-      const cipher = await encryptBodyWithMaster(key, next);
+      const cipher = await encryptBodyWithMaster(key, fields.body);
       if (myGen !== encryptGen.current) return;
-      replaceNote({ ...selected, body: '', locked: true, cipher });
+      replaceNote({
+        ...selected,
+        body: '',
+        locked: true,
+        cipher,
+        bodyFormat: fields.bodyFormat,
+        bodyPlainText: undefined,
+      });
     })();
   };
 
@@ -1022,9 +1088,9 @@ export function NotesPage() {
                 n.locked && decrypted?.noteId === n.id;
               const previewText = n.locked
                 ? isViewingLocked
-                  ? decrypted!.body
+                  ? notePlainText(n, decrypted)
                   : 'Locked note'
-                : n.body || '';
+                : notePlainText(n);
               const preview = previewText.replace(/\s+/g, ' ').slice(0, 80);
               const title = (n.title || PLACEHOLDER_TITLE).trim() || PLACEHOLDER_TITLE;
               const isManual = sortMode === 'manual';
@@ -1141,7 +1207,12 @@ export function NotesPage() {
                   // click-time so subsequent sidebar navigation
                   // doesn't reset the dialog state.
                   <IconButton
-                    onClick={() => setExtractorContext({ noteId: selected.id, notes: editorBody })}
+                    onClick={() =>
+                      setExtractorContext({
+                        noteId: selected.id,
+                        notes: notePlainText(selected, decryptedForSelected),
+                      })
+                    }
                     disabled={selected.locked && !editorReady}
                     label="Extract tasks from this note"
                     tooltip="Extract tasks from this note"
@@ -1246,20 +1317,23 @@ export function NotesPage() {
               </div>
             ) : (
               <div className="notes-page__editor">
-                {/* Default to the rendered preview when arriving at a note —
-                    the user asked for reading-mode by default; clicking
-                    "Write" inside the editor flips to edit mode (and
-                    the toolbar). We also re-key the editor on note id so
-                    the mode resets per note instead of bleeding over from
-                    whichever note the user was just editing. */}
-                <MarkdownEditor
-                  key={selected.id}
-                  value={editorBody}
-                  onChange={onChangeBody}
-                  placeholder="Type your note in Markdown…"
-                  rows={18}
-                  initialMode="preview"
-                />
+                <Suspense
+                  fallback={
+                    <div className="notes-page__editor-loading muted small">Loading editor…</div>
+                  }
+                >
+                  <RichTextEditor
+                    key={selected.id}
+                    value={editorBody}
+                    valueFormat={editorBodyFormat}
+                    onChange={onChangeBody}
+                    placeholder="Write your note…"
+                    minHeight={360}
+                    editable={editorReady}
+                    attachmentScope={{ documentKind: 'note', documentId: selected.id }}
+                    attachmentUserId={user?.id ?? 'anonymous'}
+                  />
+                </Suspense>
 
                 <NoteBacklinks
                   noteId={selected.id}

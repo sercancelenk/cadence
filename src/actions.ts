@@ -581,7 +581,14 @@ export function addTodoItem(
   data: AppData,
   groupId: string,
   title: string,
-  extras: { priority?: Priority; dueAt?: string; body?: string; sourceNoteId?: string } = {},
+  extras: {
+    priority?: Priority;
+    dueAt?: string;
+    body?: string;
+    bodyFormat?: 'markdown' | 'prosemirror';
+    bodyPlainText?: string;
+    sourceNoteId?: string;
+  } = {},
 ): AppData {
   const gid = data.todoGroups.some((g) => g.id === groupId) ? groupId : data.todoGroups[0]?.id;
   if (!gid) return data;
@@ -621,6 +628,8 @@ export function addTodoItem(
     ...(extras.priority ? { priority: extras.priority } : {}),
     ...(extras.dueAt ? { dueAt: extras.dueAt } : {}),
     ...(body ? { body } : {}),
+    ...(extras.bodyFormat ? { bodyFormat: extras.bodyFormat } : {}),
+    ...(extras.bodyPlainText?.trim() ? { bodyPlainText: extras.bodyPlainText.trim() } : {}),
     ...(sourceNoteId ? { sourceNoteId } : {}),
   };
   return { ...data, todoItems: [item, ...data.todoItems] };
@@ -649,6 +658,8 @@ export function updateTodoItem(
       TodoItem,
       | 'title'
       | 'body'
+      | 'bodyFormat'
+      | 'bodyPlainText'
       | 'groupId'
       | 'dueAt'
       | 'done'
@@ -717,11 +728,21 @@ export function updateTodoItem(
         const trimmed = patch.body.trim();
         nextBody = trimmed ? patch.body : undefined;
       }
+      const nextBodyFormat =
+        patch.bodyFormat !== undefined ? patch.bodyFormat || undefined : x.bodyFormat;
+      let nextBodyPlainText =
+        patch.bodyPlainText !== undefined ? patch.bodyPlainText || undefined : x.bodyPlainText;
+      if (nextBody === undefined) {
+        nextBodyFormat = undefined;
+        nextBodyPlainText = undefined;
+      }
 
       return {
         ...x,
         title: patch.title !== undefined ? patch.title.trim() || x.title : x.title,
         body: nextBody,
+        bodyFormat: nextBodyFormat,
+        bodyPlainText: nextBodyPlainText,
         groupId,
         dueAt: patch.dueAt !== undefined ? patch.dueAt || undefined : x.dueAt,
         status: nextStatus,
@@ -856,14 +877,19 @@ export function replaceNote(data: AppData, note: Note): AppData {
 export function patchNote(
   data: AppData,
   id: string,
-  patch: Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'sortOrder' | 'lastOpenedAt'>>,
+  patch: Partial<
+    Pick<
+      Note,
+      'title' | 'body' | 'bodyFormat' | 'bodyPlainText' | 'pinned' | 'sortOrder' | 'lastOpenedAt'
+    >
+  >,
 ): AppData {
-  // Distinguish user-visible edits (title/body/pinned) from bookkeeping
-  // touches (sortOrder, lastOpenedAt). Bookkeeping touches must NOT bump
-  // `updatedAt` — otherwise opening or re-ordering a note would push it
-  // to the top of the "Last updated" list, which is the exact opposite
-  // of what those sort modes are supposed to expose.
-  const isContentChange = 'title' in patch || 'body' in patch || 'pinned' in patch;
+  const isContentChange =
+    'title' in patch ||
+    'body' in patch ||
+    'bodyPlainText' in patch ||
+    'bodyFormat' in patch ||
+    'pinned' in patch;
   return {
     ...data,
     notes: data.notes.map((n) => {

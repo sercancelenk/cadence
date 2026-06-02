@@ -8,16 +8,35 @@ import {
   type FormEvent,
 } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
+import {
+  plainTextFromBodyFields,
+  richTextPayloadToBodyFields,
+  type RichTextBodyFields,
+} from '../lib/richTextBody';
 import { PATH_LOGIN, PATH_NOTES, PATH_REGISTER, PATH_TODOS } from '../lib/routes';
 import { AutoResizeTextarea } from './ui/AutoResizeTextarea';
 import { IcListTodo, IcPlus, IcStickyNote, IcX } from './icons';
 
-const MarkdownEditor = lazy(() =>
-  import('./ui/MarkdownEditor').then((m) => ({ default: m.MarkdownEditor })),
+const RichTextEditor = lazy(() =>
+  import('./ui/RichTextEditor').then((m) => ({ default: m.RichTextEditor })),
 );
 
 type Mode = 'task' | 'note';
+
+function emptyBodyFields(): RichTextBodyFields {
+  return { body: '', bodyFormat: undefined, bodyPlainText: undefined };
+}
+
+function todoBodyExtras(fields: RichTextBodyFields) {
+  if (!plainTextFromBodyFields(fields).trim()) return undefined;
+  return {
+    body: fields.body,
+    bodyFormat: fields.bodyFormat,
+    bodyPlainText: fields.bodyPlainText,
+  };
+}
 
 /**
  * Floating "+" button anchored to the bottom-right corner of the app
@@ -26,15 +45,6 @@ type Mode = 'task' | 'note';
  * /notes first. Each shortcut opens a focused dialog that gathers
  * just enough fields to create the item, then drops the user on the
  * matching page so they can keep iterating.
- *
- * Design notes:
- *  - Mounted globally inside Layout, so the FAB rides above every
- *    protected route. Login/Register live outside Layout already.
- *  - The dialog re-uses the same MarkdownEditor lazy-loaded by the
- *    Todos and Notes pages, so first paint of the FAB itself stays
- *    cheap.
- *  - The menu / dialog state is kept locally — nothing about quick-add
- *    needs to persist across reloads.
  */
 export function QuickAddFab() {
   const location = useLocation();
@@ -42,9 +52,6 @@ export function QuickAddFab() {
   const [mode, setMode] = useState<Mode | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  // Defensive: never render on auth pages even if somebody mounts this
-  // component outside Layout in the future. Layout itself wraps only
-  // protected routes today, so this is purely belt-and-braces.
   const onAuthPage =
     location.pathname.startsWith(PATH_LOGIN) || location.pathname.startsWith(PATH_REGISTER);
 
@@ -127,6 +134,7 @@ const NEW_LIST_TOKEN = '__new__';
 
 function QuickAddDialog({ mode, onClose }: DialogProps) {
   const { data, addTodoGroup, addTodoItem, addNote, patchNote } = useAppData();
+  const { user } = useAccount();
   const navigate = useNavigate();
 
   const activeGroups = useMemo(
@@ -134,27 +142,28 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
     [data.todoGroups],
   );
 
-  // Restore the most recent target list so a user that keeps adding tasks
-  // into "Work" doesn't have to pick the same list every time. Fall back to
-  // the first non-archived list, then to whatever exists. The token survives
-  // across sessions but is harmless if the underlying list is deleted —
-  // we just fall through to the default.
   const initialGroupId = useMemo(() => {
     try {
       const stored = localStorage.getItem(LAST_LIST_KEY);
       if (stored && activeGroups.some((g) => g.id === stored)) return stored;
     } catch {
-      /* localStorage may be disabled (private windows) — ignore. */
+      /* ignore */
     }
     return activeGroups[0]?.id ?? data.todoGroups[0]?.id ?? '';
   }, [activeGroups, data.todoGroups]);
 
   const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
+  const [bodyFields, setBodyFields] = useState<RichTextBodyFields>(() => emptyBodyFields());
+  const [noteId, setNoteId] = useState<string | null>(null);
   const [groupId, setGroupId] = useState(initialGroupId);
   const [newListName, setNewListName] = useState('');
   const [creatingList, setCreatingList] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+
+  useEffect(() => {
+    if (mode !== 'note' || noteId) return;
+    setNoteId(addNote());
+  }, [mode, noteId, addNote]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -167,39 +176,41 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
   const taskTargetReady =
     creatingList ? newListName.trim().length > 0 : !!groupId && groupId !== NEW_LIST_TOKEN;
 
+  const bodyPlain = plainTextFromBodyFields(bodyFields);
+
   const canSubmit =
     mode === 'task'
       ? title.trim().length > 0 && taskTargetReady
-      : title.trim().length > 0 || body.trim().length > 0;
+      : title.trim().length > 0 || !!bodyPlain;
+
+  const attachmentUserId = user?.id ?? 'anonymous';
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault();
     if (!canSubmit) return;
     if (mode === 'task') {
       const trimmedTitle = title.trim();
-      const trimmedBody = body.trim();
-      const targetGroupId = creatingList
-        ? addTodoGroup(newListName.trim())
-        : groupId;
-      addTodoItem(
-        targetGroupId,
-        trimmedTitle,
-        trimmedBody ? { body: trimmedBody } : undefined,
-      );
+      const targetGroupId = creatingList ? addTodoGroup(newListName.trim()) : groupId;
+      addTodoItem(targetGroupId, trimmedTitle, todoBodyExtras(bodyFields));
       try {
         localStorage.setItem(LAST_LIST_KEY, targetGroupId);
       } catch {
-        /* ignore — see initialGroupId comment. */
+        /* ignore */
       }
       onClose();
       navigate(PATH_TODOS);
       return;
     }
-    const id = addNote();
-    patchNote(id, {
+    const id = noteId ?? addNote();
+    const notePatch: Parameters<typeof patchNote>[1] = {
       title: title.trim() || 'Untitled',
-      body,
-    });
+    };
+    if (bodyPlain) {
+      notePatch.body = bodyFields.body;
+      notePatch.bodyFormat = bodyFields.bodyFormat;
+      notePatch.bodyPlainText = bodyFields.bodyPlainText;
+    }
+    patchNote(id, notePatch);
     onClose();
     navigate(PATH_NOTES);
   };
@@ -217,15 +228,8 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
           <span className="quick-add-dialog__icon" aria-hidden>
             {isTask ? <IcListTodo size={18} /> : <IcStickyNote size={18} />}
           </span>
-          <h2 className="quick-add-dialog__title">
-            {isTask ? 'New task' : 'New note'}
-          </h2>
-          <button
-            type="button"
-            className="quick-add-dialog__close"
-            aria-label="Close"
-            onClick={onClose}
-          >
+          <h2 className="quick-add-dialog__title">{isTask ? 'New task' : 'New note'}</h2>
+          <button type="button" className="quick-add-dialog__close" aria-label="Close" onClick={onClose}>
             <IcX size={18} />
           </button>
         </header>
@@ -273,8 +277,6 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
                         setCreatingList(false);
                         setNewListName('');
                       }}
-                      aria-label="Pick an existing list instead"
-                      title="Pick an existing list instead"
                     >
                       Use existing
                     </button>
@@ -309,17 +311,15 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
               {showDetails ? (
                 <label className="quick-add-dialog__field">
                   <span className="quick-add-dialog__label">Details</span>
-                  <Suspense
-                    fallback={
-                      <div className="quick-add-dialog__loading muted small">Loading editor…</div>
-                    }
-                  >
-                    <MarkdownEditor
-                      value={body}
-                      onChange={setBody}
-                      placeholder="Optional details — notes, links, checklists, code… markdown supported."
-                      rows={6}
-                      initialMode="edit"
+                  <Suspense fallback={<div className="quick-add-dialog__loading muted small">Loading editor…</div>}>
+                    <RichTextEditor
+                      value={bodyFields.body}
+                      valueFormat={bodyFields.bodyFormat ?? 'auto'}
+                      onChange={(payload) => setBodyFields(richTextPayloadToBodyFields(payload))}
+                      placeholder="Optional details — paste screenshots, add tables…"
+                      minHeight={140}
+                      attachmentScope={{ documentKind: 'todo', documentId: `quickadd-${groupId}` }}
+                      attachmentUserId={attachmentUserId}
                     />
                   </Suspense>
                 </label>
@@ -339,24 +339,26 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
               </label>
               <label className="quick-add-dialog__field">
                 <span className="quick-add-dialog__label">Body</span>
-                <Suspense
-                  fallback={
-                    <div className="quick-add-dialog__loading muted small">Loading editor…</div>
-                  }
-                >
-                  <MarkdownEditor
-                    value={body}
-                    onChange={setBody}
-                    placeholder="Write here — markdown, checklists, links…"
-                    rows={8}
-                    initialMode="edit"
-                  />
+                <Suspense fallback={<div className="quick-add-dialog__loading muted small">Loading editor…</div>}>
+                  {noteId ? (
+                    <RichTextEditor
+                      value={bodyFields.body}
+                      valueFormat={bodyFields.bodyFormat ?? 'auto'}
+                      onChange={(payload) => setBodyFields(richTextPayloadToBodyFields(payload))}
+                      placeholder="Write here…"
+                      minHeight={180}
+                      attachmentScope={{ documentKind: 'note', documentId: noteId }}
+                      attachmentUserId={attachmentUserId}
+                    />
+                  ) : (
+                    <div className="quick-add-dialog__loading muted small">Preparing editor…</div>
+                  )}
                 </Suspense>
               </label>
               {data.notesLock ? (
                 <p className="quick-add-dialog__hint muted small">
-                  Notes are encrypted. This note will be added unlocked; you can lock it from the
-                  Notes page after it's created.
+                  Notes are encrypted. This note will be added unlocked; you can lock it from the Notes page
+                  after it&apos;s created.
                 </p>
               ) : null}
             </>
@@ -381,11 +383,7 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
             <button type="button" className="btn" onClick={onClose}>
               Cancel
             </button>
-            <button
-              type="submit"
-              className="btn btn--primary"
-              disabled={!canSubmit}
-            >
+            <button type="submit" className="btn btn--primary" disabled={!canSubmit}>
               {isTask ? 'Add task' : 'Add note'}
             </button>
           </div>

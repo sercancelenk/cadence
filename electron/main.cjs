@@ -34,7 +34,9 @@ const {
   BrowserWindow,
   Menu,
   Notification,
+  dialog,
   ipcMain,
+  protocol,
   shell,
   session,
   safeStorage,
@@ -78,6 +80,20 @@ const {
 // will cache the resolved path for the rest of the process.
 const IS_DEV = !!process.env.VITE_DEV_SERVER_URL;
 app.setName(IS_DEV ? `${APP_NAME} (Dev)` : APP_NAME);
+
+// Custom protocol for rich-text image sidecars (`cadence-attachment://…`).
+// Must be registered before `app.ready` so `<img src>` loads work in the renderer.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'cadence-attachment',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
 {
   const appDataDir = app.getPath('appData');
   const legacyDir = path.join(appDataDir, IS_DEV ? `${APP_NAME_LEGACY} (Dev)` : APP_NAME_LEGACY);
@@ -169,6 +185,7 @@ const ACCOUNTS_FILENAME = `${DATA_FILE_PREFIX}-accounts.json`;
 const SESSION_FILENAME = `${DATA_FILE_PREFIX}-session.json`;
 const AUTH_FILENAME = 'auth-lock.json';
 const BACKUPS_DIRNAME = 'backups';
+const ATTACHMENTS_DIRNAME = 'attachments';
 /**
  * Per-user file holding the data-encryption key wrapped by Electron's
  * `safeStorage` (which delegates to the OS Keychain on macOS, DPAPI on
@@ -228,6 +245,160 @@ function authPath() {
 
 function backupsDirForUser(userId) {
   return path.join(app.getPath('userData'), BACKUPS_DIRNAME, userId || '_anon');
+}
+
+function attachmentsDirForUser(userId) {
+  return path.join(app.getPath('userData'), ATTACHMENTS_DIRNAME, userId || '_anon');
+}
+
+/** Safe attachment id for filesystem use (matches renderer validation). */
+function sanitizeAttachmentId(id) {
+  const s = String(id || '').trim();
+  if (!/^[a-zA-Z0-9_-]{8,128}$/.test(s)) return null;
+  return s;
+}
+
+function attachmentPathForUser(userId, attachmentId, encrypted) {
+  const safe = sanitizeAttachmentId(attachmentId);
+  if (!safe || !userId) return null;
+  const ext = encrypted ? '.cadenc' : '.bin';
+  return path.join(attachmentsDirForUser(userId), `${safe}${ext}`);
+}
+
+const ATTACHMENT_URI_PREFIX = 'cadence-attachment://';
+const ATTACHMENT_DRAFT_GRACE_MS = 24 * 60 * 60 * 1000;
+
+function parseAttachmentIdFromSrc(src) {
+  if (!src || typeof src !== 'string') return null;
+  if (!src.startsWith(ATTACHMENT_URI_PREFIX)) return null;
+  return sanitizeAttachmentId(src.slice(ATTACHMENT_URI_PREFIX.length).trim());
+}
+
+function collectAttachmentIdsFromDocNode(node, out) {
+  if (!node || typeof node !== 'object') return;
+  if (node.type === 'image' && node.attrs && typeof node.attrs === 'object') {
+    const id =
+      (typeof node.attrs.attachmentId === 'string' && sanitizeAttachmentId(node.attrs.attachmentId)) ||
+      parseAttachmentIdFromSrc(node.attrs.src);
+    if (id) out.add(id);
+  }
+  if (Array.isArray(node.content)) {
+    for (const child of node.content) collectAttachmentIdsFromDocNode(child, out);
+  }
+}
+
+function collectReferencedAttachmentIdsFromPayload(payload) {
+  const ids = new Set();
+  const scan = (body, bodyFormat) => {
+    if (bodyFormat !== 'prosemirror' || !body || typeof body !== 'string' || !body.trim()) return;
+    try {
+      collectAttachmentIdsFromDocNode(JSON.parse(body), ids);
+    } catch {
+      /* malformed doc — skip */
+    }
+  };
+  for (const n of payload?.notes || []) scan(n.body, n.bodyFormat);
+  for (const t of payload?.todoItems || []) scan(t.body, t.bodyFormat);
+  return ids;
+}
+
+function listAttachmentIdsOnDisk(userId) {
+  const dir = attachmentsDirForUser(userId);
+  if (!fs.existsSync(dir)) return [];
+  const ids = new Set();
+  for (const name of fs.readdirSync(dir)) {
+    const m = name.match(/^(.+)\.(cadenc|bin)$/);
+    if (!m) continue;
+    const id = sanitizeAttachmentId(m[1]);
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+
+function deleteAttachmentFiles(userId, attachmentId) {
+  for (const enc of [true, false]) {
+    const p = attachmentPathForUser(userId, attachmentId, enc);
+    if (p && fs.existsSync(p)) {
+      try {
+        fs.unlinkSync(p);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+function pruneOrphanAttachments(userId, payload) {
+  try {
+    const referenced = collectReferencedAttachmentIdsFromPayload(payload);
+    const now = Date.now();
+    let pruned = 0;
+    for (const id of listAttachmentIdsOnDisk(userId)) {
+      if (referenced.has(id)) continue;
+      if (id.includes('-new-')) {
+        const encPath = attachmentPathForUser(userId, id, true);
+        const plainPath = attachmentPathForUser(userId, id, false);
+        const p =
+          (encPath && fs.existsSync(encPath) && encPath) ||
+          (plainPath && fs.existsSync(plainPath) && plainPath) ||
+          null;
+        if (p) {
+          const age = now - fs.statSync(p).mtimeMs;
+          if (age < ATTACHMENT_DRAFT_GRACE_MS) continue;
+        }
+      }
+      deleteAttachmentFiles(userId, id);
+      pruned += 1;
+    }
+    return { ok: true, pruned };
+  } catch (err) {
+    console.warn('[cadence] attachment GC failed', err);
+    return { ok: false, error: String(err?.message || err) };
+  }
+}
+
+function snapshotAttachmentsForUser(userId, label, ts) {
+  try {
+    const srcDir = attachmentsDirForUser(userId);
+    if (!fs.existsSync(srcDir)) return null;
+    const files = fs.readdirSync(srcDir).filter((n) => n.endsWith('.cadenc') || n.endsWith('.bin'));
+    if (!files.length) return null;
+    const dir = backupsDirForUser(userId);
+    fs.mkdirSync(dir, { recursive: true });
+    const targetDir = path.join(dir, `attachments-${label}-${ts}`);
+    fs.mkdirSync(targetDir, { recursive: true });
+    for (const name of files) {
+      fs.copyFileSync(path.join(srcDir, name), path.join(targetDir, name));
+    }
+    return targetDir;
+  } catch (err) {
+    console.warn('[cadence] attachment snapshot failed (continuing)', err);
+    return null;
+  }
+}
+
+function restoreAttachmentsFromBackupDir(userId, backupAttDir) {
+  if (!backupAttDir || !fs.existsSync(backupAttDir)) return { ok: true, restored: 0 };
+  const liveDir = attachmentsDirForUser(userId);
+  fs.mkdirSync(liveDir, { recursive: true });
+  let restored = 0;
+  for (const name of fs.readdirSync(backupAttDir)) {
+    if (!name.endsWith('.cadenc') && !name.endsWith('.bin')) continue;
+    fs.copyFileSync(path.join(backupAttDir, name), path.join(liveDir, name));
+    restored += 1;
+  }
+  return { ok: true, restored };
+}
+
+function pairedAttachmentsBackupDir(dataBackupPath) {
+  const base = path.basename(dataBackupPath, '.json');
+  if (!base.startsWith('data-')) return null;
+  const attDir = path.join(path.dirname(dataBackupPath), base.replace(/^data-/, 'attachments-'));
+  return fs.existsSync(attDir) ? attDir : null;
+}
+
+function importAttachmentsFromDir(userId, srcDir) {
+  return restoreAttachmentsFromBackupDir(userId, srcDir);
 }
 
 function keyCachePath(userId) {
@@ -437,6 +608,137 @@ function decryptPayload(envelope, key) {
   }
 }
 
+/** AES-256-GCM encrypt binary → same on-disk envelope as data file, with `binary: true`. */
+function encryptBuffer(buffer, key) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([cipher.update(buffer), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return JSON.stringify({
+    magic: DATA_FILE_MAGIC,
+    v: 1,
+    alg: 'AES-256-GCM',
+    binary: true,
+    iv: iv.toString('base64'),
+    tag: tag.toString('base64'),
+    ct: ct.toString('base64'),
+  });
+}
+
+/** Decrypt binary envelope → Buffer or null. */
+function decryptBuffer(envelopeText, key) {
+  try {
+    const o = JSON.parse(envelopeText);
+    if (!o || o.magic !== DATA_FILE_MAGIC) return null;
+    const iv = Buffer.from(o.iv, 'base64');
+    const tag = Buffer.from(o.tag, 'base64');
+    const ct = Buffer.from(o.ct, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ct), decipher.final()]);
+  } catch {
+    return null;
+  }
+}
+
+function isEncryptedEnvelope(text) {
+  try {
+    const o = JSON.parse(text);
+    return o && o.magic === DATA_FILE_MAGIC && typeof o.iv === 'string' && typeof o.ct === 'string';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Atomic binary write (same durability guarantees as `writeJsonText`).
+ */
+function writeBinaryFile(filePath, buffer) {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const tmp = `${filePath}.tmp`;
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      fs.writeSync(fd, buffer, 0, buffer.length);
+      try {
+        fs.fsyncSync(fd);
+      } catch (err) {
+        console.warn('[cadence] fsync(file) failed (continuing)', err);
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, filePath);
+    try {
+      const dirFd = fs.openSync(path.dirname(filePath), 'r');
+      try {
+        fs.fsyncSync(dirFd);
+      } finally {
+        fs.closeSync(dirFd);
+      }
+    } catch {
+      /* Windows may not fsync directories */
+    }
+    return true;
+  } catch (err) {
+    console.error('[cadence] failed to write binary', filePath, err);
+    return false;
+  }
+}
+
+function readAttachmentBytes(userId, attachmentId) {
+  const key = dataKeys.get(userId);
+  const encPath = attachmentPathForUser(userId, attachmentId, true);
+  const plainPath = attachmentPathForUser(userId, attachmentId, false);
+  if (key && encPath && fs.existsSync(encPath)) {
+    const envelope = fs.readFileSync(encPath, 'utf8');
+    return decryptBuffer(envelope, key);
+  }
+  if (plainPath && fs.existsSync(plainPath)) {
+    const raw = fs.readFileSync(plainPath);
+    if (isEncryptedEnvelope(raw.toString('utf8'))) {
+      if (!key) return null;
+      return decryptBuffer(raw.toString('utf8'), key);
+    }
+    return raw;
+  }
+  return null;
+}
+
+function writeAttachmentBytes(userId, attachmentId, buffer, mimeType) {
+  const key = dataKeys.get(userId);
+  const filePath = attachmentPathForUser(userId, attachmentId, !!key);
+  if (!filePath) return { ok: false, error: 'Invalid attachment id.' };
+  const out = key ? Buffer.from(encryptBuffer(buffer, key), 'utf8') : buffer;
+  const ok = writeBinaryFile(filePath, out);
+  if (!ok) return { ok: false, error: 'Could not write attachment file.' };
+  return { ok: true, mimeType: mimeType || 'application/octet-stream' };
+}
+
+function detectAttachmentMime(bytes) {
+  if (!bytes || bytes.length < 2) return 'application/octet-stream';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
+  if (bytes[0] === 0x89 && bytes[1] === 0x50) return 'image/png';
+  if (bytes[0] === 0x47 && bytes[1] === 0x49) return 'image/gif';
+  if (bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') {
+    return 'image/webp';
+  }
+  return 'image/webp';
+}
+
+function parseAttachmentUrl(urlString) {
+  try {
+    const u = new URL(urlString);
+    const fromHost = u.hostname && !['localhost', '127.0.0.1'].includes(u.hostname) ? u.hostname : '';
+    const fromPath = u.pathname.replace(/^\//, '');
+    const raw = fromHost || fromPath || urlString.replace(/^cadence-attachment:\/\//i, '');
+    return sanitizeAttachmentId(decodeURIComponent(raw.split('?')[0].split('#')[0] || ''));
+  } catch {
+    const raw = String(urlString || '').replace(/^cadence-attachment:\/\//i, '');
+    return sanitizeAttachmentId(decodeURIComponent(raw.split('?')[0].split('#')[0] || ''));
+  }
+}
+
 /**
  * Read-result discriminated union. `ok=false` distinguishes "no file" from
  * "file exists but undecipherable", which is critical for callers that need
@@ -504,6 +806,7 @@ function snapshotCurrentDataFile(userId, label = 'pre-write') {
     const name = `data-${label}-${ts}.json`;
     const target = path.join(dir, name);
     fs.copyFileSync(live, target);
+    snapshotAttachmentsForUser(userId, label, ts);
     pruneBackups(dir);
     return target;
   } catch (err) {
@@ -520,7 +823,35 @@ function pruneBackups(dir) {
       .map((n) => ({ name: n, full: path.join(dir, n), mtime: fs.statSync(path.join(dir, n)).mtimeMs }))
       .sort((a, b) => b.mtime - a.mtime);
     for (const old of entries.slice(BACKUPS_KEEP_MAX)) {
-      try { fs.unlinkSync(old.full); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(old.full);
+      } catch {
+        /* ignore */
+      }
+      const attName = old.name.replace(/^data-/, 'attachments-').replace(/\.json$/, '');
+      const attDir = path.join(dir, attName);
+      if (fs.existsSync(attDir)) {
+        try {
+          fs.rmSync(attDir, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    // Drop orphaned attachment-only folders left from older builds.
+    const keptAtt = new Set(
+      entries.slice(0, BACKUPS_KEEP_MAX).map((e) =>
+        e.name.replace(/^data-/, 'attachments-').replace(/\.json$/, ''),
+      ),
+    );
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.startsWith('attachments-')) continue;
+      if (keptAtt.has(name)) continue;
+      try {
+        fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
     }
   } catch (err) {
     console.warn('[cadence] prune backups failed', err);
@@ -588,6 +919,9 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false } = {
   const json = JSON.stringify(payload);
   const out = key ? encryptPayload(json, key) : json;
   const okWrite = writeJsonText(file, out);
+  if (okWrite) {
+    pruneOrphanAttachments(userId, payload);
+  }
   return okWrite ? { ok: true } : { ok: false, error: 'I/O error while writing data file.' };
 }
 
@@ -1189,6 +1523,79 @@ async function startSyncServer(port = SYNC_DEFAULT_PORT) {
           res.setHeader('Content-Type', 'application/json');
           res.setHeader('ETag', etag);
           res.end(JSON.stringify({ ok: true, ts: new Date().toISOString(), etag, data }));
+          return;
+        }
+
+        if (url.pathname === '/v1/attachments/manifest' && req.method === 'GET') {
+          const ids = listAttachmentIdsOnDisk(uid);
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true, ids }));
+          return;
+        }
+
+        const attGet = url.pathname.match(/^\/v1\/attachments\/([^/]+)$/);
+        if (attGet && req.method === 'GET') {
+          const attId = sanitizeAttachmentId(decodeURIComponent(attGet[1]));
+          if (!attId) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'invalid attachment id' }));
+            return;
+          }
+          const bytes = readAttachmentBytes(uid, attId);
+          if (!bytes?.length) {
+            res.statusCode = 404;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'not found' }));
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('Content-Type', detectAttachmentMime(bytes));
+          res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+          res.end(bytes);
+          return;
+        }
+
+        if (attGet && req.method === 'POST') {
+          const attId = sanitizeAttachmentId(decodeURIComponent(attGet[1]));
+          if (!attId) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: false, error: 'invalid attachment id' }));
+            return;
+          }
+          const chunks = [];
+          let total = 0;
+          let oversized = false;
+          req.on('data', (c) => {
+            if (oversized) return;
+            total += c.length;
+            if (total > 3 * 1024 * 1024) {
+              oversized = true;
+              res.statusCode = 413;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: false, error: 'attachment too large' }));
+              req.destroy();
+              return;
+            }
+            chunks.push(c);
+          });
+          req.on('end', () => {
+            if (oversized) return;
+            const buffer = Buffer.concat(chunks);
+            if (!buffer.length) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: false, error: 'empty body' }));
+              return;
+            }
+            const ct = String(req.headers['content-type'] || 'image/webp');
+            const writeRes = writeAttachmentBytes(uid, attId, buffer, ct);
+            res.statusCode = writeRes.ok ? 200 : 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(writeRes));
+          });
           return;
         }
 
@@ -2127,6 +2534,8 @@ ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
   // Snapshot the existing live file under a "pre-restore" label so the user
   // can undo the restore if they picked the wrong source.
   snapshotCurrentDataFile(uid, 'pre-restore');
+  const attBackup = pairedAttachmentsBackupDir(resolved);
+  if (attBackup) restoreAttachmentsFromBackupDir(uid, attBackup);
   const w = writeUserData(uid, payload, { allowOverwriteUnreadable: true });
   return w.ok ? { ok: true, restoredFrom: path.basename(resolved) } : w;
 });
@@ -2245,6 +2654,7 @@ ipcMain.handle('cache:stats', () => {
     const backupsRoot = path.join(userDataDir, BACKUPS_DIRNAME);
     const backupsSelf = userId ? dirSizeBytes(path.join(backupsRoot, userId)) : { bytes: 0, files: 0 };
     const backupsAll = dirSizeBytes(backupsRoot);
+    const attachmentsSelf = userId ? dirSizeBytes(attachmentsDirForUser(userId)) : { bytes: 0, files: 0 };
 
     const chromiumDirs = chromiumCacheDirs();
     const chromium = chromiumDirs.map((d) => ({ label: d.label, ...dirSizeBytes(d.abs) }));
@@ -2260,6 +2670,8 @@ ipcMain.handle('cache:stats', () => {
       backupsSelfBytes: backupsSelf.bytes,
       backupsSelfCount: backupsSelf.files,
       backupsAllBytes: backupsAll.bytes,
+      attachmentsSelfBytes: attachmentsSelf.bytes,
+      attachmentsSelfCount: attachmentsSelf.files,
       chromiumBytes: chromiumTotal,
       chromiumBreakdown: chromium,
       totalBytes: totalUserData.bytes,
@@ -2302,6 +2714,126 @@ ipcMain.handle('app:showNotification', (_evt, { title, body } = {}) => {
 });
 
 ipcMain.handle('app:userDataPath', () => app.getPath('userData'));
+
+ipcMain.handle('attachment:write', (_evt, payload = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  if (payload.userId && payload.userId !== uid) {
+    return { ok: false, error: 'Session mismatch.' };
+  }
+  const attachmentId = sanitizeAttachmentId(payload.attachmentId);
+  if (!attachmentId) return { ok: false, error: 'Invalid attachment id.' };
+  const dataBase64 = typeof payload.dataBase64 === 'string' ? payload.dataBase64 : '';
+  if (!dataBase64) return { ok: false, error: 'Empty attachment payload.' };
+  let buffer;
+  try {
+    buffer = Buffer.from(dataBase64, 'base64');
+  } catch {
+    return { ok: false, error: 'Invalid attachment encoding.' };
+  }
+  if (!buffer.length) return { ok: false, error: 'Empty attachment payload.' };
+  if (buffer.length > 3 * 1024 * 1024) {
+    return { ok: false, error: 'Attachment exceeds size limit.' };
+  }
+  return writeAttachmentBytes(uid, attachmentId, buffer, payload.mimeType || 'image/webp');
+});
+
+ipcMain.handle('attachment:read', (_evt, payload = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  const attachmentId = sanitizeAttachmentId(payload.attachmentId);
+  if (!attachmentId) return { ok: false, error: 'Invalid attachment id.' };
+  const bytes = readAttachmentBytes(uid, attachmentId);
+  if (!bytes?.length) return { ok: false, error: 'Attachment not found.' };
+  return {
+    ok: true,
+    dataBase64: bytes.toString('base64'),
+    mimeType: detectAttachmentMime(bytes),
+  };
+});
+
+ipcMain.handle('attachment:gc', (_evt, payload = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  const data = readUserData(uid);
+  if (!data) return { ok: false, error: 'No workspace loaded.' };
+  return pruneOrphanAttachments(uid, data);
+});
+
+/**
+ * Export workspace JSON + attachment sidecars into a folder the user picks.
+ * Folder layout: data.json, manifest.json, attachments/*
+ */
+ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  if (!payload || typeof payload !== 'object') return { ok: false, error: 'data required' };
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const pick = await dialog.showOpenDialog(win, {
+    title: 'Choose folder for full backup',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (pick.canceled || !pick.filePaths?.[0]) return { ok: false, canceled: true };
+  try {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const folder = path.join(pick.filePaths[0], `${APP_SLUG}-backup-${ts}`);
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'data.json'), JSON.stringify(payload, null, 2), 'utf8');
+    fs.writeFileSync(
+      path.join(folder, 'manifest.json'),
+      JSON.stringify(
+        {
+          format: 'cadence-bundle-v1',
+          exportedAt: new Date().toISOString(),
+          attachmentCount: listAttachmentIdsOnDisk(uid).length,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    const attSrc = attachmentsDirForUser(uid);
+    if (fs.existsSync(attSrc)) {
+      fs.cpSync(attSrc, path.join(folder, 'attachments'), { recursive: true });
+    } else {
+      fs.mkdirSync(path.join(folder, 'attachments'), { recursive: true });
+    }
+    return { ok: true, path: folder };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+
+/**
+ * Import a bundle folder (data.json + optional attachments/) over the live workspace.
+ */
+ipcMain.handle('data:importBundle', async () => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const pick = await dialog.showOpenDialog(win, {
+    title: 'Choose backup folder to import',
+    properties: ['openDirectory'],
+  });
+  if (pick.canceled || !pick.filePaths?.[0]) return { ok: false, canceled: true };
+  const folder = pick.filePaths[0];
+  const dataPath = path.join(folder, 'data.json');
+  if (!fs.existsSync(dataPath)) {
+    return { ok: false, error: 'No data.json found in that folder.' };
+  }
+  let payload;
+  try {
+    payload = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+  } catch (err) {
+    return { ok: false, error: `Invalid data.json: ${err.message ?? err}` };
+  }
+  snapshotCurrentDataFile(uid, 'pre-import');
+  const attSrc = path.join(folder, 'attachments');
+  if (fs.existsSync(attSrc)) importAttachmentsFromDir(uid, attSrc);
+  const w = writeUserData(uid, payload, { allowOverwriteUnreadable: true });
+  return w.ok ? { ok: true, importedFrom: path.basename(folder) } : w;
+});
+
 ipcMain.handle('app:getVersion', () => app.getVersion());
 
 ipcMain.handle('app:checkUpdates', async () => {
@@ -3583,8 +4115,8 @@ app.whenReady().then(() => {
           "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' data: https://fonts.gstatic.com",
-          "img-src 'self' data: blob:",
-          "connect-src 'self' ws: wss: http://localhost:* https://api.github.com https://github.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
+          "img-src 'self' data: blob: cadence-attachment:",
+          "connect-src 'self' ws: wss: http://localhost:* cadence-attachment: https://api.github.com https://github.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
           "object-src 'none'",
           "base-uri 'self'",
           "frame-ancestors 'none'",
@@ -3594,8 +4126,8 @@ app.whenReady().then(() => {
           "script-src 'self'",
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' data: https://fonts.gstatic.com",
-          "img-src 'self' data: blob:",
-          "connect-src 'self' https://api.github.com https://github.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
+          "img-src 'self' data: blob: cadence-attachment:",
+          "connect-src 'self' cadence-attachment: https://api.github.com https://github.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
           "object-src 'none'",
           "base-uri 'self'",
           "frame-ancestors 'none'",
@@ -3611,6 +4143,29 @@ app.whenReady().then(() => {
   });
 
   buildMenu();
+
+  // Electron 25+ — `registerBufferProtocol` is deprecated; `protocol.handle` serves
+  // `<img src="cadence-attachment://…">` in the editor (and fetch previews).
+  protocol.handle('cadence-attachment', (request) => {
+    try {
+      const attachmentId = parseAttachmentUrl(request.url);
+      const uid = readSessionUserId();
+      if (!attachmentId || !uid) {
+        return new Response('Not found', { status: 404 });
+      }
+      const bytes = readAttachmentBytes(uid, attachmentId);
+      if (!bytes?.length) {
+        return new Response('Not found', { status: 404 });
+      }
+      return new Response(bytes, {
+        headers: { 'Content-Type': detectAttachmentMime(bytes), 'Cache-Control': 'private' },
+      });
+    } catch (err) {
+      console.warn('[cadence] cadence-attachment protocol failed', err);
+      return new Response('Error', { status: 500 });
+    }
+  });
+
   createWindow();
   setupAutoUpdater();
 

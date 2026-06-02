@@ -71,6 +71,8 @@ export type CacheStats =
       backupsSelfBytes: number;
       backupsSelfCount: number;
       backupsAllBytes: number;
+      attachmentsSelfBytes: number;
+      attachmentsSelfCount: number;
       chromiumBytes: number;
       chromiumBreakdown: CacheBreakdownEntry[];
       totalBytes: number;
@@ -135,6 +137,20 @@ interface CadenceApi {
       onSaveError?: (cb: (event: SaveError) => void) => () => void;
       showNotification: (opts: { title?: string; body?: string }) => Promise<boolean>;
       userDataPath: () => Promise<string>;
+      attachmentWrite?: (payload: {
+        attachmentId: string;
+        dataBase64: string;
+        mimeType?: string;
+        userId?: string;
+      }) => Promise<{ ok: boolean; error?: string }>;
+      attachmentRead?: (payload: {
+        attachmentId: string;
+      }) => Promise<{ ok: boolean; dataBase64?: string; mimeType?: string; error?: string }>;
+      attachmentGc?: () => Promise<{ ok: boolean; pruned?: number; error?: string }>;
+      exportDataBundle?: (
+        data: unknown,
+      ) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+      importDataBundle?: () => Promise<{ ok: boolean; importedFrom?: string; canceled?: boolean; error?: string }>;
       getAppVersion: () => Promise<string>;
       checkForUpdates: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
       installUpdate: () => Promise<{ ok: boolean; reason?: string; error?: string }>;

@@ -172,19 +172,15 @@ export interface TodoItem {
   groupId: string;
   title: string;
   /**
-   * Optional long-form description for the task, in GitHub-flavored
-   * markdown. Rendered with the same MarkdownEditor / preview pipeline
-   * used by the Notes page so checklists, links, code blocks and tables
-   * all work. Empty string and `undefined` are treated identically by
-   * the UI — both mean "no details".
-   *
-   * Backwards compatibility: older files written before this field
-   * existed simply load with `body` undefined; `parseTodoItems`
-   * preserves any string it finds, defensively trimming whitespace-only
-   * values to undefined so we don't carry around empty bodies in
-   * exports / sync payloads.
+   * Optional long-form description for the task. After the rich editor,
+   * `bodyFormat: 'prosemirror'` stores ProseMirror JSON; legacy rows omit
+   * the field and stay markdown until first edit.
    */
   body?: string;
+  /** `'prosemirror'` when `body` is JSON; absent = legacy markdown. */
+  bodyFormat?: 'markdown' | 'prosemirror';
+  /** Denormalised plain text for search and AI (updated on every save). */
+  bodyPlainText?: string;
   /**
    * Lifecycle status. Always present after a `parseTodoItems` round-trip;
    * older files written before this field existed are migrated from
@@ -296,18 +292,21 @@ export interface AISettings {
 }
 
 /**
- * A free-form personal note (macOS Notes-style). Body is Markdown.
+ * A free-form personal note (macOS Notes-style).
  *
- * Locked notes encrypt their body with the workspace master key (see
- * `NotesLock`). The salt lives ONCE in `NotesLock.saltB64`; each ciphertext
- * blob carries only the IV + AES-GCM ciphertext+tag so re-encryption on
- * every keystroke is sub-millisecond.
+ * `body` holds either legacy markdown or serialised ProseMirror JSON
+ * (`bodyFormat: 'prosemirror'`). Locked notes encrypt the body string;
+ * `bodyPlainText` is cleared on disk while locked.
  */
 export interface Note {
   id: string;
   title: string;
-  /** Plaintext Markdown body. Empty when the note is locked. */
+  /** Plaintext body (markdown or ProseMirror JSON). Empty when locked. */
   body: string;
+  /** `'prosemirror'` when `body` is JSON; absent = legacy markdown. */
+  bodyFormat?: 'markdown' | 'prosemirror';
+  /** Denormalised plain text for search / AI. Omitted when locked. */
+  bodyPlainText?: string;
   /** True if the note is currently encrypted at rest. */
   locked: boolean;
   /** When `locked === true`, the AES-GCM ciphertext + IV (no salt). */
@@ -634,6 +633,9 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
         groupId: typeof x.groupId === 'string' ? x.groupId : '',
         title,
         body,
+        bodyFormat:
+          x.bodyFormat === 'markdown' || x.bodyFormat === 'prosemirror' ? x.bodyFormat : undefined,
+        bodyPlainText: typeof x.bodyPlainText === 'string' ? x.bodyPlainText : undefined,
         status,
         done: resolvedDone,
         doneAt: typeof x.doneAt === 'string' ? x.doneAt : undefined,
@@ -962,6 +964,10 @@ function parseNotes(raw: unknown): Note[] {
       id: o.id,
       title: typeof o.title === 'string' ? o.title : '',
       body: typeof o.body === 'string' && !locked ? o.body : '',
+      bodyFormat:
+        o.bodyFormat === 'markdown' || o.bodyFormat === 'prosemirror' ? o.bodyFormat : undefined,
+      bodyPlainText:
+        !locked && typeof o.bodyPlainText === 'string' ? o.bodyPlainText : undefined,
       locked,
       cipher,
       pinned: !!o.pinned,

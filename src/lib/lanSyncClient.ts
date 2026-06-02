@@ -452,3 +452,84 @@ export async function pushSnapshot(
   }
   return { kind: 'ok', etag: etag ?? bodyEtag };
 }
+
+/* ------------------------------------------------------------------ */
+/* Attachment sidecar sync (LAN host disk ↔ client Electron/IDB)       */
+/* ------------------------------------------------------------------ */
+
+export async function fetchAttachmentManifest(
+  hostUrl: string,
+  token: string,
+  timeoutMs = 12_000,
+): Promise<string[]> {
+  if (isMixedContentBlocked(hostUrl)) return [];
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(`${hostUrl}/v1/attachments/manifest`, { method: 'GET', headers }, timeoutMs);
+  } catch {
+    return [];
+  }
+  if (!resp.ok) return [];
+  try {
+    const json = await resp.json();
+    return Array.isArray(json?.ids) ? json.ids.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function downloadAttachment(
+  hostUrl: string,
+  token: string,
+  attachmentId: string,
+  timeoutMs = 20_000,
+): Promise<Blob | null> {
+  if (isMixedContentBlocked(hostUrl)) return null;
+  const id = encodeURIComponent(attachmentId);
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(`${hostUrl}/v1/attachments/${id}`, { method: 'GET', headers }, timeoutMs);
+  } catch {
+    return null;
+  }
+  if (!resp.ok) return null;
+  try {
+    return await resp.blob();
+  } catch {
+    return null;
+  }
+}
+
+export async function uploadAttachment(
+  hostUrl: string,
+  token: string,
+  attachmentId: string,
+  blob: Blob,
+  timeoutMs = 25_000,
+): Promise<boolean> {
+  if (isMixedContentBlocked(hostUrl)) return false;
+  const id = encodeURIComponent(attachmentId);
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': blob.type || 'application/octet-stream',
+  };
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(
+      `${hostUrl}/v1/attachments/${id}`,
+      { method: 'POST', headers, body: blob },
+      timeoutMs,
+    );
+  } catch {
+    return false;
+  }
+  if (!resp.ok) return false;
+  try {
+    const json = await resp.json();
+    return json?.ok !== false;
+  } catch {
+    return resp.ok;
+  }
+}

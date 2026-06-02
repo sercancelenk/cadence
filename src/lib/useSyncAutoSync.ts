@@ -46,8 +46,10 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import type { AppData } from '../model';
+import { syncLanAttachments } from './lanAttachmentSync';
 import { parseRemoteSnapshot } from './syncSnapshotGuard';
 import {
   computeLocalEtag,
@@ -116,12 +118,35 @@ export type SyncCycleAction =
   | 'push-error'
   | 'corrupt-remote';
 
+async function maybeSyncLanAttachments(
+  backend: SyncBackend,
+  data: AppData,
+  userId: string | undefined,
+  action: SyncCycleAction,
+): Promise<void> {
+  if (backend.id !== 'lan' || !userId) return;
+  if (
+    action !== 'pushed' &&
+    action !== 'pulled' &&
+    action !== 'baseline-pulled' &&
+    action !== 'baseline-seeded'
+  ) {
+    return;
+  }
+  try {
+    await syncLanAttachments(data, userId);
+  } catch (err) {
+    console.warn('[cadence] LAN attachment sync failed', err);
+  }
+}
+
 export async function runSyncCycle(args: {
   backend: SyncBackend;
   localData: AppData;
   applyRemote: (data: AppData) => void;
+  userId?: string;
 }): Promise<SyncCycleAction> {
-  const { backend, localData, applyRemote } = args;
+  const { backend, localData, applyRemote, userId } = args;
   const record = backend.getRecord();
   const backendId = backend.id;
 
@@ -146,6 +171,7 @@ export async function runSyncCycle(args: {
         lastSyncedAt: new Date().toISOString(),
       });
       publishSyncEvent({ kind: 'success', backendId, text: 'Synced baseline from remote.' });
+      await maybeSyncLanAttachments(backend, parsed.data, userId, 'baseline-pulled');
       return 'baseline-pulled';
     }
     if (pullOutcome.kind === 'no-snapshot') {
@@ -158,6 +184,7 @@ export async function runSyncCycle(args: {
           lastSyncedAt: new Date().toISOString(),
         });
         publishSyncEvent({ kind: 'success', backendId, text: 'Seeded remote with current workspace.' });
+        await maybeSyncLanAttachments(backend, localData, userId, 'baseline-seeded');
         return 'baseline-seeded';
       }
       publishOutcome(backendId, 'push', pushOutcome);
@@ -177,6 +204,7 @@ export async function runSyncCycle(args: {
         localFingerprint: currentFingerprint,
         lastSyncedAt: new Date().toISOString(),
       });
+      await maybeSyncLanAttachments(backend, localData, userId, 'pushed');
       return 'pushed';
     }
     publishOutcome(backendId, 'push', pushOutcome);
@@ -202,6 +230,7 @@ export async function runSyncCycle(args: {
       localFingerprint: fp,
       lastSyncedAt: new Date().toISOString(),
     });
+    await maybeSyncLanAttachments(backend, parsed.data, userId, 'pulled');
     return 'pulled';
   }
   if (pullOutcome.kind === 'not-modified') {
@@ -230,6 +259,7 @@ export type UseSyncAutoSyncOptions = {
 
 export function useSyncAutoSync(opts: UseSyncAutoSyncOptions = {}) {
   const enabled = opts.enabled !== false;
+  const { user } = useAccount();
   const { replaceAll, data } = useAppData();
 
   // Mirror the latest `data` and `backend` into refs so the effect
@@ -243,6 +273,11 @@ export function useSyncAutoSync(opts: UseSyncAutoSyncOptions = {}) {
 
   const backendRef = useRef<SyncBackend | null>(null);
   if (backendRef.current === null) backendRef.current = getActiveBackend();
+
+  const userIdRef = useRef(user?.id);
+  useEffect(() => {
+    userIdRef.current = user?.id;
+  }, [user?.id]);
 
   const lastAttemptAt = useRef(0);
   const inFlight = useRef(false);
@@ -278,6 +313,7 @@ export function useSyncAutoSync(opts: UseSyncAutoSyncOptions = {}) {
           applyRemote: (next) => {
             if (!cancelled) replaceAll(next);
           },
+          userId: userIdRef.current,
         });
       } finally {
         if (!cancelled) inFlight.current = false;

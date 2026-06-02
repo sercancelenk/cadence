@@ -17,6 +17,7 @@ import type { AIProvider, AppData } from '../model';
 import { AI_PROVIDER_OPTIONS } from '../model';
 import type { CacheBreakdownEntry, CacheStats, DataFileInfo, DataSources, SaveError } from '../vite-env';
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
+import { syncLanAttachments } from '../lib/lanAttachmentSync';
 import {
   buildPairUrl,
   clearPair,
@@ -71,7 +72,8 @@ import {
 } from '../lib/features';
 
 export function Settings() {
-  const { data, replaceAll } = useAppData();
+  const { data, replaceAll, reload } = useAppData();
+  const { user } = useAccount();
   const { pinEnabled, refresh: refreshSession, lockSession } = useSession();
   const toast = useToast();
   const { features, managed, source, setPreset } = useFeatures();
@@ -101,6 +103,49 @@ export function Settings() {
     a.download = `${APP_SLUG}-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const exportFullBundle = async () => {
+    if (!window.cadence?.exportDataBundle) {
+      exportJson();
+      toast.showInfo(
+        'JSON exported',
+        'Full backup with images is available in the desktop app. This export contains JSON only.',
+      );
+      return;
+    }
+    const r = await window.cadence.exportDataBundle(data);
+    if (r?.canceled) return;
+    if (r?.ok && r.path) {
+      toast.showSuccess('Full backup saved', `Folder: ${r.path}`);
+      return;
+    }
+    toast.showError('Export failed', r?.error ?? 'Could not write backup folder.');
+  };
+
+  const importFullBundle = async () => {
+    if (!window.cadence?.importDataBundle) {
+      toast.showInfo(
+        'Desktop app required',
+        'Import folder backup (with images) works in the Cadence desktop app.',
+      );
+      return;
+    }
+    if (
+      !window.confirm(
+        'Import a full backup folder? This replaces your workspace and attachment files on this device.',
+      )
+    ) {
+      return;
+    }
+    const r = await window.cadence.importDataBundle();
+    if (r?.canceled) return;
+    if (r?.ok) {
+      await reload();
+      toast.showSuccess('Backup imported', r.importedFrom ? `Restored from ${r.importedFrom}.` : 'Workspace restored.');
+      return;
+    }
+    toast.showError('Import failed', r?.error ?? 'Could not read backup folder.');
   };
 
   return (
@@ -216,8 +261,14 @@ export function Settings() {
               <Button type="button" variant="primary" icon={<IcDownload size={17} />} onClick={exportJson}>
                 Export JSON
               </Button>
+              <Button type="button" variant="secondary" icon={<IcDownload size={17} />} onClick={() => void exportFullBundle()}>
+                Export full backup
+              </Button>
               <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={() => fileRef.current?.click()}>
                 Import JSON
+              </Button>
+              <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={() => void importFullBundle()}>
+                Import folder
               </Button>
               <input
                 ref={fileRef}
@@ -243,9 +294,10 @@ export function Settings() {
               />
             </div>
             <p className="muted small" style={{ marginTop: 8 }}>
-              Importing replaces your existing data. Always export a backup first. Backups exported by older
-              builds (file name <code>leeadman-backup-*.json</code>) work too — the importer reads the JSON
-              contents, not the filename.
+              Importing replaces your existing data. Always export a backup first. Use{' '}
+              <strong>Export full backup</strong> in the desktop app to include note/todo images; JSON-only
+              exports keep attachment pointers but not the image files. Rolling in-app backups also copy the
+              attachments folder beside each snapshot.
             </p>
           </CollapsibleCard>
         ) : null}
@@ -377,6 +429,7 @@ type SyncStatus = {
 
 function SyncSection() {
   const { data, replaceAll } = useAppData();
+  const { user } = useAccount();
   const toast = useToast();
   const isElectronHost = typeof window !== 'undefined' && !!window.cadence?.syncStatus;
 
@@ -654,6 +707,7 @@ function SyncSection() {
       const outcome = await pullSnapshot(sanitizedHost, token);
       if (outcome.kind === 'ok') {
         replaceAll(outcome.data as AppData);
+        if (user?.id) await syncLanAttachments(outcome.data as AppData, user.id);
         const next = savePair({ url: sanitizedHost, token, etag: outcome.etag });
         recordSync(outcome.etag);
         setSavedPair(next);
@@ -669,7 +723,7 @@ function SyncSection() {
     } finally {
       setPairBusy(false);
     }
-  }, [pairToken, sanitizedHost, isMixedContentBlocked, replaceAll, pullErrorMessage]);
+  }, [pairToken, sanitizedHost, isMixedContentBlocked, replaceAll, pullErrorMessage, user?.id]);
 
   const push = useCallback(async () => {
     setPairMsg(null);
@@ -697,6 +751,7 @@ function SyncSection() {
       // wins into a deliberate choice the user has to make.
       const outcome = await pushSnapshot(sanitizedHost, token, data, savedPair?.etag);
       if (outcome.kind === 'ok') {
+        if (user?.id) await syncLanAttachments(data, user.id);
         const next = savePair({ url: sanitizedHost, token, etag: outcome.etag, lastSyncedAt: new Date().toISOString() });
         setSavedPair(next);
         setPairMsg({ kind: 'ok', text: 'Pushed local data to the host.' });
@@ -713,6 +768,7 @@ function SyncSection() {
           const pullOutcome = await pullSnapshot(sanitizedHost, token);
           if (pullOutcome.kind === 'ok') {
             replaceAll(pullOutcome.data as AppData);
+            if (user?.id) await syncLanAttachments(pullOutcome.data as AppData, user.id);
             const next = savePair({ url: sanitizedHost, token, etag: pullOutcome.etag });
             setSavedPair(next);
             setPairMsg({
@@ -736,7 +792,7 @@ function SyncSection() {
     } finally {
       setPairBusy(false);
     }
-  }, [pairToken, sanitizedHost, isMixedContentBlocked, data, savedPair?.etag, replaceAll, pullErrorMessage, pushErrorMessage]);
+  }, [pairToken, sanitizedHost, isMixedContentBlocked, data, savedPair?.etag, replaceAll, pullErrorMessage, pushErrorMessage, user?.id]);
 
   // "Disconnect" — forget the saved pair so this device stops auto-pulling.
   const disconnect = useCallback(() => {
@@ -2643,8 +2699,15 @@ function StorageCacheSection() {
             <CacheRow
               label={`Backups · ${stats.backupsSelfCount} snapshot${stats.backupsSelfCount === 1 ? '' : 's'}`}
               bytes={stats.backupsSelfBytes}
-              hint="Rolling 50-snapshot safety net. Auto-pruned."
+              hint="Rolling 50-snapshot safety net (data + attachment sidecars). Auto-pruned."
             />
+            {'attachmentsSelfBytes' in stats && stats.attachmentsSelfBytes > 0 ? (
+              <CacheRow
+                label={`Rich-text images · ${stats.attachmentsSelfCount} file${stats.attachmentsSelfCount === 1 ? '' : 's'}`}
+                bytes={stats.attachmentsSelfBytes}
+                hint="Sidecar files for pasted screenshots and uploaded images in notes/todos."
+              />
+            ) : null}
             {stats.backupsAllBytes !== stats.backupsSelfBytes ? (
               <CacheRow
                 label="Backups (other accounts)"

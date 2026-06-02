@@ -31,20 +31,23 @@ const AIAssistantDialog = lazy(() =>
 const AITaskExtractorDialog = lazy(() =>
   import('../components/AITaskExtractorDialog').then((m) => ({ default: m.AITaskExtractorDialog })),
 );
-// MarkdownEditor pulls in react-markdown + remark-gfm (the same chunk
-// the Notes page uses). We lazy-load it here so the initial Todos page
-// payload stays light — the editor only mounts when somebody opens a
-// row for editing or starts a new task with `+`.
-const MarkdownEditor = lazy(() =>
-  import('../components/ui/MarkdownEditor').then((m) => ({ default: m.MarkdownEditor })),
+// RichTextEditor (Tiptap) is lazy-loaded so the initial Todos payload
+// stays light — it only mounts when a row is edited, expanded, or the
+// inline add form is open.
+const RichTextEditor = lazy(() =>
+  import('../components/ui/RichTextEditor').then((m) => ({ default: m.RichTextEditor })),
 );
-// Same chunk as the editor — pulling MarkdownView via the existing
-// lazy wrapper keeps the markdown-vendor cost out of the Todos initial
-// payload until the user actually expands a body preview.
-const MarkdownView = lazy(() =>
-  import('../components/ui/MarkdownEditor').then((m) => ({ default: m.MarkdownView })),
-);
+
+function prefetchRichTextEditor() {
+  void import('../components/ui/RichTextEditor');
+}
 import { SchedulePopover, type SchedulePatch } from '../components/ui/SchedulePopover';
+import {
+  appendPlainTextToBodyFields,
+  plainTextFromBodyFields,
+  richTextPayloadToBodyFields,
+  type RichTextBodyFields,
+} from '../lib/richTextBody';
 import { isAIConfigured } from '../lib/ai';
 import { useFeatures } from '../lib/features';
 import { formatDateShort, formatTimeOnly, isPast } from '../lib/datetime';
@@ -162,18 +165,16 @@ function matchesStatusFilter(status: TodoStatus, filter: StatusFilter): boolean 
 }
 
 /**
- * Strip any orphan markdown separators (`---`) that ended up at the
- * very end of a body, along with the blank lines surrounding them.
- *
- * Background: an earlier version of the "Save to notes" flow always
- * appended `\n\n---\n\n${aiContent}` to the existing body, even when
- * `aiContent` was empty (e.g. a click before the assistant finished
- * streaming). That left tasks with a dangling `---` separator and no
- * AI content below it — the user would open the body and see their
- * notes followed by a lonely horizontal rule, which read like data
- * loss. We normalise that here so the row preview and edit surface
- * both look clean even on tasks that were touched by the old code.
+ * Plain-text surface for search, AI, and legacy cleanup. ProseMirror
+ * bodies use `bodyPlainText`; markdown bodies strip dangling `---`
+ * separators left by older "Save to notes" appends.
  */
+function legacyBodyPlainText(item: Pick<TodoItem, 'body' | 'bodyFormat' | 'bodyPlainText'>): string {
+  const plain = plainTextFromBodyFields(item);
+  if (item.bodyFormat === 'prosemirror') return plain;
+  return stripTrailingSeparators(plain);
+}
+
 function stripTrailingSeparators(body: string): string {
   // Drop runs of `---` (optionally with surrounding blank lines) at
   // the very end of the body. We keep separators in the middle of
@@ -181,37 +182,40 @@ function stripTrailingSeparators(body: string): string {
   return body.replace(/(?:\s*\n)+\s*-{3,}\s*$/g, '').replace(/\s+$/g, '');
 }
 
-/**
- * Parse a single markdown blob into a title + body pair. The first
- * non-empty line becomes the title (with any leading `#` stripped so
- * users can write headings naturally); everything after it is the body,
- * trimmed of leading/trailing blank lines.
- *
- * Used by BOTH the inline edit flow on existing rows and the new-task
- * add form, so the two surfaces stay symmetric: type a heading + notes,
- * hit save, get a task whose title matches what you wrote up top.
- */
-function parseTitleAndBody(content: string): { title: string; body: string } {
-  const lines = content.split('\n');
-  let titleIdx = -1;
-  let title = '';
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (trimmed) {
-      title = trimmed.replace(/^#+\s+/, '');
-      titleIdx = i;
-      break;
-    }
+function itemToBodyFields(
+  item: Pick<TodoItem, 'body' | 'bodyFormat' | 'bodyPlainText'>,
+): RichTextBodyFields {
+  return {
+    body: item.body ?? '',
+    bodyFormat: item.bodyFormat,
+    bodyPlainText: item.bodyPlainText,
+  };
+}
+
+function todoHasBody(item: Pick<TodoItem, 'body' | 'bodyFormat' | 'bodyPlainText'>): boolean {
+  return !!plainTextFromBodyFields(item).trim();
+}
+
+function todoBodyPatchFromFields(
+  fields: RichTextBodyFields,
+): Partial<Pick<TodoItem, 'body' | 'bodyFormat' | 'bodyPlainText'>> {
+  if (!plainTextFromBodyFields(fields).trim()) {
+    return { body: '' };
   }
-  const body =
-    titleIdx >= 0
-      ? lines
-          .slice(titleIdx + 1)
-          .join('\n')
-          .replace(/^\n+/, '')
-          .replace(/\n+$/, '')
-      : '';
-  return { title, body };
+  return {
+    body: fields.body,
+    bodyFormat: fields.bodyFormat,
+    bodyPlainText: fields.bodyPlainText,
+  };
+}
+
+type InlineAddDraft = {
+  title: string;
+  body: RichTextBodyFields;
+};
+
+function emptyInlineAddDraft(): InlineAddDraft {
+  return { title: '', body: { body: '', bodyFormat: undefined, bodyPlainText: undefined } };
 }
 
 function parseStatusFilter(raw: string | null): StatusFilter {
@@ -281,13 +285,26 @@ type TodoTaskRowProps = {
    * the highlight class.
    */
   isFocused?: boolean;
+  attachmentUserId: string;
   onAskAI: (item: TodoItem) => void;
   /** Clicking the source-note chip routes to the linked note. */
   onOpenSourceNote?: (noteId: string) => void;
   onPatch: (
     id: string,
     patch: Partial<
-      Pick<TodoItem, 'title' | 'body' | 'groupId' | 'dueAt' | 'priority' | 'status' | 'remindAt' | 'remindRepeat'>
+      Pick<
+        TodoItem,
+        | 'title'
+        | 'body'
+        | 'bodyFormat'
+        | 'bodyPlainText'
+        | 'groupId'
+        | 'dueAt'
+        | 'priority'
+        | 'status'
+        | 'remindAt'
+        | 'remindRepeat'
+      >
     >,
   ) => void;
   onToggle: (id: string) => void;
@@ -309,6 +326,7 @@ function TodoTaskRow({
   isDropTgt,
   sourceNote,
   isFocused,
+  attachmentUserId,
   onAskAI,
   onOpenSourceNote,
   onPatch,
@@ -345,40 +363,41 @@ function TodoTaskRow({
   const statusChipRef = useRef<HTMLDivElement | null>(null);
   const priorityChipRef = useRef<HTMLDivElement | null>(null);
   const groupChipRef = useRef<HTMLDivElement | null>(null);
-  // Combined edit buffer: title + body in a single markdown document.
-  // The first non-empty line becomes the title on save (stripped of any
-  // leading `#` if the user wrote it as a heading), the rest becomes
-  // the body. Initialised when entering edit mode via the helper below
-  // so we always start from the current upstream state.
-  const buildEditContent = (it: TodoItem): string => {
-    // Strip any dangling `---` separators left behind by older
-    // "Save to notes" appends so the editor opens on a clean buffer.
-    const body = stripTrailingSeparators(it.body ?? '');
-    return body ? `${it.title}\n\n${body}` : it.title;
-  };
-  const [draftEdit, setDraftEdit] = useState<string>(() => buildEditContent(item));
+  const [draftTitle, setDraftTitle] = useState(() => item.title);
+  const [draftBody, setDraftBody] = useState<RichTextBodyFields>(() => itemToBodyFields(item));
 
   const beginEdit = () => {
-    setDraftEdit(buildEditContent(item));
+    setDraftTitle(item.title);
+    setDraftBody(itemToBodyFields(item));
     setEditing(true);
   };
 
   const saveEdit = () => {
-    const { title, body } = parseTitleAndBody(draftEdit);
-    // Persist the cleaned version so dangling `---` separators left
-    // behind by older "Save to notes" passes get fixed on the next
-    // edit — the user only has to open the row once.
-    const normalisedBody = stripTrailingSeparators(body);
+    const title = draftTitle.trim() || item.title;
     const patch: Parameters<typeof onPatch>[1] = {};
-    // Fall back to the existing title if the user cleared everything —
-    // we never want to leave a task with an empty title.
-    if (title && title !== item.title) patch.title = title;
-    if (normalisedBody !== (item.body ?? '')) patch.body = normalisedBody;
+    if (title !== item.title) patch.title = title;
+
+    const nextBody = todoBodyPatchFromFields(draftBody);
+    const currentPlain = plainTextFromBodyFields(item);
+    const nextPlain = plainTextFromBodyFields({
+      body: nextBody.body,
+      bodyFormat: nextBody.bodyFormat,
+      bodyPlainText: nextBody.bodyPlainText,
+    });
+    const bodyChanged =
+      (nextBody.body ?? '') !== (item.body ?? '') ||
+      (nextBody.bodyFormat ?? undefined) !== (item.bodyFormat ?? undefined) ||
+      currentPlain !== nextPlain;
+    if (bodyChanged) {
+      Object.assign(patch, nextBody);
+    }
+
     if (Object.keys(patch).length > 0) onPatch(item.id, patch);
     setEditing(false);
   };
   const cancelEdit = () => {
-    setDraftEdit(buildEditContent(item));
+    setDraftTitle(item.title);
+    setDraftBody(itemToBodyFields(item));
     setEditing(false);
   };
   // The schedule trigger ref is forwarded to the popover so the popover's
@@ -508,22 +527,28 @@ function TodoTaskRow({
 
       <div className="todos-row__mid">
         {editing ? (
-          // Unified edit mode: ONE markdown editor that holds both the
-          // task title (first line) and the body. Save parses the first
-          // non-empty line as the title (stripping leading `#` if the
-          // user wrote it as a heading) and the rest as the body.
           <div className="todos-row__edit">
+            <input
+              className="todos-row__title-input"
+              value={draftTitle}
+              onChange={(e) => setDraftTitle(e.target.value)}
+              placeholder="Task title"
+              aria-label="Task title"
+              autoFocus
+            />
             <Suspense
               fallback={
                 <div className="todos-row__details-loading muted small">Loading editor…</div>
               }
             >
-              <MarkdownEditor
-                value={draftEdit}
-                onChange={setDraftEdit}
-                placeholder="First line is the title — Markdown supported below."
-                rows={8}
-                initialMode="edit"
+              <RichTextEditor
+                value={draftBody.body}
+                valueFormat={draftBody.bodyFormat ?? 'auto'}
+                onChange={(payload) => setDraftBody(richTextPayloadToBodyFields(payload))}
+                placeholder="Details — paste screenshots with ⌘V, add tables, dates…"
+                minHeight={160}
+                attachmentScope={{ documentKind: 'todo', documentId: item.id }}
+                attachmentUserId={attachmentUserId}
               />
             </Suspense>
             <div className="todos-row__edit-actions">
@@ -566,28 +591,22 @@ function TodoTaskRow({
           </div>
         )}
 
-        {!editing && titleExpanded && item.body ? (
-          // Inline Markdown render of the body. Sits BETWEEN the title
-          // and the meta sub-row so the row reads top-to-bottom as
-          // "what is this task → what's in it → its attributes". Meta
-          // (list / priority / status / schedule + actions) is always
-          // the last thing in the row, regardless of whether the body
-          // is expanded — that keeps the visual rhythm identical for
-          // every task whether it has body content or not.
-          //
-          // Lazy-loaded so the markdown-vendor chunk only lands when
-          // at least one user actually expands a body. Dangling `---`
-          // separators left over from old "Save to notes" appends are
-          // stripped so the preview reads clean.
+        {!editing && titleExpanded && todoHasBody(item) ? (
           <div
             className="todos-row__body-preview"
             onDoubleClick={beginEdit}
             title="Double-click to edit"
           >
-            <Suspense
-              fallback={<div className="muted small">Loading preview…</div>}
-            >
-              <MarkdownView value={stripTrailingSeparators(item.body)} />
+            <Suspense fallback={<div className="muted small">Loading preview…</div>}>
+              <RichTextEditor
+                value={item.body}
+                valueFormat={item.bodyFormat ?? 'auto'}
+                editable={false}
+                toolbar={false}
+                minHeight={72}
+                attachmentScope={{ documentKind: 'todo', documentId: item.id }}
+                attachmentUserId={attachmentUserId}
+              />
             </Suspense>
           </div>
         ) : null}
@@ -854,7 +873,7 @@ export function TodosPage() {
   // the task title on submit (stripped of any leading `#`), the rest is
   // the body. Sharing the same buffer as the inline-edit flow keeps the
   // two surfaces symmetric and avoids the old "title vs. details" split.
-  const [draftByGroup, setDraftByGroup] = useState<Record<string, string>>({});
+  const [draftByGroup, setDraftByGroup] = useState<Record<string, InlineAddDraft>>({});
   const [addingGroupId, setAddingGroupId] = useState<string | null>(null);
   const [compact, setCompact] = useState(false);
   const [sectionOpenMap, setSectionOpenMap] = useState<Record<string, boolean>>({});
@@ -891,6 +910,10 @@ export function TodosPage() {
   );
 
   useEffect(() => {
+    prefetchRichTextEditor();
+  }, []);
+
+  useEffect(() => {
     if (!userId) {
       setSectionOpenMap({});
       setSectionsHydrated(true);
@@ -899,16 +922,16 @@ export function TodosPage() {
     setSectionsHydrated(false);
     try {
       const raw = localStorage.getItem(todoSectionsStorageKey(userId));
+      let fromStorage: Record<string, boolean> = {};
       if (raw) {
         const parsed = JSON.parse(raw) as unknown;
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          setSectionOpenMap(parsed as Record<string, boolean>);
-        } else {
-          setSectionOpenMap({});
+          fromStorage = parsed as Record<string, boolean>;
         }
-      } else {
-        setSectionOpenMap({});
       }
+      // Merge with any in-flight user toggles (e.g. + clicked before hydrate
+      // finished) so we don't clobber a section the user just opened.
+      setSectionOpenMap((prev) => ({ ...fromStorage, ...prev }));
       const archivedRaw = localStorage.getItem(todoShowArchivedKey(userId));
       setShowArchived(archivedRaw === '1');
       const hideDoneRaw = localStorage.getItem(todoHideDoneKey(userId));
@@ -1004,39 +1027,58 @@ export function TodosPage() {
     const params = new URLSearchParams(location.search);
     const focusId = params.get('focus');
     if (!focusId) return;
+
+    const target = data.todoItems.find((t) => t.id === focusId);
+    if (target) {
+      // Deep links (search palette, note backlinks) must reveal the row even
+      // when local filters would normally hide it.
+      setSearch('');
+      if (!matchesStatusFilter(target.status, statusFilter)) {
+        setStatusFilter('all');
+      }
+      if (!isTodoOpen(target.status) && hideDone) {
+        setHideDone(false);
+      }
+      const group = data.todoGroups.find((g) => g.id === target.groupId);
+      if (group?.archived && !showArchived) {
+        setShowArchived(true);
+      }
+      setSectionOpenMap((prev) =>
+        prev[target.groupId] === false ? { ...prev, [target.groupId]: true } : prev,
+      );
+    }
+
     setFocusedTaskId(focusId);
     // Strip the param NOW (replace history) so we don't re-fire on
     // every render. The state above keeps the highlight alive.
     params.delete('focus');
     const next = params.toString();
     navigate({ pathname: location.pathname, search: next ? `?${next}` : '' }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search, location.pathname, navigate]);
 
   useEffect(() => {
     if (!focusedTaskId) return;
-    // Defer one frame so the row has time to mount, especially when
-    // the section was collapsed and we expanded it via the effect
-    // below.
-    const frame = window.requestAnimationFrame(() => {
+    let cancelled = false;
+    const tryScroll = (attempt = 0) => {
+      if (cancelled) return;
       const el = document.querySelector<HTMLElement>(`[data-todo-id="${focusedTaskId}"]`);
-      if (!el) return;
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      if (attempt < 6) {
+        window.setTimeout(() => tryScroll(attempt + 1), 50 * (attempt + 1));
+      }
+    };
+    const frame = window.requestAnimationFrame(() => tryScroll());
     const clear = window.setTimeout(() => setFocusedTaskId(null), 1800);
     return () => {
+      cancelled = true;
       window.cancelAnimationFrame(frame);
       window.clearTimeout(clear);
     };
   }, [focusedTaskId]);
-
-  // If the focused task lives in a collapsed section, open that
-  // section so the scroll target actually exists in the DOM.
-  useEffect(() => {
-    if (!focusedTaskId) return;
-    const target = data.todoItems.find((t) => t.id === focusedTaskId);
-    if (!target) return;
-    setSectionOpenMap((prev) => (prev[target.groupId] === false ? { ...prev, [target.groupId]: true } : prev));
-  }, [focusedTaskId, data.todoItems]);
 
   const itemsByGroup = useMemo(() => {
     const m = new Map<string, TodoItem[]>();
@@ -1122,7 +1164,7 @@ export function TodosPage() {
   const matchesQuery = (it: TodoItem) =>
     !q ||
     it.title.toLowerCase().includes(q) ||
-    (typeof it.body === 'string' && it.body.toLowerCase().includes(q));
+    legacyBodyPlainText(it).toLowerCase().includes(q);
 
   return (
     <div className="page page--wide todos-route">
@@ -1412,7 +1454,7 @@ export function TodosPage() {
         const matchedList = list.filter(
           (it) => matchesQuery(it) && matchesStatusFilter(it.status, statusFilter),
         );
-        const draft = draftByGroup[g.id] ?? '';
+        const draft = draftByGroup[g.id] ?? emptyInlineAddDraft();
         // "Open" tier = todo + in_progress. Anything terminal (done,
         // cancelled) goes into the closed tier and is rendered separately
         // below so the open work always stays visible at the top.
@@ -1521,9 +1563,11 @@ export function TodosPage() {
                 title="Add task"
                 aria-label={`Add task to ${g.name}`}
                 aria-expanded={addingGroupId === g.id}
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
+                  prefetchRichTextEditor();
                   setSectionOpenMap((prev) => ({ ...prev, [g.id]: true }));
-                  setAddingGroupId(g.id);
+                  setAddingGroupId((cur) => (cur === g.id ? null : g.id));
                 }}
               >
                 <IcPlus size={18} strokeWidth={2.5} />
@@ -1655,17 +1699,24 @@ export function TodosPage() {
               <>
                 {addingGroupId === g.id ? (() => {
                   const submitAdd = () => {
-                    const { title, body } = parseTitleAndBody(draft);
+                    const title = draft.title.trim();
                     if (!title) {
-                      // Nothing actionable yet — just close the form rather
-                      // than spawn an empty task. The draft is preserved
-                      // so reopening with `+` puts the user back where
-                      // they left off (handy after an accidental Cancel).
                       setAddingGroupId(null);
                       return;
                     }
-                    addTodoItem(g.id, title, body ? { body } : undefined);
-                    setDraftByGroup((prev) => ({ ...prev, [g.id]: '' }));
+                    const bodyPatch = todoBodyPatchFromFields(draft.body);
+                    addTodoItem(
+                      g.id,
+                      title,
+                      bodyPatch.body
+                        ? {
+                            body: bodyPatch.body,
+                            bodyFormat: bodyPatch.bodyFormat,
+                            bodyPlainText: bodyPatch.bodyPlainText,
+                          }
+                        : undefined,
+                    );
+                    setDraftByGroup((prev) => ({ ...prev, [g.id]: emptyInlineAddDraft() }));
                     setAddingGroupId(null);
                   };
                   const cancelAdd = () => {
@@ -1680,19 +1731,40 @@ export function TodosPage() {
                       }}
                     >
                       <div className="todos-add-inline__body" role="region" aria-label="New task">
+                        <input
+                          className="todos-row__title-input todos-add-inline__title"
+                          value={draft.title}
+                          onChange={(e) =>
+                            setDraftByGroup((prev) => ({
+                              ...prev,
+                              [g.id]: { ...draft, title: e.target.value },
+                            }))
+                          }
+                          placeholder="Task title"
+                          aria-label="New task title"
+                          autoFocus
+                        />
                         <Suspense
                           fallback={
                             <div className="todos-row__details-loading muted small">Loading editor…</div>
                           }
                         >
-                          <MarkdownEditor
-                            value={draft}
-                            onChange={(v) =>
-                              setDraftByGroup((prev) => ({ ...prev, [g.id]: v }))
+                          <RichTextEditor
+                            value={draft.body.body}
+                            valueFormat={draft.body.bodyFormat ?? 'auto'}
+                            onChange={(payload) =>
+                              setDraftByGroup((prev) => ({
+                                ...prev,
+                                [g.id]: {
+                                  ...draft,
+                                  body: richTextPayloadToBodyFields(payload),
+                                },
+                              }))
                             }
-                            placeholder="First line is the title — Markdown supported below."
-                            rows={6}
-                            initialMode="edit"
+                            placeholder="Details (optional)"
+                            minHeight={140}
+                            attachmentScope={{ documentKind: 'todo', documentId: `new-${g.id}` }}
+                            attachmentUserId={user?.id ?? 'anonymous'}
                           />
                         </Suspense>
                       </div>
@@ -1739,6 +1811,7 @@ export function TodosPage() {
                             : undefined
                         }
                         isFocused={focusedTaskId === it.id}
+                        attachmentUserId={user?.id ?? 'anonymous'}
                         onAskAI={setAiTask}
                         onOpenSourceNote={openSourceNote}
                         onPatch={(id, patch) => updateTodoItem(id, patch)}
@@ -1779,6 +1852,7 @@ export function TodosPage() {
                               : undefined
                           }
                           isFocused={focusedTaskId === it.id}
+                          attachmentUserId={user?.id ?? 'anonymous'}
                           onAskAI={setAiTask}
                           onOpenSourceNote={openSourceNote}
                           onPatch={(id, patch) => updateTodoItem(id, patch)}
@@ -1849,24 +1923,14 @@ export function TodosPage() {
               // title used to give the assistant a one-line prompt and
               // generic, unhelpful advice. The lib-level prompt builder
               // already wraps the body in a clearly delimited section.
-              task={{ title: aiTask.title, body: aiTask.body }}
+              task={{
+                title: aiTask.title,
+                body: legacyBodyPlainText(aiTask) || undefined,
+              }}
               onAppendToBody={(markdown) => {
-                // "Save to notes" round-trips the answer into the
-                // task's own body so the user has the recommendation
-                // alongside the task they were asking about. Existing
-                // notes are preserved with a soft separator so the
-                // user can keep both their own context and the AI's.
-                //
-                // We snapshot the id/body BEFORE calling setState
-                // because `setAiTask(null)` (further down) clears the
-                // closure variable on the next render — without the
-                // snapshot, a re-click would re-read stale data.
                 const targetId = aiTask.id;
-                const existing = (aiTask.body ?? '').trim();
-                const incoming = markdown.trim();
-                if (!incoming) return;
-                const next = existing ? `${existing}\n\n---\n\n${incoming}` : incoming;
-                updateTodoItem(targetId, { body: next });
+                const nextFields = appendPlainTextToBodyFields(aiTask, markdown);
+                updateTodoItem(targetId, todoBodyPatchFromFields(nextFields));
                 // The previous build wired the callback but did
                 // nothing else — the dialog stayed open and there was
                 // no confirmation, so the click felt like a no-op.
