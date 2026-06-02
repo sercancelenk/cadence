@@ -1,4 +1,8 @@
 export { TodoTaskRow, type TodoTaskRowProps } from './TodoTaskRow';
+export { TodoListSection, type TodoListSectionCallbacks, type TodoListSectionProps } from './TodoListSection';
+export { TodosPageHeader } from './TodosPageHeader';
+export { TodosToolbar } from './TodosToolbar';
+export { TodosFilteredEmptyHint, TodosGroupDropTail, TodosNoListsHint } from './TodosEmptyHints';
 export {
   emptyInlineAddDraft,
   itemToBodyFields,
@@ -9,6 +13,9 @@ export {
   type InlineAddDraft,
 } from './todoBody';
 export { prefetchRichTextEditor } from './prefetchRichTextEditor';
+export { buildItemsByGroup, todoMatchesSearchQuery } from './sortTodoItemsByGroup';
+export { useTodoFocus } from './useTodoFocus';
+export { useTodoPagePreferences } from './useTodoPagePreferences';
 export {
   ALLOWED_SORT_MODES,
   matchesStatusFilter,
@@ -24,4 +31,4 @@ export {
   type SortMode,
   type StatusFilter,
 } from './todoPreferences';
-export { sortGroups } from './todoUiUtils';
+export { sortGroups, tagColor, ringStyle, priorityShort } from './todoUiUtils';

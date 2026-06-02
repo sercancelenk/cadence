@@ -93,7 +93,7 @@ Heavy chunks (Markdown editor, People views) split via `React.lazy`. Important f
 | `electron/main.cjs` | 3,657 | IPC, auth, crypto, sync HTTPS server, updater, menu — monolith |
 | `src/app.css` | 7,804 | Global stylesheet; high merge/regression risk |
 | `src/views/Settings.tsx` | 3,245 | Dozens of sections in one component tree |
-| `src/views/TodosPage.tsx` | ~1,165 | Was ~1,958; row UI extracted to `features/todos/` — toolbar/sections still inline |
+| `src/views/TodosPage.tsx` | ~315 | Orchestrator only; UI in `features/todos/` |
 | `src/views/NotesPage.tsx` | ~1,998 | Editor + backlinks + sort/filter in one file |
 
 These sizes are manageable for one developer **today**. They become the primary source of fear-and-regression within 6–12 months of active feature work.
@@ -160,14 +160,14 @@ Reference implementations in:
 | **Attachments** | Sidecar files, `cadence-attachment://`, orphan GC, backup folder copy, LAN manifest sync, export/import bundle |
 | **Stability** | Notes reorder-on-click fix; CommandPalette todo focus; filter reveal on deep-link |
 | **Architecture (Phase B0)** | `src/providers/`, `src/core/model/`, `src/core/actions/`; root re-export shims (zero runtime impact) |
-| **Architecture (Phase B2, partial)** | `src/features/todos/` — `TodoTaskRow`, body/preferences/utils; `TodosPage` ~800 lines slimmer |
+| **Architecture (Phase B2, partial)** | `src/features/todos/` — row, section, toolbar, hooks; `TodosPage` ~315 lines |
 
 *Not done yet — still on the roadmap below.*
 
 | Area | Status |
 |---|---|
-| Todos toolbar / section / inline-add extract | Planned (B2 remainder) |
-| Split `NotesPage` | Planned (B2) |
+| Todos toolbar / section / inline-add extract | **Done** (B2 todos) |
+| Split `NotesPage` | Planned (B2 remainder) |
 | Split `Settings.tsx` | Planned (B1) |
 | Split `core/actions/` by domain | Planned (B7, after A5 tests) |
 | `actions.ts` unit tests | Planned (A5) |
@@ -321,7 +321,7 @@ Prioritized by **risk reduction × user impact × effort**. Each item has an ID 
 |---|---|---|---|---|---|
 | **B0** | **`src/providers/` + `src/core/` layout** | S | Medium | **Done** | Contexts + model/actions moved; root shims preserve old import paths |
 | **B1** | **Split `Settings.tsx`** | L | Medium | Planned | `src/views/settings/*.tsx` — one file per section; thin orchestrator in `Settings.tsx`. |
-| **B2** | **Split `TodosPage.tsx` / `NotesPage.tsx`** | L | Medium | **In progress** | `TodoTaskRow` + helpers → `src/features/todos/` (~1,165 lines remain in page). Next: toolbar, sections, hooks. |
+| **B2** | **Split `TodosPage.tsx` / `NotesPage.tsx`** | L | Medium | **In progress** | Todos module complete (~315-line page); `TodoTaskRow`, toolbar, sections, hooks extracted. NotesPage next. |
 | **B3** | **Modularize `main.cjs`** | L | High | Planned | `electron/data/`, `electron/sync/`, `electron/auth/` — keep IPC table in one registry file. |
 | **B4** | **CSS architecture** | L | Medium | Planned | Split `app.css` by domain (`shell`, `todos`, `notes`, `settings`) or CSS modules for new code. |
 | **B5** | **Unify branding** | S | Low | Planned | Generate renderer constants from `branding.cjs` at build time, or shared JSON. |
@@ -410,6 +410,6 @@ Use this doc as the agenda. Recommended order:
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
-| 1.2 | 2026-05-31 | B2 partial — `features/todos/`, TodosPage slimmed; scores bumped |
+| 1.2 | 2026-05-31 | B2 todos complete — `features/todos/` module; TodosPage ~315 lines |
 | 1.1 | 2026-05-31 | Architecture refactor session | B0 layout (`providers/`, `core/`); rich-text & attachment delivery log; updated scores & appendix |
 | 1.0 | 2026-05-31 | Health check session | Initial analysis + phased roadmap |
