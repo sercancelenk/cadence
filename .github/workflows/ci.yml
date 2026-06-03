@@ -2,6 +2,11 @@
 # job is also invoked as a dependency by the Release and Pages
 # workflows (via `workflow_call`) so a deploy never goes out without
 # the type-check + tests + build all having passed.
+#
+# Profiles (workflow_call only):
+#   full    — push/PR default: coverage + E2E + PWA
+#   release — typecheck + unit tests + web build + E2E (skips coverage + PWA)
+#   pages   — typecheck + unit tests + web build (Pages job rebuilds PWA)
 
 name: CI
 
@@ -11,6 +16,12 @@ on:
   pull_request:
     branches: [main]
   workflow_call:
+    inputs:
+      profile:
+        description: 'full | release | pages'
+        required: false
+        type: string
+        default: full
   workflow_dispatch:
 
 # Avoid wasting minutes on superseded commits — keep only the latest
@@ -54,12 +65,22 @@ jobs:
       - name: Unit tests
         run: npm test
       - name: Unit test coverage (core + lib, 95% line gate)
+        if: github.event_name != 'workflow_call' || inputs.profile == 'full'
         run: npm run test:coverage
       - name: Build web bundle
         run: npm run build:web
+      - name: Cache Playwright Chromium
+        if: github.event_name != 'workflow_call' || inputs.profile == 'full' || inputs.profile == 'release'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Install Playwright Chromium
+        if: github.event_name != 'workflow_call' || inputs.profile == 'full' || inputs.profile == 'release'
         run: npx playwright install chromium --with-deps
       - name: Smoke E2E
+        if: github.event_name != 'workflow_call' || inputs.profile == 'full' || inputs.profile == 'release'
         run: npm run test:e2e
       - name: Build PWA bundle
+        if: github.event_name != 'workflow_call' || inputs.profile == 'full'
         run: npm run build:pwa

@@ -25,6 +25,8 @@ concurrency:
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
+    with:
+      profile: pages
 
   build:
     name: Build landing + PWA
