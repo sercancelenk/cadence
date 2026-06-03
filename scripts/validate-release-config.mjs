@@ -23,6 +23,9 @@ function readJson(relPath) {
   return JSON.parse(fs.readFileSync(path.join(root, relPath), 'utf8'));
 }
 
+const MAC_HELPER_EXTRA_TO = 'MacOS/helpers/cadence-notify-schedule';
+const MAC_HELPER_BINARY = 'Contents/MacOS/helpers/cadence-notify-schedule';
+
 function validateMacBlock(label, mac) {
   if (!mac) {
     fail(`${label}: missing mac config`);
@@ -31,22 +34,20 @@ function validateMacBlock(label, mac) {
   if (mac.bin) {
     fail(`${label}: mac.bin is invalid in electron-builder 25 — use extraFiles + binaries`);
   }
-  const hasHelperExtra = mac.extraFiles?.some(
-    (f) => f.to === 'MacOS/cadence-notify-schedule',
-  );
+  const hasHelperExtra = mac.extraFiles?.some((f) => f.to === MAC_HELPER_EXTRA_TO);
   if (!hasHelperExtra) {
-    fail(`${label}: mac.extraFiles must copy cadence-notify-schedule into MacOS/`);
+    fail(
+      `${label}: mac.extraFiles must copy cadence-notify-schedule into ${MAC_HELPER_EXTRA_TO} (signing order)`,
+    );
   }
-  if (!mac.binaries?.includes('Contents/MacOS/cadence-notify-schedule')) {
+  if (!mac.binaries?.includes(MAC_HELPER_BINARY)) {
     fail(`${label}: mac.binaries must list helper for signing/notarization`);
   }
   const pattern = mac.x64ArchFiles;
   if (!pattern) {
     fail(`${label}: mac.x64ArchFiles is required for universal packaging`);
-  } else if (
-    !minimatch('Contents/MacOS/cadence-notify-schedule', pattern, { matchBase: true })
-  ) {
-    fail(`${label}: x64ArchFiles "${pattern}" does not match Contents/MacOS/cadence-notify-schedule`);
+  } else if (!minimatch(MAC_HELPER_BINARY, pattern, { matchBase: true })) {
+    fail(`${label}: x64ArchFiles "${pattern}" does not match ${MAC_HELPER_BINARY}`);
   } else {
     ok(`${label}: mac universal helper config`);
   }

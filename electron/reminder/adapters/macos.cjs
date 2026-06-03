@@ -29,7 +29,7 @@ let stdoutBuffer = '';
  */
 function helperPath() {
   if (process.resourcesPath) {
-    const packaged = path.join(process.resourcesPath, '..', 'MacOS', 'cadence-notify-schedule');
+    const packaged = path.join(process.resourcesPath, '..', 'MacOS', 'helpers', 'cadence-notify-schedule');
     if (fs.existsSync(packaged) && packaged.includes('.app/Contents/MacOS/')) {
       return packaged;
     }

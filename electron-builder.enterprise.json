@@ -47,11 +47,11 @@
     "extraFiles": [
       {
         "from": "electron/reminder/native/cadence-notify-schedule",
-        "to": "MacOS/cadence-notify-schedule"
+        "to": "MacOS/helpers/cadence-notify-schedule"
       }
     ],
     "binaries": [
-      "Contents/MacOS/cadence-notify-schedule"
+      "Contents/MacOS/helpers/cadence-notify-schedule"
     ],
     "x64ArchFiles": "**/cadence-notify-schedule",
     "target": [
