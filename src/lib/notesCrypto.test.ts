@@ -71,11 +71,16 @@ describe('notesCrypto workspace lock', () => {
       derived,
       new TextEncoder().encode(NOTES_VERIFIER_PLAINTEXT_LEGACY),
     );
-    const b64 = (buf: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+    const toTestB64 = (buf: ArrayBuffer | Uint8Array) => {
+      const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+      let s = '';
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return btoa(s);
+    };
     const legacyLock: NotesLock = {
       saltB64: lock.saltB64,
-      verifierIvB64: b64(iv),
-      verifierCipherB64: b64(verifierCipher),
+      verifierIvB64: toTestB64(iv),
+      verifierCipherB64: toTestB64(verifierCipher),
     };
     expect(await unlockMaster(PASS, legacyLock)).not.toBeNull();
     expect(NOTES_VERIFIER_PLAINTEXT).toBe('cadence-notes-v1');

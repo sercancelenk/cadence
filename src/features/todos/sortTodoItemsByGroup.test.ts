@@ -7,20 +7,23 @@ function item(
   groupId: string,
   overrides: Partial<TodoItem> = {},
 ): TodoItem {
+  const status = overrides.status ?? 'todo';
+  const done = overrides.done ?? status === 'done';
   return {
+    ...overrides,
     id,
     groupId,
-    title: id,
-    status: 'todo',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    ...overrides,
+    title: overrides.title ?? id,
+    status,
+    done,
+    createdAt: overrides.createdAt ?? '2026-01-01T00:00:00.000Z',
+    updatedAt: overrides.updatedAt ?? '2026-01-01T00:00:00.000Z',
   };
 }
 
 const groups: TodoGroup[] = [
-  { id: 'g1', name: 'A', sortOrder: 0, createdAt: '2026-01-01', updatedAt: '2026-01-01' },
-  { id: 'g2', name: 'B', sortOrder: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+  { id: 'g1', name: 'A', sortOrder: 0, createdAt: '2026-01-01' },
+  { id: 'g2', name: 'B', sortOrder: 1, createdAt: '2026-01-01' },
 ];
 
 describe('buildItemsByGroup', () => {

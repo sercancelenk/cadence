@@ -43,7 +43,6 @@ describe('sortGroups', () => {
       pinned: opts.pinned,
       archived: opts.archived,
       createdAt: '2026-01-01',
-      updatedAt: '2026-01-01',
     };
   }
 

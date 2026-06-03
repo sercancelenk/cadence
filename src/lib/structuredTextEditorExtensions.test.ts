@@ -1,7 +1,7 @@
 import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { forceLinting, forEachDiagnostic } from '@codemirror/lint';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildStructuredTextExtensions,
   createStructuredTextCompartments,

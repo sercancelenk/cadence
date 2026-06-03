@@ -35,7 +35,6 @@ describe('DateChip node', () => {
     const editor = editorWithDateChip(
       '<p><time data-date-chip data-iso="2026-06-01" data-label="Jun 1">Jun 1</time></p>',
     );
-    const chip = editor.state.doc.descendants((node) => node.type.name === 'dateChip');
     let found = false;
     editor.state.doc.descendants((node) => {
       if (node.type.name === 'dateChip') {

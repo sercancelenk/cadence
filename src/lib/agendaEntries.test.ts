@@ -11,7 +11,25 @@ import {
   startOfDay,
 } from './agendaEntries';
 import { PATH_AGENDA, PATH_TODOS } from './routes';
-import type { AppData } from '../model';
+import type { AppData, TodoGroup, TodoItem } from '../model';
+
+const FIX_TS = '2020-01-01T00:00:00.000Z';
+
+function inboxGroup(extra: Partial<TodoGroup> = {}): TodoGroup {
+  return { id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: FIX_TS, archived: false, ...extra };
+}
+
+function testTodo(row: Partial<TodoItem> & Pick<TodoItem, 'id' | 'groupId' | 'title'>): TodoItem {
+  const status = row.status ?? 'todo';
+  const done = row.done ?? status === 'done';
+  return {
+    ...row,
+    status,
+    done,
+    createdAt: row.createdAt ?? FIX_TS,
+    updatedAt: row.updatedAt ?? FIX_TS,
+  };
+}
 
 function minimalData(overrides: Partial<AppData> = {}): AppData {
   return {
@@ -29,15 +47,9 @@ function minimalData(overrides: Partial<AppData> = {}): AppData {
 describe('collectAgendaEntries', () => {
   it('includes open todos with due dates', () => {
     const data = minimalData({
-      todoGroups: [{ id: 'g1', name: 'Inbox', priority: 0, archived: false }],
+      todoGroups: [inboxGroup()],
       todoItems: [
-        {
-          id: 't1',
-          groupId: 'g1',
-          title: 'Ship',
-          status: 'todo',
-          dueAt: '2030-06-15T10:00:00.000Z',
-        },
+        testTodo({ id: 't1', groupId: 'g1', title: 'Ship', status: 'todo', dueAt: '2030-06-15T10:00:00.000Z' }),
       ],
     });
     const entries = collectAgendaEntries(data);
@@ -47,15 +59,9 @@ describe('collectAgendaEntries', () => {
 
   it('filters overdue open items', () => {
     const data = minimalData({
-      todoGroups: [{ id: 'g1', name: 'Inbox', priority: 0, archived: false }],
+      todoGroups: [inboxGroup()],
       todoItems: [
-        {
-          id: 't1',
-          groupId: 'g1',
-          title: 'Late',
-          status: 'todo',
-          dueAt: '2020-01-01T10:00:00.000Z',
-        },
+        testTodo({ id: 't1', groupId: 'g1', title: 'Late', status: 'todo', dueAt: '2020-01-01T10:00:00.000Z' }),
       ],
     });
     const entries = collectAgendaEntries(data);
@@ -65,15 +71,9 @@ describe('collectAgendaEntries', () => {
 
   it('filters entries for a calendar day', () => {
     const data = minimalData({
-      todoGroups: [{ id: 'g1', name: 'Inbox', priority: 0, archived: false }],
+      todoGroups: [inboxGroup()],
       todoItems: [
-        {
-          id: 't1',
-          groupId: 'g1',
-          title: 'Today task',
-          status: 'todo',
-          dueAt: '2030-06-15T14:00:00.000Z',
-        },
+        testTodo({ id: 't1', groupId: 'g1', title: 'Today task', status: 'todo', dueAt: '2030-06-15T14:00:00.000Z' }),
       ],
     });
     const entries = collectAgendaEntries(data);
@@ -130,13 +130,7 @@ describe('collectAgendaEntries', () => {
         },
       ],
       todoItems: [
-        {
-          id: 't-bad',
-          groupId: 'g1',
-          title: 'Bad todo date',
-          status: 'todo',
-          dueAt: 'nope',
-        },
+        testTodo({ id: 't-bad', groupId: 'g1', title: 'Bad todo date', status: 'todo', dueAt: 'nope' }),
       ],
       todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: '2020-01-01T00:00:00.000Z' }],
     });
@@ -162,13 +156,7 @@ describe('collectAgendaEntries', () => {
       ],
       todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: '2020-01-01T00:00:00.000Z' }],
       todoItems: [
-        {
-          id: 't-done',
-          groupId: 'g1',
-          title: 'Done todo',
-          status: 'done',
-          dueAt: '2030-06-16T10:00:00.000Z',
-        },
+        testTodo({ id: 't-done', groupId: 'g1', title: 'Done todo', status: 'done', dueAt: '2030-06-16T10:00:00.000Z' }),
       ],
     });
     expect(collectAgendaEntries(data)).toEqual([]);
@@ -180,13 +168,13 @@ describe('collectAgendaEntries', () => {
     const data = minimalData({
       todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: '2020-01-01T00:00:00.000Z' }],
       todoItems: [
-        {
+        testTodo({
           id: 't-cancel',
           groupId: 'g1',
           title: 'Dropped',
           status: 'cancelled',
           dueAt: '2030-06-15T10:00:00.000Z',
-        },
+        }),
       ],
     });
     expect(collectAgendaEntries(data)).toEqual([]);
@@ -196,20 +184,8 @@ describe('collectAgendaEntries', () => {
     const data = minimalData({
       todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: '2020-01-01T00:00:00.000Z' }],
       todoItems: [
-        {
-          id: 't-late',
-          groupId: 'g1',
-          title: 'Late',
-          status: 'todo',
-          dueAt: '2030-06-16T10:00:00.000Z',
-        },
-        {
-          id: 't-early',
-          groupId: 'g1',
-          title: 'Early',
-          status: 'todo',
-          dueAt: '2030-06-14T10:00:00.000Z',
-        },
+        testTodo({ id: 't-late', groupId: 'g1', title: 'Late', status: 'todo', dueAt: '2030-06-16T10:00:00.000Z' }),
+        testTodo({ id: 't-early', groupId: 'g1', title: 'Early', status: 'todo', dueAt: '2030-06-14T10:00:00.000Z' }),
       ],
     });
     const entries = collectAgendaEntries(data);
@@ -298,15 +274,9 @@ describe('agendaEntryHref', () => {
   it('links todos to the todos focus route', () => {
     const entries = collectAgendaEntries(
       minimalData({
-        todoGroups: [{ id: 'g1', name: 'Inbox', priority: 0, archived: false }],
+        todoGroups: [inboxGroup()],
         todoItems: [
-          {
-            id: 't1',
-            groupId: 'g1',
-            title: 'Ship',
-            status: 'todo',
-            dueAt: '2030-06-15T10:00:00.000Z',
-          },
+          testTodo({ id: 't1', groupId: 'g1', title: 'Ship', status: 'todo', dueAt: '2030-06-15T10:00:00.000Z' }),
         ],
       }),
     );
@@ -401,22 +371,10 @@ describe('filterOverdueAgendaEntries', () => {
           updatedAt: '2020-01-01T00:00:00.000Z',
         },
       ],
-      todoGroups: [{ id: 'g1', name: 'Inbox', priority: 0, archived: false }],
+      todoGroups: [inboxGroup()],
       todoItems: [
-        {
-          id: 't-done',
-          groupId: 'g1',
-          title: 'Finished',
-          status: 'done',
-          dueAt: '2030-06-10T10:00:00.000Z',
-        },
-        {
-          id: 't-open',
-          groupId: 'g1',
-          title: 'Late',
-          status: 'todo',
-          dueAt: '2030-06-10T10:00:00.000Z',
-        },
+        testTodo({ id: 't-done', groupId: 'g1', title: 'Finished', status: 'done', dueAt: '2030-06-10T10:00:00.000Z' }),
+        testTodo({ id: 't-open', groupId: 'g1', title: 'Late', status: 'todo', dueAt: '2030-06-10T10:00:00.000Z' }),
       ],
     });
     const entries = collectAgendaEntries(data);
@@ -427,15 +385,9 @@ describe('filterOverdueAgendaEntries', () => {
   it('ignores entries scheduled later today', () => {
     const ref = new Date('2030-06-15T08:00:00.000Z');
     const data = minimalData({
-      todoGroups: [{ id: 'g1', name: 'Inbox', priority: 0, archived: false }],
+      todoGroups: [inboxGroup()],
       todoItems: [
-        {
-          id: 't-later',
-          groupId: 'g1',
-          title: 'Later today',
-          status: 'todo',
-          dueAt: '2030-06-15T18:00:00.000Z',
-        },
+        testTodo({ id: 't-later', groupId: 'g1', title: 'Later today', status: 'todo', dueAt: '2030-06-15T18:00:00.000Z' }),
       ],
     });
     const entries = collectAgendaEntries(data);
@@ -451,13 +403,7 @@ describe('filterOverdueAgendaEntries', () => {
     const data = minimalData({
       todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: '2020-01-01T00:00:00.000Z' }],
       todoItems: [
-        {
-          id: 't-yesterday',
-          groupId: 'g1',
-          title: 'Yesterday',
-          status: 'todo',
-          dueAt: yesterday.toISOString(),
-        },
+        testTodo({ id: 't-yesterday', groupId: 'g1', title: 'Yesterday', status: 'todo', dueAt: yesterday.toISOString() }),
       ],
     });
     const entries = collectAgendaEntries(data);
@@ -470,22 +416,10 @@ describe('buildAgendaWeekStrip', () => {
   it('always includes today and labels tomorrow', () => {
     const ref = new Date('2030-06-15T12:00:00.000Z');
     const data = minimalData({
-      todoGroups: [{ id: 'g1', name: 'Inbox', priority: 0, archived: false }],
+      todoGroups: [inboxGroup()],
       todoItems: [
-        {
-          id: 't-today',
-          groupId: 'g1',
-          title: 'Today',
-          status: 'todo',
-          dueAt: '2030-06-15T14:00:00.000Z',
-        },
-        {
-          id: 't-tomorrow',
-          groupId: 'g1',
-          title: 'Tomorrow',
-          status: 'todo',
-          dueAt: '2030-06-16T09:00:00.000Z',
-        },
+        testTodo({ id: 't-today', groupId: 'g1', title: 'Today', status: 'todo', dueAt: '2030-06-15T14:00:00.000Z' }),
+        testTodo({ id: 't-tomorrow', groupId: 'g1', title: 'Tomorrow', status: 'todo', dueAt: '2030-06-16T09:00:00.000Z' }),
       ],
     });
     const strip = buildAgendaWeekStrip(collectAgendaEntries(data), ref);
@@ -513,20 +447,20 @@ describe('buildAgendaWeekStrip', () => {
     const data = minimalData({
       todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: '2020-01-01T00:00:00.000Z' }],
       todoItems: [
-        {
+        testTodo({
           id: 't-tomorrow',
           groupId: 'g1',
           title: 'Tomorrow task',
           status: 'todo',
           dueAt: new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate(), 9).toISOString(),
-        },
-        {
+        }),
+        testTodo({
           id: 't-mon',
           groupId: 'g1',
           title: 'Monday task',
           status: 'todo',
           dueAt: new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 10).toISOString(),
-        },
+        }),
       ],
     });
     const strip = buildAgendaWeekStrip(collectAgendaEntries(data), ref);

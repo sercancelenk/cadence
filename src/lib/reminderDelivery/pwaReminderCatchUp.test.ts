@@ -97,7 +97,8 @@ describe('collectPwaDeliveredSlotKeys', () => {
     });
     await expect(collectPwaDeliveredSlotKeys()).resolves.toEqual([]);
     expect(catchSpy).toHaveBeenCalledWith(expect.any(Function));
-    expect(catchSpy.mock.calls[0]?.[0](new Error('no sw'))).toBeNull();
+    const onReject = catchSpy.mock.calls[0]?.[0];
+    expect(onReject!(new Error('no sw'))).toBeNull();
   });
 
   it('collects slot keys for past-due cadence notifications', async () => {

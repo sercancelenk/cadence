@@ -39,6 +39,7 @@ const SAMPLE_PAIR: LanSyncPair = {
   token: 'pair-token',
   etag: 'etag-1',
   localFingerprint: 'fp-1',
+  pairedAt: '2026-05-19T00:00:00.000Z',
   lastSyncedAt: '2026-05-19T00:00:00.000Z',
 };
 

@@ -83,7 +83,8 @@ describe('pwaReminderSync', () => {
     });
     await expect(postReminderSyncToServiceWorker([])).resolves.toBeUndefined();
     expect(catchSpy).toHaveBeenCalledWith(expect.any(Function));
-    expect(catchSpy.mock.calls[0]?.[0](new Error('offline'))).toBeNull();
+    const onReject = catchSpy.mock.calls[0]?.[0];
+    expect(onReject!(new Error('offline'))).toBeNull();
     expect(postMessage).not.toHaveBeenCalled();
   });
 
@@ -105,7 +106,8 @@ describe('pwaReminderSync', () => {
     });
     await expect(postReminderCancelItem('reject-me')).resolves.toBeUndefined();
     expect(catchSpy).toHaveBeenCalledWith(expect.any(Function));
-    expect(catchSpy.mock.calls[0]?.[0](new Error('offline'))).toBeNull();
+    const onReject = catchSpy.mock.calls[0]?.[0];
+    expect(onReject!(new Error('offline'))).toBeNull();
     expect(postMessage).not.toHaveBeenCalled();
   });
 });

@@ -34,7 +34,7 @@ describe('FeaturesProvider', () => {
         path: '/etc/cadence/policy.json',
         preset: 'work-strict',
       })),
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
 
     render(
       <FeaturesProvider>
@@ -52,7 +52,7 @@ describe('FeaturesProvider', () => {
       policyGet: vi.fn(async () => {
         throw new Error('policy read failed');
       }),
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
 
     render(
       <FeaturesProvider>
@@ -67,7 +67,7 @@ describe('FeaturesProvider', () => {
   it('persists a user preset selection to localStorage', async () => {
     window.cadence = {
       policyGet: vi.fn(async () => null),
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
 
     render(
       <FeaturesProvider>

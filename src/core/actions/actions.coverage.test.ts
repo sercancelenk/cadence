@@ -8,6 +8,7 @@ import {
   leaderPersonIdForTeam,
   selfPersonIdForTeam,
   type AppData,
+  type AISettings,
   type ItemKind,
   type Note,
   type NotesLock,
@@ -30,7 +31,6 @@ import {
   removePerson,
   removeTeam,
   removeTodoGroup,
-  removeTodoItem,
   reorderTodoGroup,
   reorderTodoItem,
   replaceNote,
@@ -401,7 +401,12 @@ describe('profile and AI settings', () => {
     expect(d.aiSettings?.provider).toBe('openai');
     expect(d.aiSettings?.apiKey).toBe('key');
 
-    d = updateAISettings(d, { provider: '', apiKey: '', model: '', systemPrompt: '' });
+    d = updateAISettings(d, {
+      provider: '' as never,
+      apiKey: '',
+      model: '',
+      systemPrompt: '',
+    } satisfies Partial<AISettings>);
     expect(d.aiSettings).toBeUndefined();
   });
 

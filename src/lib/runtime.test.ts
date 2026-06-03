@@ -28,7 +28,7 @@ describe('isElectronApp', () => {
   });
 
   it('returns true when cadence.saveData is present', () => {
-    window.cadence = { saveData: async () => true } as Window['cadence'];
+    window.cadence = { saveData: async () => true } as unknown as Window['cadence'];
     expect(isElectronApp()).toBe(true);
   });
 });
@@ -67,7 +67,7 @@ describe('isMobileWeb', () => {
 
   it('is false in Electron even when the viewport is narrow', () => {
     mockMatchMedia(true);
-    window.cadence = { saveData: async () => true } as Window['cadence'];
+    window.cadence = { saveData: async () => true } as unknown as Window['cadence'];
     expect(isMobileWeb()).toBe(false);
   });
 });

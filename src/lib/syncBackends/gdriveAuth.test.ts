@@ -355,7 +355,7 @@ describe('beginAuth', () => {
           redirectUri: 'http://127.0.0.1:53682/',
         }),
       },
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
     vi.stubGlobal('fetch', async () =>
       Response.json({ access_token: 'electron-token', expires_in: 3600 }),
     );
@@ -366,7 +366,7 @@ describe('beginAuth', () => {
   });
 
   it('returns electron-unsupported when the bridge is missing', async () => {
-    window.cadence = {} as Window['cadence'];
+    window.cadence = {} as unknown as Window['cadence'];
     const result = await beginAuth();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('electron-unsupported');
@@ -382,7 +382,7 @@ describe('beginAuth', () => {
           redirectUri: 'http://127.0.0.1:53682/',
         }),
       },
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
     vi.stubGlobal('fetch', async () =>
       Response.json({ error: 'invalid_grant', error_description: 'bad code' }, { status: 400 }),
     );
@@ -405,7 +405,7 @@ describe('beginAuth', () => {
           redirectUri: 'http://127.0.0.1:53682/',
         }),
       },
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
     vi.stubGlobal('fetch', async () => {
       throw new TypeError('offline');
     });
@@ -425,7 +425,7 @@ describe('beginAuth', () => {
           redirectUri: 'http://127.0.0.1:53682/',
         }),
       },
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
     vi.stubGlobal('fetch', async () =>
       Response.json({
         access_token: 'electron-token',
@@ -543,7 +543,7 @@ describe('beginAuth', () => {
           redirectUri: 'http://127.0.0.1:53682/',
         }),
       },
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
     vi.stubGlobal('fetch', async () => new Response('plain-text-error', { status: 500 }));
 
     const result = await beginAuth();
@@ -564,7 +564,7 @@ describe('beginAuth', () => {
           redirectUri: 'http://127.0.0.1:53682/',
         }),
       },
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
     vi.stubGlobal('fetch', async () =>
       Response.json({
         access_token: 'tok',
@@ -686,7 +686,7 @@ describe('beginAuth — Electron bridge failures', () => {
       gdriveAuth: {
         start: async () => ({ ok: false, reason: 'user-cancelled', detail: 'closed' }),
       },
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
   });
 
   afterEach(() => {
@@ -703,7 +703,7 @@ describe('beginAuth — Electron bridge failures', () => {
       gdriveAuth: {
         start: async () => ({ ok: false } as { ok: false }),
       },
-    } as Window['cadence'];
+    } as unknown as Window['cadence'];
     const result = await beginAuth();
     expect(result).toEqual({ ok: false, reason: 'unexpected', detail: undefined });
   });

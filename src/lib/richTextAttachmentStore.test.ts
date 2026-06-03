@@ -9,12 +9,19 @@ function installMockIndexedDB() {
     open(name: string, _version?: number) {
       if (!dbs.has(name)) dbs.set(name, new Map());
       const store = dbs.get(name)!;
-      const req = {
-        result: null as IDBDatabase | null,
-        error: null as DOMException | null,
-        onsuccess: null as (() => void) | null,
-        onerror: null as (() => void) | null,
-        onupgradeneeded: null as ((ev: { target: typeof req }) => void) | null,
+      type MockOpenRequest = {
+        result: IDBDatabase | null;
+        error: DOMException | null;
+        onsuccess: (() => void) | null;
+        onerror: (() => void) | null;
+        onupgradeneeded: ((ev: { target: MockOpenRequest }) => void) | null;
+      };
+      const req: MockOpenRequest = {
+        result: null,
+        error: null,
+        onsuccess: null,
+        onerror: null,
+        onupgradeneeded: null,
       };
       const db = {
         name,

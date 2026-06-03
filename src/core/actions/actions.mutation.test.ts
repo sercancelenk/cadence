@@ -4,15 +4,10 @@ import * as modelModule from '../model';
 import {
   emptyData,
   getSelfPerson,
-  isLeaderPerson,
   isSelfPerson,
-  leaderPersonIdForTeam,
-  selfPersonIdForTeam,
   type AppData,
   type Item,
   type ItemKind,
-  type Note,
-  type NotesLock,
   type TodoItem,
 } from '../model';
 import {
@@ -22,22 +17,12 @@ import {
   addTeam,
   addTodoGroup,
   addTodoItem,
-  moveTodoGroup,
   patchNote,
-  patchUtilityDocument,
   patchUtilityStructuredText,
-  removeItem,
-  removeNote,
-  removePerson,
   removeTeam,
-  removeTodoGroup,
-  removeTodoItem,
   reorderTodoGroup,
   reorderTodoItem,
-  replaceNote,
   setLastTeamId,
-  setNotesLock,
-  setTodoStatus,
   toggleFavoriteTeam,
   toggleItemDone,
   toggleTodoItem,
@@ -45,9 +30,7 @@ import {
   updateItem,
   updatePerson,
   updateTeam,
-  updateTodoGroup,
   updateTodoItem,
-  updateUserProfile,
 } from './index';
 import { reminderNotifyKey } from '../../lib/reminderNotify';
 
@@ -587,7 +570,7 @@ describe('actions mutation — deterministic reducers', () => {
       const base = freshData();
       let d = updateAISettings(base, { provider: 'openai', apiKey: 'k' });
       expect(d.aiSettings).toEqual({ provider: 'openai', apiKey: 'k', model: undefined, systemPrompt: undefined });
-      d = updateAISettings(d, { provider: '', apiKey: '' });
+      d = updateAISettings(d, { provider: '' as never, apiKey: '' });
       expect(d.aiSettings).toBeUndefined();
     });
 

@@ -45,6 +45,7 @@ describe('distinctCategoriesForTeam', () => {
           body: '',
           done: false,
           createdAt: '2020-01-01T00:00:00.000Z',
+          updatedAt: '2020-01-01T00:00:00.000Z',
           category: '  Operations  ',
         },
         {
@@ -55,6 +56,7 @@ describe('distinctCategoriesForTeam', () => {
           body: '',
           done: false,
           createdAt: '2020-01-01T00:00:00.000Z',
+          updatedAt: '2020-01-01T00:00:00.000Z',
           category: 'Initiative',
         },
         {
@@ -65,6 +67,7 @@ describe('distinctCategoriesForTeam', () => {
           body: '',
           done: false,
           createdAt: '2020-01-01T00:00:00.000Z',
+          updatedAt: '2020-01-01T00:00:00.000Z',
           category: 'Initiative',
         },
         {
@@ -75,6 +78,7 @@ describe('distinctCategoriesForTeam', () => {
           body: '',
           done: false,
           createdAt: '2020-01-01T00:00:00.000Z',
+          updatedAt: '2020-01-01T00:00:00.000Z',
           category: 'Ignored',
         },
         {
@@ -85,6 +89,7 @@ describe('distinctCategoriesForTeam', () => {
           body: '',
           done: false,
           createdAt: '2020-01-01T00:00:00.000Z',
+          updatedAt: '2020-01-01T00:00:00.000Z',
           category: '   ',
         },
       ],
@@ -104,6 +109,7 @@ describe('distinctCategoriesForTeam', () => {
           body: '',
           done: false,
           createdAt: '2020-01-01T00:00:00.000Z',
+          updatedAt: '2020-01-01T00:00:00.000Z',
         },
       ],
     });

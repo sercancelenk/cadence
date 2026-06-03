@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1780522818552" clover="3.2.0">
-  <project timestamp="1780522818552" name="All files">
-    <metrics statements="2521" coveredstatements="2406" conditionals="2607" coveredconditionals="2120" methods="590" coveredmethods="559" elements="5718" coveredelements="5085" complexity="0" loc="2521" ncloc="2521" packages="5" files="58" classes="58"/>
+<coverage generated="1780526158033" clover="3.2.0">
+  <project timestamp="1780526158033" name="All files">
+    <metrics statements="2526" coveredstatements="2409" conditionals="2609" coveredconditionals="2120" methods="593" coveredmethods="560" elements="5728" coveredelements="5089" complexity="0" loc="2526" ncloc="2526" packages="5" files="59" classes="59"/>
     <package name="core.actions">
-      <metrics statements="264" coveredstatements="263" conditionals="493" coveredconditionals="385" methods="104" coveredmethods="100"/>
+      <metrics statements="265" coveredstatements="264" conditionals="493" coveredconditionals="385" methods="104" coveredmethods="100"/>
       <file name="index.ts" path="/Users/sercancelenk/development/workspaces/projects/leeadman/src/core/actions/index.ts">
-        <metrics statements="264" coveredstatements="263" conditionals="493" coveredconditionals="385" methods="104" coveredmethods="100"/>
+        <metrics statements="265" coveredstatements="264" conditionals="493" coveredconditionals="385" methods="104" coveredmethods="100"/>
         <line num="26" count="5" type="stmt"/>
         <line num="27" count="5" type="stmt"/>
         <line num="28" count="5" type="stmt"/>
@@ -267,9 +267,10 @@
         <line num="941" count="1" type="stmt"/>
         <line num="948" count="2" type="cond" truecount="2" falsecount="0"/>
         <line num="952" count="2" type="stmt"/>
-        <line num="966" count="6" type="cond" truecount="2" falsecount="0"/>
-        <line num="972" count="6" type="cond" truecount="4" falsecount="0"/>
-        <line num="973" count="6" type="stmt"/>
+        <line num="963" count="4" type="stmt"/>
+        <line num="969" count="7" type="cond" truecount="2" falsecount="0"/>
+        <line num="975" count="7" type="cond" truecount="4" falsecount="0"/>
+        <line num="976" count="7" type="stmt"/>
       </file>
     </package>
     <package name="core.model">
@@ -288,23 +289,23 @@
         <line num="170" count="28" type="cond" truecount="2" falsecount="0"/>
         <line num="247" count="11" type="stmt"/>
         <line num="261" count="11" type="stmt"/>
-        <line num="403" count="731" type="stmt"/>
-        <line num="407" count="287" type="stmt"/>
-        <line num="411" count="287" type="stmt"/>
+        <line num="403" count="735" type="stmt"/>
+        <line num="407" count="288" type="stmt"/>
+        <line num="411" count="288" type="stmt"/>
         <line num="415" count="103" type="cond" truecount="2" falsecount="0"/>
         <line num="416" count="41" type="stmt"/>
         <line num="420" count="16" type="stmt"/>
         <line num="424" count="47" type="cond" truecount="2" falsecount="0"/>
         <line num="428" count="6" type="cond" truecount="2" falsecount="0"/>
         <line num="433" count="5" type="cond" truecount="3" falsecount="0"/>
-        <line num="437" count="199" type="stmt"/>
-        <line num="438" count="199" type="stmt"/>
-        <line num="439" count="199" type="stmt"/>
-        <line num="440" count="199" type="stmt"/>
-        <line num="441" count="199" type="stmt"/>
-        <line num="471" count="206" type="stmt"/>
-        <line num="472" count="206" type="stmt"/>
-        <line num="473" count="206" type="stmt"/>
+        <line num="437" count="200" type="stmt"/>
+        <line num="438" count="200" type="stmt"/>
+        <line num="439" count="200" type="stmt"/>
+        <line num="440" count="200" type="stmt"/>
+        <line num="441" count="200" type="stmt"/>
+        <line num="471" count="207" type="stmt"/>
+        <line num="472" count="207" type="stmt"/>
+        <line num="473" count="207" type="stmt"/>
         <line num="480" count="66" type="stmt"/>
         <line num="481" count="39" type="cond" truecount="2" falsecount="0"/>
         <line num="482" count="37" type="stmt"/>
@@ -539,7 +540,7 @@
       </file>
     </package>
     <package name="lib">
-      <metrics statements="1512" coveredstatements="1417" conditionals="1204" coveredconditionals="952" methods="315" coveredmethods="291"/>
+      <metrics statements="1516" coveredstatements="1419" conditionals="1206" coveredconditionals="952" methods="318" coveredmethods="292"/>
       <file name="NotesUnlockContext.tsx" path="/Users/sercancelenk/development/workspaces/projects/leeadman/src/lib/NotesUnlockContext.tsx">
         <metrics statements="0" coveredstatements="0" conditionals="0" coveredconditionals="0" methods="0" coveredmethods="0"/>
       </file>
@@ -1215,26 +1216,33 @@
         <line num="42" count="64" type="stmt"/>
         <line num="43" count="2" type="stmt"/>
       </file>
+      <file name="pendingSaveFlush.ts" path="/Users/sercancelenk/development/workspaces/projects/leeadman/src/lib/pendingSaveFlush.ts">
+        <metrics statements="4" coveredstatements="1" conditionals="2" coveredconditionals="0" methods="3" coveredmethods="0"/>
+        <line num="6" count="2" type="stmt"/>
+        <line num="9" count="0" type="stmt"/>
+        <line num="13" count="0" type="stmt"/>
+        <line num="17" count="0" type="cond" truecount="0" falsecount="2"/>
+      </file>
       <file name="persistQueue.ts" path="/Users/sercancelenk/development/workspaces/projects/leeadman/src/lib/persistQueue.ts">
-        <metrics statements="18" coveredstatements="17" conditionals="2" coveredconditionals="2" methods="7" coveredmethods="6"/>
-        <line num="20" count="5" type="stmt"/>
-        <line num="21" count="5" type="stmt"/>
-        <line num="22" count="5" type="stmt"/>
-        <line num="24" count="5" type="stmt"/>
+        <metrics statements="18" coveredstatements="18" conditionals="2" coveredconditionals="2" methods="7" coveredmethods="7"/>
+        <line num="20" count="6" type="stmt"/>
+        <line num="21" count="6" type="stmt"/>
+        <line num="22" count="6" type="stmt"/>
+        <line num="24" count="6" type="stmt"/>
         <line num="25" count="3" type="stmt"/>
-        <line num="28" count="9" type="stmt"/>
-        <line num="29" count="9" type="stmt"/>
-        <line num="31" count="9" type="stmt"/>
-        <line num="32" count="9" type="stmt"/>
-        <line num="33" count="9" type="cond" truecount="2" falsecount="0"/>
+        <line num="28" count="11" type="stmt"/>
+        <line num="29" count="11" type="stmt"/>
+        <line num="31" count="11" type="stmt"/>
+        <line num="32" count="11" type="stmt"/>
+        <line num="33" count="10" type="cond" truecount="2" falsecount="0"/>
         <line num="34" count="2" type="stmt"/>
-        <line num="36" count="7" type="stmt"/>
-        <line num="39" count="9" type="stmt"/>
-        <line num="40" count="9" type="stmt"/>
-        <line num="41" count="9" type="stmt"/>
-        <line num="42" count="0" type="stmt"/>
-        <line num="44" count="9" type="stmt"/>
-        <line num="48" count="1" type="stmt"/>
+        <line num="36" count="8" type="stmt"/>
+        <line num="39" count="11" type="stmt"/>
+        <line num="40" count="11" type="stmt"/>
+        <line num="41" count="10" type="stmt"/>
+        <line num="42" count="1" type="stmt"/>
+        <line num="44" count="11" type="stmt"/>
+        <line num="48" count="2" type="stmt"/>
       </file>
       <file name="reminderNotify.ts" path="/Users/sercancelenk/development/workspaces/projects/leeadman/src/lib/reminderNotify.ts">
         <metrics statements="11" coveredstatements="11" conditionals="12" coveredconditionals="12" methods="5" coveredmethods="5"/>
@@ -2166,9 +2174,9 @@
       </file>
       <file name="uuid.ts" path="/Users/sercancelenk/development/workspaces/projects/leeadman/src/lib/uuid.ts">
         <metrics statements="14" coveredstatements="14" conditionals="10" coveredconditionals="10" methods="3" coveredmethods="3"/>
-        <line num="13" count="433" type="stmt"/>
-        <line num="14" count="433" type="cond" truecount="4" falsecount="0"/>
-        <line num="15" count="431" type="stmt"/>
+        <line num="13" count="435" type="stmt"/>
+        <line num="14" count="435" type="cond" truecount="4" falsecount="0"/>
+        <line num="15" count="433" type="stmt"/>
         <line num="17" count="2" type="cond" truecount="4" falsecount="0"/>
         <line num="18" count="1" type="stmt"/>
         <line num="19" count="1" type="stmt"/>

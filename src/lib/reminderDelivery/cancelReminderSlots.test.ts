@@ -19,7 +19,7 @@ describe('cancelPendingReminderSlots', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     supportsPwaOsSchedule.mockReturnValue(false);
-    window.cadence = { cancelReminderSlots } as typeof window.cadence;
+    window.cadence = { cancelReminderSlots } as unknown as typeof window.cadence;
   });
 
   afterEach(() => {
@@ -57,7 +57,7 @@ describe('cancelPendingReminderSlots', () => {
   });
 
   it('does not throw when cadence exists without cancelReminderSlots', () => {
-    window.cadence = {} as typeof window.cadence;
+    window.cadence = {} as unknown as typeof window.cadence;
     supportsPwaOsSchedule.mockReturnValue(false);
     expect(() => cancelPendingReminderSlots('item-5')).not.toThrow();
     expect(postReminderCancelItem).not.toHaveBeenCalled();

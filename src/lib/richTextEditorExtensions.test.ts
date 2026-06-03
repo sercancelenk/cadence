@@ -1,7 +1,8 @@
 import { Editor } from '@tiptap/core';
 import { generateJSON } from '@tiptap/html';
 import { describe, expect, it } from 'vitest';
-import { createRichTextExtensions, RichTextImage } from './richTextEditorExtensions';
+import type { Node as PmNode } from '@tiptap/pm/model';
+import { createRichTextExtensions } from './richTextEditorExtensions';
 
 describe('createRichTextExtensions', () => {
   it('builds a non-empty extension list with default placeholder', () => {
@@ -21,7 +22,7 @@ describe('createRichTextExtensions', () => {
       '<img src="https://example.com/x.png" data-attachment-id="att-1" width="120" height="80" />';
     const json = generateJSON(html, createRichTextExtensions());
     expect(json.type).toBe('doc');
-    expect(json.content?.some((n) => n.type === 'paragraph')).toBe(true);
+    expect(json.content?.some((n: { type: string }) => n.type === 'paragraph')).toBe(true);
   });
 });
 
@@ -32,13 +33,14 @@ describe('RichTextImage', () => {
       content:
         '<img src="x" data-attachment-id="id-9" data-width="200" data-height="100" class="rich-editor-image" />',
     });
-    let imageNode: { attrs: Record<string, unknown> } | null = null;
+    let imageNode: PmNode | null = null;
     editor.state.doc.descendants((node) => {
       if (node.type.name === 'image') imageNode = node;
     });
-    expect(imageNode?.attrs.attachmentId).toBe('id-9');
-    expect(imageNode?.attrs.width).toBe(200);
-    expect(imageNode?.attrs.height).toBe(100);
+    const attrs = (imageNode as PmNode | null)?.attrs as Record<string, unknown> | undefined;
+    expect(attrs?.attachmentId).toBe('id-9');
+    expect(attrs?.width).toBe(200);
+    expect(attrs?.height).toBe(100);
     editor.destroy();
   });
 
@@ -58,13 +60,14 @@ describe('RichTextImage', () => {
       extensions: createRichTextExtensions(),
       content: '<img src="https://example.com/p.png" class="rich-editor-image" />',
     });
-    let imageNode: { attrs: Record<string, unknown> } | null = null;
+    let imageNode: PmNode | null = null;
     editor.state.doc.descendants((node) => {
       if (node.type.name === 'image') imageNode = node;
     });
-    expect(imageNode?.attrs.attachmentId).toBeNull();
-    expect(imageNode?.attrs.width).toBeNull();
-    expect(imageNode?.attrs.height).toBeNull();
+    const attrs = (imageNode as PmNode | null)?.attrs as Record<string, unknown> | undefined;
+    expect(attrs?.attachmentId).toBeNull();
+    expect(attrs?.width).toBeNull();
+    expect(attrs?.height).toBeNull();
     const html = editor.getHTML();
     expect(html).not.toContain('data-attachment-id');
     expect(html).not.toContain('data-width');
@@ -76,12 +79,13 @@ describe('RichTextImage', () => {
       extensions: createRichTextExtensions(),
       content: '<img src="x" width="64" height="32" class="rich-editor-image" />',
     });
-    let imageNode: { attrs: Record<string, unknown> } | null = null;
+    let imageNode: PmNode | null = null;
     editor.state.doc.descendants((node) => {
       if (node.type.name === 'image') imageNode = node;
     });
-    expect(imageNode?.attrs.width).toBe(64);
-    expect(imageNode?.attrs.height).toBe(32);
+    const attrs = (imageNode as PmNode | null)?.attrs as Record<string, unknown> | undefined;
+    expect(attrs?.width).toBe(64);
+    expect(attrs?.height).toBe(32);
     editor.destroy();
   });
 });

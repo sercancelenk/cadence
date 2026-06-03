@@ -167,7 +167,7 @@ describe('askAI', () => {
     });
     expect(result.text).toBe('Claude says hi');
     expect(result.stopReason).toBe('stop');
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((init.headers as Record<string, string>)['anthropic-dangerous-direct-browser-access']).toBe('true');
   });
 

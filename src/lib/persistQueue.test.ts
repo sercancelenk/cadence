@@ -6,7 +6,7 @@ describe('createPersistQueue', () => {
     const order: number[] = [];
     const queue = createPersistQueue(async (n: number) => {
       order.push(n);
-      return { ok: true };
+      return { ok: true as const };
     });
     await queue.enqueue(1);
     await queue.enqueue(2);
@@ -22,9 +22,9 @@ describe('createPersistQueue', () => {
     const write = vi.fn(async (n: number) => {
       if (n === 1) {
         await firstGate;
-        return { ok: false, reason: 'io', error: 'disk full' };
+        return { ok: false as const, reason: 'io', error: 'disk full' };
       }
-      return { ok: true };
+      return { ok: true as const };
     });
     const queue = createPersistQueue(write);
     const p1 = queue.enqueue(1);
@@ -37,7 +37,7 @@ describe('createPersistQueue', () => {
   });
 
   it('surfaces failure from the latest job', async () => {
-    const queue = createPersistQueue(async () => ({ ok: false, reason: 'rejected', error: 'nope' }));
+    const queue = createPersistQueue(async () => ({ ok: false as const, reason: 'rejected', error: 'nope' }));
     const r = await queue.enqueue({ x: 1 });
     expect(r).toEqual({ ok: false, reason: 'rejected', error: 'nope' });
   });
@@ -47,7 +47,7 @@ describe('createPersistQueue', () => {
     const queue = createPersistQueue(async () => {
       await new Promise((r) => setTimeout(r, 30));
       done = true;
-      return { ok: true };
+      return { ok: true as const };
     });
     void queue.enqueue(1);
     await queue.flush();
@@ -57,7 +57,7 @@ describe('createPersistQueue', () => {
   it('keeps the queue alive when a write throws', async () => {
     const queue = createPersistQueue(async (n: number) => {
       if (n === 1) throw new Error('disk exploded');
-      return { ok: true };
+      return { ok: true as const };
     });
     await expect(queue.enqueue(1)).rejects.toThrow('disk exploded');
     await expect(queue.enqueue(2)).resolves.toEqual({ ok: true });
