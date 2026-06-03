@@ -134,9 +134,15 @@
           ]
         }
       ],
-      "bin": {
-        "cadence-notify-schedule": "electron/reminder/native/cadence-notify-schedule"
-      },
+      "extraFiles": [
+        {
+          "from": "electron/reminder/native/cadence-notify-schedule",
+          "to": "MacOS/cadence-notify-schedule"
+        }
+      ],
+      "binaries": [
+        "Contents/MacOS/cadence-notify-schedule"
+      ],
       "target": [
         {
           "target": "dmg",

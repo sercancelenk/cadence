@@ -35,6 +35,9 @@ string LaunchUrl(string? itemId, string? source)
 
 ToastNotifier Notifier() => ToastNotificationManager.CreateToastNotifier(AppId());
 
+IReadOnlyList<ScheduledToastNotification> ScheduledToasts() =>
+    Notifier().GetScheduledToastNotifications();
+
 void RequestPermission()
 {
     Respond(null, true, new Dictionary<string, object?> { ["granted"] = true, ["error"] = null });
@@ -45,8 +48,7 @@ void ListPending()
     var ids = new List<string>();
     try
     {
-        var collection = ToastNotificationManager.GetFutureScheduledToastNotificationsCollection();
-        foreach (var toast in collection)
+        foreach (var toast in ScheduledToasts())
         {
             if (toast.Id.StartsWith(IdPrefix, StringComparison.Ordinal)) ids.Add(toast.Id);
         }
@@ -67,7 +69,11 @@ void ListDelivered()
         var history = ToastNotificationManager.History.GetHistory(AppId());
         foreach (var toast in history)
         {
-            if (toast.Id.StartsWith(IdPrefix, StringComparison.Ordinal)) ids.Add(toast.Id);
+            var tag = toast.Tag;
+            if (!string.IsNullOrEmpty(tag) && tag.StartsWith(IdPrefix, StringComparison.Ordinal))
+            {
+                ids.Add(tag);
+            }
         }
     }
     catch (Exception ex)
@@ -82,8 +88,15 @@ void Cancel(string id)
 {
     try
     {
-        Notifier().RemoveFromSchedule(id);
-        ToastNotificationManager.History.Remove(id);
+        foreach (var toast in ScheduledToasts())
+        {
+            if (toast.Id == id)
+            {
+                Notifier().RemoveFromSchedule(toast);
+                break;
+            }
+        }
+        ToastNotificationManager.History.Remove(id, string.Empty, AppId());
     }
     catch
     {
@@ -96,20 +109,20 @@ void CancelPrefix(string prefix)
 {
     try
     {
-        var collection = ToastNotificationManager.GetFutureScheduledToastNotificationsCollection();
-        foreach (var toast in collection)
+        foreach (var toast in ScheduledToasts())
         {
             if (toast.Id.StartsWith(prefix, StringComparison.Ordinal))
             {
-                Notifier().RemoveFromSchedule(toast.Id);
+                Notifier().RemoveFromSchedule(toast);
             }
         }
         var history = ToastNotificationManager.History.GetHistory(AppId());
         foreach (var toast in history)
         {
-            if (toast.Id.StartsWith(prefix, StringComparison.Ordinal))
+            var tag = toast.Tag;
+            if (!string.IsNullOrEmpty(tag) && tag.StartsWith(prefix, StringComparison.Ordinal))
             {
-                ToastNotificationManager.History.Remove(toast.Id);
+                ToastNotificationManager.History.Remove(tag, string.Empty, AppId());
             }
         }
     }
@@ -166,7 +179,11 @@ void Schedule(string json)
     {
         var doc = new XmlDocument();
         doc.LoadXml(xml);
-        var scheduled = new ScheduledToastNotification(doc, fireAt.UtcDateTime) { Id = payload.Id };
+        var scheduled = new ScheduledToastNotification(doc, fireAt.UtcDateTime)
+        {
+            Id = payload.Id,
+            Tag = payload.Id,
+        };
         Notifier().AddToSchedule(scheduled);
         Respond(null, true, new Dictionary<string, object?>
         {
