@@ -7205,7 +7205,8 @@ details summary {
 }
 
 .utilities-doc-page__head,
-.utilities-doc-page__future {
+.utilities-doc-page__future,
+.utilities-structured-page .utilities-doc-page__head {
   flex-shrink: 0;
 }
 
@@ -7253,6 +7254,8 @@ details summary {
   padding: 24px;
   border: 1px dashed var(--border);
   border-radius: var(--radius);
+  flex: 1;
+  min-height: 0;
 }
 
 .structured-text-editor__toolbar {
@@ -7340,11 +7343,15 @@ details summary {
 .structured-text-editor__host {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .structured-text-editor__host .cm-editor {
-  min-height: inherit;
+  flex: 1;
+  min-height: var(--structured-text-min-height, 360px);
+  height: 100%;
 }
 
 .structured-text-editor__host .cm-editor.cm-focused {
@@ -7359,6 +7366,8 @@ details summary {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  flex: 1;
+  --structured-text-min-height: 480px;
   border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-radius: var(--radius);
   background: var(--panel);
@@ -7367,6 +7376,20 @@ details summary {
 
 .structured-text-workspace__chrome {
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.structured-text-workspace__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.structured-text-workspace__body > .structured-text-editor,
+.structured-text-workspace__body > .structured-text-diff-pane {
+  flex: 1;
+  min-height: 0;
 }
 
 .structured-text-workspace .structured-text-editor,
@@ -7422,23 +7445,29 @@ details summary {
 .structured-text-diff-pane__host {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .structured-text-diff-pane__host .cm-mergeView {
+  flex: 1;
+  height: 100%;
+  min-height: var(--structured-text-min-height, 480px);
+}
+
+.structured-text-diff-pane__host .cm-mergeViewEditors {
   height: 100%;
   min-height: inherit;
 }
 
-.structured-text-diff-pane__host .cm-mergeViewEditors {
-  min-height: inherit;
-}
-
 .structured-text-diff-pane__host .cm-mergeViewEditor {
+  height: 100%;
   min-height: inherit;
 }
 
 .structured-text-diff-pane__host .cm-editor {
+  height: 100%;
   min-height: inherit;
 }
 

@@ -11,8 +11,10 @@ export function useDebouncedEmit(debounceMs: number, onEmit?: (value: string) =>
   debounceRef.current = debounceMs;
   const lastEmitted = useRef<string | null>(null);
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingValue = useRef<string | null>(null);
 
   const flush = useCallback((value: string) => {
+    pendingValue.current = null;
     if (value === lastEmitted.current) return;
     lastEmitted.current = value;
     onEmitRef.current?.(value);
@@ -20,6 +22,7 @@ export function useDebouncedEmit(debounceMs: number, onEmit?: (value: string) =>
 
   const schedule = useCallback(
     (value: string) => {
+      pendingValue.current = value;
       const ms = debounceRef.current;
       if (ms <= 0) {
         flush(value);
@@ -37,8 +40,11 @@ export function useDebouncedEmit(debounceMs: number, onEmit?: (value: string) =>
   useEffect(
     () => () => {
       if (pending.current) clearTimeout(pending.current);
+      if (pendingValue.current != null) {
+        flush(pendingValue.current);
+      }
     },
-    [],
+    [flush],
   );
 
   return { lastEmitted, flush, schedule };

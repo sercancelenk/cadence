@@ -14,6 +14,7 @@ export function replaceStructuredTextDoc(
   text: string,
   { preserveSelection = true, recordHistory = true }: ReplaceDocOptions = {},
 ) {
+  if (text === view.state.doc.toString()) return;
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: text },
     ...(preserveSelection ? { selection: view.state.selection } : {}),
@@ -30,11 +31,12 @@ export function syncStructuredTextDocFromProp(
   value: string,
   lastEmitted: MutableRefObject<string | null>,
 ): boolean {
-  if (value === lastEmitted.current) return false;
-  if (value === view.state.doc.toString()) {
+  const current = view.state.doc.toString();
+  if (current === value) {
     lastEmitted.current = value;
     return false;
   }
+  if (value === lastEmitted.current) return false;
   replaceStructuredTextDoc(view, value, { recordHistory: false });
   lastEmitted.current = value;
   return true;

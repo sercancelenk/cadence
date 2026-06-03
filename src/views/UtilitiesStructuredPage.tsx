@@ -102,33 +102,33 @@ export function UtilitiesStructuredPage() {
           </div>
         </div>
 
-        <Suspense
-          fallback={
-            <div className="structured-text-editor structured-text-editor--loading muted small">
-              Loading editor…
-            </div>
-          }
-        >
-          {mode === 'edit' ? (
-            <StructuredTextEditor
-              value={content}
-              language={language}
-              onChange={onChange}
-              onLanguageChange={onLanguageChange}
-              minHeight={480}
-            />
-          ) : (
-            <StructuredTextDiffPane
-              valueA={content}
-              valueB={diffContent}
-              onChangeA={onChange}
-              onChangeB={onDiffChange}
-              language={language}
-              onLanguageChange={onLanguageChange}
-              minHeight={480}
-            />
-          )}
-        </Suspense>
+        <div className="structured-text-workspace__body">
+          <Suspense
+            fallback={
+              <div className="structured-text-editor structured-text-editor--loading muted small">
+                Loading editor…
+              </div>
+            }
+          >
+            {mode === 'edit' ? (
+              <StructuredTextEditor
+                value={content}
+                language={language}
+                onChange={onChange}
+                onLanguageChange={onLanguageChange}
+              />
+            ) : (
+              <StructuredTextDiffPane
+                valueA={content}
+                valueB={diffContent}
+                onChangeA={onChange}
+                onChangeB={onDiffChange}
+                language={language}
+                onLanguageChange={onLanguageChange}
+              />
+            )}
+          </Suspense>
+        </div>
       </div>
     </div>
   );

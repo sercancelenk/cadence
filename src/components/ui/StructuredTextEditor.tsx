@@ -9,15 +9,17 @@ import {
   IcCopy,
   IcQuotes,
   IcRowsCompact,
+  IcSearch,
 } from '../icons';
 import { StructuredTextLanguageToggle } from './StructuredTextLanguageToggle';
 import { StructuredTextToolbarButton } from './StructuredTextToolbarButton';
 import {
   buildStructuredTextExtensions,
-  defaultStructuredTextCompartments,
+  createStructuredTextCompartments,
   structuredTextLanguageExtensions,
 } from '../../lib/structuredTextEditorExtensions';
 import { syncStructuredTextDocFromProp, replaceStructuredTextDoc } from '../../lib/structuredTextEditorSync';
+import { observeStructuredTextHostResize, openStructuredTextSearch } from '../../lib/structuredTextEditorLayout';
 import {
   compactStructuredText,
   formatStructuredText,
@@ -31,8 +33,6 @@ import { useDebouncedEmit } from '../../hooks/useDebouncedEmit';
 import { useEphemeralNotice } from '../../hooks/useEphemeralNotice';
 
 const DEFAULT_DEBOUNCE_MS = 150;
-const { language: languageCompartment, readOnly: readOnlyCompartment } =
-  defaultStructuredTextCompartments;
 
 export type StructuredTextEditorProps = {
   value: string;
@@ -63,6 +63,10 @@ export function StructuredTextEditor({
 }: StructuredTextEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const compartmentsRef = useRef<ReturnType<typeof createStructuredTextCompartments> | null>(
+    null,
+  );
+  const syncedLanguageRef = useRef(language);
   const onValidationChangeRef = useRef(onValidationChange);
   onValidationChangeRef.current = onValidationChange;
   const languageRef = useRef(language);
@@ -102,34 +106,35 @@ export function StructuredTextEditor({
   );
 
   const baseExtensions = useMemo(
-    () =>
-      buildStructuredTextExtensions(
-        defaultStructuredTextCompartments,
-        language,
-        readOnly,
-        [],
-        scheduleChange,
-      ),
+    () => (compartments: ReturnType<typeof createStructuredTextCompartments>) =>
+      buildStructuredTextExtensions(compartments, language, readOnly, [], scheduleChange),
     [language, readOnly, scheduleChange],
   );
 
   useEffect(() => {
-    if (!hostRef.current) return;
+    const host = hostRef.current;
+    if (!host) return;
+    const compartments = createStructuredTextCompartments();
+    compartmentsRef.current = compartments;
     lastEmitted.current = value;
     pushValidation(value, language);
+    syncedLanguageRef.current = language;
 
     const view = new EditorView({
       state: EditorState.create({
         doc: value,
-        extensions: baseExtensions,
+        extensions: baseExtensions(compartments),
       }),
-      parent: hostRef.current,
+      parent: host,
     });
     viewRef.current = view;
+    const stopResizeObserver = observeStructuredTextHostResize(host, view);
 
     return () => {
+      stopResizeObserver();
       view.destroy();
       viewRef.current = null;
+      compartmentsRef.current = null;
     };
     // Mount once — language/readOnly sync in dedicated effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -141,22 +146,25 @@ export function StructuredTextEditor({
     if (syncStructuredTextDocFromProp(view, value, lastEmitted)) {
       pushValidation(value, language);
     }
-  }, [value, language, pushValidation, lastEmitted]);
+  }, [value, pushValidation, lastEmitted]);
 
   useEffect(() => {
     const view = viewRef.current;
-    if (!view) return;
+    const compartments = compartmentsRef.current;
+    if (!view || !compartments || syncedLanguageRef.current === language) return;
+    syncedLanguageRef.current = language;
     view.dispatch({
-      effects: languageCompartment.reconfigure(structuredTextLanguageExtensions(language)),
+      effects: compartments.language.reconfigure(structuredTextLanguageExtensions(language)),
     });
     pushValidation(view.state.doc.toString(), language);
   }, [language, pushValidation]);
 
   useEffect(() => {
     const view = viewRef.current;
-    if (!view) return;
+    const compartments = compartmentsRef.current;
+    if (!view || !compartments) return;
     view.dispatch({
-      effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(readOnly)),
+      effects: compartments.readOnly.reconfigure(EditorState.readOnly.of(readOnly)),
     });
   }, [readOnly]);
 
@@ -199,6 +207,12 @@ export function StructuredTextEditor({
         <StructuredTextLanguageToggle language={language} onLanguageChange={onLanguageChange} />
         <span className="structured-text-editor__toolbar-divider" aria-hidden />
         <div className="structured-text-editor__toolbar-actions">
+          <StructuredTextToolbarButton
+            label="Search"
+            tooltip="Find in document (⌘F · ⌘G next)"
+            icon={<IcSearch size={15} />}
+            onClick={() => openStructuredTextSearch(viewRef.current)}
+          />
           <StructuredTextToolbarButton
             label="Format"
             tooltip={
@@ -255,9 +269,9 @@ export function StructuredTextEditor({
         </div>
         <span
           className="structured-text-editor__kbd-hint muted small"
-          title="Fold gutter · ⌘Z undo · ⌘⇧Z redo · ⌘⇧[ collapse · ⌘⇧] expand"
+          title="⌘F search · ⌘G next · ⌘Z undo · ⌘⇧Z redo · ⌘⇧[ collapse · ⌘⇧] expand · { } auto-close"
         >
-          ⌘Z · ⌘⇧[ / ⌘⇧]
+          ⌘F · ⌘Z
         </span>
         <span
           className={`structured-text-editor__status${validation.valid ? ' structured-text-editor__status--ok' : ' structured-text-editor__status--err'}`}
@@ -275,7 +289,7 @@ export function StructuredTextEditor({
       <div
         ref={hostRef}
         className="structured-text-editor__host"
-        style={{ minHeight: `${minHeight}px` }}
+        style={{ ['--structured-text-min-height' as string]: `${minHeight}px` }}
       />
     </div>
   );

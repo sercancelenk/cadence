@@ -20,14 +20,13 @@ export function StructuredTextToolbarButton({
 }: StructuredTextToolbarButtonProps) {
   return (
     <Button
-      size="sm"
+      size="icon"
       variant="secondary"
       icon={icon}
       onClick={onClick}
       disabled={disabled}
       title={tooltip ?? label}
-    >
-      {label}
-    </Button>
+      aria-label={tooltip ?? label}
+    />
   );
 }

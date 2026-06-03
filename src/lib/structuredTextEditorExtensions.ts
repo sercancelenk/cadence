@@ -3,8 +3,16 @@ import { EditorState, Compartment, type Extension } from '@codemirror/state';
 import { json, jsonParseLinter } from '@codemirror/lang-json';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
 import { linter, lintGutter } from '@codemirror/lint';
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
+import {
+  bracketMatching,
+  codeFolding,
+  foldGutter,
+  foldKeymap,
+  indentOnInput,
+} from '@codemirror/language';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { codeFolding, foldGutter, foldKeymap } from '@codemirror/language';
+import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { parseDocument } from 'yaml';
 import type { StructuredTextLanguage } from './structuredText';
 
@@ -19,9 +27,6 @@ export function createStructuredTextCompartments(): StructuredTextCompartments {
     readOnly: new Compartment(),
   };
 }
-
-/** Shared compartments for the single-pane editor (one instance on screen). */
-export const defaultStructuredTextCompartments = createStructuredTextCompartments();
 
 function yamlParseLinter() {
   return linter((view) => {
@@ -61,6 +66,9 @@ export const cadenceStructuredTextTheme = EditorView.theme(
       backgroundColor: 'var(--panel)',
       color: 'var(--text)',
       fontSize: '13px',
+      height: '100%',
+      flex: '1 1 auto',
+      minHeight: 0,
     },
     '&.cm-focused': {
       outline: 'none',
@@ -69,6 +77,8 @@ export const cadenceStructuredTextTheme = EditorView.theme(
       fontFamily:
         'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       lineHeight: '1.55',
+      overflow: 'auto',
+      minHeight: '100%',
     },
     '.cm-content': {
       padding: '12px 0',
@@ -110,9 +120,57 @@ export const cadenceStructuredTextTheme = EditorView.theme(
       borderRadius: '4px',
       padding: '0 6px',
     },
+    '.cm-panel.cm-search': {
+      background: 'color-mix(in srgb, var(--panel) 94%, var(--bg))',
+      borderBottom: '1px solid color-mix(in srgb, var(--accent) 18%, transparent)',
+      padding: '6px 10px',
+      gap: '6px',
+    },
+    '.cm-panel.cm-search input, .cm-panel.cm-search button': {
+      font: 'inherit',
+      fontSize: '12px',
+      borderRadius: '6px',
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      color: 'var(--text)',
+      padding: '4px 8px',
+    },
+    '.cm-panel.cm-search label': {
+      fontSize: '12px',
+      color: 'var(--muted)',
+    },
+    '.cm-searchMatch': {
+      backgroundColor: 'color-mix(in srgb, #ffb24a 35%, transparent)',
+      outline: '1px solid color-mix(in srgb, #ffb24a 55%, transparent)',
+    },
+    '.cm-searchMatch-selected': {
+      backgroundColor: 'color-mix(in srgb, var(--accent) 40%, transparent)',
+      outline: '1px solid color-mix(in srgb, var(--accent) 60%, transparent)',
+    },
+    '.cm-selectionMatch': {
+      backgroundColor: 'color-mix(in srgb, var(--accent) 18%, transparent)',
+    },
   },
   { dark: false },
 );
+
+const structuredTextKeymap = keymap.of([
+  ...closeBracketsKeymap,
+  ...searchKeymap,
+  ...historyKeymap,
+  ...foldKeymap,
+  ...defaultKeymap,
+  indentWithTab,
+]);
+
+/** Bracket closing, smart indent, in-document search (⌘F / ⌘G). */
+const structuredTextEditingExtensions: Extension[] = [
+  search({ top: true }),
+  highlightSelectionMatches(),
+  closeBrackets(),
+  bracketMatching(),
+  indentOnInput(),
+];
 
 export function buildStructuredTextExtensions(
   compartments: StructuredTextCompartments,
@@ -130,7 +188,8 @@ export function buildStructuredTextExtensions(
     drawSelection(),
     lintGutter(),
     history(),
-    keymap.of([...historyKeymap, ...foldKeymap, ...defaultKeymap, indentWithTab]),
+    structuredTextKeymap,
+    ...structuredTextEditingExtensions,
     compartments.language.of(structuredTextLanguageExtensions(language)),
     compartments.readOnly.of(EditorState.readOnly.of(readOnly)),
     EditorView.lineWrapping,

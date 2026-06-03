@@ -6,6 +6,7 @@ import {
   IcArrowUp,
   IcBraces,
   IcChevronDown,
+  IcSearch,
 } from '../icons';
 import { StructuredTextLanguageToggle } from './StructuredTextLanguageToggle';
 import { StructuredTextToolbarButton } from './StructuredTextToolbarButton';
@@ -15,6 +16,7 @@ import {
   structuredTextLanguageExtensions,
 } from '../../lib/structuredTextEditorExtensions';
 import { syncStructuredTextDocFromProp, replaceStructuredTextDoc } from '../../lib/structuredTextEditorSync';
+import { observeStructuredTextMergeHostResize, openStructuredTextSearch } from '../../lib/structuredTextEditorLayout';
 import {
   formatStructuredText,
   validateStructuredText,
@@ -59,12 +61,13 @@ export function StructuredTextDiffPane({
 }: StructuredTextDiffPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mergeRef = useRef<MergeView | null>(null);
-  const compartmentsRef = useRef({
-    a: createStructuredTextCompartments(),
-    b: createStructuredTextCompartments(),
-  });
+  const compartmentsRef = useRef<{
+    a: ReturnType<typeof createStructuredTextCompartments>;
+    b: ReturnType<typeof createStructuredTextCompartments>;
+  } | null>(null);
   const languageRef = useRef(language);
   languageRef.current = language;
+  const syncedLanguageRef = useRef(language);
 
   const onChangeARef = useRef(onChangeA);
   onChangeARef.current = onChangeA;
@@ -116,9 +119,16 @@ export function StructuredTextDiffPane({
   );
 
   useEffect(() => {
-    if (!hostRef.current) return;
+    const host = hostRef.current;
+    if (!host) return;
+    const compartments = {
+      a: createStructuredTextCompartments(),
+      b: createStructuredTextCompartments(),
+    };
+    compartmentsRef.current = compartments;
     emitA.lastEmitted.current = valueA;
     emitB.lastEmitted.current = valueB;
+    syncedLanguageRef.current = language;
 
     const metaListenerA = EditorView.updateListener.of((update) => {
       if (update.docChanged) refreshMeta();
@@ -131,7 +141,7 @@ export function StructuredTextDiffPane({
       a: {
         doc: valueA,
         extensions: buildStructuredTextExtensions(
-          compartmentsRef.current.a,
+          compartments.a,
           language,
           false,
           [metaListenerA],
@@ -141,14 +151,14 @@ export function StructuredTextDiffPane({
       b: {
         doc: valueB,
         extensions: buildStructuredTextExtensions(
-          compartmentsRef.current.b,
+          compartments.b,
           language,
           false,
           [metaListenerB],
           scheduleB,
         ),
       },
-      parent: hostRef.current,
+      parent: host,
       gutter: true,
       highlightChanges: true,
       collapseUnchanged: { margin: 3, minSize: 4 },
@@ -156,10 +166,13 @@ export function StructuredTextDiffPane({
     });
     mergeRef.current = merge;
     refreshMeta();
+    const stopResizeObserver = observeStructuredTextMergeHostResize(host, merge);
 
     return () => {
+      stopResizeObserver();
       merge.destroy();
       mergeRef.current = null;
+      compartmentsRef.current = null;
     };
     // Mount once — prop sync in dedicated effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -179,13 +192,15 @@ export function StructuredTextDiffPane({
 
   useEffect(() => {
     const merge = mergeRef.current;
-    if (!merge) return;
+    const compartments = compartmentsRef.current;
+    if (!merge || !compartments || syncedLanguageRef.current === language) return;
+    syncedLanguageRef.current = language;
     const langExt = structuredTextLanguageExtensions(language);
     merge.a.dispatch({
-      effects: compartmentsRef.current.a.language.reconfigure(langExt),
+      effects: compartments.a.language.reconfigure(langExt),
     });
     merge.b.dispatch({
-      effects: compartmentsRef.current.b.language.reconfigure(langExt),
+      effects: compartments.b.language.reconfigure(langExt),
     });
     refreshMeta();
   }, [language, refreshMeta]);
@@ -210,6 +225,7 @@ export function StructuredTextDiffPane({
     replaceStructuredTextDoc(merge.b, resultB.text);
     emitA.flush(resultA.text);
     emitB.flush(resultB.text);
+    refreshMeta();
   };
 
   const statusFor = (validation: StructuredTextValidation, side: string) =>
@@ -225,6 +241,12 @@ export function StructuredTextDiffPane({
         <StructuredTextLanguageToggle language={language} onLanguageChange={onLanguageChange} />
         <span className="structured-text-editor__toolbar-divider" aria-hidden />
         <div className="structured-text-editor__toolbar-actions">
+          <StructuredTextToolbarButton
+            label="Search"
+            tooltip="Find in focused side (⌘F · ⌘G next)"
+            icon={<IcSearch size={15} />}
+            onClick={() => openStructuredTextSearch(undefined, mergeRef.current)}
+          />
           <StructuredTextToolbarButton
             label="Format"
             tooltip={
@@ -285,7 +307,7 @@ export function StructuredTextDiffPane({
       <div
         ref={hostRef}
         className="structured-text-diff-pane__host"
-        style={{ minHeight: `${minHeight}px` }}
+        style={{ ['--structured-text-min-height' as string]: `${minHeight}px` }}
       />
     </div>
   );
