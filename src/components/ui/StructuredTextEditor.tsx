@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { EditorView } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { foldAll, unfoldAll } from '@codemirror/language';
 import {
+  IcArrowLeft,
+  IcArrowRight,
   IcArrowUp,
   IcBraces,
   IcChevronDown,
@@ -18,10 +20,15 @@ import {
   createStructuredTextCompartments,
   structuredTextLanguageExtensions,
 } from '../../lib/structuredTextEditorExtensions';
-import { syncStructuredTextDocFromProp, replaceStructuredTextDoc } from '../../lib/structuredTextEditorSync';
+import {
+  commitLocalStructuredTextEdit,
+  syncStructuredTextDocFromProp,
+} from '../../lib/structuredTextEditorSync';
 import { observeStructuredTextHostResize, openStructuredTextSearch } from '../../lib/structuredTextEditorLayout';
 import {
   compactStructuredText,
+  convertJsonToYaml,
+  convertYamlToJson,
   formatStructuredText,
   stringifyStructuredTextDocument,
   validateStructuredText,
@@ -39,6 +46,8 @@ export type StructuredTextEditorProps = {
   onChange?: (value: string) => void;
   language: StructuredTextLanguage;
   onLanguageChange?: (language: StructuredTextLanguage) => void;
+  /** Atomically persist converted content + target language (avoids prop sync races). */
+  onConvert?: (text: string, language: StructuredTextLanguage) => void;
   readOnly?: boolean;
   minHeight?: number;
   onChangeDebounceMs?: number;
@@ -55,6 +64,7 @@ export function StructuredTextEditor({
   onChange,
   language,
   onLanguageChange,
+  onConvert,
   readOnly = false,
   minHeight = 360,
   onChangeDebounceMs = DEFAULT_DEBOUNCE_MS,
@@ -67,6 +77,8 @@ export function StructuredTextEditor({
     null,
   );
   const syncedLanguageRef = useRef(language);
+  const holdPropSyncRef = useRef(false);
+  const [editorReady, setEditorReady] = useState(false);
   const onValidationChangeRef = useRef(onValidationChange);
   onValidationChangeRef.current = onValidationChange;
   const languageRef = useRef(language);
@@ -89,14 +101,6 @@ export function StructuredTextEditor({
     return next;
   }, []);
 
-  const flushChange = useCallback(
-    (text: string) => {
-      pushValidation(text, languageRef.current);
-      flushEmit(text);
-    },
-    [flushEmit, pushValidation],
-  );
-
   const scheduleChange = useCallback(
     (text: string) => {
       pushValidation(text, languageRef.current);
@@ -111,7 +115,7 @@ export function StructuredTextEditor({
     [language, readOnly, scheduleChange],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const compartments = createStructuredTextCompartments();
@@ -128,6 +132,7 @@ export function StructuredTextEditor({
       parent: host,
     });
     viewRef.current = view;
+    setEditorReady(true);
     const stopResizeObserver = observeStructuredTextHostResize(host, view);
 
     return () => {
@@ -135,6 +140,7 @@ export function StructuredTextEditor({
       view.destroy();
       viewRef.current = null;
       compartmentsRef.current = null;
+      setEditorReady(false);
     };
     // Mount once — language/readOnly sync in dedicated effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,10 +149,10 @@ export function StructuredTextEditor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    if (syncStructuredTextDocFromProp(view, value, lastEmitted)) {
+    if (syncStructuredTextDocFromProp(view, value, lastEmitted, holdPropSyncRef)) {
       pushValidation(value, language);
     }
-  }, [value, pushValidation, lastEmitted]);
+  }, [value, language, pushValidation, lastEmitted]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -175,15 +181,89 @@ export function StructuredTextEditor({
       const current = view.state.doc.toString();
       const result = transform(current, languageRef.current);
       if (!result.ok) {
-        showNotice(result.error);
+        showNotice(result.error, 4000);
         return;
       }
       clearNotice();
-      replaceStructuredTextDoc(view, result.text);
-      flushChange(result.text);
+      commitLocalStructuredTextEdit(view, result.text, lastEmitted, holdPropSyncRef);
+      pushValidation(result.text, languageRef.current);
+      flushEmit(result.text);
     },
-    [clearNotice, flushChange, readOnly, showNotice],
+    [clearNotice, flushEmit, pushValidation, readOnly, showNotice],
   );
+
+  const applyConvert = useCallback(() => {
+    if (readOnly) return;
+    const view = viewRef.current;
+    const compartments = compartmentsRef.current;
+    const source = languageRef.current;
+    const target: StructuredTextLanguage = source === 'json' ? 'yaml' : 'json';
+    const current = view?.state.doc.toString() ?? value;
+
+    const result = target === 'yaml' ? convertJsonToYaml(current) : convertYamlToJson(current);
+    if (!result.ok) {
+      const hint =
+        source === 'json'
+          ? 'Paste valid JSON first, or switch the toggle to YAML for YAML → JSON.'
+          : 'Paste valid YAML first, or switch the toggle to JSON for JSON → YAML.';
+      showNotice(`${result.error} ${hint}`, 6000);
+      return;
+    }
+
+    const reconfigureLanguage = () => {
+      if (!view || !compartments) return;
+      syncedLanguageRef.current = target;
+      view.dispatch({
+        effects: compartments.language.reconfigure(structuredTextLanguageExtensions(target)),
+      });
+      view.focus();
+    };
+
+    if (result.text === current) {
+      lastEmitted.current = result.text;
+      holdPropSyncRef.current = true;
+      pushValidation(result.text, target);
+      reconfigureLanguage();
+      if (onConvert) {
+        onConvert(result.text, target);
+      } else {
+        onLanguageChange?.(target);
+      }
+      showNotice(`Switched to ${target.toUpperCase()} mode`, 4000);
+      return;
+    }
+
+    clearNotice();
+    if (view) {
+      commitLocalStructuredTextEdit(view, result.text, lastEmitted, holdPropSyncRef);
+    } else {
+      lastEmitted.current = result.text;
+      holdPropSyncRef.current = true;
+    }
+    pushValidation(result.text, target);
+    reconfigureLanguage();
+
+    if (onConvert) {
+      onConvert(result.text, target);
+    } else {
+      flushEmit(result.text);
+      onLanguageChange?.(target);
+    }
+
+    showNotice(
+      target === 'yaml' ? 'Converted JSON → YAML' : 'Converted YAML → JSON',
+      5000,
+    );
+  }, [
+    clearNotice,
+    flushEmit,
+    onConvert,
+    onLanguageChange,
+    pushValidation,
+    readOnly,
+    showNotice,
+    value,
+  ]);
 
   const copyAll = async () => {
     const text = viewRef.current?.state.doc.toString() ?? value;
@@ -205,6 +285,30 @@ export function StructuredTextEditor({
     <div className={`structured-text-editor${className ? ` ${className}` : ''}`}>
       <div className="structured-text-editor__toolbar" role="toolbar" aria-label="Structured text tools">
         <StructuredTextLanguageToggle language={language} onLanguageChange={onLanguageChange} />
+        <span className="structured-text-editor__toolbar-divider" aria-hidden />
+        <button
+          type="button"
+          className="btn btn--secondary btn--small structured-text-editor__convert-btn"
+          disabled={readOnly || !editorReady}
+          title={
+            language === 'json'
+              ? 'Parse document as JSON and convert to YAML'
+              : 'Parse document as YAML and convert to JSON'
+          }
+          onClick={() => applyConvert()}
+        >
+          {language === 'json' ? (
+            <>
+              <IcArrowRight size={14} />
+              <span>Convert to YAML</span>
+            </>
+          ) : (
+            <>
+              <IcArrowLeft size={14} />
+              <span>Convert to JSON</span>
+            </>
+          )}
+        </button>
         <span className="structured-text-editor__toolbar-divider" aria-hidden />
         <div className="structured-text-editor__toolbar-actions">
           <StructuredTextToolbarButton

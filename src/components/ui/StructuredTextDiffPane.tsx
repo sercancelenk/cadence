@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { EditorView } from '@codemirror/view';
 import { MergeView } from '@codemirror/merge';
 import { foldAll, unfoldAll } from '@codemirror/language';
@@ -15,7 +15,10 @@ import {
   createStructuredTextCompartments,
   structuredTextLanguageExtensions,
 } from '../../lib/structuredTextEditorExtensions';
-import { syncStructuredTextDocFromProp, replaceStructuredTextDoc } from '../../lib/structuredTextEditorSync';
+import {
+  commitLocalStructuredTextEdit,
+  syncStructuredTextDocFromProp,
+} from '../../lib/structuredTextEditorSync';
 import { observeStructuredTextMergeHostResize, openStructuredTextSearch } from '../../lib/structuredTextEditorLayout';
 import {
   formatStructuredText,
@@ -68,6 +71,8 @@ export function StructuredTextDiffPane({
   const languageRef = useRef(language);
   languageRef.current = language;
   const syncedLanguageRef = useRef(language);
+  const holdPropSyncARef = useRef(false);
+  const holdPropSyncBRef = useRef(false);
 
   const onChangeARef = useRef(onChangeA);
   onChangeARef.current = onChangeA;
@@ -118,7 +123,7 @@ export function StructuredTextDiffPane({
     [emitB],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const compartments = {
@@ -181,13 +186,17 @@ export function StructuredTextDiffPane({
   useEffect(() => {
     const merge = mergeRef.current;
     if (!merge) return;
-    if (syncStructuredTextDocFromProp(merge.a, valueA, emitA.lastEmitted)) refreshMeta();
+    if (syncStructuredTextDocFromProp(merge.a, valueA, emitA.lastEmitted, holdPropSyncARef)) {
+      refreshMeta();
+    }
   }, [valueA, refreshMeta, emitA.lastEmitted]);
 
   useEffect(() => {
     const merge = mergeRef.current;
     if (!merge) return;
-    if (syncStructuredTextDocFromProp(merge.b, valueB, emitB.lastEmitted)) refreshMeta();
+    if (syncStructuredTextDocFromProp(merge.b, valueB, emitB.lastEmitted, holdPropSyncBRef)) {
+      refreshMeta();
+    }
   }, [valueB, refreshMeta, emitB.lastEmitted]);
 
   useEffect(() => {
@@ -221,8 +230,8 @@ export function StructuredTextDiffPane({
       return;
     }
     clearNotice();
-    replaceStructuredTextDoc(merge.a, resultA.text);
-    replaceStructuredTextDoc(merge.b, resultB.text);
+    commitLocalStructuredTextEdit(merge.a, resultA.text, emitA.lastEmitted, holdPropSyncARef);
+    commitLocalStructuredTextEdit(merge.b, resultB.text, emitB.lastEmitted, holdPropSyncBRef);
     emitA.flush(resultA.text);
     emitB.flush(resultB.text);
     refreshMeta();

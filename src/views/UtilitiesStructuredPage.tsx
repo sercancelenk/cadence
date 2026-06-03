@@ -52,13 +52,17 @@ export function UtilitiesStructuredPage() {
     patchUtilityStructuredText({ language: next });
   };
 
+  const onConvert = (content: string, nextLanguage: StructuredTextLanguage) => {
+    patchUtilityStructuredText({ content, language: nextLanguage });
+  };
+
   return (
     <div className="page page--wide utilities-structured-page">
       <header className="utilities-doc-page__head">
         <div>
           <h1 className="utilities-doc-page__title">JSON / YAML</h1>
           <p className="utilities-doc-page__lead muted">
-            Edit structured data with folding, validation, and side-by-side diff. Auto-saved to your
+            Edit, convert, and diff structured data with folding and validation. Auto-saved to your
             workspace — not a note or todo.
           </p>
         </div>
@@ -93,7 +97,7 @@ export function UtilitiesStructuredPage() {
             <span className="rich-doc-pane__hint muted small">
               {mode === 'edit' ? (
                 <>
-                  <IcBraces size={13} /> Paste JSON or YAML · fold nested blocks from the gutter
+                  <IcBraces size={13} /> Edit tab · set JSON/YAML toggle to match input, then Convert
                 </>
               ) : (
                 'Compare Before and After side by side'
@@ -116,6 +120,7 @@ export function UtilitiesStructuredPage() {
                 language={language}
                 onChange={onChange}
                 onLanguageChange={onLanguageChange}
+                onConvert={onConvert}
               />
             ) : (
               <StructuredTextDiffPane

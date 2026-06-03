@@ -23,15 +23,36 @@ export function replaceStructuredTextDoc(
 }
 
 /**
- * Apply a prop-driven value to the editor without polluting undo history.
- * Returns true when the document was updated.
+ * Record a toolbar-driven local edit (format, convert, …) before parent props catch up.
+ * Prevents syncStructuredTextDocFromProp from reverting the editor on the next render.
  */
+export function commitLocalStructuredTextEdit(
+  view: EditorView,
+  text: string,
+  lastEmitted: MutableRefObject<string | null>,
+  holdPropSync: MutableRefObject<boolean>,
+): void {
+  replaceStructuredTextDoc(view, text);
+  lastEmitted.current = text;
+  holdPropSync.current = true;
+}
+
 export function syncStructuredTextDocFromProp(
   view: EditorView,
   value: string,
   lastEmitted: MutableRefObject<string | null>,
+  holdPropSync?: MutableRefObject<boolean>,
 ): boolean {
   const current = view.state.doc.toString();
+
+  if (holdPropSync?.current) {
+    if (value === current) {
+      holdPropSync.current = false;
+      lastEmitted.current = value;
+    }
+    return false;
+  }
+
   if (current === value) {
     lastEmitted.current = value;
     return false;

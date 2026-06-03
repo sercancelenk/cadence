@@ -7319,6 +7319,18 @@ details summary {
   gap: 4px;
 }
 
+.structured-text-editor__convert-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.structured-text-editor__convert-btn .ui-ic {
+  flex-shrink: 0;
+}
+
 .structured-text-editor__status {
   margin-left: auto;
   font-size: 11.5px;

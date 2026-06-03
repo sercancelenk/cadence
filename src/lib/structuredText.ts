@@ -144,6 +144,45 @@ export function stringifyStructuredTextDocument(
   }
 }
 
+/** Parse the document as JSON and emit pretty YAML (2-space indent). */
+export function convertJsonToYaml(text: string): StructuredTextFormatResult {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return { ok: true, text: '{}\n' };
+  }
+
+  try {
+    const parsed = parseJsonDocumentValue(trimmed);
+    const yamlText = stringifyYaml(parsed, { indent: 2 });
+    return { ok: true, text: yamlText.endsWith('\n') ? yamlText : `${yamlText}\n` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Invalid JSON' };
+  }
+}
+
+/** Parse the document as YAML and emit pretty JSON. */
+export function convertYamlToJson(text: string): StructuredTextFormatResult {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return { ok: true, text: '{\n}\n' };
+  }
+
+  try {
+    const parsed = parseYaml(trimmed, { strict: true });
+    return { ok: true, text: `${JSON.stringify(parsed, null, 2)}\n` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Invalid YAML' };
+  }
+}
+
+/** Convert structured text to the target language (parses source format from the action). */
+export function convertStructuredText(
+  text: string,
+  target: StructuredTextLanguage,
+): StructuredTextFormatResult {
+  return target === 'yaml' ? convertJsonToYaml(text) : convertYamlToJson(text);
+}
+
 function parseJsonErrorLine(message: string, source?: string): number | undefined {
   const lineMatch = message.match(/line\s+(\d+)/i);
   if (lineMatch) {

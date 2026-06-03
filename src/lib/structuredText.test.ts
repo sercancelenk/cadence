@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   compactStructuredText,
+  convertJsonToYaml,
+  convertStructuredText,
+  convertYamlToJson,
   formatStructuredText,
   stringifyStructuredTextDocument,
   validateStructuredText,
@@ -109,5 +112,64 @@ describe('stringifyStructuredTextDocument', () => {
 
   it('rejects YAML', () => {
     expect(stringifyStructuredTextDocument('foo: 1\n', 'yaml').ok).toBe(false);
+  });
+});
+
+describe('convertJsonToYaml', () => {
+  it('converts a JSON object to YAML', () => {
+    const r = convertJsonToYaml('{"name":"cadence","count":2}');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.text).toContain('name: cadence');
+      expect(r.text).toContain('count: 2');
+    }
+  });
+
+  it('converts empty JSON to an empty YAML mapping', () => {
+    const r = convertJsonToYaml('  ');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.text.trim()).toBe('{}');
+  });
+
+  it('rejects invalid JSON', () => {
+    expect(convertJsonToYaml('{bad').ok).toBe(false);
+  });
+
+  it('converts JSON arrays', () => {
+    const r = convertJsonToYaml('[1, 2, 3]');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.text).toContain('- 1');
+  });
+});
+
+describe('convertYamlToJson', () => {
+  it('converts YAML to pretty JSON', () => {
+    const r = convertYamlToJson('name: cadence\ncount: 2\n');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.text).toContain('"name": "cadence"');
+      expect(r.text).toContain('"count": 2');
+    }
+  });
+
+  it('converts empty YAML to an empty JSON object', () => {
+    const r = convertYamlToJson('');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.text.trim()).toBe('{\n}');
+  });
+
+  it('rejects invalid YAML', () => {
+    expect(convertYamlToJson('foo: [').ok).toBe(false);
+  });
+});
+
+describe('convertStructuredText', () => {
+  it('routes to JSON or YAML targets', () => {
+    const yaml = convertStructuredText('{"a":1}', 'yaml');
+    const json = convertStructuredText('a: 1\n', 'json');
+    expect(yaml.ok).toBe(true);
+    expect(json.ok).toBe(true);
+    if (yaml.ok) expect(yaml.text).toContain('a: 1');
+    if (json.ok) expect(json.text).toContain('"a": 1');
   });
 });
