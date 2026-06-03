@@ -11,12 +11,14 @@ import {
   PATH_TEAMS,
   PATH_TODOS,
   PATH_UTILITIES_DOCUMENT,
+  PATH_UTILITIES_STRUCTURED,
 } from '../lib/routes';
 import { plainTextFromBodyFields } from '../lib/richTextBody';
 import { teamBase, teamPeople, teamPerson } from '../lib/teamPaths';
 import type { Item, Note, Person, Team, TodoItem } from '../model';
 import {
   IcArrowRight,
+  IcBraces,
   IcCalendar,
   IcFileText,
   IcFolder,
@@ -285,6 +287,13 @@ function buildCommands(
       label: 'Go to Document (Utilities)',
       icon: <IcFileText size={16} />,
       run: () => navigate(PATH_UTILITIES_DOCUMENT),
+    },
+    {
+      id: 'nav-utilities-structured',
+      group: 'Navigate',
+      label: 'Go to JSON / YAML (Utilities)',
+      icon: <IcBraces size={16} />,
+      run: () => navigate(PATH_UTILITIES_STRUCTURED),
     },
     {
       id: 'nav-profile',

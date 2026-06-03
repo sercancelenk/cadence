@@ -672,6 +672,21 @@ section {
   height: auto;
 }
 
+.feature__code-sample {
+  margin: 22px 0 0;
+  padding: 20px 18px 18px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+  white-space: pre-wrap;
+}
+
+.feature__code-sample code {
+  font: inherit;
+}
+
 @media (max-width: 840px) {
   .feature {
     grid-template-columns: 1fr;

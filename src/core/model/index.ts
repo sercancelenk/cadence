@@ -376,6 +376,8 @@ export interface AppData {
    * a free-form workspace for drafts, paste buffers, etc.
    */
   utilityDocument?: UtilityDocument;
+  /** Utilities → JSON / YAML scratch buffer (synced in workspace JSON). */
+  utilityStructuredText?: UtilityStructuredText;
 }
 
 /** Persisted rich-text scratch pad under Utilities. */
@@ -383,6 +385,14 @@ export interface UtilityDocument {
   body: string;
   bodyFormat?: 'markdown' | 'prosemirror';
   bodyPlainText?: string;
+  updatedAt: string;
+}
+
+export interface UtilityStructuredText {
+  content: string;
+  /** Second buffer for side-by-side diff (After). */
+  diffContent?: string;
+  language: 'json' | 'yaml';
   updatedAt: string;
 }
 
@@ -857,6 +867,7 @@ export function normalizeData(raw: unknown): AppData {
   const notes = parseNotes(o.notes);
   let notesLock = parseNotesLock(o.notesLock);
   const utilityDocument = parseUtilityDocument(o.utilityDocument);
+  const utilityStructuredText = parseUtilityStructuredText(o.utilityStructuredText);
 
   // Defensive: orphan notesLock cleanup. The lock object can survive on
   // disk after the user clears the notes passphrase if the corresponding
@@ -886,6 +897,7 @@ export function normalizeData(raw: unknown): AppData {
     notes,
     notesLock,
     utilityDocument,
+    utilityStructuredText,
     profile: parseProfile(o.profile),
   };
 
@@ -1004,6 +1016,18 @@ function parseUtilityDocument(raw: unknown): UtilityDocument | undefined {
     bodyFormat:
       o.bodyFormat === 'markdown' || o.bodyFormat === 'prosemirror' ? o.bodyFormat : undefined,
     bodyPlainText: typeof o.bodyPlainText === 'string' ? o.bodyPlainText : undefined,
+    updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
+  };
+}
+
+function parseUtilityStructuredText(raw: unknown): UtilityStructuredText | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.content !== 'string') return undefined;
+  return {
+    content: o.content,
+    diffContent: typeof o.diffContent === 'string' ? o.diffContent : undefined,
+    language: o.language === 'yaml' ? 'yaml' : 'json',
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
   };
 }

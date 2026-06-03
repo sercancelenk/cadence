@@ -365,6 +365,41 @@
             <img src="./screenshots/settings.png" alt="Cadence Settings showing the LAN sync host card with QR code and Connected badge" loading="lazy" />
           </figure>
         </div>
+
+        <div class="feature feature--reverse">
+          <div class="feature__copy">
+            <div class="feature__eyebrow">Utilities</div>
+            <h3>Scratch pad and structured-data bench.</h3>
+            <p>
+              Not everything belongs in a note or a todo. The
+              <strong>Utilities</strong> sidebar holds workspace tools that
+              autosave beside your data — no sync hop, no separate app.
+            </p>
+            <p>
+              <strong>Document</strong> is a rich-text scratch pad with the
+              same Preview / Edit tabs as Notes. <strong>JSON / YAML</strong>
+              is a CodeMirror bench: syntax highlighting, validation, code
+              folding, pretty-print, and a side-by-side <strong>Diff</strong>
+              mode for Before/After config reviews. JSON adds compact
+              (single-line) and stringify (escape for env vars).
+            </p>
+            <ul class="checklist">
+              <li>Autosaved to your encrypted workspace file</li>
+              <li>Edit + Diff tabs; fold nested blocks from the gutter</li>
+              <li>Undo/redo; icon toolbar with hover labels</li>
+              <li>⌘K → “Go to JSON / YAML (Utilities)”</li>
+            </ul>
+          </div>
+          <figure class="feature__media">
+            <pre class="feature__code-sample" aria-hidden><code>{
+  "before": { "timeout": 30 },
+  "after":  { "timeout": 60 }
+}
+
+→ Diff highlights changes inline
+→ Format pretty-prints both sides</code></pre>
+          </figure>
+        </div>
       </section>
 
       <!-- ─── AI ───────────────────────────────────────────────────────── -->

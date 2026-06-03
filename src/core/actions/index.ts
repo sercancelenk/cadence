@@ -17,6 +17,7 @@ import type {
   TodoStatus,
   UserProfile,
   UtilityDocument,
+  UtilityStructuredText,
 } from '../model';
 import { isLeaderPerson, isSelfPerson, nowIso, selfPersonIdForTeam, leaderPersonIdForTeam } from '../model';
 
@@ -927,6 +928,28 @@ export function patchUtilityDocument(
     utilityDocument: {
       ...prev,
       ...patch,
+      updatedAt: nowIso(),
+    },
+  };
+}
+
+export function patchUtilityStructuredText(
+  data: AppData,
+  patch: Partial<Pick<UtilityStructuredText, 'content' | 'diffContent' | 'language'>>,
+): AppData {
+  const prev: UtilityStructuredText = data.utilityStructuredText ?? {
+    content: '',
+    language: 'json',
+    updatedAt: nowIso(),
+  };
+  const language =
+    patch.language === 'yaml' ? 'yaml' : patch.language === 'json' ? 'json' : prev.language;
+  return {
+    ...data,
+    utilityStructuredText: {
+      ...prev,
+      ...patch,
+      language,
       updatedAt: nowIso(),
     },
   };

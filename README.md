@@ -98,6 +98,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | 👥 **Teams + People** | Group people into teams, give each a private scratchpad and a running agenda. **1:1 mode** with a persistent markdown meeting agenda + archive of past meetings; unchecked items carry over. **Person Timeline** for review prep. |
 | 🔎 **⌘K command palette** | Global search across notes, tasks, items, people and navigation targets. Indexes **body text** (not just titles), highlights matches with contextual snippets, deep-links straight to the result. Locked notes searchable by title only. |
 | 📊 **Analytics** | Local-only dashboard: completion rate, daily / weekly / monthly / yearly created-vs-completed SVG chart, per-team performance bars, top-contributors table. |
+| 🧰 **Utilities** | Sidebar scratch **Document** (rich-text, autosaved, not a note/todo) plus **JSON / YAML** editor: syntax highlighting, validation, code folding, pretty-print, side-by-side **Diff** (Before/After), JSON-only compact & stringify. |
 
 ### Powered by your device
 
@@ -216,6 +217,7 @@ The official Releases DMG never needs this.
 ```
 Account
 └── App data file (JSON)
+    ├── Utilities (Document scratch pad, JSON/YAML editor)
     └── Teams[]
         ├── Me              (auto-created per team)
         ├── My leader       (auto-created per team)
@@ -324,6 +326,18 @@ straight from your workspace data:
 - **Personal to-dos** — a separate stat block for `/todos` items.
 
 Nothing is sent off-device; the chart is rendered as inline SVG.
+
+### Utilities
+
+Sidebar **Utilities** — workspace tools that are not notes, todos, or team items:
+
+- **Document** (`/utilities/document`) — a standalone rich-text scratch pad with the same Preview/Edit chrome as notes (sticky tabs, Esc → preview, autosave indicator). Persisted as `utilityDocument` in your workspace JSON.
+- **JSON / YAML** (`/utilities/structured`) — a lazy-loaded CodeMirror editor for config and payload review:
+  - **Edit** — paste JSON or YAML, fold nested blocks, format (pretty-print), validate inline, copy, undo/redo.
+  - **Diff** — compare **Before** and **After** buffers side-by-side with merge highlighting (autosaved as `content` + `diffContent`).
+  - **JSON-only** — **Compact** (single-line minify) and **Stringify** (escape as a JSON string literal for env vars / nested fields). Format unwraps stringified JSON back to a readable object.
+
+Both utilities autosave to your encrypted workspace file like everything else.
 
 ### Recurring reminders
 

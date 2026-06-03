@@ -3,6 +3,7 @@ import {
   IcCalendar,
   IcChartBar,
   IcFileText,
+  IcBraces,
   IcFolder,
   IcHome,
   IcLayoutGrid,
@@ -15,7 +16,7 @@ import {
 } from './icons';
 import { useAppData } from '../AppDataContext';
 import { brandIconUrl } from '../lib/appBranding';
-import { PATH_HOME, PATH_TEAMS, PATH_UTILITIES_DOCUMENT } from '../lib/routes';
+import { PATH_HOME, PATH_TEAMS, PATH_UTILITIES_DOCUMENT, PATH_UTILITIES_STRUCTURED } from '../lib/routes';
 import { teamLeader, teamMe, teamPeople as teamPeopleRoute, teamBase } from '../lib/teamPaths';
 
 const linkCls = ({ isActive }: { isActive: boolean }) => `app-sidebar__link${isActive ? ' app-sidebar__link--active' : ''}`;
@@ -142,6 +143,12 @@ export function AppSidebar({ collapsed }: Props) {
               <IcFileText size={18} />
             </span>
             {!collapsed ? <span>Document</span> : null}
+          </NavLink>
+          <NavLink to={PATH_UTILITIES_STRUCTURED} className={linkCls} title="JSON / YAML editor">
+            <span className="app-sidebar__ic">
+              <IcBraces size={18} />
+            </span>
+            {!collapsed ? <span>JSON / YAML</span> : null}
           </NavLink>
         </div>
 

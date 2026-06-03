@@ -72,9 +72,6 @@ export function UtilitiesDocumentPage() {
         attachmentUserId={attachmentUserId}
       />
 
-      <p className="utilities-doc-page__future muted small">
-        Coming later in Utilities: JSON / YAML editor with format, validate, and diff.
-      </p>
     </div>
   );
 }

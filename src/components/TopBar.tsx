@@ -32,6 +32,7 @@ function breadcrumbFromPath(data: AppData, pathname: string): string {
   if (pathname === '/profile') return 'Profile';
   if (pathname === '/settings') return 'Settings';
   if (pathname === '/utilities/document') return 'Utilities · Document';
+  if (pathname === '/utilities/structured') return 'Utilities · JSON / YAML';
   const tm = pathname.match(/^\/teams\/([^/]+)/);
   if (!tm) return 'Cadence';
   const id = tm[1];

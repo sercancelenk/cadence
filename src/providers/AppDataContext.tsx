@@ -23,6 +23,7 @@ import {
   moveTodoGroup as moveTodoGroupFn,
   patchNote as patchNoteFn,
   patchUtilityDocument as patchUtilityDocumentFn,
+  patchUtilityStructuredText as patchUtilityStructuredTextFn,
   removeNote as removeNoteFn,
   reorderTodoGroup as reorderTodoGroupFn,
   reorderTodoItem as reorderTodoItemFn,
@@ -63,6 +64,7 @@ import type {
   TodoStatus,
   UserProfile,
   UtilityDocument,
+  UtilityStructuredText,
 } from '../core/model';
 import { normalizeData, shapeOfData } from '../core/model';
 
@@ -246,6 +248,9 @@ type Api = {
   setNotesLock: (lock: NotesLock | undefined) => void;
   patchUtilityDocument: (
     patch: Partial<Pick<UtilityDocument, 'body' | 'bodyFormat' | 'bodyPlainText'>>,
+  ) => void;
+  patchUtilityStructuredText: (
+    patch: Partial<Pick<UtilityStructuredText, 'content' | 'diffContent' | 'language'>>,
   ) => void;
 };
 
@@ -726,6 +731,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       removeNote: (id) => update((x) => removeNoteFn(x, id)),
       setNotesLock: (lock) => update((x) => setNotesLockFn(x, lock)),
       patchUtilityDocument: (patch) => update((x) => patchUtilityDocumentFn(x, patch)),
+      patchUtilityStructuredText: (patch) => update((x) => patchUtilityStructuredTextFn(x, patch)),
     };
   }, [data, ready, update, replaceAll, reload, lastSaveError, lastSavedAt, saving, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
 
