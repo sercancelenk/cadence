@@ -36,8 +36,16 @@ jobs:
 
       - run: npm ci
 
+      - name: Validate release config
+        run: node scripts/validate-release-config.mjs
+
       - name: Build macOS reminder helper
         run: npm run build:reminder-helper
+        env:
+          CADENCE_UNIVERSAL_HELPER: '1'
+
+      - name: Verify macOS helper binary
+        run: node scripts/validate-release-config.mjs --check-helper
 
       - name: Derle ve GitHub Release oluştur (macOS)
         run: npm run build:release
@@ -68,8 +76,18 @@ jobs:
 
       - run: npm ci
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+
+      - name: Validate release config
+        run: node scripts/validate-release-config.mjs
+
       - name: Build Windows reminder helper
         run: npm run build:reminder-helper-win
+
+      - name: Verify Windows helper binary
+        run: node scripts/validate-release-config.mjs --check-helper
 
       - name: Derle ve GitHub Release oluştur (Windows)
         run: npx vite build && npx electron-builder --win --publish always

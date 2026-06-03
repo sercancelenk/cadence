@@ -22,6 +22,7 @@
     "preview:landing": "npx --yes serve dist -l 4173",
     "build:release": "npm run build:reminder-helper && vite build && electron-builder --publish always",
     "build:release:enterprise": "cross-env CADENCE_DISTRIBUTION=enterprise vite build && cross-env CADENCE_DISTRIBUTION=enterprise electron-builder --config electron-builder.enterprise.json --publish always",
+    "release:validate": "node scripts/validate-release-config.mjs",
     "icons": "node scripts/generate-pwa-icons.mjs",
     "check:env": "node scripts/check-env.mjs",
     "typecheck": "tsc --noEmit",
@@ -143,6 +144,7 @@
       "binaries": [
         "Contents/MacOS/cadence-notify-schedule"
       ],
+      "x64ArchFiles": "**/cadence-notify-schedule",
       "target": [
         {
           "target": "dmg",

@@ -53,6 +53,7 @@
     "binaries": [
       "Contents/MacOS/cadence-notify-schedule"
     ],
+    "x64ArchFiles": "**/cadence-notify-schedule",
     "target": [
       {
         "target": "dmg",
