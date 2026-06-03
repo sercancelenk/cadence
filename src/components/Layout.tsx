@@ -4,9 +4,10 @@ import { AppSidebar } from './AppSidebar';
 import { TopBar } from './TopBar';
 import { QuickAddFab } from './QuickAddFab';
 import { BackToTopFab } from './BackToTopFab';
-import { useAppData } from '../AppDataContext';
+import { usePersistStatus } from '../AppDataContext';
 import { IcAlertTriangle, IcX } from './icons';
 import { PATH_SETTINGS } from '../lib/routes';
+import { isElectronApp } from '../lib/runtime';
 
 const MOBILE_BREAKPOINT = 700;
 
@@ -110,8 +111,9 @@ export function Layout() {
  *     the current shape. If the user signs out and back in, no banner.
  */
 function DataIntegrityBanner() {
-  const { dataLossSuspicion, dismissDataLossSuspicion } = useAppData();
+  const { dataLossSuspicion, dismissDataLossSuspicion } = usePersistStatus();
   const navigate = useNavigate();
+  const electron = isElectronApp();
   if (!dataLossSuspicion) return null;
   const { current, previous } = dataLossSuspicion;
   return (
@@ -126,16 +128,18 @@ function DataIntegrityBanner() {
           {previous.teams} teams, {previous.todoItems} todos, {previous.notes} notes);
           this boot loaded <strong>{current.total} items</strong> (
           {current.teams} teams, {current.todoItems} todos, {current.notes} notes).
-          Open Backups & Recovery to inspect or restore an earlier snapshot.
+          {electron
+            ? ' Open Backups & Recovery to inspect or restore an earlier snapshot.'
+            : ' Export a JSON backup now if anything looks wrong.'}
         </span>
       </div>
       <div className="data-integrity-banner__actions">
         <button
           type="button"
           className="data-integrity-banner__btn data-integrity-banner__btn--primary"
-          onClick={() => navigate(`${PATH_SETTINGS}#backups`)}
+          onClick={() => navigate(`${PATH_SETTINGS}${electron ? '#backups' : '#backup'}`)}
         >
-          Open Backups
+          {electron ? 'Open Backups' : 'Export backup'}
         </button>
         <button
           type="button"
@@ -158,8 +162,9 @@ function DataIntegrityBanner() {
  * the next successful save clears it automatically.
  */
 function SaveErrorBanner() {
-  const { lastSaveError, clearSaveError } = useAppData();
+  const { lastSaveError, clearSaveError } = usePersistStatus();
   const navigate = useNavigate();
+  const electron = isElectronApp();
   if (!lastSaveError) return null;
   const reason = lastSaveError.reason ?? 'unknown';
   const detail = lastSaveError.error ?? 'Autosave failed.';
@@ -178,9 +183,9 @@ function SaveErrorBanner() {
         <button
           type="button"
           className="save-error-banner__btn save-error-banner__btn--primary"
-          onClick={() => navigate(`${PATH_SETTINGS}#backups`)}
+          onClick={() => navigate(`${PATH_SETTINGS}${electron ? '#backups' : '#backup'}`)}
         >
-          Open Backups
+          {electron ? 'Open Backups' : 'Export backup'}
         </button>
         <button
           type="button"

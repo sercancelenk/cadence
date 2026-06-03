@@ -464,6 +464,8 @@ This panel is purely diagnostic — you can ignore it forever and nothing degrad
 
 ### LAN sync (multi-device, no cloud)
 
+> **Companion guide:** For the recommended **one user, desktop + phone** workflow, troubleshooting, and golden rules, see **[docs/LAN-SYNC.md](docs/LAN-SYNC.md)**.
+
 `Settings → Multi-device sync` lets two devices on the same Wi-Fi share a workspace without any cloud service:
 
 - The Electron app runs an optional, opt-in **HTTPS** server (default port `9787`) protected by a **bearer token** stored in `sync.json`. The TLS certificate is **generated on this device** (self-signed, never leaves the machine) and persisted in `cadence-sync-tls.json` next to the workspace data.
@@ -1085,7 +1087,11 @@ The signed binary uses the entitlements at [`build/entitlements.mac.plist`](./bu
 │       └── LoginPage.tsx / RegisterPage.tsx
 ├── public/                         # PWA static assets (manifest, sw.js, icons)
 ├── docs/
-│   └── electron-guide.md           # Practical Electron tutorial walking through this codebase
+│   ├── LAN-SYNC.md                 # Single-user desktop + phone companion workflow
+│   ├── HEALTH-CHECK-AND-ROADMAP.md # Living health score + phased roadmap
+│   ├── electron-guide.md           # Practical Electron tutorial walking through this codebase
+│   ├── DEPLOYMENT-AND-POLICY.md
+│   └── ENTERPRISE.md
 ├── build/
 │   └── entitlements.mac.plist
 ├── scripts/

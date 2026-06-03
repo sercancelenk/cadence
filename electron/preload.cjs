@@ -11,7 +11,30 @@ const api = {
   // electron/main.cjs `data:save`. New callers should always pass it;
   // omitting it falls back to the old "trust the active session" path
   // for any legacy renderer code we haven't migrated yet.
-  saveData: (data, expectedUid) => ipcRenderer.invoke('data:save', data, expectedUid),
+  saveData: (data, expectedUid, expectedGeneration) =>
+    ipcRenderer.invoke('data:save', data, expectedUid, expectedGeneration),
+  /**
+   * Blocks until the main process has fsync'd the payload (used on pagehide
+   * and before quit-and-install so debounced edits are not lost).
+   */
+  flushPendingSaveSync: (data, expectedUid, expectedGeneration) =>
+    ipcRenderer.sendSync('data:flushSync', {
+      payload: data,
+      expectedUid,
+      expectedGeneration,
+    }),
+  onRequestFlush: (cb) => {
+    const listener = () => {
+      try {
+        cb();
+      } catch (err) {
+        console.error('[cadence] request-flush handler threw', err);
+      }
+    };
+    ipcRenderer.on('app:request-flush', listener);
+    return () => ipcRenderer.removeListener('app:request-flush', listener);
+  },
+  notifyFlushDone: () => ipcRenderer.send('app:flush-done'),
   dataListSources: () => ipcRenderer.invoke('data:listSources'),
   dataPreviewSource: (payload) => ipcRenderer.invoke('data:previewSource', payload),
   dataRestoreFromSource: (payload) => ipcRenderer.invoke('data:restoreFromSource', payload),
@@ -27,6 +50,33 @@ const api = {
     return () => ipcRenderer.removeListener('data:saveError', listener);
   },
   showNotification: (opts) => ipcRenderer.invoke('app:showNotification', opts),
+  reminderSyncStatus: () => ipcRenderer.invoke('reminder:status'),
+  requestReminderPermission: () => ipcRenderer.invoke('reminder:requestPermission'),
+  setReminderBackgroundSettings: (settings) => ipcRenderer.invoke('reminder:setBackgroundSettings', settings),
+  syncReminders: (data) => ipcRenderer.invoke('reminder:sync', data),
+  cancelReminderSlots: (itemId) => ipcRenderer.invoke('reminder:cancelItem', { itemId }),
+  onReminderEvent: (cb) => {
+    const listener = (_evt, payload) => {
+      try {
+        cb(payload);
+      } catch (err) {
+        console.error('[cadence] reminder event handler threw', err);
+      }
+    };
+    ipcRenderer.on('reminder:event', listener);
+    return () => ipcRenderer.removeListener('reminder:event', listener);
+  },
+  onDeepLink: (cb) => {
+    const listener = (_evt, payload) => {
+      try {
+        cb(payload);
+      } catch (err) {
+        console.error('[cadence] deep link handler threw', err);
+      }
+    };
+    ipcRenderer.on('app:deepLink', listener);
+    return () => ipcRenderer.removeListener('app:deepLink', listener);
+  },
   userDataPath: () => ipcRenderer.invoke('app:userDataPath'),
   attachmentWrite: (payload) => ipcRenderer.invoke('attachment:write', payload),
   attachmentRead: (payload) => ipcRenderer.invoke('attachment:read', payload),

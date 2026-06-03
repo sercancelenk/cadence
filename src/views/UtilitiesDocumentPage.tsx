@@ -38,7 +38,11 @@ export function UtilitiesDocumentPage() {
     const fields = payload.plainText.trim()
       ? richTextPayloadToBodyFields(payload)
       : { body: '', bodyFormat: undefined, bodyPlainText: undefined };
-    const prev = { body, bodyFormat: doc?.bodyFormat, bodyPlainText: doc?.bodyPlainText };
+    const prev = {
+      body: doc?.body ?? '',
+      bodyFormat: doc?.bodyFormat,
+      bodyPlainText: doc?.bodyPlainText,
+    };
     if (noteBodyPatchIsNoOp(prev, fields)) {
       return;
     }

@@ -535,6 +535,7 @@ export function TodoTaskRow({
             {scheduleOpen ? (
               <SchedulePopover
                 anchorRef={scheduleTriggerRef}
+                itemId={item.id}
                 dueAt={item.dueAt}
                 remindAt={item.remindAt}
                 remindRepeat={item.remindRepeat}

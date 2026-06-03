@@ -418,4 +418,218 @@ describe('GDriveBackend (client id configured)', () => {
     const status = await backend.status();
     expect(status).toBe('ready');
   });
+
+  it('status() returns "offline" when navigator reports offline', async () => {
+    fakeTokens();
+    const backend = createGDriveBackend()!;
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    expect(await backend.status()).toBe('offline');
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+  });
+
+  it('describe() returns the connected account email when present', () => {
+    fakeTokens();
+    const backend = createGDriveBackend()!;
+    expect(backend.describe()).toBe('tester@example.com');
+  });
+
+  it('describe() falls back to Connected without email', () => {
+    saveTokens({
+      accessToken: 'a',
+      expiresAt: Date.now() + 60_000,
+    });
+    const backend = createGDriveBackend()!;
+    expect(backend.describe()).toBe('Connected');
+  });
+
+  it('getRecord returns null for malformed stored JSON', () => {
+    fakeTokens();
+    window.localStorage.setItem('cadence.sync.gdrive.record.v1', 'not-json');
+    const backend = createGDriveBackend()!;
+    expect(backend.getRecord()).toBeNull();
+  });
+
+  it('pull maps download 401 to auth-required', async () => {
+    fakeTokens();
+    setSyncPassphrase(PASS, false);
+    mockFetch([
+      {
+        match: 'drive/v3/files?',
+        handler: async () =>
+          Response.json({ files: [{ id: 'file-1', name: 'snapshot.cadence', version: '7' }] }),
+      },
+      {
+        match: 'drive/v3/files/file-1',
+        handler: async () => new Response('nope', { status: 401 }),
+      },
+    ]);
+    const backend = createGDriveBackend()!;
+    expect(await backend.pull()).toEqual({ kind: 'auth-required' });
+  });
+
+  it('pull maps download network failure to network-error', async () => {
+    fakeTokens();
+    setSyncPassphrase(PASS, false);
+    mockFetch([
+      {
+        match: 'drive/v3/files?',
+        handler: async () =>
+          Response.json({ files: [{ id: 'file-1', name: 'snapshot.cadence', version: '7' }] }),
+      },
+      {
+        match: 'drive/v3/files/file-1',
+        handler: async () => {
+          throw new TypeError('offline');
+        },
+      },
+    ]);
+    const backend = createGDriveBackend()!;
+    const out = await backend.pull();
+    expect(out.kind).toBe('network-error');
+  });
+
+  it('push maps upload 401 to auth-required', async () => {
+    fakeTokens();
+    setSyncPassphrase(PASS, false);
+    mockFetch([
+      {
+        match: 'drive/v3/files?',
+        handler: async () =>
+          Response.json({ files: [{ id: 'f', name: 'snapshot.cadence', version: '5' }] }),
+      },
+      {
+        match: 'upload/drive/v3/files/f',
+        handler: async () => new Response('nope', { status: 401 }),
+      },
+    ]);
+    const backend = createGDriveBackend()!;
+    expect(await backend.push(SAMPLE, '5')).toEqual({ kind: 'auth-required' });
+  });
+
+  it('push maps metadata network failure to network-error', async () => {
+    fakeTokens();
+    setSyncPassphrase(PASS, false);
+    mockFetch([
+      {
+        match: 'drive/v3/files?',
+        handler: async () => {
+          throw new TypeError('offline');
+        },
+      },
+    ]);
+    const backend = createGDriveBackend()!;
+    const out = await backend.push(SAMPLE);
+    expect(out.kind).toBe('network-error');
+  });
+
+  it('retries transient 429 responses before succeeding', async () => {
+    fakeTokens();
+    setSyncPassphrase(PASS, false);
+    let listCalls = 0;
+    mockFetch([
+      {
+        match: 'drive/v3/files?',
+        handler: async () => {
+          listCalls++;
+          if (listCalls < 2) return new Response('rate limited', { status: 429 });
+          return Response.json({ files: [] });
+        },
+      },
+    ]);
+    const backend = createGDriveBackend()!;
+    expect(await backend.pull()).toEqual({ kind: 'no-snapshot' });
+    expect(listCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it('reports http-error when upload fails with a non-413 status', async () => {
+    fakeTokens();
+    setSyncPassphrase(PASS, false);
+    mockFetch([
+      {
+        match: 'drive/v3/files?',
+        handler: async () =>
+          Response.json({ files: [{ id: 'f', name: 'snapshot.cadence', version: '5' }] }),
+      },
+      {
+        match: 'upload/drive/v3/files/f',
+        handler: async () =>
+          Response.json({ error: { message: 'quota' } }, { status: 403 }),
+      },
+    ]);
+    const backend = createGDriveBackend()!;
+    const out = await backend.push(SAMPLE, '5');
+    expect(out.kind).toBe('http-error');
+    if (out.kind === 'http-error') expect(out.status).toBe(403);
+  });
+
+  it('reports http-error when file metadata lookup fails with 404', async () => {
+    fakeTokens();
+    setSyncPassphrase(PASS, false);
+    mockFetch([
+      {
+        match: 'drive/v3/files?',
+        handler: async () => new Response('missing', { status: 404 }),
+      },
+    ]);
+    const backend = createGDriveBackend()!;
+    const out = await backend.pull();
+    expect(out.kind).toBe('http-error');
+  });
+
+  it('reports unsupported-version when snapshot format is too new', async () => {
+    fakeTokens();
+    setSyncPassphrase(PASS, false);
+    const blob = new Uint8Array(await wrapSnapshot(SAMPLE, PASS));
+    blob[4] = 99;
+    blob[5] = 0;
+    mockFetch([
+      {
+        match: 'drive/v3/files?',
+        handler: async () =>
+          Response.json({ files: [{ id: 'file-1', name: 'snapshot.cadence', version: '7' }] }),
+      },
+      {
+        match: 'drive/v3/files/file-1',
+        handler: async () => new Response(blob as unknown as BodyInit, { status: 200 }),
+      },
+    ]);
+    const backend = createGDriveBackend()!;
+    const out = await backend.pull();
+    expect(out.kind).toBe('unsupported-version');
+  });
+
+  it('reports network-error when file metadata JSON cannot be parsed', async () => {
+    fakeTokens();
+    setSyncPassphrase(PASS, false);
+    mockFetch([
+      {
+        match: 'drive/v3/files?',
+        handler: async () => new Response('not-json', { status: 200 }),
+      },
+    ]);
+    const backend = createGDriveBackend()!;
+    const out = await backend.pull();
+    expect(out.kind).toBe('network-error');
+  });
+
+  it('maps unsupported-kdf snapshots to unsupported-version pull result', async () => {
+    fakeTokens();
+    setSyncPassphrase(PASS, false);
+    const blob = new Uint8Array(await wrapSnapshot(SAMPLE, PASS));
+    blob[6] = 99;
+    mockFetch([
+      {
+        match: 'drive/v3/files?',
+        handler: async () =>
+          Response.json({ files: [{ id: 'file-1', name: 'snapshot.cadence', version: '7' }] }),
+      },
+      {
+        match: 'drive/v3/files/file-1',
+        handler: async () => new Response(blob as unknown as BodyInit, { status: 200 }),
+      },
+    ]);
+    const backend = createGDriveBackend()!;
+    const out = await backend.pull();
+    expect(out.kind).toBe('unsupported-version');
+  });
 });

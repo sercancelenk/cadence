@@ -45,12 +45,13 @@
  *   side-effect, not part of the steady-state push/pull loop.
  */
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import type { AppData } from '../model';
 import { syncLanAttachments } from './lanAttachmentSync';
 import { parseRemoteSnapshot } from './syncSnapshotGuard';
+import { prepareForRemoteApply } from './syncApplyGuard';
 import {
   computeLocalEtag,
   readPairFromUrl,
@@ -116,7 +117,8 @@ export type SyncCycleAction =
   | 'not-modified'
   | 'pull-error'
   | 'push-error'
-  | 'corrupt-remote';
+  | 'corrupt-remote'
+  | 'local-changed-during-pull';
 
 async function maybeSyncLanAttachments(
   backend: SyncBackend,
@@ -143,12 +145,34 @@ async function maybeSyncLanAttachments(
 export async function runSyncCycle(args: {
   backend: SyncBackend;
   localData: AppData;
+  getLocalData?: () => AppData;
   applyRemote: (data: AppData) => void;
+  flushLocal?: () => Promise<void>;
   userId?: string;
 }): Promise<SyncCycleAction> {
   const { backend, localData, applyRemote, userId } = args;
+  const getLocal = args.getLocalData ?? (() => localData);
+  const flushLocal = args.flushLocal ?? (async () => {});
   const record = backend.getRecord();
   const backendId = backend.id;
+
+  async function applyRemoteIfLocalStable(remote: AppData): Promise<SyncCycleAction | null> {
+    const fpBefore = await safeFingerprint(getLocal());
+    await flushLocal();
+    await prepareForRemoteApply();
+    const fpAfter = await safeFingerprint(getLocal());
+    if (fpBefore && fpAfter !== fpBefore) {
+      publishSyncEvent({
+        kind: 'info',
+        backendId,
+        code: 'local-edits',
+        text: 'Skipped remote pull — you have unsaved local changes.',
+      });
+      return 'local-changed-during-pull';
+    }
+    applyRemote(remote);
+    return null;
+  }
 
   if (!record?.localFingerprint) {
     const pullOutcome = await backend.pull();
@@ -163,7 +187,8 @@ export async function runSyncCycle(args: {
         });
         return 'corrupt-remote';
       }
-      applyRemote(parsed.data);
+      const blocked = await applyRemoteIfLocalStable(parsed.data);
+      if (blocked) return blocked;
       const fp = await safeFingerprint(parsed.data);
       backend.setRecord({
         etag: pullOutcome.etag,
@@ -223,7 +248,8 @@ export async function runSyncCycle(args: {
       });
       return 'corrupt-remote';
     }
-    applyRemote(parsed.data);
+    const blocked = await applyRemoteIfLocalStable(parsed.data);
+    if (blocked) return blocked;
     const fp = await safeFingerprint(parsed.data);
     backend.setRecord({
       etag: pullOutcome.etag,
@@ -260,7 +286,7 @@ export type UseSyncAutoSyncOptions = {
 export function useSyncAutoSync(opts: UseSyncAutoSyncOptions = {}) {
   const enabled = opts.enabled !== false;
   const { user } = useAccount();
-  const { replaceAll, data } = useAppData();
+  const { replaceAll, data, flushPendingSave } = useAppData();
 
   // Mirror the latest `data` and `backend` into refs so the effect
   // doesn't tear down its listeners every time either changes. The
@@ -281,6 +307,10 @@ export function useSyncAutoSync(opts: UseSyncAutoSyncOptions = {}) {
 
   const lastAttemptAt = useRef(0);
   const inFlight = useRef(false);
+
+  const flushLocal = useCallback(async () => {
+    await flushPendingSave();
+  }, [flushPendingSave]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -310,6 +340,8 @@ export function useSyncAutoSync(opts: UseSyncAutoSyncOptions = {}) {
         await runSyncCycle({
           backend,
           localData: dataRef.current,
+          getLocalData: () => dataRef.current,
+          flushLocal,
           applyRemote: (next) => {
             if (!cancelled) replaceAll(next);
           },
@@ -353,5 +385,5 @@ export function useSyncAutoSync(opts: UseSyncAutoSyncOptions = {}) {
       window.removeEventListener('online', onOnline);
       unsubscribe();
     };
-  }, [replaceAll, enabled]);
+  }, [replaceAll, enabled, flushLocal]);
 }

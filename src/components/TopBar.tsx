@@ -15,7 +15,7 @@ import {
 import { CMD_PALETTE_OPEN_EVENT } from './CommandPalette';
 import { useAccount } from '../AccountContext';
 import { useSession } from '../AuthContext';
-import { useAppData } from '../AppDataContext';
+import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { sortedTeams } from '../lib/teamSort';
 import { TEAM_STATUS_OPTIONS, teamStatusLabel } from '../lib/teamStatus';
 import { PATH_HOME, PATH_TEAMS } from '../lib/routes';
@@ -60,16 +60,31 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
   const location = useLocation();
   const teamMatch = useMatch({ path: '/teams/:teamId/*', end: false });
   const activeTeamId = teamMatch?.params.teamId;
-  const { data, rememberTeam, toggleFavoriteTeam, updateTeam, flushPendingSave } = useAppData();
+  const { rememberTeam, toggleFavoriteTeam, updateTeam, flushPendingSave } = useAppDataActions();
+  const topBarData = useAppDataSelector(
+    (d) => ({
+      profile: d.profile ?? { displayName: 'Me', favoriteTeamIds: [] as string[] },
+      teams: d.teams,
+      people: d.people,
+    }),
+    (a, b) => a.profile === b.profile && a.teams === b.teams && a.people === b.people,
+  );
+  const breadcrumb = useMemo(
+    () => breadcrumbFromPath({ teams: topBarData.teams, people: topBarData.people } as AppData, location.pathname),
+    [topBarData.teams, topBarData.people, location.pathname],
+  );
   const { user, logout } = useAccount();
   const { theme, toggle } = useTheme();
   const { pinEnabled, lockSession } = useSession();
-  const profile = data.profile ?? { displayName: 'Me', favoriteTeamIds: [] };
+  const profile = topBarData.profile;
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
 
-  const teamsSorted = useMemo(() => sortedTeams(data), [data]);
-  const currentTeam = activeTeamId ? data.teams.find((t) => t.id === activeTeamId) : undefined;
+  const teamsSorted = useMemo(
+    () => sortedTeams({ teams: topBarData.teams, profile: topBarData.profile } as AppData),
+    [topBarData.teams, topBarData.profile],
+  );
+  const currentTeam = activeTeamId ? topBarData.teams.find((t) => t.id === activeTeamId) : undefined;
   const favSet = useMemo(() => new Set(profile.favoriteTeamIds), [profile.favoriteTeamIds]);
 
   useEffect(() => {
@@ -82,7 +97,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
   }, [teamMenuOpen]);
 
   const initials = profile.displayName.trim().slice(0, 2).toUpperCase() || 'ME';
-  const crumb = useMemo(() => breadcrumbFromPath(data, location.pathname), [data, location.pathname]);
+  const crumb = breadcrumb;
 
   /** Detect the platform once for the keyboard-shortcut badge — Mac users
    *  see ⌘K, everyone else sees Ctrl+K. We can't rely on the OS in the

@@ -1,5 +1,5 @@
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { IcArrowRight, IcCheck, IcPencil, IcPlus, IcSave, IcSparkles, IcTrash, IcUndo, IcX } from '../components/icons';
 // Lazy-loaded: only fetched the first time the user clicks "Ask AI" on a note.
 const AIAssistantDialog = lazy(() =>
@@ -10,8 +10,10 @@ import { Button } from '../components/ui/Button';
 import { MarkdownEditor, MarkdownView } from '../components/ui/MarkdownEditor';
 import { isAIConfigured } from '../lib/ai';
 import { useFeatures } from '../lib/features';
-import { useAppData } from '../AppDataContext';
+import { useAppData, useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { distinctCategoriesForTeam, SUGGESTED_CATEGORIES } from '../lib/categories';
+import { useItemFocus } from '../features/people/useItemFocus';
+import { cancelPendingReminderSlots } from '../lib/reminderDelivery/cancelReminderSlots';
 import { fromLocalDatetimeValue, formatShort, isPast, toLocalDatetimeValue } from '../lib/datetime';
 import { kindLabel } from '../lib/labels';
 import { teamLeader, teamMe, teamPeople as teamPeoplePath } from '../lib/teamPaths';
@@ -80,15 +82,27 @@ export function TeamLeaderPage() {
 
 export function People() {
   const { teamId } = useParams();
-  const { data, addPerson, removePerson } = useAppData();
+  const { addPerson, removePerson } = useAppDataActions();
+  const teamBundle = useAppDataSelector(
+    (d) => {
+      if (!teamId) return null;
+      const team = d.teams.find((t) => t.id === teamId);
+      if (!team) return null;
+      return { team, members: teamPeople(d, teamId), self: getSelfPerson(d, teamId) };
+    },
+    (a, b) =>
+      a?.team.id === b?.team.id &&
+      a?.members.length === b?.members.length &&
+      a?.self?.id === b?.self?.id,
+  );
   const [name, setName] = useState('');
   const [title, setTitle] = useState('');
 
-  const team = teamId ? data.teams.find((t) => t.id === teamId) : undefined;
-  const self = teamId ? getSelfPerson(data, teamId) : undefined;
-  const members = useMemo(() => (teamId ? teamPeople(data, teamId) : []), [data, teamId]);
+  if (!teamBundle) return <Navigate to={PATH_TEAMS} replace />;
+  const { team, members, self } = teamBundle;
+  const resolvedTeamId = team.id;
 
-  if (!teamId || !team) return <Navigate to={PATH_TEAMS} replace />;
+  if (!self) return <Navigate to={PATH_TEAMS} replace />;
 
   return (
     <div className="page page--wide">
@@ -103,7 +117,7 @@ export function People() {
         {self ? (
           <Link
             className="btn btn--primary btn--icon"
-            to={teamMe(teamId)}
+            to={teamMe(resolvedTeamId)}
             title="Open Me workspace"
             aria-label="Open Me workspace"
           >
@@ -123,7 +137,7 @@ export function People() {
         </p>
         <Link
           className="btn btn--primary btn--icon"
-          to={teamLeader(teamId)}
+          to={teamLeader(resolvedTeamId)}
           title="Open My leader workspace"
           aria-label="Open My leader workspace"
         >
@@ -140,7 +154,7 @@ export function People() {
           onSubmit={(e: FormEvent) => {
             e.preventDefault();
             if (!name.trim()) return;
-            addPerson(teamId, name.trim(), title.trim() || undefined);
+            addPerson(resolvedTeamId, name.trim(), title.trim() || undefined);
             setName('');
             setTitle('');
           }}
@@ -166,7 +180,7 @@ export function People() {
           <div className="tiles">
             {members.map((p) => (
               <div key={p.id} className="tile">
-                <Link to={`${teamPeoplePath(teamId)}/${p.id}`} className="tile__link">
+                <Link to={`${teamPeoplePath(resolvedTeamId)}/${p.id}`} className="tile__link">
                   <div className="tile__name">{p.name}</div>
                   {p.title ? <div className="muted small">{p.title}</div> : <div className="muted small">Open workspace</div>}
                 </Link>
@@ -197,6 +211,8 @@ type WorkspaceTab = 'workspace' | 'timeline' | 'meeting';
 
 export function PersonWorkspace({ personId }: { personId: string }) {
   const { teamId } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const { data, updatePerson, addItem, updateItem, toggleItemDone, removeItem } = useAppData();
   const person = data.people.find((p) => p.id === personId);
   const [name, setName] = useState('');
@@ -206,6 +222,8 @@ export function PersonWorkspace({ personId }: { personId: string }) {
   const [tab, setTab] = useState<WorkspaceTab>('workspace');
 
   const items = useMemo(() => data.items.filter((i) => i.personId === personId), [data.items, personId]);
+
+  useItemFocus(location.search, location.pathname, navigate, items, setOpenId, setTab);
 
   const categoryHints = useMemo(() => {
     if (!teamId) return [...SUGGESTED_CATEGORIES];
@@ -560,6 +578,8 @@ function KindSection({
   const { features: appFeatures } = useFeatures();
   const aiEnabled = appFeatures.ai && isAIConfigured(data.aiSettings);
   const listId = `cat-${teamId}-${kind}`;
+  const submittingRef = useRef(false);
+  const [reminderEditorOpen, setReminderEditorOpen] = useState<Set<string>>(() => new Set());
 
   return (
     <section className="card">
@@ -574,34 +594,40 @@ function KindSection({
         style={{ marginBottom: 12, flexDirection: kind === 'goal' ? 'column' : undefined, alignItems: 'stretch' }}
         onSubmit={(e) => {
           e.preventDefault();
+          if (submittingRef.current) return;
           if (!draftTitle.trim() && kind !== 'document') return;
           if (kind === 'document' && !draftTitle.trim() && !draftUrl.trim()) return;
-          if (kind === 'document') {
-            onAdd({ title: draftTitle.trim() || 'Document', url: draftUrl.trim(), category: draftCategory.trim() || undefined });
-          } else if (kind === 'goal') {
-            onAdd({
-              title: draftTitle.trim(),
-              category: draftCategory.trim() || undefined,
-              startAt: draftStartAt ? fromLocalDatetimeValue(draftStartAt) : undefined,
-              dueAt: draftDueAt ? fromLocalDatetimeValue(draftDueAt) : undefined,
-              goalStatus: draftGoalStatus,
-            });
-          } else if (kind === 'feedback') {
-            onAdd({
-              title: draftTitle.trim(),
-              category: draftCategory.trim() || undefined,
-              feedbackKind: draftFeedbackKind,
-            });
-          } else {
-            onAdd({ title: draftTitle.trim(), category: draftCategory.trim() || undefined });
+          submittingRef.current = true;
+          try {
+            if (kind === 'document') {
+              onAdd({ title: draftTitle.trim() || 'Document', url: draftUrl.trim(), category: draftCategory.trim() || undefined });
+            } else if (kind === 'goal') {
+              onAdd({
+                title: draftTitle.trim(),
+                category: draftCategory.trim() || undefined,
+                startAt: draftStartAt ? fromLocalDatetimeValue(draftStartAt) : undefined,
+                dueAt: draftDueAt ? fromLocalDatetimeValue(draftDueAt) : undefined,
+                goalStatus: draftGoalStatus,
+              });
+            } else if (kind === 'feedback') {
+              onAdd({
+                title: draftTitle.trim(),
+                category: draftCategory.trim() || undefined,
+                feedbackKind: draftFeedbackKind,
+              });
+            } else {
+              onAdd({ title: draftTitle.trim(), category: draftCategory.trim() || undefined });
+            }
+            setDraftTitle('');
+            setDraftUrl('');
+            setDraftCategory('');
+            setDraftStartAt('');
+            setDraftDueAt('');
+            setDraftGoalStatus('planned');
+            setDraftFeedbackKind('coaching');
+          } finally {
+            submittingRef.current = false;
           }
-          setDraftTitle('');
-          setDraftUrl('');
-          setDraftCategory('');
-          setDraftStartAt('');
-          setDraftDueAt('');
-          setDraftGoalStatus('planned');
-          setDraftFeedbackKind('coaching');
         }}
       >
         {kind === 'goal' ? (
@@ -702,7 +728,7 @@ function KindSection({
       ) : (
         <ul className="list">
           {list.map((it) => (
-            <li key={it.id} className="list__block">
+            <li key={it.id} className="list__block" data-item-id={it.id}>
               <div className="row row--between">
                 <div>
                   <div className={`list__title${kind === 'goal' ? ' list__title--multiline' : ''}`}>
@@ -889,7 +915,11 @@ function KindSection({
                         className="input"
                         defaultValue={toLocalDatetimeValue(it.startAt)}
                         key={`s-${it.id}-${it.updatedAt}`}
-                        onBlur={(e) => onUpdate(it.id, { startAt: fromLocalDatetimeValue(e.target.value) })}
+                        onChange={(e) => {
+                          const next = fromLocalDatetimeValue(e.target.value);
+                          if (next === it.startAt) return;
+                          onUpdate(it.id, { startAt: next });
+                        }}
                       />
                     </label>
                   ) : null}
@@ -901,20 +931,75 @@ function KindSection({
                         className="input"
                         defaultValue={toLocalDatetimeValue(it.dueAt)}
                         key={`d-${it.id}-${it.updatedAt}`}
-                        onBlur={(e) => onUpdate(it.id, { dueAt: fromLocalDatetimeValue(e.target.value) })}
+                        onChange={(e) => {
+                          const next = fromLocalDatetimeValue(e.target.value);
+                          if (next === it.dueAt) return;
+                          onUpdate(it.id, { dueAt: next });
+                        }}
                       />
+                      <span className="muted small">Shown on Agenda only — does not notify.</span>
                     </label>
                   ) : null}
-                  <label className="field">
-                    <span>Reminder (desktop notification)</span>
-                    <input
-                      type="datetime-local"
-                      className="input"
-                      defaultValue={toLocalDatetimeValue(it.remindAt)}
-                      key={`r-${it.id}-${it.updatedAt}`}
-                      onBlur={(e) => onUpdate(it.id, { remindAt: fromLocalDatetimeValue(e.target.value) })}
-                    />
-                  </label>
+                  {it.kind === 'task' || it.kind === 'goal' ? (
+                    it.remindAt || reminderEditorOpen.has(it.id) ? (
+                      <label className="field">
+                        <span className="row row--between" style={{ alignItems: 'center' }}>
+                          <span>Reminder (desktop notification)</span>
+                          {it.remindAt ? (
+                            <button
+                              type="button"
+                              className="btn btn--ghost btn--small"
+                              onClick={() => {
+                                cancelPendingReminderSlots(it.id);
+                                onUpdate(it.id, { remindAt: undefined, remindRepeat: undefined });
+                                setReminderEditorOpen((prev) => {
+                                  const next = new Set(prev);
+                                  next.delete(it.id);
+                                  return next;
+                                });
+                              }}
+                            >
+                              Clear reminder
+                            </button>
+                          ) : null}
+                        </span>
+                        <input
+                          type="datetime-local"
+                          className="input"
+                          defaultValue={toLocalDatetimeValue(it.remindAt)}
+                          key={`r-${it.id}-${it.updatedAt}`}
+                          onChange={(e) => {
+                            const next = fromLocalDatetimeValue(e.target.value);
+                            if (next === it.remindAt) return;
+                            if (!next) {
+                              cancelPendingReminderSlots(it.id);
+                              onUpdate(it.id, { remindAt: undefined, remindRepeat: undefined });
+                              return;
+                            }
+                            onUpdate(it.id, { remindAt: next });
+                          }}
+                        />
+                        <span className="muted small">Fires a desktop notification at this time.</span>
+                      </label>
+                    ) : (
+                      <div className="field">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                            setReminderEditorOpen((prev) => {
+                              const next = new Set(prev);
+                              next.add(it.id);
+                              return next;
+                            })
+                          }
+                        >
+                          Add desktop reminder
+                        </Button>
+                      </div>
+                    )
+                  ) : null}
                   <label className="field">
                     <span>Repeat</span>
                     <select

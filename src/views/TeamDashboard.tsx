@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { IcArrowRight, IcCheck, IcPlus } from '../components/icons';
 import { Button } from '../components/ui/Button';
@@ -45,6 +45,7 @@ export function TeamDashboard() {
   const [category, setCategory] = useState('');
   const [personId, setPersonId] = useState('');
   const [kind, setKind] = useState<ItemKind>('task');
+  const submittingRef = useRef(false);
 
   const team = teamId ? data.teams.find((t) => t.id === teamId) : undefined;
   const self = teamId ? getSelfPerson(data, teamId) : undefined;
@@ -111,11 +112,17 @@ export function TeamDashboard() {
           className="row"
           onSubmit={(e) => {
             e.preventDefault();
+            if (submittingRef.current) return;
             const t = title.trim();
             if (!t || !effectivePersonId) return;
-            addItem(effectivePersonId, kind, { title: t, category: category.trim() || undefined });
-            setTitle('');
-            setCategory('');
+            submittingRef.current = true;
+            try {
+              addItem(effectivePersonId, kind, { title: t, category: category.trim() || undefined });
+              setTitle('');
+              setCategory('');
+            } finally {
+              submittingRef.current = false;
+            }
           }}
         >
           <input

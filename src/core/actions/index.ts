@@ -1,4 +1,5 @@
 import { uuid } from '../../lib/uuid';
+import { clearReminderNotifyKeys, reminderNotifyEntryId } from '../../lib/reminderNotify';
 import type {
   AISettings,
   AppData,
@@ -87,7 +88,8 @@ export function removeTeam(data: AppData, teamId: string): AppData {
     items,
     profile,
     notifiedReminderIds: data.notifiedReminderIds.filter((nid) => {
-      const it = data.items.find((i) => i.id === nid);
+      const itemId = reminderNotifyEntryId(nid);
+      const it = data.items.find((i) => i.id === itemId);
       return !it || !personIds.has(it.personId);
     }),
     lastTeamId,
@@ -145,7 +147,8 @@ export function removePerson(data: AppData, id: string): AppData {
     people: data.people.filter((x) => x.id !== id),
     items: data.items.filter((it) => it.personId !== id),
     notifiedReminderIds: data.notifiedReminderIds.filter((nid) => {
-      const it = data.items.find((i) => i.id === nid);
+      const itemId = reminderNotifyEntryId(nid);
+      const it = data.items.find((i) => i.id === itemId);
       return !it || it.personId !== id;
     }),
   };
@@ -262,7 +265,12 @@ export function updateItem(
   let clearedNotify = false;
   const items = data.items.map((it) => {
     if (it.id !== id) return it;
-    if (patch.remindAt !== undefined && patch.remindAt !== it.remindAt) clearedNotify = true;
+    if (
+      ('remindAt' in patch && patch.remindAt !== it.remindAt) ||
+      ('remindRepeat' in patch && patch.remindRepeat !== it.remindRepeat)
+    ) {
+      clearedNotify = true;
+    }
 
     const title = patch.title !== undefined ? patch.title.trim() || it.title : it.title;
     const body = patch.body !== undefined ? patch.body : it.body;
@@ -320,7 +328,9 @@ export function updateItem(
       updatedAt: nowIso(),
     };
   });
-  let notified = clearedNotify ? data.notifiedReminderIds.filter((x) => x !== id) : data.notifiedReminderIds;
+  let notified = clearedNotify
+    ? clearReminderNotifyKeys(data.notifiedReminderIds, id)
+    : data.notifiedReminderIds;
   const markedDoneId = data.items.find((it) => it.id === id && patch.done === true && !it.done)?.id;
   if (markedDoneId) notified = notified.filter((x) => x !== markedDoneId);
   return {
@@ -344,7 +354,7 @@ export function removeItem(data: AppData, id: string): AppData {
   return {
     ...data,
     items: data.items.filter((i) => i.id !== id),
-    notifiedReminderIds: data.notifiedReminderIds.filter((x) => x !== id),
+    notifiedReminderIds: clearReminderNotifyKeys(data.notifiedReminderIds, id),
   };
 }
 
@@ -672,10 +682,15 @@ export function updateTodoItem(
     >
   >,
 ): AppData {
-  return {
-    ...data,
-    todoItems: data.todoItems.map((x) => {
+  let clearedNotify = false;
+  const todoItems = data.todoItems.map((x) => {
       if (x.id !== id) return x;
+      if (
+        ('remindAt' in patch && patch.remindAt !== x.remindAt) ||
+        ('remindRepeat' in patch && patch.remindRepeat !== x.remindRepeat)
+      ) {
+        clearedNotify = true;
+      }
       const groupId =
         patch.groupId !== undefined && data.todoGroups.some((g) => g.id === patch.groupId) ? patch.groupId : x.groupId;
       const updatedAt = nowIso();
@@ -755,7 +770,14 @@ export function updateTodoItem(
         remindRepeat,
         updatedAt,
       };
-    }),
+    });
+  const notifiedReminderIds = clearedNotify
+    ? clearReminderNotifyKeys(data.notifiedReminderIds, id)
+    : data.notifiedReminderIds;
+  return {
+    ...data,
+    todoItems,
+    notifiedReminderIds,
   };
 }
 
@@ -840,7 +862,11 @@ export function toggleTodoItem(data: AppData, id: string): AppData {
 }
 
 export function removeTodoItem(data: AppData, id: string): AppData {
-  return { ...data, todoItems: data.todoItems.filter((x) => x.id !== id) };
+  return {
+    ...data,
+    todoItems: data.todoItems.filter((x) => x.id !== id),
+    notifiedReminderIds: clearReminderNotifyKeys(data.notifiedReminderIds, id),
+  };
 }
 
 // -- Notes -----------------------------------------------------------------
@@ -933,12 +959,15 @@ export function patchUtilityDocument(
   };
 }
 
+/** Default editor seed — must match `UtilitiesStructuredPage` DEFAULT_JSON. */
+const DEFAULT_UTILITY_STRUCTURED_CONTENT = '{\n}\n';
+
 export function patchUtilityStructuredText(
   data: AppData,
   patch: Partial<Pick<UtilityStructuredText, 'content' | 'diffContent' | 'language'>>,
 ): AppData {
   const prev: UtilityStructuredText = data.utilityStructuredText ?? {
-    content: '',
+    content: DEFAULT_UTILITY_STRUCTURED_CONTENT,
     language: 'json',
     updatedAt: nowIso(),
   };

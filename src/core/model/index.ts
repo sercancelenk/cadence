@@ -1,4 +1,7 @@
 import { uuid } from '../../lib/uuid';
+import { UnsupportedDataVersionError } from './unsupportedDataVersion';
+
+export { UnsupportedDataVersionError, isUnsupportedDataVersionError } from './unsupportedDataVersion';
 
 /** Legacy single-team self identifier (used during migration). */
 export const LEGACY_SELF_PERSON_ID = '__self';
@@ -843,6 +846,10 @@ export function normalizeData(raw: unknown): AppData {
 
   const o = raw as Record<string, unknown>;
   const ver = typeof o.version === 'number' ? o.version : 1;
+
+  if (ver > DATA_VERSION) {
+    throw new UnsupportedDataVersionError(ver, DATA_VERSION);
+  }
 
   if (ver < 2) {
     return patchDataToV3(migrateV1ToV2(o));

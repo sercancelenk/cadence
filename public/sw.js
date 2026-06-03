@@ -15,7 +15,7 @@
  * does (main.tsx checks CADENCE_PWA flag + presence of `serviceWorker` API).
  */
 
-const CACHE_VERSION = 'v27-lan-pwa-v1-passthrough';
+const CACHE_VERSION = 'v30-reminder-reschedule';
 const CACHE_NAME = `cadence-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -47,6 +47,89 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
+  if (event.data?.type === 'REMINDER_SYNC') {
+    event.waitUntil(syncReminderSlots(event.data.slots || []));
+  }
+  if (event.data?.type === 'REMINDER_CANCEL_ITEM') {
+    event.waitUntil(cancelReminderTagsForItem(event.data.itemId));
+  }
+});
+
+const REMINDER_TAG_PREFIX = 'cadence:';
+
+function reminderTag(slotKey) {
+  return REMINDER_TAG_PREFIX + String(slotKey).replace(/\u0001/g, '|');
+}
+
+function reminderPath(slot) {
+  if (slot.source === 'team-item') return null;
+  return `/todos?focus=${encodeURIComponent(slot.itemId)}`;
+}
+
+async function cancelReminderTagsForItem(itemId) {
+  if (!itemId || typeof itemId !== 'string') return;
+  const prefix = `${REMINDER_TAG_PREFIX}${itemId}|`;
+  const existing = await self.registration.getNotifications();
+  for (const n of existing) {
+    if (n.tag && n.tag.startsWith(prefix)) n.close();
+  }
+}
+
+async function syncReminderSlots(slots) {
+  if (!('showTrigger' in Notification.prototype)) return;
+  if (Notification.permission !== 'granted') return;
+
+  const desiredTags = new Set(slots.map((s) => reminderTag(s.slotKey)));
+  const existing = await self.registration.getNotifications();
+  const existingByTag = new Map(
+    existing.filter((n) => n.tag && n.tag.startsWith(REMINDER_TAG_PREFIX)).map((n) => [n.tag, n]),
+  );
+
+  for (const n of existing) {
+    if (n.tag && n.tag.startsWith(REMINDER_TAG_PREFIX) && !desiredTags.has(n.tag)) {
+      n.close();
+    }
+  }
+
+  const now = Date.now();
+
+  for (const slot of slots) {
+    const tag = reminderTag(slot.slotKey);
+    const path = slot.deepLinkPath || reminderPath(slot);
+    const title = slot.title || 'Reminder';
+    const body = slot.body || '';
+    const prev = existingByTag.get(tag);
+    if (prev) {
+      const d = prev.data || {};
+      if (d.title === title && d.body === body && d.path === path) continue;
+      prev.close();
+    }
+    const fireAt = Date.parse(slot.remindAt);
+    if (Number.isNaN(fireAt) || fireAt <= now + 1000) continue;
+    await self.registration.showNotification(title, {
+      body,
+      tag,
+      data: { slotKey: slot.slotKey, itemId: slot.itemId, source: slot.source, path, title, body },
+      showTrigger: new TimestampTrigger(fireAt),
+    });
+  }
+}
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const path = event.notification.data?.path;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client) {
+          if (path) client.navigate(path);
+          return client.focus();
+        }
+      }
+      if (path) return self.clients.openWindow(path);
+      return self.clients.openWindow('./');
+    }),
+  );
 });
 
 function isAsset(url) {

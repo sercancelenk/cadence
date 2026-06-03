@@ -14,20 +14,35 @@ import {
   IcUser,
   IcUsers,
 } from './icons';
-import { useAppData } from '../AppDataContext';
+import { useAppDataSelector } from '../AppDataContext';
 import { brandIconUrl } from '../lib/appBranding';
+import { useMobileWeb } from '../lib/runtime';
 import { PATH_HOME, PATH_TEAMS, PATH_UTILITIES_DOCUMENT, PATH_UTILITIES_STRUCTURED } from '../lib/routes';
 import { teamLeader, teamMe, teamPeople as teamPeopleRoute, teamBase } from '../lib/teamPaths';
+import { AppSidebarFooter } from './AppSidebarFooter';
 
 const linkCls = ({ isActive }: { isActive: boolean }) => `app-sidebar__link${isActive ? ' app-sidebar__link--active' : ''}`;
 
 type Props = { collapsed: boolean };
 
 export function AppSidebar({ collapsed }: Props) {
+  const mobileWeb = useMobileWeb();
   const m = useMatch({ path: '/teams/:teamId/*', end: false });
   const teamId = m?.params.teamId;
-  const { data } = useAppData();
-  const team = teamId ? data.teams.find((t) => t.id === teamId) : undefined;
+  const sidebarData = useAppDataSelector(
+    (d) => ({
+      teams: d.teams,
+      todoGroups: d.todoGroups,
+      todoItems: d.todoItems,
+      notes: d.notes,
+    }),
+    (a, b) =>
+      a.teams === b.teams &&
+      a.todoGroups === b.todoGroups &&
+      a.todoItems === b.todoItems &&
+      a.notes === b.notes,
+  );
+  const team = teamId ? sidebarData.teams.find((t) => t.id === teamId) : undefined;
 
   // Compute small badges for nav links that have a "hidden by filter"
   // failure mode. The point is to make data presence obvious from the
@@ -40,15 +55,15 @@ export function AppSidebar({ collapsed }: Props) {
   //   the warning even before they click into the page.
   // - Notes: locked vs unlocked split, again only when relevant.
   const todoSummary = (() => {
-    const totalGroups = data.todoGroups.length;
-    const archivedGroups = data.todoGroups.filter((g) => g.archived).length;
-    const openTodos = data.todoItems.filter((t) => t.status !== 'done' && t.status !== 'cancelled').length;
+    const totalGroups = sidebarData.todoGroups.length;
+    const archivedGroups = sidebarData.todoGroups.filter((g) => g.archived).length;
+    const openTodos = sidebarData.todoItems.filter((t) => t.status !== 'done' && t.status !== 'cancelled').length;
     const allArchived = totalGroups > 0 && archivedGroups === totalGroups;
     return { openTodos, allArchived, archivedGroups, totalGroups };
   })();
   const notesSummary = (() => {
-    const total = data.notes.length;
-    const locked = data.notes.filter((n) => n.locked).length;
+    const total = sidebarData.notes.length;
+    const locked = sidebarData.notes.filter((n) => n.locked).length;
     return { total, locked };
   })();
 
@@ -73,12 +88,14 @@ export function AppSidebar({ collapsed }: Props) {
             not a work-in-progress one. */}
         <div className="app-sidebar__section">
           {!collapsed ? <div className="app-sidebar__section-label">App</div> : null}
-          <NavLink to={PATH_HOME} end className={linkCls} title="Home">
-            <span className="app-sidebar__ic">
-              <IcHome size={18} />
-            </span>
-            {!collapsed ? <span>Home</span> : null}
-          </NavLink>
+          {!mobileWeb ? (
+            <NavLink to={PATH_HOME} end className={linkCls} title="Home">
+              <span className="app-sidebar__ic">
+                <IcHome size={18} />
+              </span>
+              {!collapsed ? <span>Home</span> : null}
+            </NavLink>
+          ) : null}
           <NavLink to="/agenda" className={linkCls} title="Agenda">
             <span className="app-sidebar__ic">
               <IcCalendar size={18} />
@@ -128,14 +145,17 @@ export function AppSidebar({ collapsed }: Props) {
               <span className="app-sidebar__badge">{notesSummary.total}</span>
             ) : null}
           </NavLink>
-          <NavLink to={PATH_TEAMS} end className={linkCls} title="Teams">
-            <span className="app-sidebar__ic">
-              <IcFolder size={18} />
-            </span>
-            {!collapsed ? <span>Teams</span> : null}
-          </NavLink>
+          {!mobileWeb ? (
+            <NavLink to={PATH_TEAMS} end className={linkCls} title="Teams">
+              <span className="app-sidebar__ic">
+                <IcFolder size={18} />
+              </span>
+              {!collapsed ? <span>Teams</span> : null}
+            </NavLink>
+          ) : null}
         </div>
 
+        {!mobileWeb ? (
         <div className="app-sidebar__section">
           {!collapsed ? <div className="app-sidebar__section-label">Utilities</div> : null}
           <NavLink to={PATH_UTILITIES_DOCUMENT} className={linkCls} title="Document — scratch pad">
@@ -151,15 +171,18 @@ export function AppSidebar({ collapsed }: Props) {
             {!collapsed ? <span>JSON / YAML</span> : null}
           </NavLink>
         </div>
+        ) : null}
 
         <div className="app-sidebar__section">
           {!collapsed ? <div className="app-sidebar__section-label">Account</div> : null}
+          {!mobileWeb ? (
           <NavLink to="/analytics" className={linkCls} title="Analytics">
             <span className="app-sidebar__ic">
               <IcChartBar size={18} />
             </span>
             {!collapsed ? <span>Analytics</span> : null}
           </NavLink>
+          ) : null}
           <NavLink to="/profile" className={linkCls} title="Profile">
             <span className="app-sidebar__ic">
               <IcUser size={18} />
@@ -208,6 +231,8 @@ export function AppSidebar({ collapsed }: Props) {
           </div>
         ) : null}
       </nav>
+
+      <AppSidebarFooter collapsed={collapsed} />
     </aside>
   );
 }

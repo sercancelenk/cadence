@@ -1,6 +1,13 @@
 import { RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { IcBell, IcCalendar, IcChevronLeft, IcChevronRight, IcClock, IcX } from '../icons';
 import type { ReminderRepeat } from '../../model';
+import { cancelPendingReminderSlots } from '../../lib/reminderDelivery/cancelReminderSlots';
+import {
+  buildReminderToggleOffPatch,
+  buildReminderToggleOnPatch,
+  buildScheduleClearPatch,
+  buildScheduleDateTimePatch,
+} from './schedulePopoverPatch';
 
 export type { ReminderRepeat };
 
@@ -37,6 +44,8 @@ type Props = {
    *      we flip it above the anchor instead.
    */
   anchorRef?: RefObject<HTMLElement | null>;
+  /** Task/item id — used to cancel OS pending reminders before save debounce. */
+  itemId?: string;
 };
 
 const WEEKDAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
@@ -88,6 +97,58 @@ function monthLabel(d: Date) {
   return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 }
 
+function isInFuture(when: Date, now: Date) {
+  return when.getTime() > now.getTime();
+}
+
+const TIME_CHIP_OPTIONS = ['09:00', '12:00', '17:00'] as const;
+
+const QUICK_PRESET_DEFS: { key: string; label: string; getDate: (now: Date) => Date }[] = [
+  {
+    key: 'today-5pm',
+    label: 'Today 5pm',
+    getDate: (now) => {
+      const d = new Date(now);
+      d.setHours(17, 0, 0, 0);
+      return d;
+    },
+  },
+  {
+    key: 'tomorrow-9am',
+    label: 'Tomorrow 9am',
+    getDate: (now) => {
+      const d = new Date(now);
+      d.setDate(d.getDate() + 1);
+      d.setHours(9, 0, 0, 0);
+      return d;
+    },
+  },
+  {
+    key: 'in-3h',
+    label: '+3h',
+    getDate: (now) => new Date(now.getTime() + 3 * 60 * 60 * 1000),
+  },
+  {
+    key: 'next-mon',
+    label: 'Mon 9am',
+    getDate: (now) => {
+      const d = new Date(now);
+      const day = d.getDay();
+      let offset = (1 + 7 - day) % 7;
+      if (offset === 0) {
+        d.setHours(9, 0, 0, 0);
+        if (!isInFuture(d, now)) {
+          d.setDate(d.getDate() + 7);
+        }
+        return d;
+      }
+      d.setDate(d.getDate() + offset);
+      d.setHours(9, 0, 0, 0);
+      return d;
+    },
+  },
+];
+
 /**
  * Build a 6×7 grid of dates anchored to the first Monday on/before the
  * 1st of `viewMonth`. We always emit 42 cells so the popover doesn't
@@ -124,6 +185,7 @@ export function SchedulePopover({
   onClose,
   doneLabel = 'Done',
   anchorRef,
+  itemId,
 }: Props) {
   const today = useMemo(() => startOfDay(new Date()), []);
   const initialSelected = useMemo(() => {
@@ -213,19 +275,16 @@ export function SchedulePopover({
   }, [anchorRef]);
 
   const grid = useMemo(() => buildMonthGrid(viewMonth), [viewMonth]);
+  const now = new Date();
+  const visibleQuickPresets = QUICK_PRESET_DEFS.filter((p) => isInFuture(p.getDate(now), now));
+  const visibleTimeChips = TIME_CHIP_OPTIONS.filter((t) => {
+    if (!sameDay(selectedDate, today)) return true;
+    return isInFuture(new Date(isoFromDateAndTime(selectedDate, t)), now);
+  });
 
-  /**
-   * Commit (date, time) to BOTH `dueAt` and, when the reminder toggle is
-   * on, `remindAt`. Used by every interactive path in the popover (day
-   * cell, time input, chips). Keeping the commit logic in one place
-   * avoids the "this UI lane forgot to mirror to remindAt" drift that
-   * an earlier implementation had.
-   */
   const commitDateTime = (date: Date, hhmm: string) => {
     const iso = isoFromDateAndTime(date, hhmm);
-    const patch: SchedulePatch = { dueAt: iso };
-    if (reminderOn) patch.remindAt = iso;
-    onPatch(patch);
+    onPatch(buildScheduleDateTimePatch(iso, reminderOn));
   };
 
   const commitDate = (date: Date) => {
@@ -246,13 +305,10 @@ export function SchedulePopover({
     setReminderOn(next);
     if (next) {
       const iso = dueAt || isoFromDateAndTime(selectedDate, time);
-      // Coupling: when the user turns reminders on without a deadline,
-      // we default `dueAt` to the same slot. The popover UI doesn't
-      // expose a way to set them independently, so this matches the
-      // visual model the user sees (one date + one time → one ping).
-      onPatch({ remindAt: iso, dueAt: dueAt ? undefined : iso });
+      onPatch(buildReminderToggleOnPatch(iso, !!dueAt));
     } else {
-      onPatch({ remindAt: null, remindRepeat: null });
+      cancelPendingReminderSlots(itemId);
+      onPatch(buildReminderToggleOffPatch());
       setRepeat('');
     }
   };
@@ -268,57 +324,11 @@ export function SchedulePopover({
     setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1));
 
   const clearAll = () => {
-    onPatch({ dueAt: null, remindAt: null, remindRepeat: null });
+    if (remindAt || reminderOn) cancelPendingReminderSlots(itemId);
+    onPatch(buildScheduleClearPatch());
     setReminderOn(false);
     setRepeat('');
   };
-
-  // Quick presets work off "now" rather than the currently selected date,
-  // which matches user intuition: "Today 5pm" jumps to today regardless
-  // of which month you happen to be browsing.
-  const quickPresets: { key: string; label: string; getDate: () => Date }[] = [
-    {
-      key: 'today',
-      label: 'Today 5pm',
-      getDate: () => {
-        const d = new Date();
-        d.setHours(17, 0, 0, 0);
-        return d;
-      },
-    },
-    {
-      key: 'tomorrow',
-      label: 'Tomorrow 9am',
-      getDate: () => {
-        const d = new Date();
-        d.setDate(d.getDate() + 1);
-        d.setHours(9, 0, 0, 0);
-        return d;
-      },
-    },
-    {
-      key: 'in-3h',
-      label: '+3h',
-      getDate: () => {
-        const d = new Date();
-        d.setMinutes(0, 0, 0);
-        d.setHours(d.getHours() + 3);
-        return d;
-      },
-    },
-    {
-      key: 'next-mon',
-      label: 'Mon 9am',
-      getDate: () => {
-        const d = new Date();
-        const day = d.getDay();
-        const offset = ((1 + 7 - day) % 7) || 7;
-        d.setDate(d.getDate() + offset);
-        d.setHours(9, 0, 0, 0);
-        return d;
-      },
-    },
-  ];
 
   const applyPreset = (when: Date) => {
     const day = startOfDay(when);
@@ -418,32 +428,36 @@ export function SchedulePopover({
           onChange={(e) => handleTimeChange(e.target.value)}
           aria-label="Time"
         />
-        <div className="sched-pop__time-chips" role="group" aria-label="Quick time">
-          {['09:00', '12:00', '17:00'].map((t) => (
+        {visibleTimeChips.length > 0 ? (
+          <div className="sched-pop__time-chips" role="group" aria-label="Quick time">
+            {visibleTimeChips.map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={`sched-pop__chip${time === t ? ' sched-pop__chip--active' : ''}`}
+                onClick={() => handleTimeChange(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      {visibleQuickPresets.length > 0 ? (
+        <div className="sched-pop__presets" role="group" aria-label="Quick presets">
+          {visibleQuickPresets.map((p) => (
             <button
-              key={t}
+              key={p.key}
               type="button"
-              className={`sched-pop__chip${time === t ? ' sched-pop__chip--active' : ''}`}
-              onClick={() => handleTimeChange(t)}
+              className="sched-pop__preset"
+              onClick={() => applyPreset(p.getDate(now))}
             >
-              {t}
+              {p.label}
             </button>
           ))}
         </div>
-      </div>
-
-      <div className="sched-pop__presets" role="group" aria-label="Quick presets">
-        {quickPresets.map((p) => (
-          <button
-            key={p.key}
-            type="button"
-            className="sched-pop__preset"
-            onClick={() => applyPreset(p.getDate())}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
+      ) : null}
 
       <div className="sched-pop__reminder">
         <button

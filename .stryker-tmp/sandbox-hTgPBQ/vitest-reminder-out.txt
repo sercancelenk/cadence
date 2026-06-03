@@ -1,0 +1,10 @@
+
+ RUN  v4.1.6 /Users/sercancelenk/development/workspaces/projects/leeadman
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  23:53:21
+   Duration  588ms (transform 19ms, setup 0ms, import 30ms, tests 3ms, environment 447ms)
+
+EXIT:0

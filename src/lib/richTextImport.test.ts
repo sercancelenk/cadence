@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseRichDoc } from './richText';
+import { EMPTY_RICH_DOC, parseRichDoc } from './richText';
 import { markdownToRichDoc, resolveRichTextContent } from './richTextImport';
 
 describe('richTextImport', () => {
@@ -27,5 +27,24 @@ describe('richTextImport', () => {
     const doc = markdownToRichDoc('- [ ] open\n- [x] done');
     const json = JSON.stringify(doc);
     expect(json).toContain('taskList');
+    expect(json).toContain('done');
+  });
+
+  it('returns EMPTY_RICH_DOC for blank markdown', () => {
+    expect(markdownToRichDoc('   ')).toEqual(EMPTY_RICH_DOC);
+  });
+
+  it('resolveRichTextContent handles in-memory docs and invalid objects', () => {
+    const doc = { type: 'doc' as const, content: [] };
+    expect(resolveRichTextContent(doc)).toBe(doc);
+    expect(resolveRichTextContent({ type: 'paragraph' } as never)).toEqual(EMPTY_RICH_DOC);
+    expect(resolveRichTextContent(null)).toEqual(EMPTY_RICH_DOC);
+    expect(resolveRichTextContent('', 'markdown')).toEqual(EMPTY_RICH_DOC);
+  });
+
+  it('resolveRichTextContent uses explicit markdown format', () => {
+    const doc = resolveRichTextContent('# Title', 'markdown');
+    expect(doc.type).toBe('doc');
+    expect(doc.content?.length).toBeGreaterThan(0);
   });
 });

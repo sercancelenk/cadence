@@ -305,4 +305,257 @@ describe('runSyncCycle (steady state — record exists)', () => {
     expect(applied).toHaveLength(0);
     expect(fake.record?.etag).toBe('rev-1'); // unchanged
   });
+
+  it('skips pull when local fingerprint changes during apply guard', async () => {
+    const local = makeData('local');
+    const { computeLocalEtag } = await import('./lanSyncClient');
+    const fp = await computeLocalEtag(local);
+    let current = local;
+    const fake = makeFakeBackend(
+      { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
+      { pull: { kind: 'ok', data: makeData('remote'), etag: 'rev-2' } },
+    );
+    const applied: AppData[] = [];
+    const { events, unsubscribe } = captureEvents();
+
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: local,
+      getLocalData: () => current,
+      flushLocal: async () => {
+        current = makeData('local-edited');
+      },
+      applyRemote: (d) => applied.push(d),
+    });
+
+    expect(action).toBe('local-changed-during-pull');
+    expect(applied).toHaveLength(0);
+    expect(fake.record?.etag).toBe('rev-1');
+    expect(events.some((e) => e.code === 'local-edits')).toBe(true);
+    unsubscribe();
+  });
+});
+
+describe('runSyncCycle (additional branches)', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('reports push-error when baseline seed push fails', async () => {
+    const fake = makeFakeBackend(null, {
+      pull: { kind: 'no-snapshot' },
+      push: { kind: 'http-error', status: 500, message: 'fail' },
+    });
+    const { events, unsubscribe } = captureEvents();
+
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: makeData('local'),
+      applyRemote: () => {},
+    });
+
+    expect(action).toBe('push-error');
+    expect(fake.record).toBeNull();
+    expect(events.some((e) => e.kind === 'error')).toBe(true);
+    unsubscribe();
+  });
+
+  it('reports pull-error on steady-state conditional pull failure', async () => {
+    const local = makeData('local');
+    const { computeLocalEtag } = await import('./lanSyncClient');
+    const fp = await computeLocalEtag(local);
+    const fake = makeFakeBackend(
+      { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
+      { pull: { kind: 'network-error', message: 'offline' } },
+    );
+    const { events, unsubscribe } = captureEvents();
+
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: local,
+      applyRemote: () => {},
+    });
+
+    expect(action).toBe('pull-error');
+    expect(events.some((e) => e.kind === 'error')).toBe(true);
+    unsubscribe();
+  });
+
+  it('skips baseline apply when local edits appear during first pull', async () => {
+    const fake = makeFakeBackend(null, {
+      pull: { kind: 'ok', data: makeData('remote'), etag: 'rev-1' },
+    });
+    let current = makeData('local');
+    const applied: AppData[] = [];
+
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: current,
+      getLocalData: () => current,
+      flushLocal: async () => {
+        current = makeData('local-edited');
+      },
+      applyRemote: (d) => applied.push(d),
+    });
+
+    expect(action).toBe('local-changed-during-pull');
+    expect(applied).toHaveLength(0);
+    expect(fake.record).toBeNull();
+  });
+
+  it('syncs LAN attachments after a successful push on lan backend', async () => {
+    const syncSpy = vi.spyOn(await import('./lanAttachmentSync'), 'syncLanAttachments');
+    const lanBackend: SyncBackend = {
+      id: 'lan',
+      displayName: 'LAN',
+      e2eEncryption: false,
+      async status() {
+        return 'ready';
+      },
+      async pull() {
+        return { kind: 'not-modified' };
+      },
+      async push() {
+        return { kind: 'ok', etag: 'rev-2' };
+      },
+      getRecord() {
+        return { etag: 'rev-1', localFingerprint: '"old-fingerprint"', lastSyncedAt: '2026-05-19T00:00:00.000Z' };
+      },
+      setRecord() {},
+      describe() {
+        return 'lan';
+      },
+    };
+
+    const local = makeData('local');
+    await runSyncCycle({
+      backend: lanBackend,
+      localData: local,
+      applyRemote: () => {},
+      userId: 'user-1',
+    });
+
+    expect(syncSpy).toHaveBeenCalledWith(local, 'user-1');
+    syncSpy.mockRestore();
+  });
+
+  it('does not sync LAN attachments for gdrive backend', async () => {
+    const syncSpy = vi.spyOn(await import('./lanAttachmentSync'), 'syncLanAttachments');
+    const fake = makeFakeBackend(
+      { etag: 'rev-1', localFingerprint: '"old-fingerprint"', lastSyncedAt: '2026-05-19T00:00:00.000Z' },
+      { push: { kind: 'ok', etag: 'rev-2' } },
+    );
+
+    await runSyncCycle({
+      backend: fake.backend,
+      localData: makeData('local'),
+      applyRemote: () => {},
+      userId: 'user-1',
+    });
+
+    expect(syncSpy).not.toHaveBeenCalled();
+    syncSpy.mockRestore();
+  });
+
+  it('continues when computeLocalEtag throws (safe fingerprint fallback)', async () => {
+    vi.spyOn(await import('./lanSyncClient'), 'computeLocalEtag').mockRejectedValue(new Error('no crypto'));
+    const fake = makeFakeBackend(
+      { etag: 'rev-1', localFingerprint: 'fp-old', lastSyncedAt: '2026-05-19T00:00:00.000Z' },
+      { pull: { kind: 'not-modified' } },
+    );
+
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: makeData('local'),
+      applyRemote: () => {},
+    });
+
+    expect(action).toBe('not-modified');
+    vi.restoreAllMocks();
+  });
+
+  it('treats empty localFingerprint as baseline (first-time sync)', async () => {
+    const fake = makeFakeBackend(
+      { etag: 'rev-0', localFingerprint: '', lastSyncedAt: '2026-05-19T00:00:00.000Z' },
+      { pull: { kind: 'no-snapshot' }, push: { kind: 'ok', etag: 'rev-1' } },
+    );
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: makeData('local'),
+      applyRemote: () => {},
+    });
+    expect(action).toBe('baseline-seeded');
+    expect(fake.calls.map((c) => c.method)).toEqual(['pull', 'push']);
+  });
+
+  it('skips dirty push when fingerprint is empty and does conditional pull', async () => {
+    vi.spyOn(await import('./lanSyncClient'), 'computeLocalEtag').mockResolvedValue('');
+    const fake = makeFakeBackend(
+      { etag: 'rev-1', localFingerprint: 'fp-old', lastSyncedAt: '2026-05-19T00:00:00.000Z' },
+      { pull: { kind: 'not-modified' } },
+    );
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: makeData('local'),
+      applyRemote: () => {},
+    });
+    expect(action).toBe('not-modified');
+    expect(fake.calls).toEqual([{ method: 'pull', etag: 'rev-1' }]);
+    vi.restoreAllMocks();
+  });
+
+  it('syncs LAN attachments after baseline-pulled when userId is set', async () => {
+    const syncSpy = vi.spyOn(await import('./lanAttachmentSync'), 'syncLanAttachments');
+    const lanBackend: SyncBackend = {
+      id: 'lan',
+      displayName: 'LAN',
+      e2eEncryption: false,
+      status: async () => 'ready',
+      pull: async () => ({ kind: 'ok', data: makeData('remote'), etag: 'rev-1' }),
+      push: async () => ({ kind: 'ok', etag: 'rev-1' }),
+      getRecord: () => null,
+      setRecord: () => {},
+      describe: () => 'lan',
+    };
+    await runSyncCycle({
+      backend: lanBackend,
+      localData: makeData('local'),
+      applyRemote: () => {},
+      userId: 'user-42',
+    });
+    expect(syncSpy).toHaveBeenCalledWith(expect.objectContaining({ version: 3 }), 'user-42');
+    syncSpy.mockRestore();
+  });
+
+  it('logs and continues when LAN attachment sync throws', async () => {
+    const syncSpy = vi
+      .spyOn(await import('./lanAttachmentSync'), 'syncLanAttachments')
+      .mockRejectedValue(new Error('lan down'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const lanBackend: SyncBackend = {
+      id: 'lan',
+      displayName: 'LAN',
+      e2eEncryption: false,
+      status: async () => 'ready',
+      pull: async () => ({ kind: 'not-modified' }),
+      push: async () => ({ kind: 'ok', etag: 'rev-2' }),
+      getRecord: () => ({
+        etag: 'rev-1',
+        localFingerprint: '"old-fingerprint"',
+        lastSyncedAt: '2026-05-19T00:00:00.000Z',
+      }),
+      setRecord: () => {},
+      describe: () => 'lan',
+    };
+    const action = await runSyncCycle({
+      backend: lanBackend,
+      localData: makeData('local'),
+      applyRemote: () => {},
+      userId: 'user-1',
+    });
+    expect(action).toBe('pushed');
+    expect(warn).toHaveBeenCalled();
+    syncSpy.mockRestore();
+    warn.mockRestore();
+  });
 });

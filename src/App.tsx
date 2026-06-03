@@ -2,7 +2,7 @@ import { lazy, Suspense, type ReactElement } from 'react';
 import { BrowserRouter, HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AccountProvider, useAccount } from './providers/AccountContext';
 import { AuthGate, AuthProvider } from './providers/AuthContext';
-import { AppDataProvider, useAppData, useReminderWatcher } from './providers/AppDataContext';
+import { AppDataProvider, useElectronReminderBridge, usePersistStatus, usePwaReminderBridge, useReminderWatcher } from './providers/AppDataContext';
 import { Layout } from './components/Layout';
 import { TeamLayout } from './components/TeamLayout';
 import { ThemeProvider } from './providers/ThemeContext';
@@ -12,6 +12,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { NotesUnlockProvider } from './providers/NotesUnlockContext';
 import { WelcomeTour } from './components/WelcomeTour';
 import { useSyncAutoSync } from './lib/useSyncAutoSync';
+import { useAppDeepLink } from './hooks/useAppDeepLink';
 import { FeaturesProvider, useFeatures } from './lib/features';
 import './app.css';
 
@@ -148,7 +149,7 @@ export default function App() {
 }
 
 function Boot() {
-  const { ready } = useAppData();
+  const { ready } = usePersistStatus();
   if (!ready) {
     return (
       <div className="boot">
@@ -160,6 +161,9 @@ function Boot() {
 }
 
 function AppRoutes() {
+  useAppDeepLink();
+  useElectronReminderBridge();
+  usePwaReminderBridge();
   useReminderWatcher();
   // Keep this device's workspace in sync with the paired host (if any).
   // No-op when the user hasn't paired yet, so safe to mount unconditionally —

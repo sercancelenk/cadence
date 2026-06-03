@@ -41,6 +41,7 @@ const {
   session,
   safeStorage,
 } = require('electron');
+
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
@@ -61,6 +62,42 @@ const {
   DATA_FILE_PREFIX_LEGACY,
   SYNC_FINGERPRINT,
 } = require('./branding.cjs');
+
+const {
+  initReminderSync,
+  syncRemindersFromAppData,
+  getReminderSyncStatus,
+  requestReminderPermission,
+  cancelReminderSlotsForItem,
+  stopReminderSync,
+} = require('./reminder/index.cjs');
+const {
+  initLinuxBackground,
+  attachWindowCloseHandler,
+  markQuitting,
+  isActive: isLinuxBackgroundActive,
+  destroyTray,
+  getBackgroundStatus,
+  setBackgroundSettings,
+} = require('./reminder/linuxBackground.cjs');
+const { parseCadenceDeepLink, deepLinkToRendererPath } = require('./reminder/deepLink.cjs');
+const { getBuildAppId } = require('./buildAppId.cjs');
+const {
+  readWriteMeta,
+  canCommitWriteGeneration,
+  isFutureDataVersion,
+  isValidSnapshotPayload,
+} = require('./persistence/writeGeneration.cjs');
+const { unwrapStoredWorkspace, wrapCommitEnvelope } = require('./persistence/commitEnvelope.cjs');
+const { initCrashReporting } = require('./crashReporting.cjs');
+const { requirePolicyFeature } = require('./ipc/policyGuard.cjs');
+
+/** Reject IPC saves larger than the LAN sync POST limit (defence against OOM). */
+const MAX_SAVE_PAYLOAD_BYTES = 25 * 1024 * 1024;
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(getBuildAppId());
+}
 
 // ---------- Dev / prod data isolation + one-shot legacy migration --------------
 //
@@ -159,6 +196,64 @@ function migrateLegacyUserData(legacyDir, newDir) {
 // ---------- Single instance ----------------------------------------------------
 
 let mainWindow = null;
+/** @type {string | null} */
+let pendingDeepLinkPath = null;
+/** @type {{ kind: string; itemId: string } | null} */
+let pendingDeepLinkParsed = null;
+
+function deliverDeepLinkPath(path) {
+  if (!path || typeof path !== 'string') return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      mainWindow.webContents.send('app:deepLink', { path });
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+  pendingDeepLinkPath = path;
+}
+
+function deliverDeepLink(url) {
+  const parsed = parseCadenceDeepLink(url);
+  if (!parsed) return;
+  const uid = readSessionUserId();
+  const data = uid ? readUserData(uid) : null;
+  const path = deepLinkToRendererPath(parsed, data);
+  if (path) {
+    pendingDeepLinkParsed = null;
+    deliverDeepLinkPath(path);
+    return;
+  }
+  pendingDeepLinkParsed = parsed;
+}
+
+function flushPendingDeepLink() {
+  const uid = readSessionUserId();
+  const data = uid ? readUserData(uid) : null;
+  if (pendingDeepLinkParsed && data) {
+    const path = deepLinkToRendererPath(pendingDeepLinkParsed, data);
+    if (path) {
+      pendingDeepLinkParsed = null;
+      deliverDeepLinkPath(path);
+      return;
+    }
+  }
+  if (!pendingDeepLinkPath) return;
+  const path = pendingDeepLinkPath;
+  pendingDeepLinkPath = null;
+  deliverDeepLinkPath(path);
+}
+
+if (process.platform === 'darwin') {
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    deliverDeepLink(url);
+  });
+}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -166,7 +261,9 @@ if (!gotLock) {
   process.exit(0);
 }
 
-app.on('second-instance', () => {
+app.on('second-instance', (_event, commandLine) => {
+  const url = commandLine.find((arg) => typeof arg === 'string' && arg.startsWith('cadence://'));
+  if (url) deliverDeepLink(url);
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
@@ -229,6 +326,83 @@ function legacyDataPath() {
 
 function dataPathForUser(userId) {
   return path.join(app.getPath('userData'), `${DATA_FILE_PREFIX}-data-${userId}.json`);
+}
+
+function writeMetaPathForUser(userId) {
+  return path.join(app.getPath('userData'), `${DATA_FILE_PREFIX}-data-${userId}.meta.json`);
+}
+
+function writeWriteMeta(userId, generation) {
+  const metaPath = writeMetaPathForUser(userId);
+  const payload = {
+    generation,
+    updatedAt: new Date().toISOString(),
+  };
+  return writeJsonText(metaPath, JSON.stringify(payload, null, 2)).ok;
+}
+
+/**
+ * Extract AppData from a parsed on-disk object (envelope or legacy).
+ * @param {unknown} obj
+ */
+function workspaceForSummary(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  return unwrapStoredWorkspace(obj).workspace;
+}
+
+/**
+ * Read the generation embedded in the live data file (envelope format).
+ * Falls back to the meta sidecar for legacy plaintext files.
+ * @param {string} userId
+ * @returns {number}
+ */
+function readStoredWriteGeneration(userId) {
+  const metaPath = writeMetaPathForUser(userId);
+  const metaFallback = () => readWriteMeta(metaPath, fs).generation;
+  const file = dataPathForUser(userId);
+  if (!fs.existsSync(file)) return metaFallback();
+  try {
+    let text = fs.readFileSync(file, 'utf8');
+    const key = dataKeys.get(userId);
+    if (isEncryptedFile(text)) {
+      if (!key) return metaFallback();
+      const plain = decryptPayload(text, key);
+      if (plain == null) return metaFallback();
+      text = plain;
+    }
+    const parsed = JSON.parse(text);
+    const { writeGeneration, enveloped } = unwrapStoredWorkspace(parsed);
+    if (enveloped && typeof writeGeneration === 'number') return writeGeneration;
+    return metaFallback();
+  } catch {
+    return metaFallback();
+  }
+}
+
+/**
+ * Persist workspace bytes and bump the on-disk write generation so the
+ * renderer (and LAN clients using If-Match) can detect concurrent writers.
+ *
+ * Generation is embedded inside the data file envelope and atomically written
+ * with the workspace bytes; the `.meta.json` sidecar is a read cache only.
+ */
+function commitUserData(userId, payload, options = {}) {
+  const meta = readWriteMeta(writeMetaPathForUser(userId), fs);
+  const fileGen = readStoredWriteGeneration(userId);
+  const currentGeneration = Math.max(meta.generation, fileGen);
+  const nextGeneration = currentGeneration + 1;
+
+  const r = writeUserData(userId, payload, { ...options, writeGeneration: nextGeneration });
+  if (!r.ok) return r;
+
+  const metaOk = writeWriteMeta(userId, nextGeneration);
+  if (!metaOk) {
+    console.warn(
+      '[cadence] meta mirror write failed; generation is embedded in the data envelope',
+      { userId, nextGeneration },
+    );
+  }
+  return { ok: true, writeGeneration: nextGeneration };
 }
 
 function accountsPath() {
@@ -510,16 +684,7 @@ function readJsonSafe(filePath, fallback = null) {
 }
 
 function writeJsonSafe(filePath, payload) {
-  try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const tmp = `${filePath}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf8');
-    fs.renameSync(tmp, filePath);
-    return true;
-  } catch (err) {
-    console.error('[cadence] failed to write', filePath, err);
-    return false;
-  }
+  return writeJsonText(filePath, JSON.stringify(payload, null, 2)).ok;
 }
 
 // ---------- Auth helpers -------------------------------------------------------
@@ -768,13 +933,27 @@ function readUserDataResult(userId) {
       return { ok: false, reason: 'bad-key', encrypted: true };
     }
     try {
-      return { ok: true, data: JSON.parse(plain), encrypted: true };
+      const parsed = JSON.parse(plain);
+      const { workspace, writeGeneration, enveloped } = unwrapStoredWorkspace(parsed);
+      return {
+        ok: true,
+        data: workspace,
+        encrypted: true,
+        writeGeneration: enveloped ? writeGeneration : undefined,
+      };
     } catch {
       return { ok: false, reason: 'parse', encrypted: true };
     }
   }
   try {
-    return { ok: true, data: JSON.parse(text), encrypted: false };
+    const parsed = JSON.parse(text);
+    const { workspace, writeGeneration, enveloped } = unwrapStoredWorkspace(parsed);
+    return {
+      ok: true,
+      data: workspace,
+      encrypted: false,
+      writeGeneration: enveloped ? writeGeneration : undefined,
+    };
   } catch {
     return { ok: false, reason: 'parse', encrypted: false };
   }
@@ -873,8 +1052,21 @@ function pruneBackups(dir) {
  *      irrevocably overwrite the encrypted file with that single character's
  *      worth of state.
  */
-function writeUserData(userId, payload, { allowOverwriteUnreadable = false } = {}) {
+function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writeGeneration = null } = {}) {
   const file = dataPathForUser(userId);
+
+  if (isFutureDataVersion(payload)) {
+    console.error('[cadence] refusing to write future data version', {
+      userId,
+      version: payload && typeof payload === 'object' ? payload.version : undefined,
+    });
+    return {
+      ok: false,
+      reason: 'unsupported-version',
+      error:
+        'This workspace was saved by a newer version of Cadence. Update the app before saving changes.',
+    };
+  }
 
   if (fs.existsSync(file) && !allowOverwriteUnreadable) {
     const existing = readUserDataResult(userId);
@@ -918,13 +1110,24 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false } = {
 
   snapshotCurrentDataFile(userId, 'pre-save');
 
-  const json = JSON.stringify(payload);
+  const body =
+    writeGeneration != null ? wrapCommitEnvelope(writeGeneration, payload) : payload;
+  const json = JSON.stringify(body);
   const out = key ? encryptPayload(json, key) : json;
-  const okWrite = writeJsonText(file, out);
-  if (okWrite) {
+  const writeResult = writeJsonText(file, out);
+  if (writeResult.ok) {
     pruneOrphanAttachments(userId, payload);
   }
-  return okWrite ? { ok: true } : { ok: false, error: 'I/O error while writing data file.' };
+  if (!writeResult.ok) {
+    return {
+      ok: false,
+      reason: writeResult.reason ?? 'io',
+      error:
+        writeResult.error ??
+        'I/O error while writing data file.',
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -949,21 +1152,37 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false } = {
  *      crash. (No-op / not supported on Windows; we swallow that error.)
  */
 function writeJsonText(filePath, text) {
+  const fail = (reason, error) => ({ ok: false, reason, error });
+  let tmp;
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const tmp = `${filePath}.tmp`;
+    tmp = `${filePath}.tmp`;
     const fd = fs.openSync(tmp, 'w');
+    let fileFsyncOk = true;
     try {
       fs.writeSync(fd, text, 0, 'utf8');
       try {
         fs.fsyncSync(fd);
       } catch (err) {
-        console.warn('[cadence] fsync(file) failed (continuing)', err);
+        console.error('[cadence] fsync(file) failed — refusing to commit', filePath, err);
+        fileFsyncOk = false;
       }
     } finally {
       fs.closeSync(fd);
     }
+    if (!fileFsyncOk) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* ignore */
+      }
+      return fail(
+        'durability',
+        'Could not confirm your data reached durable storage. Retry the save; your previous file is unchanged.',
+      );
+    }
     fs.renameSync(tmp, filePath);
+    tmp = null;
     try {
       const dirFd = fs.openSync(path.dirname(filePath), 'r');
       try {
@@ -976,10 +1195,17 @@ function writeJsonText(filePath, text) {
       // The rename itself is still atomic; we just don't get the extra
       // crash guarantee for the directory entry.
     }
-    return true;
+    return { ok: true };
   } catch (err) {
+    if (tmp) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* ignore */
+      }
+    }
     console.error('[cadence] failed to write', filePath, err);
-    return false;
+    return fail('io', 'I/O error while writing data file.');
   }
 }
 
@@ -1301,17 +1527,6 @@ function safeEqualToken(received, expected) {
 // fields we don't recognise (so we don't break forward-compatibility), but
 // we DO require the discriminator fields a legitimate Cadence client would
 // always send. Anything else is rejected before it touches the data writer.
-function isValidSnapshotPayload(obj) {
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
-  if (typeof obj.version !== 'number') return false;
-  if (!Array.isArray(obj.teams)) return false;
-  if (!Array.isArray(obj.people)) return false;
-  if (!Array.isArray(obj.items)) return false;
-  if (!Array.isArray(obj.todoGroups)) return false;
-  if (!Array.isArray(obj.todoItems)) return false;
-  return true;
-}
-
 // ---------- Sync server: PWA static-asset helper -----------------------------
 //
 // We also serve the bundled PWA from the same port so a mobile device on the
@@ -1682,7 +1897,7 @@ async function startSyncServer(port = SYNC_DEFAULT_PORT) {
                 }
               }
 
-              const writeRes = writeUserData(uid, payload);
+              const writeRes = commitUserData(uid, payload);
               // Always return the post-write ETag so the client can stop
               // tracking the previous one (otherwise a successful push
               // followed by another push would 412 against itself).
@@ -1835,7 +2050,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       spellcheck: true,
     },
   });
@@ -1885,6 +2100,12 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    flushPendingDeepLink();
+  });
+
+  attachWindowCloseHandler(mainWindow);
 }
 
 // ---------- Application menu (English) -----------------------------------------
@@ -2236,63 +2457,149 @@ function setupAutoUpdater() {
   });
 }
 
-// Make sure we don't leak the interval into a re-launch or a quit-while-
-// asleep scenario. Electron tears the module down on quit anyway, but
-// being explicit keeps tests and dev hot-reloads tidy.
-app.on('before-quit', () => {
+// Coordinated quit: ask renderer to flush debounced saves before teardown.
+let appQuittingConfirmed = false;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let pendingQuitFlushTimeout = null;
+
+function finishAppQuit() {
+  if (appQuittingConfirmed) return;
+  appQuittingConfirmed = true;
+  if (pendingQuitFlushTimeout) {
+    clearTimeout(pendingQuitFlushTimeout);
+    pendingQuitFlushTimeout = null;
+  }
   if (updateCheckTimer) {
     clearInterval(updateCheckTimer);
     updateCheckTimer = null;
   }
+  markQuitting();
+  destroyTray();
+  stopReminderSync();
+  void stopSyncServer();
+  app.quit();
+}
+
+function requestRendererFlushBeforeQuit() {
+  if (appQuittingConfirmed) return;
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app:request-flush');
+    }
+  } catch (err) {
+    console.warn('[cadence] app:request-flush failed', err);
+    finishAppQuit();
+    return;
+  }
+  if (pendingQuitFlushTimeout) clearTimeout(pendingQuitFlushTimeout);
+  pendingQuitFlushTimeout = setTimeout(() => finishAppQuit(), 2500);
+}
+
+ipcMain.on('app:flush-done', () => {
+  finishAppQuit();
+});
+
+app.on('before-quit', (event) => {
+  if (appQuittingConfirmed) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    event.preventDefault();
+    requestRendererFlushBeforeQuit();
+    return;
+  }
+  finishAppQuit();
 });
 
 // ---------- IPC: data ----------------------------------------------------------
 
-ipcMain.handle('data:load', () => {
-  const uid = readSessionUserId();
-  if (!uid) return null;
-  return readUserData(uid);
-});
+function measurePayloadBytes(payload) {
+  try {
+    return Buffer.byteLength(JSON.stringify(payload ?? {}), 'utf8');
+  } catch {
+    return Infinity;
+  }
+}
 
-ipcMain.handle('data:save', (_evt, payload, expectedUid) => {
+/**
+ * Shared save path for async IPC and synchronous flush-on-quit.
+ * @returns {{ ok: true; writeGeneration?: number } | { ok: false; reason?: string; error?: string; writeGeneration?: number }}
+ */
+function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRenderer = true } = {}) {
   const uid = readSessionUserId();
-  if (!uid) return false;
-  // Defence in depth: the renderer can pass the user ID it BELIEVES is
-  // active when it queued the save. If the active session has flipped
-  // to a different user between the renderer scheduling the save and
-  // this IPC executing (fast logout → login race; in-flight debounced
-  // save from the previous account), we MUST NOT overwrite the new
-  // user's data file with the previous user's payload — that would
-  // destroy the new user's data and conflate two accounts' state.
-  //
-  // Callers that don't pass `expectedUid` (legacy compat) keep the old
-  // "trust the current session" behaviour. The renderer now always
-  // passes it via `AppDataContext.persist()` so this guard is live for
-  // the main code paths.
+  if (!uid) return { ok: false, reason: 'no-session' };
+
+  if (measurePayloadBytes(payload) > MAX_SAVE_PAYLOAD_BYTES) {
+    return {
+      ok: false,
+      reason: 'too-large',
+      error: 'Workspace exceeds 25 MB. Compact attachments or archive old items before saving.',
+    };
+  }
+
   if (typeof expectedUid === 'string' && expectedUid && expectedUid !== uid) {
     console.warn(
       '[cadence] refusing data:save — session changed underneath the renderer',
       { expectedUid, currentUid: uid },
     );
-    if (mainWindow) {
-      try {
-        mainWindow.webContents.send('data:saveError', {
-          ok: false,
-          reason: 'session-changed',
-          error: 'Your save was discarded because the active session changed between when you typed and when the save was committed. The data was NOT written under the wrong account.',
-        });
-      } catch { /* ignore */ }
+    const rejected = {
+      ok: false,
+      reason: 'session-changed',
+      error:
+        'Your save was discarded because the active session changed between when you typed and when the save was committed. The data was NOT written under the wrong account.',
+    };
+    if (notifyRenderer && mainWindow) {
+      try { mainWindow.webContents.send('data:saveError', rejected); } catch { /* ignore */ }
     }
-    return false;
+    return rejected;
   }
-  const r = writeUserData(uid, payload);
-  if (!r.ok && mainWindow) {
-    // Surface destructive-write refusals to the renderer so it can show a
-    // "Your data is locked, open Backups & Recovery" banner instead of the
-    // user noticing only after they've typed a lot of text.
+
+  const metaPath = writeMetaPathForUser(uid);
+  const meta = readWriteMeta(metaPath, fs);
+  const resolvedGeneration = Math.max(meta.generation, readStoredWriteGeneration(uid));
+  if (!canCommitWriteGeneration(expectedGeneration, resolvedGeneration)) {
+    console.warn('[cadence] refusing data:save — write generation conflict', {
+      expectedGeneration,
+      currentGeneration: resolvedGeneration,
+      uid,
+    });
+    const conflict = {
+      ok: false,
+      reason: 'write-conflict',
+      error:
+        'Another save updated your data file before this one finished (for example LAN sync or a second app instance). Reload from disk or pull the latest snapshot, then retry your edits.',
+      writeGeneration: resolvedGeneration,
+    };
+    if (notifyRenderer && mainWindow) {
+      try { mainWindow.webContents.send('data:saveError', conflict); } catch { /* ignore */ }
+    }
+    return conflict;
+  }
+
+  const r = commitUserData(uid, payload);
+  if (!r.ok && notifyRenderer && mainWindow) {
     try { mainWindow.webContents.send('data:saveError', r); } catch { /* ignore */ }
   }
-  return r.ok;
+  if (r.ok) {
+    void syncRemindersFromAppData(payload, uid);
+    return { ok: true, writeGeneration: r.writeGeneration };
+  }
+  return r;
+}
+
+ipcMain.handle('data:load', () => {
+  const uid = readSessionUserId();
+  if (!uid) return null;
+  const data = readUserData(uid);
+  if (data) flushPendingDeepLink();
+  return data;
+});
+
+ipcMain.handle('data:save', (_evt, payload, expectedUid, expectedGeneration) => {
+  return executeDataSave(payload, expectedUid, expectedGeneration);
+});
+
+/** Synchronous flush used by renderer `pagehide` / update install (blocks until fsync). */
+ipcMain.on('data:flushSync', (event, { payload, expectedUid, expectedGeneration } = {}) => {
+  event.returnValue = executeDataSave(payload, expectedUid, expectedGeneration, { notifyRenderer: false });
 });
 
 /**
@@ -2302,8 +2609,11 @@ ipcMain.handle('data:save', (_evt, payload, expectedUid) => {
  */
 ipcMain.handle('data:loadResult', () => {
   const uid = readSessionUserId();
-  if (!uid) return { ok: true, data: null, reason: 'no-session' };
-  return readUserDataResult(uid);
+  if (!uid) return { ok: true, data: null, reason: 'no-session', writeGeneration: 0 };
+  const result = readUserDataResult(uid);
+  const metaGen = readWriteMeta(writeMetaPathForUser(uid), fs).generation;
+  const fileGen = typeof result.writeGeneration === 'number' ? result.writeGeneration : 0;
+  return { ...result, writeGeneration: Math.max(metaGen, fileGen) };
 });
 
 // ---------- IPC: Backups & Recovery -----------------------------------------
@@ -2336,7 +2646,7 @@ function inspectDataFile(filePath, uid) {
       try {
         const obj = JSON.parse(text);
         parsedOk = true;
-        counts = summarizeAppData(obj);
+        counts = summarizeAppData(workspaceForSummary(obj));
       } catch { /* parse fail */ }
     } else if (uid) {
       const key = dataKeys.get(uid);
@@ -2347,7 +2657,7 @@ function inspectDataFile(filePath, uid) {
           try {
             const obj = JSON.parse(plain);
             parsedOk = true;
-            counts = summarizeAppData(obj);
+            counts = summarizeAppData(workspaceForSummary(obj));
           } catch { /* parse fail */ }
         }
       }
@@ -2368,6 +2678,8 @@ function inspectDataFile(filePath, uid) {
 }
 
 function summarizeAppData(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  obj = workspaceForSummary(obj);
   if (!obj || typeof obj !== 'object') return null;
   // Pre-compute "archived" splits for todo groups so the Backups & Recovery
   // viewer can flag a backup that's already in the failure mode the user
@@ -2538,8 +2850,8 @@ ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
   snapshotCurrentDataFile(uid, 'pre-restore');
   const attBackup = pairedAttachmentsBackupDir(resolved);
   if (attBackup) restoreAttachmentsFromBackupDir(uid, attBackup);
-  const w = writeUserData(uid, payload, { allowOverwriteUnreadable: true });
-  return w.ok ? { ok: true, restoredFrom: path.basename(resolved) } : w;
+  const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
+  return w.ok ? { ok: true, restoredFrom: path.basename(resolved), writeGeneration: w.writeGeneration } : w;
 });
 
 /**
@@ -2715,6 +3027,26 @@ ipcMain.handle('app:showNotification', (_evt, { title, body } = {}) => {
   return true;
 });
 
+ipcMain.handle('reminder:status', () => {
+  const status = getReminderSyncStatus();
+  if (process.platform === 'linux') {
+    return { ...status, ...getBackgroundStatus() };
+  }
+  return status;
+});
+ipcMain.handle('reminder:requestPermission', () => requestReminderPermission());
+ipcMain.handle('reminder:setBackgroundSettings', (_event, partial) => setBackgroundSettings(partial || {}));
+ipcMain.handle('reminder:sync', (_evt, payload) => {
+  const uid = readSessionUserId();
+  if (!uid || !payload) return { ok: false };
+  void syncRemindersFromAppData(payload, uid);
+  return { ok: true };
+});
+ipcMain.handle('reminder:cancelItem', (_evt, { itemId } = {}) => {
+  if (typeof itemId !== 'string' || !itemId) return { ok: false, error: 'bad-id' };
+  return cancelReminderSlotsForItem(itemId);
+});
+
 ipcMain.handle('app:userDataPath', () => app.getPath('userData'));
 
 ipcMain.handle('attachment:write', (_evt, payload = {}) => {
@@ -2767,6 +3099,8 @@ ipcMain.handle('attachment:gc', (_evt, payload = {}) => {
  * Folder layout: data.json, manifest.json, attachments/*
  */
 ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
   const uid = readSessionUserId();
   if (!uid) return { ok: false, error: 'Not signed in.' };
   if (!payload || typeof payload !== 'object') return { ok: false, error: 'data required' };
@@ -2810,6 +3144,8 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
  * Import a bundle folder (data.json + optional attachments/) over the live workspace.
  */
 ipcMain.handle('data:importBundle', async () => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
   const uid = readSessionUserId();
   if (!uid) return { ok: false, error: 'Not signed in.' };
   const win = BrowserWindow.getFocusedWindow() || mainWindow;
@@ -2832,14 +3168,16 @@ ipcMain.handle('data:importBundle', async () => {
   snapshotCurrentDataFile(uid, 'pre-import');
   const attSrc = path.join(folder, 'attachments');
   if (fs.existsSync(attSrc)) importAttachmentsFromDir(uid, attSrc);
-  const w = writeUserData(uid, payload, { allowOverwriteUnreadable: true });
-  return w.ok ? { ok: true, importedFrom: path.basename(folder) } : w;
+  const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
+  return w.ok ? { ok: true, importedFrom: path.basename(folder), writeGeneration: w.writeGeneration } : w;
 });
 
 ipcMain.handle('app:getVersion', () => app.getVersion());
 
 ipcMain.handle('app:checkUpdates', async () => {
   if (!app.isPackaged) return { ok: false, reason: 'dev' };
+  const blocked = requirePolicyFeature('updateCheck', isFeatureAllowed);
+  if (blocked) return blocked;
   const u = getAutoUpdater();
   if (!u) return { ok: false, error: 'updater unavailable' };
 
@@ -2869,6 +3207,8 @@ ipcMain.handle('app:checkUpdates', async () => {
 
 ipcMain.handle('app:installUpdate', () => {
   if (!app.isPackaged) return { ok: false, reason: 'dev' };
+  const blocked = requirePolicyFeature('updateCheck', isFeatureAllowed);
+  if (blocked) return blocked;
   const u = getAutoUpdater();
   if (!u) return { ok: false, error: 'updater unavailable' };
   // Defer so this IPC can return its result before the app quits.
@@ -3426,6 +3766,7 @@ ipcMain.handle('account:register', (_evt, { email, password, migrateLegacy, disp
   });
   writeAccounts(accounts);
   writeSession(id);
+  flushPendingDeepLink();
   const newKey = deriveDataKey(password, encSalt);
   dataKeys.set(id, newKey);
   // Persist the freshly derived key so the next launch can resume without
@@ -3443,9 +3784,10 @@ ipcMain.handle('account:register', (_evt, { email, password, migrateLegacy, disp
         const legacyText = fs.readFileSync(leg, 'utf8');
         try {
           const obj = JSON.parse(legacyText);
-          writeUserData(id, obj);
+          commitUserData(id, obj);
         } catch {
           fs.copyFileSync(leg, userPath);
+          writeWriteMeta(id, 1);
         }
       }
     } catch (e) {
@@ -3512,10 +3854,11 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
           const legacyText = fs.readFileSync(leg, 'utf8');
           try {
             const obj = JSON.parse(legacyText);
-            writeUserData(u.id, obj);
+            commitUserData(u.id, obj);
             console.log('[cadence] auto-migrated legacy data into', u.email);
           } catch {
             fs.copyFileSync(leg, file);
+            writeWriteMeta(u.id, 1);
           }
         } catch (err) {
           console.warn('[cadence] legacy auto-migrate failed', err);
@@ -3533,7 +3876,7 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
       if (!isEncryptedFile(text)) {
         try {
           const obj = JSON.parse(text);
-          writeUserData(u.id, obj);
+          commitUserData(u.id, obj);
         } catch {
           /* best effort */
         }
@@ -3541,6 +3884,7 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
     }
 
     writeSession(u.id);
+    flushPendingDeepLink();
     return {
       ok: true,
       user: { id: u.id, email: u.email, displayName: typeof u.displayName === 'string' ? u.displayName : undefined },
@@ -3646,7 +3990,7 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
   snapshotCurrentDataFile(uid, 'pre-pwchange');
   dataKeys.set(uid, newKey);
   if (plaintextPayload != null) {
-    writeUserData(uid, plaintextPayload, { allowOverwriteUnreadable: true });
+    commitUserData(uid, plaintextPayload, { allowOverwriteUnreadable: true });
   }
 
   // Refresh the OS-keychain cache with the rotated key. Without this the
@@ -3864,6 +4208,8 @@ ipcMain.handle('sync:disable', async () => {
 });
 
 ipcMain.handle('sync:rotateToken', async () => {
+  const blocked = requirePolicyFeature('sync.lan', isFeatureAllowed);
+  if (blocked) return blocked;
   const cfg = readSyncConfig();
   cfg.token = crypto.randomBytes(24).toString('base64url');
   writeSyncConfig(cfg);
@@ -4084,6 +4430,11 @@ app.on('web-contents-created', (_e, contents) => {
 });
 
 app.whenReady().then(() => {
+  initCrashReporting(app.getPath('userData'));
+  if (!process.defaultApp) {
+    app.setAsDefaultProtocolClient('cadence');
+  }
+
   // macOS dock icon override. The packaged DMG ships with a proper `.icns`
   // baked in, so the OS picks the right icon for both Finder and the dock
   // automatically. In dev (`npm run dev`) Electron defaults to its grey
@@ -4169,6 +4520,38 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  const launchUrl = process.argv.find((arg) => typeof arg === 'string' && arg.startsWith('cadence://'));
+  if (launchUrl) deliverDeepLink(launchUrl);
+  initLinuxBackground({
+    showMainWindow: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      } else {
+        createWindow();
+      }
+    },
+    requestQuit: () => {
+      markQuitting();
+      app.quit();
+    },
+  });
+  initReminderSync({
+    readUserData,
+    writeUserData: (uid, payload) => commitUserData(uid, payload),
+    getSessionUserId: readSessionUserId,
+    notifyRenderer: (payload) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        try {
+          mainWindow.webContents.send('reminder:event', payload);
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    emitDeepLink: deliverDeepLink,
+  });
   setupAutoUpdater();
 
   // Take a "known good at launch" snapshot of every per-user data file we can
@@ -4201,12 +4584,10 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('before-quit', () => {
-  void stopSyncServer();
-});
-
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform === 'darwin') return;
+  if (isLinuxBackgroundActive()) return;
+  app.quit();
 });
 
 process.on('uncaughtException', (err) => {

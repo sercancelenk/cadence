@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { EditorView } from '@codemirror/view';
 import { MergeView } from '@codemirror/merge';
 import { foldAll, unfoldAll } from '@codemirror/language';
@@ -316,7 +316,11 @@ export function StructuredTextDiffPane({
       <div
         ref={hostRef}
         className="structured-text-diff-pane__host"
-        style={{ ['--structured-text-min-height' as string]: `${minHeight}px` }}
+        style={
+          minHeight > 0
+            ? ({ ['--structured-text-min-height' as string]: `${minHeight}px` } as CSSProperties)
+            : undefined
+        }
       />
     </div>
   );

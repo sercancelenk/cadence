@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Cadence">
+  <!--
+    Cadence app icon — "Planner disc / quiet dial".
+    Cream rounded square plate, a wooden-brown clock dial without numerals,
+    and a single deliberate indicator hand at roughly 1:40 o'clock.
+    The face deliberately omits numerals: this is a planner, not a watch.
+    The tilt of the hand reads as "the next beat" — a moment of intent,
+    not the current time.
+
+    Edit this file then run `npm run icons` to refresh all PWA / favicon
+    raster sizes from this single source of truth.
+  -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#fef3c7"/>
+      <stop offset="100%" stop-color="#fde68a"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="35%" cy="32%" r="60%">
+      <stop offset="0%"  stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="70%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Rounded-square plate (Apple-style icon canvas, rx matches 22% of side). -->
+  <rect width="512" height="512" rx="112" fill="url(#plate)"/>
+  <!-- A whisper of top-left sheen so the cream surface feels warmed by light
+       rather than flat-printed. Stays invisible at favicon sizes. -->
+  <rect width="512" height="512" rx="112" fill="url(#sheen)"/>
+
+  <!-- Dial ring. Thick stroke so it survives down to 32×32. -->
+  <circle cx="256" cy="256" r="158" fill="none" stroke="#78350f" stroke-width="14"/>
+
+  <!-- Tick marks. Cardinal positions (12 / 3 / 6 / 9) are longer and thicker
+       to anchor the eye; the eight in-between hours are shorter and thinner.
+       Rendered as a single vertical line at 12 o'clock then rotated around
+       the dial centre so the geometry stays exact and easy to tweak. -->
+  <g stroke="#78350f" stroke-linecap="round">
+    <g stroke-width="10">
+      <line x1="256" y1="108" x2="256" y2="130"/>
+      <line x1="256" y1="108" x2="256" y2="130" transform="rotate(90 256 256)"/>
+      <line x1="256" y1="108" x2="256" y2="130" transform="rotate(180 256 256)"/>
+      <line x1="256" y1="108" x2="256" y2="130" transform="rotate(270 256 256)"/>
+    </g>
+    <g stroke-width="6">
+      <line x1="256" y1="112" x2="256" y2="126" transform="rotate(30 256 256)"/>
+      <line x1="256" y1="112" x2="256" y2="126" transform="rotate(60 256 256)"/>
+      <line x1="256" y1="112" x2="256" y2="126" transform="rotate(120 256 256)"/>
+      <line x1="256" y1="112" x2="256" y2="126" transform="rotate(150 256 256)"/>
+      <line x1="256" y1="112" x2="256" y2="126" transform="rotate(210 256 256)"/>
+      <line x1="256" y1="112" x2="256" y2="126" transform="rotate(240 256 256)"/>
+      <line x1="256" y1="112" x2="256" y2="126" transform="rotate(300 256 256)"/>
+      <line x1="256" y1="112" x2="256" y2="126" transform="rotate(330 256 256)"/>
+    </g>
+  </g>
+
+  <!-- Indicator hand. Rotation wrapper makes the angle the only tunable
+       variable (50° ≈ 1:40 o'clock — a "moment after the last beat"). -->
+  <g transform="rotate(50 256 256)">
+    <line x1="256" y1="256" x2="256" y2="148"
+          stroke="#92400e" stroke-width="22" stroke-linecap="round"/>
+    <!-- Solid tip dot — the destination, the next deliberate beat. -->
+    <circle cx="256" cy="148" r="15" fill="#92400e"/>
+  </g>
+
+  <!-- Central pivot with a cream inset so the eye finds the centre easily
+       and the dial reads as a single object rather than two stacked shapes. -->
+  <circle cx="256" cy="256" r="18" fill="#78350f"/>
+  <circle cx="256" cy="256" r="7"  fill="#fde68a"/>
+</svg>

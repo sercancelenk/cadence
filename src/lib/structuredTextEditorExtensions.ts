@@ -78,7 +78,8 @@ export const cadenceStructuredTextTheme = EditorView.theme(
         'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       lineHeight: '1.55',
       overflow: 'auto',
-      minHeight: '100%',
+      height: '100%',
+      maxHeight: '100%',
     },
     '.cm-content': {
       padding: '12px 0',

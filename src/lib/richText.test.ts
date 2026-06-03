@@ -3,6 +3,7 @@ import {
   EMPTY_RICH_DOC,
   SAMPLE_RICH_DOC,
   extractPlainText,
+  isRichTextOverSoftLimit,
   parseRichDoc,
   serializeRichDoc,
 } from './richText';
@@ -27,10 +28,6 @@ describe('richText', () => {
     expect(parseRichDoc('not json')).toBeNull();
   });
 
-  it('empty doc yields empty plain text', () => {
-    expect(extractPlainText(EMPTY_RICH_DOC)).toBe('');
-  });
-
   it('extractPlainText includes date chips', () => {
     const text = extractPlainText({
       type: 'doc',
@@ -45,5 +42,33 @@ describe('richText', () => {
       ],
     });
     expect(text).toContain('May 31, 2026');
+  });
+
+  it('empty doc yields empty plain text', () => {
+    expect(extractPlainText(EMPTY_RICH_DOC)).toBe('');
+    expect(extractPlainText(null)).toBe('');
+  });
+
+  it('extractPlainText includes image alt text', () => {
+    const text = extractPlainText({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'image', attrs: { alt: '  Diagram  ' } }],
+        },
+      ],
+    });
+    expect(text).toBe('Diagram');
+  });
+
+  it('isRichTextOverSoftLimit compares against the soft char cap', () => {
+    expect(isRichTextOverSoftLimit(100_001)).toBe(true);
+    expect(isRichTextOverSoftLimit(100_000)).toBe(false);
+  });
+
+  it('parseRichDoc rejects empty and malformed payloads', () => {
+    expect(parseRichDoc('')).toBeNull();
+    expect(parseRichDoc('null')).toBeNull();
   });
 });

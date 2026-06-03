@@ -54,10 +54,21 @@ export type DataSources = {
 };
 
 export type LoadResult =
-  | { ok: true; data: unknown; encrypted: boolean; reason?: string }
-  | { ok: false; reason: 'no-key' | 'bad-key' | 'parse' | 'io' | 'no-session'; encrypted?: boolean; error?: string };
+  | { ok: true; data: unknown; encrypted: boolean; reason?: string; writeGeneration?: number }
+  | {
+      ok: false;
+      reason: 'no-key' | 'bad-key' | 'parse' | 'io' | 'no-session';
+      encrypted?: boolean;
+      error?: string;
+      writeGeneration?: number;
+    };
 
-export type SaveError = { ok: false; reason?: string; error?: string };
+export type SaveDataResult =
+  | boolean
+  | { ok: true; writeGeneration?: number }
+  | { ok: false; reason?: string; error?: string; writeGeneration?: number };
+
+export type SaveError = { ok: false; reason?: string; error?: string; writeGeneration?: number };
 
 export type CacheBreakdownEntry = { label: string; bytes: number; files: number };
 
@@ -126,7 +137,19 @@ interface CadenceApi {
        *   race; new callers should always pass the user ID they believed
        *   was active when they queued the save.
        */
-      saveData: (data: unknown, expectedUid?: string) => Promise<boolean>;
+      saveData: (
+        data: unknown,
+        expectedUid?: string,
+        expectedGeneration?: number,
+      ) => Promise<import('./lib/appDataSave').SaveDataResult>;
+      /** Blocks until main process fsync completes (Electron quit/update path). */
+      flushPendingSaveSync?: (
+        data: unknown,
+        expectedUid?: string,
+        expectedGeneration?: number,
+      ) => import('./lib/appDataSave').SaveDataResult;
+      onRequestFlush?: (cb: () => void) => () => void;
+      notifyFlushDone?: () => void;
       dataListSources?: () => Promise<DataSources>;
       dataPreviewSource?: (payload: { filePath: string }) => Promise<{ ok: boolean; info?: DataFileInfo; error?: string }>;
       dataRestoreFromSource?: (payload: { filePath: string }) => Promise<{ ok: boolean; restoredFrom?: string; error?: string; reason?: string }>;
@@ -136,6 +159,15 @@ interface CadenceApi {
       clearChromiumCache?: () => Promise<CacheClearResult>;
       onSaveError?: (cb: (event: SaveError) => void) => () => void;
       showNotification: (opts: { title?: string; body?: string }) => Promise<boolean>;
+  reminderSyncStatus?: () => Promise<import('./lib/reminderDelivery/types').ReminderSyncStatus>;
+  requestReminderPermission?: () => Promise<{ ok: boolean; granted: boolean; error?: string | null }>;
+  setReminderBackgroundSettings?: (
+    settings: import('./lib/reminderDelivery/types').ReminderBackgroundSettings,
+  ) => Promise<{ ok: boolean; error?: string; backgroundMode?: boolean; launchAtLogin?: boolean; hideToTrayOnClose?: boolean }>;
+      syncReminders?: (data: unknown) => Promise<{ ok: boolean }>;
+      cancelReminderSlots?: (itemId: string) => Promise<{ ok: boolean; error?: string }>;
+      onReminderEvent?: (cb: (event: { type: string; data?: unknown; slotKey?: string }) => void) => () => void;
+      onDeepLink?: (cb: (event: { path: string }) => void) => () => void;
       userDataPath: () => Promise<string>;
       attachmentWrite?: (payload: {
         attachmentId: string;

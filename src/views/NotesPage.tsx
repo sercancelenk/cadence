@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useAppData } from '../AppDataContext';
+import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { useAccount } from '../AccountContext';
 import {
   NotesBodyEditor,
@@ -20,6 +20,7 @@ import {
 import { isAIConfigured } from '../lib/ai';
 import { useFeatures } from '../lib/features';
 import { useNotesUnlock } from '../lib/NotesUnlockContext';
+import type { AppData } from '../model';
 
 const AITaskExtractorDialog = lazy(() =>
   import('../components/AITaskExtractorDialog').then((m) => ({ default: m.AITaskExtractorDialog })),
@@ -34,13 +35,28 @@ const AITaskExtractorDialog = lazy(() =>
  * `docs/HEALTH-CHECK-AND-ROADMAP.md` (B2 notes module).
  */
 export function NotesPage() {
-  const { data, addNote, patchNote, replaceNote, removeNote, setNotesLock, update } = useAppData();
+  const { addNote, patchNote, replaceNote, removeNote, setNotesLock, update } = useAppDataActions();
+  const notesWorkspace = useAppDataSelector(
+    (d) => ({
+      notes: d.notes,
+      notesLock: d.notesLock,
+      todoItems: d.todoItems,
+      todoGroups: d.todoGroups,
+      aiSettings: d.aiSettings,
+    }),
+    (a, b) =>
+      a.notes === b.notes &&
+      a.notesLock === b.notesLock &&
+      a.todoItems === b.todoItems &&
+      a.todoGroups === b.todoGroups &&
+      a.aiSettings === b.aiSettings,
+  );
   const { user } = useAccount();
   const unlock = useNotesUnlock();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { features } = useFeatures();
-  const aiEnabled = features.ai && isAIConfigured(data.aiSettings);
+  const aiEnabled = features.ai && isAIConfigured(notesWorkspace.aiSettings);
 
   const [extractorContext, setExtractorContext] = useState<{ noteId: string; notes: string } | null>(
     null,
@@ -50,10 +66,10 @@ export function NotesPage() {
     prefetchRichTextEditor();
   }, []);
 
-  const { sortMode, setSortMode, notes } = useNotesSort(data.notes);
+  const { sortMode, setSortMode, notes } = useNotesSort(notesWorkspace.notes);
   const { selectedId, setSelectedId, selected } = useNotesSelection(
     notes,
-    data.notes,
+    notesWorkspace.notes,
     searchParams,
     setSearchParams,
     sortMode,
@@ -76,7 +92,7 @@ export function NotesPage() {
   } = editorState;
 
   const lock = useNotesLock({
-    data,
+    data: notesWorkspace as AppData,
     selected,
     decrypted,
     setDecrypted,
@@ -179,8 +195,8 @@ export function NotesPage() {
                 onBodyEditingChange={setBodyEditing}
                 onChangeBody={onChangeBody}
                 attachmentUserId={user?.id ?? 'anonymous'}
-                todoItems={data.todoItems}
-                todoGroups={data.todoGroups}
+                todoItems={notesWorkspace.todoItems}
+                todoGroups={notesWorkspace.todoGroups}
                 onOpenTask={(taskId) => {
                   navigate(`/todos?focus=${encodeURIComponent(taskId)}`);
                 }}
@@ -201,7 +217,7 @@ export function NotesPage() {
         </Suspense>
       ) : null}
 
-      <NotesLockDialogs notes={notes} data={data} lock={lock} />
+      <NotesLockDialogs notes={notes} data={notesWorkspace as AppData} lock={lock} />
     </div>
   );
 }

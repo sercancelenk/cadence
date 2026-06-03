@@ -6,10 +6,19 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react';
 import { useAccount } from './AccountContext';
 import { STORAGE_PREFIX } from '../lib/appBranding';
+import { registerFlushPendingSave, unregisterFlushPendingSave } from '../lib/pendingSaveFlush';
+import { isReminderSlotNotified, reminderNotifyKey } from '../lib/reminderNotify';
+import { supportsPwaOsSchedule } from '../lib/reminderDelivery/capabilities';
+import { collectFutureReminderSlots } from '../lib/reminderDelivery/collectReminderSlots';
+import { collectPwaDeliveredSlotKeys } from '../lib/reminderDelivery/pwaReminderCatchUp';
+import { cancelPendingReminderSlots } from '../lib/reminderDelivery/cancelReminderSlots';
+import { mergeReminderEventIntoAppData } from '../lib/reminderDelivery/mergeReminderEvent';
+import { postReminderSyncToServiceWorker } from '../lib/reminderDelivery/pwaReminderSync';
 import { uuid } from '../lib/uuid';
 import {
   addItem as addItemFn,
@@ -66,51 +75,19 @@ import type {
   UtilityDocument,
   UtilityStructuredText,
 } from '../core/model';
-import { normalizeData, shapeOfData } from '../core/model';
+import { isUnsupportedDataVersionError, normalizeData, shapeOfData } from '../core/model';
+import { parseSaveDataResult } from '../lib/appDataSave';
+import { createPersistQueue } from '../lib/persistQueue';
+import {
+  createAppDataSnapshotStore,
+  createPersistStatusStore,
+  type AppDataSnapshotStore,
+  type DataLossSuspicion,
+  type PersistError,
+  type PersistStatusStore,
+} from './appDataStore';
 
-/**
- * Surfaced save failure. Either:
- *   - an in-renderer `persist()` error (the IPC call rejected or returned
- *     false), or
- *   - a `data:saveError` push from the main process (e.g. refused to
- *     overwrite an undecipherable file).
- *
- * The provider keeps the most recent failure in state so any view can render
- * a banner; this is critical for the user's "never lose data silently"
- * requirement.
- */
-export type PersistError = {
-  reason?: string;
-  error?: string;
-  /** ms since epoch of when we observed the failure. */
-  at: number;
-};
-
-/**
- * Signal that we suspect this boot has loaded a smaller workspace than the
- * user had at the end of their previous session. Set when the freshly
- * loaded `shape.total` is meaningfully smaller than the
- * "last-known-good" fingerprint we wrote to localStorage on the most
- * recent successful save.
- *
- * We don't auto-recover: the right answer might be "the user really did
- * delete those items themselves", and silently restoring a backup would
- * be its own data-loss footgun. Instead we surface this state in a
- * Layout-level banner ("Looks like data may be missing — review backups")
- * and let the user trigger a restore explicitly.
- *
- * The banner is dismissable per-boot; dismissing also clears the
- * suspicion (i.e. we accept the current state as the new normal). Until
- * dismissed, the banner persists even if the user starts typing — that's
- * intentional, because shape changes during the session would otherwise
- * suppress a real "I just lost my data" warning.
- */
-export type DataLossSuspicion = {
-  current: DataShape;
-  previous: DataShape;
-  /** ms since epoch of the suspicious boot. */
-  at: number;
-};
+export type { DataLossSuspicion, PersistError } from './appDataStore';
 
 type Api = {
   data: AppData;
@@ -255,6 +232,12 @@ type Api = {
 };
 
 const Ctx = createContext<Api | null>(null);
+const SnapshotStoreCtx = createContext<AppDataSnapshotStore | null>(null);
+const PersistStoreCtx = createContext<PersistStatusStore | null>(null);
+const ActionsCtx = createContext<Omit<
+  Api,
+  'data' | 'ready' | 'lastSaveError' | 'lastSavedAt' | 'saving' | 'dataLossSuspicion' | 'currentShape'
+> | null>(null);
 
 const SAVE_DEBOUNCE_MS = 400;
 
@@ -343,28 +326,16 @@ function isSuspiciousShrink(current: DataShape, previous: DataShape): boolean {
  * provider so a global banner can warn the user — silently dropping a save
  * is the worst possible outcome for a local-first app.
  */
-async function persist(userId: string, data: AppData): Promise<{ ok: true } | { ok: false; reason: string; error?: string }> {
+async function persist(
+  userId: string,
+  data: AppData,
+  expectedGeneration: number,
+): Promise<{ ok: true; writeGeneration?: number } | { ok: false; reason: string; error?: string; writeGeneration?: number }> {
   const api = window.cadence;
   if (api?.saveData) {
     try {
-      // Pass the expected user ID so the main process can refuse to
-      // write if the active session has flipped between the moment
-      // this save was queued and the moment we actually invoke the
-      // IPC (see the "fast logout → login race" comment in
-      // electron/main.cjs `data:save`). Defence in depth.
-      const ok = await api.saveData(data, userId);
-      if (ok === true) return { ok: true };
-      // The main process returns `false` when `writeUserData()` refused to
-      // write — either because the existing file is undecipherable, or
-      // because the in-memory key was lost across a process restart (see
-      // `account:session` guard in `electron/main.cjs`). The detailed
-      // reason also arrives separately via `data:saveError`; this string
-      // is the fallback the banner shows when nothing better has arrived.
-      return {
-        ok: false,
-        reason: 'write-rejected',
-        error: 'Your changes were not saved. Sign out and back in to unlock the data file, or open Settings → Backups & Recovery to restore an earlier snapshot.',
-      };
+      const raw = await api.saveData(data, userId, expectedGeneration);
+      return parseSaveDataResult(raw);
     } catch (err) {
       return {
         ok: false,
@@ -377,7 +348,6 @@ async function persist(userId: string, data: AppData): Promise<{ ok: true } | { 
     localStorage.setItem(storageKeyForUser(userId), JSON.stringify(data));
     return { ok: true };
   } catch (err) {
-    // QuotaExceeded, SecurityError (private mode), etc.
     return {
       ok: false,
       reason: 'localstorage-error',
@@ -386,21 +356,71 @@ async function persist(userId: string, data: AppData): Promise<{ ok: true } | { 
   }
 }
 
-async function loadInitial(userId: string): Promise<AppData> {
+type LoadInitialResult = {
+  data: AppData;
+  writeGeneration: number;
+  loadError?: { reason: string; error: string };
+};
+
+async function loadInitial(userId: string): Promise<LoadInitialResult> {
   const api = window.cadence;
+  if (api?.loadDataResult) {
+    try {
+      const r = await api.loadDataResult();
+      const writeGeneration = typeof r.writeGeneration === 'number' ? r.writeGeneration : 0;
+      if (r.ok) {
+        try {
+          return { data: normalizeData(r.data), writeGeneration };
+        } catch (err) {
+          if (isUnsupportedDataVersionError(err)) {
+            return {
+              data: normalizeData(null),
+              writeGeneration,
+              loadError: { reason: 'unsupported-version', error: err.message },
+            };
+          }
+          throw err;
+        }
+      }
+      return { data: normalizeData(null), writeGeneration };
+    } catch {
+      return { data: normalizeData(null), writeGeneration: 0 };
+    }
+  }
   if (api?.loadData) {
     try {
       const loaded = await api.loadData();
-      return normalizeData(loaded);
-    } catch {
-      return normalizeData(null);
+      return { data: normalizeData(loaded), writeGeneration: 0 };
+    } catch (err) {
+      if (isUnsupportedDataVersionError(err)) {
+        return {
+          data: normalizeData(null),
+          writeGeneration: 0,
+          loadError: { reason: 'unsupported-version', error: err.message },
+        };
+      }
+      return { data: normalizeData(null), writeGeneration: 0 };
     }
   }
   try {
     const raw = localStorage.getItem(storageKeyForUser(userId));
-    return normalizeData(raw ? JSON.parse(raw) : null);
+    try {
+      return {
+        data: normalizeData(raw ? JSON.parse(raw) : null),
+        writeGeneration: 0,
+      };
+    } catch (err) {
+      if (isUnsupportedDataVersionError(err)) {
+        return {
+          data: normalizeData(null),
+          writeGeneration: 0,
+          loadError: { reason: 'unsupported-version', error: err.message },
+        };
+      }
+      throw err;
+    }
   } catch {
-    return normalizeData(null);
+    return { data: normalizeData(null), writeGeneration: 0 };
   }
 }
 
@@ -420,8 +440,40 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   // The most recent payload pending a debounced save, kept so we can flush it
   // synchronously on tab close / unmount.
   const pendingSave = useRef<AppData | null>(null);
+  const writeGenerationRef = useRef(0);
+  const persistQueueRef = useRef(createPersistQueue<AppData>(async () => ({ ok: true })));
+  const snapshotStoreRef = useRef(createAppDataSnapshotStore());
+  const persistStoreRef = useRef(
+    createPersistStatusStore({
+      ready: false,
+      lastSaveError: null,
+      lastSavedAt: null,
+      saving: false,
+      dataLossSuspicion: null,
+      currentShape: shapeOfData(normalizeData(null)),
+    }),
+  );
 
-  // Bubble main-process save failures (e.g. "refused to overwrite an
+  const syncSnapshotStore = useCallback((next: AppData | null) => {
+    snapshotStoreRef.current.setSnapshot(next);
+  }, []);
+
+  useEffect(() => {
+    syncSnapshotStore(data);
+  }, [data, syncSnapshotStore]);
+
+  useEffect(() => {
+    persistStoreRef.current.setSnapshot({
+      ready: ready && data !== null,
+      lastSaveError,
+      lastSavedAt,
+      saving,
+      dataLossSuspicion,
+      currentShape: shapeOfData(data ?? normalizeData(null)),
+    });
+  }, [data, ready, lastSaveError, lastSavedAt, saving, dataLossSuspicion]);
+
+  // Bubble main-process save failures
   // undecipherable file") up to the global banner. This complements the
   // try/catch in `runPersist` because some failures only come from main,
   // not from a rejected IPC call.
@@ -438,23 +490,54 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    persistQueueRef.current = createPersistQueue(async (payload) => {
+      const uid = userIdRef.current;
+      if (!uid) return { ok: false, reason: 'no-user' };
+      const gen = writeGenerationRef.current;
+      const r = await persist(uid, payload, gen);
+      if (r.ok) {
+        if (typeof r.writeGeneration === 'number') {
+          writeGenerationRef.current = r.writeGeneration;
+        } else if (window.cadence?.saveData) {
+          writeGenerationRef.current = gen + 1;
+        }
+      } else if (typeof r.writeGeneration === 'number') {
+        writeGenerationRef.current = r.writeGeneration;
+      }
+      return r;
+    });
+  }, [userId]);
+
   const runPersist = useCallback(async (uid: string, payload: AppData) => {
     setSaving(true);
     try {
-      const r = await persist(uid, payload);
+      const r = await persistQueueRef.current.enqueue(payload);
       if (r.ok) {
         setLastSavedAt(Date.now());
         setLastSaveError(null);
-        // Pin the post-save shape as the new last-known-good fingerprint.
-        // We deliberately update on EVERY successful save (not just
-        // session end) so a power loss between saves still leaves a
-        // fingerprint matching the last persisted state.
         try { writeLastShape(uid, shapeOfData(payload)); } catch { /* best effort */ }
       } else {
         setLastSaveError({ reason: r.reason, error: r.error, at: Date.now() });
       }
     } finally {
       setSaving(false);
+    }
+  }, []);
+
+  const applyPersistOutcome = useCallback((uid: string, payload: AppData, r: ReturnType<typeof parseSaveDataResult>) => {
+    if (r.ok) {
+      setLastSavedAt(Date.now());
+      setLastSaveError(null);
+      if (typeof r.writeGeneration === 'number') {
+        writeGenerationRef.current = r.writeGeneration;
+      }
+      try { writeLastShape(uid, shapeOfData(payload)); } catch { /* best effort */ }
+    } else {
+      if (typeof r.writeGeneration === 'number') {
+        writeGenerationRef.current = r.writeGeneration;
+      }
+      setLastSaveError({ reason: r.reason, error: r.error, at: Date.now() });
     }
   }, []);
 
@@ -465,42 +548,50 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
     const uid = userIdRef.current;
     const next = pendingSave.current;
-    if (!uid || !next) return;
     pendingSave.current = null;
-    await runPersist(uid, next);
-  }, [runPersist]);
 
-  // Synchronous variant used by `beforeunload` / `pagehide`. Async-await is
-  // fine for promise-based persistence here because Electron `ipcRenderer`
-  // can usually deliver the message before the renderer process is torn
-  // down, but we explicitly don't await — we just fire and let the listener
-  // resolve in the background. Worst case is the OS kills us; best case
-  // (and the common case) is the message reaches main before we die.
-  const flushPendingSaveSync = useCallback(() => {
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
+    await persistQueueRef.current.flush();
+
+    if (!uid || !next) return;
+
+    if (window.cadence?.flushPendingSaveSync) {
+      setSaving(true);
+      try {
+        const raw = window.cadence.flushPendingSaveSync(next, uid, writeGenerationRef.current);
+        applyPersistOutcome(uid, next, parseSaveDataResult(raw));
+      } finally {
+        setSaving(false);
+      }
+      return;
     }
-    const uid = userIdRef.current;
-    const next = pendingSave.current;
-    if (!uid || !next) return;
-    pendingSave.current = null;
-    void runPersist(uid, next);
-  }, [runPersist]);
 
-  // Best-effort: flush before the browser/Electron tab actually goes away so
-  // the user never loses the last 400ms of typing on an abrupt close.
-  //
-  // Mobile Safari is the picky one here: it frequently freezes a page on
-  // `visibilitychange → hidden` (background tab, home button, app switcher)
-  // and only later fires `pagehide` when the OS actually tears the process
-  // down — long after our 400 ms save timer would have lost the chance.
-  // Adding the visibility listener makes the persistence path defensive
-  // against PWA suspensions where pagehide never arrives in time.
+    await runPersist(uid, next);
+    await persistQueueRef.current.flush();
+  }, [runPersist, applyPersistOutcome]);
+
   useEffect(() => {
-    const onPageHide = () => flushPendingSaveSync();
+    registerFlushPendingSave(flushPendingSave);
+    return () => unregisterFlushPendingSave();
+  }, [flushPendingSave]);
+
+  useEffect(() => {
+    const off = window.cadence?.onRequestFlush?.(() => {
+      void flushPendingSave().finally(() => {
+        window.cadence?.notifyFlushDone?.();
+      });
+    });
+    return () => {
+      off?.();
+    };
+  }, [flushPendingSave]);
+
+  // Best-effort: flush before the tab goes away (Electron uses sendSync after queue drain).
+  useEffect(() => {
+    const onPageHide = () => {
+      void flushPendingSave();
+    };
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') flushPendingSaveSync();
+      if (document.visibilityState === 'hidden') void flushPendingSave();
     };
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('beforeunload', onPageHide);
@@ -509,9 +600,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('beforeunload', onPageHide);
       document.removeEventListener('visibilitychange', onVisibility);
-      flushPendingSaveSync();
+      void flushPendingSave();
     };
-  }, [flushPendingSaveSync]);
+  }, [flushPendingSave]);
 
   useEffect(() => {
     if (!userId) {
@@ -525,16 +616,24 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setData(null);
     setDataLossSuspicion(null);
     void (async () => {
-      const next = await loadInitial(userId);
+      const loaded = await loadInitial(userId);
       if (cancelled) return;
-      let merged = next;
+      writeGenerationRef.current = loaded.writeGeneration;
+      if (loaded.loadError) {
+        setLastSaveError({
+          reason: loaded.loadError.reason,
+          error: loaded.loadError.error,
+          at: Date.now(),
+        });
+      }
+      let merged = loaded.data;
       const seed = sessionStorage.getItem(`${STORAGE_PREFIX}-profile-seed`);
       let seeded = false;
       if (seed?.trim()) {
         sessionStorage.removeItem(`${STORAGE_PREFIX}-profile-seed`);
-        const p = next.profile?.displayName ?? 'Me';
-        if (p === 'Me' || p === 'Ben' || !next.profile?.displayName?.trim()) {
-          merged = updateUserProfileFn(next, { displayName: seed.trim() });
+        const p = merged.profile?.displayName ?? 'Me';
+        if (p === 'Me' || p === 'Ben' || !merged.profile?.displayName?.trim()) {
+          merged = updateUserProfileFn(merged, { displayName: seed.trim() });
           seeded = true;
         }
       }
@@ -634,8 +733,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
     pendingSave.current = null;
     setReady(false);
-    const next = await loadInitial(uid);
-    setData(next);
+    const loaded = await loadInitial(uid);
+    writeGenerationRef.current = loaded.writeGeneration;
+    if (loaded.loadError) {
+      setLastSaveError({
+        reason: loaded.loadError.reason,
+        error: loaded.loadError.error,
+        at: Date.now(),
+      });
+    } else {
+      setLastSaveError(null);
+    }
+    setData(loaded.data);
     setReady(true);
     // After a restore/reload the on-disk file is, by definition, the source
     // of truth again — any earlier save-rejection banner refers to a
@@ -647,7 +756,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     // update the fingerprint to the restored shape so the next boot
     // doesn't re-fire the banner against the older (pre-restore) marker.
     setDataLossSuspicion(null);
-    try { writeLastShape(uid, shapeOfData(next)); } catch { /* best effort */ }
+    try { writeLastShape(uid, shapeOfData(loaded.data)); } catch { /* best effort */ }
   }, []);
 
   const dismissDataLossSuspicion = useCallback(() => {
@@ -688,14 +797,23 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       removeTeam: (teamId) => update((x) => removeTeamFn(x, teamId)),
       addPerson: (teamId, name, title) => update((x) => addPersonFn(x, teamId, name, title)),
       updatePerson: (id, patch) => update((x) => updatePersonFn(x, id, patch)),
-      removePerson: (id) => update((x) => removePersonFn(x, id)),
+      removePerson: (id) =>
+        update((x) => {
+          for (const it of x.items) {
+            if (it.personId === id) cancelPendingReminderSlots(it.id);
+          }
+          return removePersonFn(x, id);
+        }),
       updateUserProfile: (patch) => update((x) => updateUserProfileFn(x, patch)),
       toggleFavoriteTeam: (teamId) => update((x) => toggleFavoriteTeamFn(x, teamId)),
       updateAISettings: (patch) => update((x) => updateAISettingsFn(x, patch)),
       addItem: (personId, kind, fields) => update((x) => addItemFn(x, personId, kind, fields ?? {})),
       updateItem: (id, patch) => update((x) => updateItemFn(x, id, patch)),
       toggleItemDone: (id) => update((x) => toggleItemDoneFn(x, id)),
-      removeItem: (id) => update((x) => removeItemFn(x, id)),
+      removeItem: (id) => {
+        cancelPendingReminderSlots(id);
+        update((x) => removeItemFn(x, id));
+      },
       addTodoGroup: (name) => {
         const id = uuid();
         update((x) => addTodoGroupFn(x, name, id));
@@ -716,7 +834,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         update((x) => updateTodoGroupPriorityFn(x, groupId, priority)),
       toggleTodoItem: (id) => update((x) => toggleTodoItemFn(x, id)),
       setTodoStatus: (id, status) => update((x) => setTodoStatusFn(x, id, status)),
-      removeTodoItem: (id) => update((x) => removeTodoItemFn(x, id)),
+      removeTodoItem: (id) => {
+        cancelPendingReminderSlots(id);
+        update((x) => removeTodoItemFn(x, id));
+      },
       // Generate the id BEFORE the updater runs, so the updater itself is
       // pure (a requirement for React's setState(updater) — StrictMode may
       // run it twice). The view gets the id back synchronously and selects
@@ -735,13 +856,148 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
   }, [data, ready, update, replaceAll, reload, lastSaveError, lastSavedAt, saving, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
 
-  return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
+  const actionsBridgeRef = useRef(api);
+  actionsBridgeRef.current = api;
+
+  const stableActions = useMemo(
+    () => ({
+      replaceAll: (next: AppData) => actionsBridgeRef.current.replaceAll(next),
+      reload: () => actionsBridgeRef.current.reload(),
+      update: (fn: (d: AppData) => AppData) => actionsBridgeRef.current.update(fn),
+      clearSaveError: () => actionsBridgeRef.current.clearSaveError(),
+      dismissDataLossSuspicion: () => actionsBridgeRef.current.dismissDataLossSuspicion(),
+      flushPendingSave: () => actionsBridgeRef.current.flushPendingSave(),
+      rememberTeam: (teamId: string) => actionsBridgeRef.current.rememberTeam(teamId),
+      addTeam: (name: string) => actionsBridgeRef.current.addTeam(name),
+      updateTeam: (teamId: string, patch: Parameters<Api['updateTeam']>[1]) =>
+        actionsBridgeRef.current.updateTeam(teamId, patch),
+      removeTeam: (teamId: string) => actionsBridgeRef.current.removeTeam(teamId),
+      addPerson: (teamId: string, name: string, title?: string) =>
+        actionsBridgeRef.current.addPerson(teamId, name, title),
+      updatePerson: (id: string, patch: Parameters<Api['updatePerson']>[1]) =>
+        actionsBridgeRef.current.updatePerson(id, patch),
+      removePerson: (id: string) => actionsBridgeRef.current.removePerson(id),
+      updateUserProfile: (patch: Parameters<Api['updateUserProfile']>[0]) =>
+        actionsBridgeRef.current.updateUserProfile(patch),
+      toggleFavoriteTeam: (teamId: string) => actionsBridgeRef.current.toggleFavoriteTeam(teamId),
+      updateAISettings: (patch: Parameters<Api['updateAISettings']>[0]) =>
+        actionsBridgeRef.current.updateAISettings(patch),
+      addItem: (
+        personId: string,
+        kind: Parameters<Api['addItem']>[1],
+        fields?: Parameters<Api['addItem']>[2],
+      ) => actionsBridgeRef.current.addItem(personId, kind, fields),
+      updateItem: (id: string, patch: Parameters<Api['updateItem']>[1]) =>
+        actionsBridgeRef.current.updateItem(id, patch),
+      toggleItemDone: (id: string) => actionsBridgeRef.current.toggleItemDone(id),
+      removeItem: (id: string) => actionsBridgeRef.current.removeItem(id),
+      addTodoGroup: (name: string) => actionsBridgeRef.current.addTodoGroup(name),
+      updateTodoGroup: (groupId: string, patch: Parameters<Api['updateTodoGroup']>[1]) =>
+        actionsBridgeRef.current.updateTodoGroup(groupId, patch),
+      moveTodoGroup: (groupId: string, direction: 'up' | 'down') =>
+        actionsBridgeRef.current.moveTodoGroup(groupId, direction),
+      reorderTodoGroup: (groupId: string, beforeGroupId: string | null) =>
+        actionsBridgeRef.current.reorderTodoGroup(groupId, beforeGroupId),
+      clearCompletedInGroup: (groupId: string) => actionsBridgeRef.current.clearCompletedInGroup(groupId),
+      markAllCompleteInGroup: (groupId: string) => actionsBridgeRef.current.markAllCompleteInGroup(groupId),
+      removeTodoGroup: (groupId: string) => actionsBridgeRef.current.removeTodoGroup(groupId),
+      addTodoItem: (
+        groupId: string,
+        title: string,
+        extras?: Parameters<Api['addTodoItem']>[2],
+      ) => actionsBridgeRef.current.addTodoItem(groupId, title, extras),
+      updateTodoItem: (id: string, patch: Parameters<Api['updateTodoItem']>[1]) =>
+        actionsBridgeRef.current.updateTodoItem(id, patch),
+      reorderTodoItem: (itemId: string, targetGroupId: string, beforeItemId: string | null) =>
+        actionsBridgeRef.current.reorderTodoItem(itemId, targetGroupId, beforeItemId),
+      updateTodoGroupPriority: (groupId: string, priority: Parameters<Api['updateTodoGroupPriority']>[1]) =>
+        actionsBridgeRef.current.updateTodoGroupPriority(groupId, priority),
+      toggleTodoItem: (id: string) => actionsBridgeRef.current.toggleTodoItem(id),
+      setTodoStatus: (id: string, status: Parameters<Api['setTodoStatus']>[1]) =>
+        actionsBridgeRef.current.setTodoStatus(id, status),
+      removeTodoItem: (id: string) => actionsBridgeRef.current.removeTodoItem(id),
+      addNote: () => actionsBridgeRef.current.addNote(),
+      replaceNote: (note: Parameters<Api['replaceNote']>[0]) => actionsBridgeRef.current.replaceNote(note),
+      patchNote: (id: string, patch: Parameters<Api['patchNote']>[1]) =>
+        actionsBridgeRef.current.patchNote(id, patch),
+      removeNote: (id: string) => actionsBridgeRef.current.removeNote(id),
+      setNotesLock: (lock: Parameters<Api['setNotesLock']>[0]) => actionsBridgeRef.current.setNotesLock(lock),
+      patchUtilityDocument: (patch: Parameters<Api['patchUtilityDocument']>[0]) =>
+        actionsBridgeRef.current.patchUtilityDocument(patch),
+      patchUtilityStructuredText: (patch: Parameters<Api['patchUtilityStructuredText']>[0]) =>
+        actionsBridgeRef.current.patchUtilityStructuredText(patch),
+    }),
+    [],
+  );
+
+  return (
+    <SnapshotStoreCtx.Provider value={snapshotStoreRef.current}>
+      <PersistStoreCtx.Provider value={persistStoreRef.current}>
+        <ActionsCtx.Provider value={stableActions}>
+          <Ctx.Provider value={api}>{children}</Ctx.Provider>
+        </ActionsCtx.Provider>
+      </PersistStoreCtx.Provider>
+    </SnapshotStoreCtx.Provider>
+  );
 }
 
 export function useAppData(): Api {
   const v = useContext(Ctx);
   if (!v) throw new Error('useAppData outside provider');
   return v;
+}
+
+/**
+ * Subscribe to a slice of AppData without re-rendering on unrelated mutations.
+ * Prefer this over `useAppData().data` in list/detail views.
+ */
+export function useAppDataSelector<T>(
+  selector: (data: AppData) => T,
+  isEqual: (a: T, b: T) => boolean = Object.is,
+): T {
+  const store = useContext(SnapshotStoreCtx);
+  if (!store) throw new Error('useAppDataSelector outside provider');
+
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
+  const isEqualRef = useRef(isEqual);
+  isEqualRef.current = isEqual;
+  const cachedRef = useRef<{ snap: AppData | null; value: T } | null>(null);
+  const emptyRef = useRef(normalizeData(null));
+
+  return useSyncExternalStore(
+    store.subscribe,
+    () => {
+      const snap = store.getSnapshot() ?? emptyRef.current;
+      const next = selectorRef.current(snap);
+      const cached = cachedRef.current;
+      if (cached && cached.snap === snap && isEqualRef.current(cached.value, next)) {
+        return cached.value;
+      }
+      cachedRef.current = { snap, value: next };
+      return next;
+    },
+    () => selectorRef.current(emptyRef.current),
+  );
+}
+
+/** Stable mutation API — does not subscribe to data snapshots. */
+export function useAppDataActions(): Omit<
+  Api,
+  'data' | 'ready' | 'lastSaveError' | 'lastSavedAt' | 'saving' | 'dataLossSuspicion' | 'currentShape'
+> {
+  const v = useContext(ActionsCtx);
+  if (!v) throw new Error('useAppDataActions outside provider');
+  return v;
+}
+
+/** Persist / save status without subscribing to workspace data mutations. */
+export function usePersistStatus() {
+  const store = useContext(PersistStoreCtx);
+  const { clearSaveError, dismissDataLossSuspicion } = useAppDataActions();
+  if (!store) throw new Error('usePersistStatus outside provider');
+  const status = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  return { ...status, clearSaveError, dismissDataLossSuspicion };
 }
 
 /**
@@ -763,21 +1019,96 @@ function advanceReminder(iso: string, repeat: 'daily' | 'weekly' | 'monthly'): s
   return d.toISOString();
 }
 
+async function fireReminderNotification(title: string, body: string): Promise<boolean> {
+  if (window.cadence?.showNotification) {
+    try {
+      return (await window.cadence.showNotification({ title, body })) === true;
+    } catch {
+      /* fall through to browser API */
+    }
+  }
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      // eslint-disable-next-line no-new
+      new Notification(title, { body });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function nextPendingReminderAt(data: AppData, now: number): number | null {
+  let next: number | null = null;
+  const consider = (id: string, remindAt: string | undefined, skip: boolean) => {
+    if (skip || !remindAt || isReminderSlotNotified(data.notifiedReminderIds, id, remindAt)) return;
+    const t = Date.parse(remindAt);
+    if (Number.isNaN(t) || t <= now) return;
+    next = next === null ? t : Math.min(next, t);
+  };
+  for (const it of data.items) consider(it.id, it.remindAt, it.done);
+  for (const t of data.todoItems) {
+    consider(t.id, t.remindAt, t.status === 'done' || t.status === 'cancelled');
+  }
+  return next;
+}
+
 export function useReminderWatcher() {
   const { data, update, ready } = useAppData();
+  const electronReminders = typeof window !== 'undefined' && !!window.cadence?.syncReminders;
+  const pwaOsReminders = supportsPwaOsSchedule();
   const askedPermission = useRef(false);
   // Hold the freshest data + update fn in a ref so the timer effect itself
   // can stay mounted across renders. Putting `data.items` etc in the effect
   // deps means every keystroke that changes anything reachable from `data`
-  // tears down and rebuilds the 45s interval, which both leaks timer
-  // identities and causes a fresh `tick()` to run on every state change.
+  // tears down and rebuilds timers, which both leaks timer identities and
+  // causes a fresh `tick()` to run on every state change.
   const latest = useRef({ data, update });
   latest.current = { data, update };
+  const scheduleNextRef = useRef<(() => void) | null>(null);
+
+  const reminderSignature = useMemo(() => {
+    const parts: string[] = [];
+    for (const t of data.todoItems) {
+      if (!t.remindAt || t.status === 'done' || t.status === 'cancelled') continue;
+      if (isReminderSlotNotified(data.notifiedReminderIds, t.id, t.remindAt)) continue;
+      parts.push(`t:${t.id}:${t.remindAt}:${t.remindRepeat ?? ''}`);
+    }
+    for (const it of data.items) {
+      if (!it.remindAt || it.done) continue;
+      if (isReminderSlotNotified(data.notifiedReminderIds, it.id, it.remindAt)) continue;
+      parts.push(`i:${it.id}:${it.remindAt}:${it.remindRepeat ?? ''}`);
+    }
+    return parts.join('|');
+  }, [data.todoItems, data.items, data.notifiedReminderIds]);
 
   useEffect(() => {
     if (!ready) return;
+    if (electronReminders) return;
 
-    const tick = () => {
+    if (!askedPermission.current && 'Notification' in window && Notification.permission === 'default') {
+      askedPermission.current = true;
+      void Notification.requestPermission();
+    }
+
+    let timeoutId: number | undefined;
+    let intervalId: number | undefined;
+
+    const scheduleNext = () => {
+      if (pwaOsReminders) return;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      timeoutId = undefined;
+      const nextAt = nextPendingReminderAt(latest.current.data, Date.now());
+      if (nextAt === null) return;
+      const delay = Math.max(250, nextAt - Date.now() + 100);
+      timeoutId = window.setTimeout(() => {
+        void runTick();
+      }, delay);
+    };
+    scheduleNextRef.current = scheduleNext;
+
+    const runTick = async () => {
       const { data: d, update: up } = latest.current;
       const now = Date.now();
 
@@ -791,7 +1122,7 @@ export function useReminderWatcher() {
         if (!it.remindAt || it.done) continue;
         const t = Date.parse(it.remindAt);
         if (Number.isNaN(t) || t > now) continue;
-        if (d.notifiedReminderIds.includes(it.id)) continue;
+        if (isReminderSlotNotified(d.notifiedReminderIds, it.id, it.remindAt)) continue;
         dueItemIds.push(it.id);
       }
       const dueTodoIds: string[] = [];
@@ -802,14 +1133,13 @@ export function useReminderWatcher() {
         if (t.status === 'done' || t.status === 'cancelled') continue;
         const ts = Date.parse(t.remindAt);
         if (Number.isNaN(ts) || ts > now) continue;
-        if (d.notifiedReminderIds.includes(t.id)) continue;
+        if (isReminderSlotNotified(d.notifiedReminderIds, t.id, t.remindAt)) continue;
         dueTodoIds.push(t.id);
       }
-      if (dueItemIds.length === 0 && dueTodoIds.length === 0) return;
 
-      if (!askedPermission.current && 'Notification' in window && Notification.permission === 'default') {
-        askedPermission.current = true;
-        void Notification.requestPermission();
+      if (dueItemIds.length === 0 && dueTodoIds.length === 0) {
+        scheduleNext();
+        return;
       }
 
       // Index people/teams/groups once for O(1) lookups instead of O(n) per due id.
@@ -819,14 +1149,8 @@ export function useReminderWatcher() {
 
       const recurringItemAdvances: Record<string, string> = {};
       const recurringTodoAdvances: Record<string, string> = {};
-      const fire = (title: string, body: string) => {
-        if ('Notification' in window && Notification.permission === 'granted') {
-          // eslint-disable-next-line no-new
-          new Notification(title, { body });
-        } else {
-          void window.cadence?.showNotification?.({ title, body });
-        }
-      };
+      const firedItemIds = new Set<string>();
+      const firedTodoIds = new Set<string>();
 
       for (const id of dueItemIds) {
         const it = d.items.find((x) => x.id === id);
@@ -835,7 +1159,9 @@ export function useReminderWatcher() {
         const team = person ? teamsById.get(person.teamId) : undefined;
         const label = [team?.name, person?.name].filter(Boolean).join(' · ') || 'Item';
         const title = it.kind === 'task' ? 'Task reminder' : 'Reminder';
-        fire(title, `${label}: ${it.title || '(untitled)'}`);
+        const ok = await fireReminderNotification(title, `${label}: ${it.title || '(untitled)'}`);
+        if (!ok) continue;
+        firedItemIds.add(id);
         if (it.remindRepeat && it.remindAt) {
           const next = advanceReminder(it.remindAt, it.remindRepeat);
           if (next) recurringItemAdvances[id] = next;
@@ -847,23 +1173,37 @@ export function useReminderWatcher() {
         if (!t) continue;
         const group = todoGroupsById.get(t.groupId);
         const label = group?.name || 'Todo';
-        fire('Todo reminder', `${label}: ${t.title || '(untitled)'}`);
+        const ok = await fireReminderNotification('Todo reminder', `${label}: ${t.title || '(untitled)'}`);
+        if (!ok) continue;
+        firedTodoIds.add(id);
         if (t.remindRepeat && t.remindAt) {
           const next = advanceReminder(t.remindAt, t.remindRepeat);
           if (next) recurringTodoAdvances[id] = next;
         }
       }
 
+      if (firedItemIds.size === 0 && firedTodoIds.size === 0) {
+        scheduleNext();
+        return;
+      }
+
       const advanceItemIds = new Set(Object.keys(recurringItemAdvances));
       const advanceTodoIds = new Set(Object.keys(recurringTodoAdvances));
-      const oneShotDueIds = [
-        ...dueItemIds.filter((id) => !advanceItemIds.has(id)),
-        ...dueTodoIds.filter((id) => !advanceTodoIds.has(id)),
-      ];
+      const oneShotDueKeys: string[] = [];
+      for (const id of firedItemIds) {
+        if (advanceItemIds.has(id)) continue;
+        const it = d.items.find((x) => x.id === id);
+        if (it?.remindAt) oneShotDueKeys.push(reminderNotifyKey(id, it.remindAt));
+      }
+      for (const id of firedTodoIds) {
+        if (advanceTodoIds.has(id)) continue;
+        const t = d.todoItems.find((x) => x.id === id);
+        if (t?.remindAt) oneShotDueKeys.push(reminderNotifyKey(id, t.remindAt));
+      }
 
       up((prev) => ({
         ...prev,
-        notifiedReminderIds: [...new Set([...prev.notifiedReminderIds, ...oneShotDueIds])],
+        notifiedReminderIds: [...new Set([...prev.notifiedReminderIds, ...oneShotDueKeys])],
         items: advanceItemIds.size
           ? prev.items.map((x) =>
               recurringItemAdvances[x.id]
@@ -879,11 +1219,121 @@ export function useReminderWatcher() {
             )
           : prev.todoItems,
       }));
+      scheduleNext();
     };
 
-    tick();
-    const timerId = window.setInterval(tick, 45_000);
-    return () => window.clearInterval(timerId);
+    void runTick();
+    if (!pwaOsReminders) {
+      intervalId = window.setInterval(() => {
+        void runTick();
+      }, 30_000);
+    } else {
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') void runTick();
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      return () => {
+        document.removeEventListener('visibilitychange', onVisible);
+        scheduleNextRef.current = null;
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      };
+    }
+    scheduleNext();
+
+    return () => {
+      scheduleNextRef.current = null;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      if (intervalId !== undefined) window.clearInterval(intervalId);
+    };
     // Only `ready` belongs in the deps. Everything else flows through `latest`.
-  }, [ready]);
+  }, [ready, electronReminders, pwaOsReminders]);
+
+  useEffect(() => {
+    if (!ready) return;
+    scheduleNextRef.current?.();
+  }, [ready, reminderSignature, electronReminders, pwaOsReminders]);
+}
+
+/** Sync future reminder slots to the PWA service worker (Chrome Notification Triggers). */
+export function usePwaReminderBridge() {
+  const { data, ready, update } = useAppData();
+  const pwaOsReminders = supportsPwaOsSchedule();
+
+  useEffect(() => {
+    if (!ready || !pwaOsReminders) return;
+    const slots = collectFutureReminderSlots(data);
+    void postReminderSyncToServiceWorker(slots);
+  }, [ready, pwaOsReminders, data.todoItems, data.items, data.notifiedReminderIds]);
+
+  useEffect(() => {
+    if (!ready || !pwaOsReminders) return;
+
+    const reconcileDelivered = async () => {
+      const keys = await collectPwaDeliveredSlotKeys();
+      if (!keys.length) return;
+      update((prev) => {
+        const next = [...prev.notifiedReminderIds];
+        let changed = false;
+        for (const key of keys) {
+          const sep = key.indexOf('\u0001');
+          if (sep === -1) continue;
+          const itemId = key.slice(0, sep);
+          const remindAt = key.slice(sep + 1);
+          if (isReminderSlotNotified(prev.notifiedReminderIds, itemId, remindAt)) continue;
+          if (!next.includes(key)) {
+            next.push(key);
+            changed = true;
+          }
+        }
+        return changed ? { ...prev, notifiedReminderIds: next } : prev;
+      });
+    };
+
+    void reconcileDelivered();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void reconcileDelivered();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [ready, pwaOsReminders, update]);
+}
+
+/** Wire renderer state to Electron main-process reminder scheduler. */
+export function useElectronReminderBridge() {
+  const { data, ready, update } = useAppData();
+  const dataRef = useRef(data);
+  dataRef.current = data;
+
+  const reminderSignature = useMemo(() => {
+    const parts: string[] = [];
+    for (const t of data.todoItems) {
+      if (!t.remindAt || t.status === 'done' || t.status === 'cancelled') continue;
+      if (isReminderSlotNotified(data.notifiedReminderIds, t.id, t.remindAt)) continue;
+      parts.push(`t:${t.id}:${t.remindAt}:${t.remindRepeat ?? ''}`);
+    }
+    for (const it of data.items) {
+      if (!it.remindAt || it.done) continue;
+      if (isReminderSlotNotified(data.notifiedReminderIds, it.id, it.remindAt)) continue;
+      parts.push(`i:${it.id}:${it.remindAt}:${it.remindRepeat ?? ''}`);
+    }
+    return parts.join('|');
+  }, [data.todoItems, data.items, data.notifiedReminderIds]);
+
+  useEffect(() => {
+    if (!ready || !window.cadence?.syncReminders) return;
+    void window.cadence.syncReminders(dataRef.current);
+  }, [ready, reminderSignature]);
+
+  useEffect(() => {
+    const off = window.cadence?.onReminderEvent?.((evt) => {
+      if (!evt?.data) return;
+      if (evt.type === 'fired' || evt.type === 'delivered-sync') {
+        const disk = normalizeData(evt.data as AppData);
+        update((prev) => mergeReminderEventIntoAppData(prev, disk));
+      }
+    });
+    return () => {
+      off?.();
+    };
+  }, [update]);
 }

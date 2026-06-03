@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAccount } from '../AccountContext';
-import { useAppData } from '../AppDataContext';
+import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { useToast } from '../components/ui/Toast';
 import {
   legacyBodyPlainText,
@@ -39,7 +39,6 @@ export function TodosPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const {
-    data,
     addTodoGroup,
     removeTodoGroup,
     addTodoItem,
@@ -53,7 +52,20 @@ export function TodosPage() {
     reorderTodoGroup,
     clearCompletedInGroup,
     markAllCompleteInGroup,
-  } = useAppData();
+  } = useAppDataActions();
+  const workspace = useAppDataSelector(
+    (d) => ({
+      todoGroups: d.todoGroups,
+      todoItems: d.todoItems,
+      notes: d.notes,
+      aiSettings: d.aiSettings,
+    }),
+    (a, b) =>
+      a.todoGroups === b.todoGroups &&
+      a.todoItems === b.todoItems &&
+      a.notes === b.notes &&
+      a.aiSettings === b.aiSettings,
+  );
 
   const [newGroupName, setNewGroupName] = useState('');
   const [newListOpen, setNewListOpen] = useState(false);
@@ -86,8 +98,8 @@ export function TodosPage() {
   } = prefs;
 
   const { features: appFeatures } = useFeatures();
-  const aiEnabled = appFeatures.ai && isAIConfigured(data.aiSettings);
-  const allGroupsSorted = useMemo(() => sortGroups(data.todoGroups), [data.todoGroups]);
+  const aiEnabled = appFeatures.ai && isAIConfigured(workspace.aiSettings);
+  const allGroupsSorted = useMemo(() => sortGroups(workspace.todoGroups), [workspace.todoGroups]);
   const visibleGroups = useMemo(
     () => allGroupsSorted.filter((g) => showArchived || !g.archived),
     [allGroupsSorted, showArchived],
@@ -99,11 +111,11 @@ export function TodosPage() {
 
   const noteTitleById = useMemo(() => {
     const m = new Map<string, string>();
-    for (const n of data.notes) {
+    for (const n of workspace.notes) {
       if (n?.id) m.set(n.id, (n.title || '').trim() || 'Untitled note');
     }
     return m;
-  }, [data.notes]);
+  }, [workspace.notes]);
 
   const openSourceNote = (noteId: string) => {
     navigate(`/notes?focus=${encodeURIComponent(noteId)}`);
@@ -113,8 +125,8 @@ export function TodosPage() {
     location.search,
     location.pathname,
     navigate,
-    data.todoItems,
-    data.todoGroups,
+    workspace.todoItems,
+    workspace.todoGroups,
     statusFilter,
     hideDone,
     showArchived,
@@ -128,8 +140,8 @@ export function TodosPage() {
   );
 
   const itemsByGroup = useMemo(
-    () => buildItemsByGroup(data.todoGroups, data.todoItems, sortMode),
-    [data.todoGroups, data.todoItems, sortMode],
+    () => buildItemsByGroup(workspace.todoGroups, workspace.todoItems, sortMode),
+    [workspace.todoGroups, workspace.todoItems, sortMode],
   );
   const groupById = useMemo(() => new Map(allGroupsSorted.map((g) => [g.id, g])), [allGroupsSorted]);
 
@@ -206,7 +218,7 @@ export function TodosPage() {
       {visibleGroups.length === 0 && allGroupsSorted.length > 0 ? (
         <TodosFilteredEmptyHint
           allGroupsSorted={allGroupsSorted}
-          todoItems={data.todoItems}
+          todoItems={workspace.todoItems}
           showArchived={showArchived}
           onShowArchived={() => setShowArchived(true)}
         />
@@ -237,7 +249,7 @@ export function TodosPage() {
           groupById={groupById}
           noteTitleById={noteTitleById}
           attachmentUserId={user?.id ?? 'anonymous'}
-          totalGroupCount={data.todoGroups.length}
+          totalGroupCount={workspace.todoGroups.length}
           isGroupDragSrc={dragGroupId === g.id}
           isGroupDropTgt={dropTargetId === g.id && dragGroupId !== null && dragGroupId !== g.id}
           dragGroupId={dragGroupId}

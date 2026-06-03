@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { flushPendingSaveGlobal } from '../lib/pendingSaveFlush';
 import { STORAGE_PREFIX } from '../lib/appBranding';
 import { pbkdf2HashPassword, pbkdf2VerifyPassword } from '../lib/passwordPbkdf2';
 
@@ -244,6 +245,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    await flushPendingSaveGlobal();
     if (window.cadence?.accountLogout) {
       await window.cadence.accountLogout();
     } else {

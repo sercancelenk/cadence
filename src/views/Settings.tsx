@@ -13,7 +13,8 @@ import {
   SYNC_FINGERPRINT,
   SYNC_FINGERPRINT_LEGACY,
 } from '../lib/appBranding';
-import type { AIProvider, AppData } from '../model';
+import { resolveAppProfileLabel } from '../lib/appProfileLabel';
+import type { AIProvider } from '../model';
 import { AI_PROVIDER_OPTIONS } from '../model';
 import type { CacheBreakdownEntry, CacheStats, DataFileInfo, DataSources, SaveError } from '../vite-env';
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
@@ -32,6 +33,7 @@ import {
   type LanSyncPair,
 } from '../lib/lanSyncClient';
 import { parseRemoteSnapshot } from '../lib/syncSnapshotGuard';
+import { isElectronApp } from '../lib/runtime';
 import {
   getLastSyncEvent,
   subscribeSyncEvents,
@@ -70,6 +72,133 @@ import {
   useFeatures,
   type PresetName,
 } from '../lib/features';
+import type { ReminderSyncStatus } from '../lib/reminderDelivery/types';
+import { supportsPwaOsSchedule } from '../lib/reminderDelivery/capabilities';
+
+function RemindersSettingsSection() {
+  const toast = useToast();
+  const [status, setStatus] = useState<ReminderSyncStatus | null>(null);
+
+  const refreshStatus = () => {
+    void window.cadence?.reminderSyncStatus?.().then((s) => {
+      if (s) setStatus(s);
+    });
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const s = await window.cadence?.reminderSyncStatus?.();
+      if (!cancelled && s) setStatus(s);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isElectron = typeof window !== 'undefined' && !!window.cadence?.reminderSyncStatus;
+  const pwaOsSchedule = !isElectron && supportsPwaOsSchedule();
+  const isLinux = isElectron && status?.platform === 'linux';
+  const pendingTotal = (status?.pendingInApp ?? 0) + (status?.pendingOs ?? 0);
+  const showOsLimitWarning =
+    isElectron &&
+    (status?.platform === 'darwin' || status?.platform === 'win32') &&
+    status?.osScheduling &&
+    pendingTotal >= 50;
+
+  const updateBackground = (patch: { launchAtLogin?: boolean; hideToTrayOnClose?: boolean }) => {
+    void window.cadence?.setReminderBackgroundSettings?.(patch).then((r) => {
+      if (!r?.ok) {
+        toast.showError('Reminder settings', r?.error || 'Could not save');
+        return;
+      }
+      refreshStatus();
+    });
+  };
+
+  return (
+    <>
+      <p className="muted">
+        On a to-do, open the calendar control, pick a time, and leave &quot;Remind me&quot; on. Cadence schedules a
+        desktop notification for that slot.
+      </p>
+      {isElectron && status?.platform === 'darwin' ? (
+        <p className="muted" style={{ marginTop: 8 }}>
+          {status.osScheduling
+            ? 'Reminders are registered with macOS and can fire when Cadence is quit. Allow notifications in System Settings → Notifications → Cadence.'
+            : 'In development (npm run dev), reminders fire while the app is open only — allow notifications for Electron in System Settings → Notifications. Quit-after-fire needs a packaged Cadence.app build.'}
+          {status.osError ? ` (${status.osError})` : null}
+        </p>
+      ) : isElectron && status?.platform === 'win32' ? (
+        <p className="muted" style={{ marginTop: 8 }}>
+          {status.osScheduling
+            ? 'Reminders are scheduled with Windows and can fire when Cadence is quit. Allow notifications for Cadence in Windows Settings → System → Notifications.'
+            : 'Reminders run while Cadence is open. Quit-after-fire requires the packaged Windows app with the notify helper built.'}
+          {status.osError ? ` (${status.osError})` : null}
+        </p>
+      ) : isLinux ? (
+        <>
+          <p className="muted" style={{ marginTop: 8 }}>
+            Linux does not offer reliable OS-level scheduled notifications after Cadence quits. Reminders fire while the
+            app process is running — use the system tray and launch at login so Cadence stays available in the background.
+            {status.pendingInApp > 0 ? ` (${status.pendingInApp} pending)` : null}
+          </p>
+          <div className="stack" style={{ marginTop: 12, gap: 10 }}>
+            <label className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={status.launchAtLogin === true}
+                onChange={(e) => updateBackground({ launchAtLogin: e.target.checked })}
+              />
+              <span>Launch Cadence at login</span>
+            </label>
+            <label className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={status.hideToTrayOnClose !== false}
+                onChange={(e) => updateBackground({ hideToTrayOnClose: e.target.checked })}
+              />
+              <span>Minimize to tray when closing the window (keeps reminders running)</span>
+            </label>
+          </div>
+        </>
+      ) : isElectron ? (
+        <p className="muted" style={{ marginTop: 8 }}>
+          Reminders work while Cadence is running via the main-process scheduler.
+        </p>
+      ) : (
+        <p className="muted" style={{ marginTop: 8 }}>
+          {pwaOsSchedule
+            ? 'Reminders are scheduled in the browser and can fire when Cadence is closed (Chrome with Notification Triggers). Allow notifications when prompted.'
+            : 'In the browser, keep Cadence open for reminders to fire on time. Safari and Firefox do not support background scheduling yet.'}
+        </p>
+      )}
+      {showOsLimitWarning ? (
+        <p className="muted" style={{ marginTop: 8, color: 'var(--warn, #c9a227)' }}>
+          You have {pendingTotal} scheduled reminders. macOS and Windows may stop accepting new ones around 64 — consider
+          clearing completed tasks or turning off reminders you no longer need.
+        </p>
+      ) : null}
+      {isElectron ? (
+        <div className="row" style={{ marginTop: 12 }}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              void window.cadence?.requestReminderPermission?.().then((r) => {
+                refreshStatus();
+                if (r?.granted) toast.showSuccess('Notifications enabled');
+                else if (r?.error) toast.showError('Notification permission', r.error);
+              });
+            }}
+          >
+            Request notification permission
+          </Button>
+        </div>
+      ) : null}
+    </>
+  );
+}
 
 export function Settings() {
   const { data, replaceAll, reload } = useAppData();
@@ -83,6 +212,7 @@ export function Settings() {
   const [clearPin, setClearPin] = useState('');
   const [updaterOpen, setUpdaterOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const isElectron = isElectronApp();
 
   useEffect(() => {
     void (async () => {
@@ -161,6 +291,7 @@ export function Settings() {
         description="Who can open Cadence on this device, and how your data file is protected."
       >
         <StaySignedInSection />
+        {isElectron ? (
         <CollapsibleCard id="pin" title="PIN protection" badge={pinEnabled ? 'Enabled' : 'Disabled'}>
         <p className="muted">
           Adds a quick lock screen when Cadence starts and when you choose <em>Lock now</em>. Useful when you step away from your desk so a passer-by can't open the app and read 1:1 notes.
@@ -248,6 +379,7 @@ export function Settings() {
           </form>
         )}
         </CollapsibleCard>
+        ) : null}
       </SettingsGroup>
 
       <SettingsGroup
@@ -279,9 +411,24 @@ export function Settings() {
                   e.target.value = '';
                   if (!f) return;
                 try {
+                  if (
+                    !window.confirm(
+                      'Importing replaces your entire workspace with the contents of this file. Export a backup first if you are unsure. Continue?',
+                    )
+                  ) {
+                    return;
+                  }
                   const text = await f.text();
-                  const parsed = JSON.parse(text) as AppData;
-                  replaceAll(parsed);
+                  const raw = JSON.parse(text) as unknown;
+                  const parsed = parseRemoteSnapshot(raw);
+                  if (parsed.kind !== 'ok') {
+                    toast.showError(
+                      'Could not import that file',
+                      'The JSON does not look like a Cadence workspace snapshot. Your existing data was not changed.',
+                    );
+                    return;
+                  }
+                  replaceAll(parsed.data);
                   toast.showSuccess('Backup imported', 'Your workspace was replaced with the contents of the file.');
                 } catch {
                   toast.showError(
@@ -308,10 +455,19 @@ export function Settings() {
             flag, which only governs file-out / file-in. */}
         <BackupsRecoverySection />
 
+        {isElectron ? (
         <CollapsibleCard id="data-location" title="Data location" defaultOpen={false}>
-          {path ? <pre className="pre">{path}</pre> : <p className="muted">No Electron data path available; in the browser preview, data lives in localStorage.</p>}
+          {path ? <pre className="pre">{path}</pre> : <p className="muted">No Electron data path available.</p>}
           <p className="muted small">File name pattern: {DATA_FILE_PREFIX}-data-&lt;userId&gt;.json</p>
         </CollapsibleCard>
+        ) : (
+        <CollapsibleCard id="mobile-storage" title="Mobile storage" defaultOpen={false}>
+          <p className="muted">
+            Your workspace is stored in this browser&apos;s local storage on this device. Export JSON backups regularly —
+            clearing site data or switching browsers will erase your workspace.
+          </p>
+        </CollapsibleCard>
+        )}
 
         <StorageCacheSection />
       </SettingsGroup>
@@ -332,10 +488,7 @@ export function Settings() {
       >
         {features.ai ? <AISettingsSection /> : null}
         <CollapsibleCard id="reminders" title="Reminders" defaultOpen={false}>
-          <p className="muted">
-            The OS will request notification permission. Fill in the &quot;Reminder&quot; field on a task or note; a desktop notification will fire at the scheduled time
-            (the same reminder will not repeat — adjusting the time can re-trigger it).
-          </p>
+          <RemindersSettingsSection />
         </CollapsibleCard>
       </SettingsGroup>
 
@@ -705,8 +858,16 @@ function SyncSection() {
       // against yet. We pass the prior ETag only on background auto-pulls.
       const outcome = await pullSnapshot(sanitizedHost, token);
       if (outcome.kind === 'ok') {
-        replaceAll(outcome.data as AppData);
-        if (user?.id) await syncLanAttachments(outcome.data as AppData, user.id);
+        const parsed = parseRemoteSnapshot(outcome.data);
+        if (parsed.kind !== 'ok') {
+          setPairMsg({
+            kind: 'error',
+            text: 'Host returned a snapshot with an unrecognised shape — refusing to overwrite local data.',
+          });
+          return;
+        }
+        replaceAll(parsed.data);
+        if (user?.id) await syncLanAttachments(parsed.data, user.id);
         const next = savePair({ url: sanitizedHost, token, etag: outcome.etag });
         recordSync(outcome.etag);
         setSavedPair(next);
@@ -766,8 +927,16 @@ function SyncSection() {
         if (confirmPull) {
           const pullOutcome = await pullSnapshot(sanitizedHost, token);
           if (pullOutcome.kind === 'ok') {
-            replaceAll(pullOutcome.data as AppData);
-            if (user?.id) await syncLanAttachments(pullOutcome.data as AppData, user.id);
+            const parsed = parseRemoteSnapshot(pullOutcome.data);
+            if (parsed.kind !== 'ok') {
+              setPairMsg({
+                kind: 'error',
+                text: 'Host returned a snapshot with an unrecognised shape — refusing to overwrite local data.',
+              });
+              return;
+            }
+            replaceAll(parsed.data);
+            if (user?.id) await syncLanAttachments(parsed.data, user.id);
             const next = savePair({ url: sanitizedHost, token, etag: pullOutcome.etag });
             setSavedPair(next);
             setPairMsg({
@@ -1937,6 +2106,7 @@ type UpdaterPhase =
   | { kind: 'error'; message?: string };
 
 function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { flushPendingSave } = useAppData();
   const [phase, setPhase] = useState<UpdaterPhase>({ kind: 'checking' });
   const [installing, setInstalling] = useState(false);
   const toast = useToast();
@@ -1999,6 +2169,11 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   const installNow = async () => {
     setInstalling(true);
+    try {
+      await flushPendingSave();
+    } catch {
+      /* best effort — still attempt install */
+    }
     const r = await window.cadence?.installUpdate?.();
     if (!r?.ok) {
       setInstalling(false);
@@ -2394,14 +2569,7 @@ function BackupsRecoverySection() {
   }, []);
 
   if (!isElectron) {
-    return (
-      <CollapsibleCard id="backups" title="Backups & recovery" defaultOpen={false}>
-        <p className="muted">
-          This panel is only available in the desktop app. In the browser preview, your data lives in the browser&apos;s
-          local storage and is automatically cleared if you switch browsers or use private mode.
-        </p>
-      </CollapsibleCard>
-    );
+    return null;
   }
 
   const restore = async (filePath: string, label: string) => {
@@ -3101,36 +3269,14 @@ type AppProfileSectionProps = {
 };
 
 function AppProfileSection({ features, managed, source, setPreset }: AppProfileSectionProps) {
-  const currentPreset: PresetName | 'custom' = (() => {
-    // Match against the three named presets; otherwise call it "custom"
-    // (a policy.json with granular overrides falls here).
-    for (const name of ['personal', 'work-standard', 'work-strict'] as PresetName[]) {
-      const p = PRESETS[name];
-      if (
-        p.sync.lan === features.sync.lan &&
-        p.sync.cloud === features.sync.cloud &&
-        p.ai === features.ai &&
-        p.dataExport === features.dataExport &&
-        p.updateCheck === features.updateCheck
-      ) {
-        return name;
-      }
-    }
-    return 'custom';
-  })();
-
-  const badgeText = managed
-    ? 'Managed by organization'
-    : currentPreset === 'custom'
-      ? 'Custom'
-      : PRESET_LABELS[currentPreset].title;
+  const { badgeLabel, preset: currentPreset } = resolveAppProfileLabel(features, managed, source);
 
   return (
     <CollapsibleCard
       id="app-profile"
       title="App profile"
       defaultOpen={false}
-      badge={badgeText}
+      badge={badgeLabel}
     >
       {managed ? (
         <div className="app-profile__managed">

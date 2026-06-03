@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { SYNC_BEFORE_APPLY } from '../../lib/syncApplyGuard';
 import { createPortal } from 'react-dom';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { RichTextBodyFormat, RichTextDoc, RichTextPayload } from '../../lib/richText';
@@ -279,11 +280,17 @@ export function RichTextEditor({
 
   useEffect(() => {
     return () => {
-      if (pendingTimer.current) clearTimeout(pendingTimer.current);
+      flushPending();
       releaseAttachmentBlobUrls(attachmentIdsRef.current);
       attachmentIdsRef.current.clear();
     };
-  }, []);
+  }, [flushPending]);
+
+  useEffect(() => {
+    const onBeforeSync = () => flushPending();
+    window.addEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
+    return () => window.removeEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
+  }, [flushPending]);
 
   const trackAttachmentId = useCallback((id: string) => {
     attachmentIdsRef.current.add(id);

@@ -3,6 +3,11 @@ export { AuthGate, AuthProvider, useSession, type AuthPhase } from './AuthContex
 export {
   AppDataProvider,
   useAppData,
+  useAppDataActions,
+  useAppDataSelector,
+  usePersistStatus,
+  useElectronReminderBridge,
+  usePwaReminderBridge,
   useReminderWatcher,
   type DataLossSuspicion,
   type PersistError,

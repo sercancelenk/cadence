@@ -1,17 +1,9 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useAppData } from '../AppDataContext';
-import { IcBraces, IcLayoutGrid, IcPencil } from '../components/icons';
+import { StructuredTextDiffPane } from '../components/ui/StructuredTextDiffPane';
+import { StructuredTextEditor } from '../components/ui/StructuredTextEditor';
+import { IcLayoutGrid, IcPencil } from '../components/icons';
 import type { StructuredTextLanguage } from '../lib/structuredText';
-
-const StructuredTextEditor = lazy(() =>
-  import('../components/ui/StructuredTextEditor').then((m) => ({ default: m.StructuredTextEditor })),
-);
-
-const StructuredTextDiffPane = lazy(() =>
-  import('../components/ui/StructuredTextDiffPane').then((m) => ({
-    default: m.StructuredTextDiffPane,
-  })),
-);
 
 const DEFAULT_JSON = '{\n}\n';
 
@@ -94,45 +86,30 @@ export function UtilitiesStructuredPage() {
               <IcLayoutGrid size={14} />
               <span>Diff</span>
             </button>
-            <span className="rich-doc-pane__hint muted small">
-              {mode === 'edit' ? (
-                <>
-                  <IcBraces size={13} /> Edit tab · set JSON/YAML toggle to match input, then Convert
-                </>
-              ) : (
-                'Compare Before and After side by side'
-              )}
-            </span>
           </div>
         </div>
 
         <div className="structured-text-workspace__body">
-          <Suspense
-            fallback={
-              <div className="structured-text-editor structured-text-editor--loading muted small">
-                Loading editor…
-              </div>
-            }
-          >
-            {mode === 'edit' ? (
-              <StructuredTextEditor
-                value={content}
-                language={language}
-                onChange={onChange}
-                onLanguageChange={onLanguageChange}
-                onConvert={onConvert}
-              />
-            ) : (
-              <StructuredTextDiffPane
-                valueA={content}
-                valueB={diffContent}
-                onChangeA={onChange}
-                onChangeB={onDiffChange}
-                language={language}
-                onLanguageChange={onLanguageChange}
-              />
-            )}
-          </Suspense>
+          {mode === 'edit' ? (
+            <StructuredTextEditor
+              value={content}
+              language={language}
+              onChange={onChange}
+              onLanguageChange={onLanguageChange}
+              onConvert={onConvert}
+              minHeight={0}
+            />
+          ) : (
+            <StructuredTextDiffPane
+              valueA={content}
+              valueB={diffContent}
+              onChangeA={onChange}
+              onChangeB={onDiffChange}
+              language={language}
+              onLanguageChange={onLanguageChange}
+              minHeight={0}
+            />
+          )}
         </div>
       </div>
     </div>

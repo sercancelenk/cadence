@@ -1,0 +1,18 @@
+{
+  "$comment_managedBy": "Free-form label shown to end-users under 'Managed by:'. Pick something they recognise — your company name, MDM tool, etc.",
+  "managedBy": "Acme Corp IT",
+
+  "$comment_preset": "One of: 'personal' (everything on), 'work-standard' (no sync), 'work-strict' (no sync, no AI, no export). Acts as the base; the optional 'features' block overrides individual flags.",
+  "preset": "work-standard",
+
+  "$comment_features": "Granular overrides. Anything you omit inherits from the preset. Anything you include wins over the preset.",
+  "features": {
+    "sync": {
+      "lan": false,
+      "cloud": false
+    },
+    "ai": true,
+    "dataExport": true,
+    "updateCheck": true
+  }
+}

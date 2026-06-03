@@ -143,6 +143,24 @@ describe('snapshotCrypto.wrap / unwrap', () => {
     await expect(wrapSnapshot(SAMPLE, '')).rejects.toThrow();
   });
 
+  it('rejects corrupt header when salt length is zero or too large', async () => {
+    const blob = await wrapSnapshot(SAMPLE, PASS);
+    const zeroSalt = new Uint8Array(blob);
+    zeroSalt[7] = 0;
+    expect(await unwrapSnapshot(zeroSalt, PASS)).toEqual({ kind: 'corrupt' });
+
+    const hugeSalt = new Uint8Array(blob);
+    hugeSalt[7] = 65;
+    expect(await unwrapSnapshot(hugeSalt, PASS)).toEqual({ kind: 'corrupt' });
+  });
+
+  it('rejects blobs that are too short after the header claims a salt', async () => {
+    const blob = await wrapSnapshot(SAMPLE, PASS);
+    const truncated = blob.slice(0, 12);
+    const result = await unwrapSnapshot(truncated, PASS);
+    expect(result.kind).toBe('corrupt');
+  });
+
   it('developer self-test passes end-to-end', async () => {
     const result = await __snapshotCryptoSelfTest();
     expect(result).toEqual({ ok: true });

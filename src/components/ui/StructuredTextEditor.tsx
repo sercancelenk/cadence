@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { EditorView } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { foldAll, unfoldAll } from '@codemirror/language';
@@ -372,12 +372,6 @@ export function StructuredTextEditor({
           />
         </div>
         <span
-          className="structured-text-editor__kbd-hint muted small"
-          title="⌘F search · ⌘G next · ⌘Z undo · ⌘⇧Z redo · ⌘⇧[ collapse · ⌘⇧] expand · { } auto-close"
-        >
-          ⌘F · ⌘Z
-        </span>
-        <span
           className={`structured-text-editor__status${validation.valid ? ' structured-text-editor__status--ok' : ' structured-text-editor__status--err'}`}
           role="status"
           title={validation.message}
@@ -393,7 +387,11 @@ export function StructuredTextEditor({
       <div
         ref={hostRef}
         className="structured-text-editor__host"
-        style={{ ['--structured-text-min-height' as string]: `${minHeight}px` }}
+        style={
+          minHeight > 0
+            ? ({ ['--structured-text-min-height' as string]: `${minHeight}px` } as CSSProperties)
+            : undefined
+        }
       />
     </div>
   );

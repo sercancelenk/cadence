@@ -12,6 +12,17 @@ type FocusSetters = {
   setSectionOpenMap: Dispatch<SetStateAction<Record<string, boolean>>>;
 };
 
+function stripFocusParam(
+  locationSearch: string,
+  locationPathname: string,
+  navigate: NavigateFunction,
+) {
+  const params = new URLSearchParams(locationSearch);
+  params.delete('focus');
+  const next = params.toString();
+  navigate({ pathname: locationPathname, search: next ? `?${next}` : '' }, { replace: true });
+}
+
 /**
  * Deep-link handler for `/todos?focus=<id>` — reveals filtered rows,
  * scrolls into view, and flashes the matching task briefly.
@@ -50,14 +61,30 @@ export function useTodoFocus(
       setters.setSectionOpenMap((prev) =>
         prev[target.groupId] === false ? { ...prev, [target.groupId]: true } : prev,
       );
+      setFocusedTaskId(focusId);
+      stripFocusParam(locationSearch, locationPathname, navigate);
+      return;
     }
 
-    setFocusedTaskId(focusId);
-    params.delete('focus');
-    const next = params.toString();
-    navigate({ pathname: locationPathname, search: next ? `?${next}` : '' }, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationSearch, locationPathname, navigate]);
+    // Wait until todos are loaded before dropping an unknown focus id.
+    if (todoItems.length > 0) {
+      stripFocusParam(locationSearch, locationPathname, navigate);
+    }
+  }, [
+    locationSearch,
+    locationPathname,
+    navigate,
+    todoItems,
+    todoGroups,
+    statusFilter,
+    hideDone,
+    showArchived,
+    setters.setSearch,
+    setters.setStatusFilter,
+    setters.setHideDone,
+    setters.setShowArchived,
+    setters.setSectionOpenMap,
+  ]);
 
   useEffect(() => {
     if (!focusedTaskId) return;

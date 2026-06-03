@@ -1,0 +1,3 @@
+[32m23:57:19 (16452) INFO ProjectReader[39m Found 1 of 423 file(s) to be mutated.
+[32m23:57:19 (16452) INFO Instrumenter[39m Instrumented 1 source file(s) with 35 mutant(s)
+[32m23:57:20 (16452) INFO ConcurrencyTokenProvider[39m Creating 4 test runner process(es).

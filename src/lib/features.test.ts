@@ -130,6 +130,16 @@ describe('parsePolicy validation', () => {
     const p = parsePolicy({ path: '/x', features: { ai: false } });
     expect(p).toEqual({ path: '/x', features: { ai: false } });
   });
+
+  it('accepts sync.cloud-only granular overrides', () => {
+    const p = parsePolicy({ path: '/x', features: { sync: { cloud: true } } });
+    expect(p).toEqual({ path: '/x', features: { sync: { cloud: true } } });
+  });
+
+  it('drops sync block when sync is not an object', () => {
+    const p = parsePolicy({ path: '/x', features: { sync: 'nope', ai: true } });
+    expect(p).toEqual({ path: '/x', features: { ai: true } });
+  });
 });
 
 describe('resolveFeatures precedence', () => {
@@ -278,6 +288,29 @@ describe('resolveFeatures — enterprise build flavor', () => {
     expect(r.features.sync).toEqual({ lan: false, cloud: false });
     expect(r.features.ai).toBe(false);
     expect(r.features.dataExport).toBe(false);
+  });
+
+  it('enterprise merge uses policy preset cloud override independently of lan', () => {
+    const r = resolveFeatures(
+      {
+        path: '/x',
+        features: { sync: { cloud: true } },
+      },
+      'personal',
+      { enterpriseBuild: true },
+    );
+    expect(r.features).toEqual({
+      sync: { lan: false, cloud: true },
+      ai: false,
+      dataExport: false,
+      updateCheck: true,
+    });
+  });
+
+  it('policy with preset personal still resolves under non-enterprise builds', () => {
+    const r = resolveFeatures({ path: '/x', preset: 'personal' }, 'work-strict');
+    expect(r.features).toEqual(PRESETS.personal);
+    expect(r.managed).toBe(true);
   });
 
   it('sidecar preset value is ignored (base is always work-strict in enterprise)', () => {
