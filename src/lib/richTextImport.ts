@@ -9,6 +9,24 @@ import {
   type RichTextDoc,
 } from './richText';
 
+/** Map markdown-it-task-lists HTML to Tiptap taskList / taskItem nodes. */
+function upgradeTaskListHtml(html: string): string {
+  return html.replace(
+    /<ul class="contains-task-list">([\s\S]*?)<\/ul>/gi,
+    (_match, body: string) => {
+      const items = body.replace(
+        /<li class="task-list-item">([\s\S]*?)<\/li>/gi,
+        (_li, content: string) => {
+          const checked = /<input[^>]*\bchecked\b/i.test(content);
+          const inner = content.replace(/<input[^>]*>/i, '').trim();
+          return `<li data-type="taskItem" data-checked="${checked ? 'true' : 'false'}">${inner}</li>`;
+        },
+      );
+      return `<ul data-type="taskList">${items}</ul>`;
+    },
+  );
+}
+
 const md = new MarkdownIt('default', {
   html: false,
   linkify: true,
@@ -28,7 +46,7 @@ const importExtensions = createRichTextExtensions('');
 export function markdownToRichDoc(markdown: string): RichTextDoc {
   const trimmed = markdown.trim();
   if (!trimmed) return EMPTY_RICH_DOC;
-  const html = md.render(trimmed);
+  const html = upgradeTaskListHtml(md.render(trimmed));
   const doc = generateJSON(html, importExtensions) as RichTextDoc;
   if (doc?.type === 'doc') return doc;
   return EMPTY_RICH_DOC;

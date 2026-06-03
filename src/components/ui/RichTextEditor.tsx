@@ -49,6 +49,8 @@ export type RichTextEditorProps = {
   attachmentScope?: RichTextAttachmentScope;
   /** Signed-in user id — scopes attachments on disk / IndexedDB. */
   attachmentUserId?: string;
+  /** Focus the editor when `editable` becomes true (e.g. entering edit mode). */
+  autoFocus?: boolean;
 };
 
 function contentKey(
@@ -122,6 +124,7 @@ export function RichTextEditor({
   onEditorNotice,
   attachmentScope,
   attachmentUserId,
+  autoFocus = false,
 }: RichTextEditorProps) {
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -253,12 +256,15 @@ export function RichTextEditor({
       ed
         .chain()
         .focus()
-        .setImage({
-          src,
-          attachmentId: stored.attachmentId,
-          alt: stored.alt,
-          width: stored.width,
-          height: stored.height,
+        .insertContent({
+          type: 'image',
+          attrs: {
+            src,
+            attachmentId: stored.attachmentId,
+            alt: stored.alt ?? null,
+            width: stored.width ?? null,
+            height: stored.height ?? null,
+          },
         })
         .run();
     } catch (err) {
@@ -331,7 +337,10 @@ export function RichTextEditor({
   useEffect(() => {
     if (!editor) return;
     editor.setEditable(editable);
-  }, [editor, editable]);
+    if (editable && autoFocus) {
+      editor.commands.focus('end');
+    }
+  }, [editor, editable, autoFocus]);
 
   useEffect(() => {
     if (!editor || !attachmentUserId) return;

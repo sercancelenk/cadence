@@ -73,7 +73,6 @@ import {
 
 export function Settings() {
   const { data, replaceAll, reload } = useAppData();
-  const { user } = useAccount();
   const { pinEnabled, refresh: refreshSession, lockSession } = useSession();
   const toast = useToast();
   const { features, managed, source, setPreset } = useFeatures();

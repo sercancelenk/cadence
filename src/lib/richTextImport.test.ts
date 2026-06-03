@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SAMPLE_LEGACY_MARKDOWN, parseRichDoc } from './richText';
+import { parseRichDoc } from './richText';
 import { markdownToRichDoc, resolveRichTextContent } from './richTextImport';
 
 describe('richTextImport', () => {

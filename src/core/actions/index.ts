@@ -728,7 +728,7 @@ export function updateTodoItem(
         const trimmed = patch.body.trim();
         nextBody = trimmed ? patch.body : undefined;
       }
-      const nextBodyFormat =
+      let nextBodyFormat =
         patch.bodyFormat !== undefined ? patch.bodyFormat || undefined : x.bodyFormat;
       let nextBodyPlainText =
         patch.bodyPlainText !== undefined ? patch.bodyPlainText || undefined : x.bodyPlainText;

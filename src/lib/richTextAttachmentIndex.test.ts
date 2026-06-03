@@ -5,10 +5,11 @@ import type { AppData } from '../model';
 
 const baseData = (): AppData =>
   ({
-    version: 1,
+    version: 3,
     teams: [],
     people: [],
     items: [],
+    notifiedReminderIds: [],
     todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: '2020-01-01T00:00:00.000Z' }],
     todoItems: [],
     notes: [],
@@ -35,6 +36,7 @@ describe('collectReferencedAttachmentIds', () => {
         title: 'T',
         body: serializeRichDoc(doc),
         bodyFormat: 'prosemirror',
+        locked: false,
         sortOrder: 0,
         createdAt: '2020-01-01T00:00:00.000Z',
         updatedAt: '2020-01-01T00:00:00.000Z',
@@ -76,6 +78,7 @@ describe('collectReferencedAttachmentIds', () => {
         id: 'n1',
         title: 'T',
         body: '![x](cadence-attachment://should-not-parse)',
+        locked: false,
         sortOrder: 0,
         createdAt: '2020-01-01T00:00:00.000Z',
         updatedAt: '2020-01-01T00:00:00.000Z',

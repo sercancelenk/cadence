@@ -473,7 +473,9 @@ export async function fetchAttachmentManifest(
   if (!resp.ok) return [];
   try {
     const json = await resp.json();
-    return Array.isArray(json?.ids) ? json.ids.filter((x): x is string => typeof x === 'string') : [];
+    return Array.isArray(json?.ids)
+      ? json.ids.filter((x: unknown): x is string => typeof x === 'string')
+      : [];
   } catch {
     return [];
   }

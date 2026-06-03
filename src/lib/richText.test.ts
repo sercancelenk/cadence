@@ -3,9 +3,7 @@ import {
   EMPTY_RICH_DOC,
   SAMPLE_RICH_DOC,
   extractPlainText,
-  isRichTextOverSoftLimit,
   parseRichDoc,
-  RICH_TEXT_SOFT_CHAR_LIMIT,
   serializeRichDoc,
 } from './richText';
 

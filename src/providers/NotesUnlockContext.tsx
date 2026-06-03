@@ -12,7 +12,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
  * app restart).
  */
 
-type NotesUnlockApi = {
+export type NotesUnlockApi = {
   /** The session master key, or null when locked. */
   masterKey: CryptoKey | null;
   /** True iff `masterKey` is set. */
