@@ -197,8 +197,12 @@ export function StructuredTextDiffPane({
     const currentB = merge.b.state.doc.toString();
     const resultA = formatStructuredText(currentA, language);
     const resultB = formatStructuredText(currentB, language);
-    if (!resultA.ok || !resultB.ok) {
-      showNotice(resultA.ok ? resultB.error : resultA.error);
+    if (!resultA.ok) {
+      showNotice(resultA.error);
+      return;
+    }
+    if (!resultB.ok) {
+      showNotice(resultB.error);
       return;
     }
     clearNotice();

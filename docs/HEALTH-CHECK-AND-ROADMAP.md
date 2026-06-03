@@ -82,7 +82,7 @@ Provider-agnostic `SyncBackend` interface; LAN and Google Drive coexist. Remote 
 
 **4. Lazy-loaded routes**
 
-Heavy chunks (Markdown editor, People views) split via `React.lazy`. Important for PWA first paint.
+Heavy chunks (Markdown editor, People views, Utilities JSON/YAML) split via `React.lazy`. Important for PWA first paint. **Backlog:** `vendor-misc` (~1 MB) still catches CodeMirror + TipTap + misc deps — split in **B9**; fix circular `vendor-misc ↔ vendor-react` chunk graph.
 
 ### Risks
 
@@ -339,6 +339,7 @@ Prioritized by **risk reduction × user impact × effort**. Each item has an ID 
 | **B6** | **ESLint + Prettier** | S | Medium | Planned | `@typescript-eslint`, React hooks rules; format on CI. |
 | **B7** | **Split `core/actions/` by domain** | M | Medium | Planned | `todos.ts`, `notes.ts`, `teams.ts` + barrel; after A5 test coverage. |
 | **B8** | **Remove root re-export shims** | S | Low | Planned | Once all imports point at `providers/` and `core/`; optional codemod. |
+| **B9** | **Vite vendor chunk split** | M | Medium | Planned | Break up `vendor-misc` (~1 MB / 373 KB gzip): `vendor-codemirror`, `vendor-tiptap`; resolve circular chunk with `vendor-react`. Do **not** merely raise `chunkSizeWarningLimit`. Utilities editor already lazy — this improves first paint (PWA) and parse time. |
 
 **Exit criteria for Phase B:** No source file >1,500 lines without explicit exception. New features don't require editing `app.css` past line 6000.
 
@@ -426,6 +427,7 @@ Use this doc as the agenda. Recommended order:
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
+| 1.6 | 2026-05-31 | DX + backlog | `npm run typecheck` / `check`; backlog **B9** vendor chunk split; TS fix note in release path |
 | 1.5 | 2026-05-31 | Utilities JSON/YAML | C8 shipped: CodeMirror editor, folding, Edit/Diff, format/validate, JSON compact/stringify; shared sync hooks; landing + README updated |
 | 1.4 | 2026-05-31 | Editor UX + Utilities | `RichTextDocumentPane`; Esc/sticky/save status; Utilities sidebar + Document; C8 JSON/YAML editor on roadmap |
 | 1.3 | 2026-05-31 | B2 notes complete — `features/notes/` module; NotesPage ~207 lines; preview/edit mode |

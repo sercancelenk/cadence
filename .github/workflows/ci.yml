@@ -50,7 +50,7 @@ jobs:
       - name: Install dependencies (no electron binary)
         run: npm ci --no-audit --no-fund
       - name: Type check
-        run: npx tsc --noEmit
+        run: npm run typecheck
       - name: Unit tests
         run: npm test
       - name: Build web bundle

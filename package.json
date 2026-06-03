@@ -21,6 +21,8 @@
     "build:release:enterprise": "cross-env CADENCE_DISTRIBUTION=enterprise vite build && cross-env CADENCE_DISTRIBUTION=enterprise electron-builder --config electron-builder.enterprise.json --publish always",
     "icons": "node scripts/generate-pwa-icons.mjs",
     "check:env": "node scripts/check-env.mjs",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test",
     "test": "vitest run",
     "test:watch": "vitest"
   },

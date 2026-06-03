@@ -957,7 +957,7 @@ tab and pick the workflow you want; CI runs first as a gate inside it.
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| [`ci.yml`](.github/workflows/ci.yml) | reusable (`workflow_call`) + manual (`Run workflow`) | `tsc --noEmit` + `npm run build:web`. Invoked as the green-light gate by Release & Pages; you can also fire it on demand to sanity-check a branch. |
+| [`ci.yml`](.github/workflows/ci.yml) | reusable (`workflow_call`) + manual (`Run workflow`) | `npm run typecheck` + `npm test` + `npm run build:web`. Invoked as the green-light gate by Release & Pages; you can also fire it on demand to sanity-check a branch. |
 | [`pages.yml`](.github/workflows/pages.yml) | manual (`Run workflow`) | Calls CI → `npm run build:pwa` → publishes to GitHub Pages. |
 | [`release.yml`](.github/workflows/release.yml) | manual (`Run workflow`) | Calls CI → bumps version to `0.2.<run_number>` → `electron-builder --publish always` → signs + notarizes the `.app` → uploads DMG/ZIP/`latest-mac.yml` to a new GitHub Release. |
 
@@ -1287,7 +1287,8 @@ Issues and pull requests are welcome. Please:
 1. Use Node 20+, install with `npm install`, and run `npm run dev`.
 2. Keep all UI strings in English (no in-code i18n yet).
 3. Before sending a PR, run:
-   - `npx tsc --noEmit` — strict type-check.
+   - `npm run typecheck` — strict type-check (same gate as CI).
+   - `npm run check` — typecheck + unit tests in one shot.
    - `npm run build:web` — Electron-targeted Vite build.
    - `npm run build:pwa` — Pages-targeted Vite build.
 
