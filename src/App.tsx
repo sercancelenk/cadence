@@ -28,6 +28,9 @@ const AnalyticsPage = lazy(() => import('./views/AnalyticsPage').then((m) => ({ 
 const ProfilePage = lazy(() => import('./views/ProfilePage').then((m) => ({ default: m.ProfilePage })));
 const Settings = lazy(() => import('./views/Settings').then((m) => ({ default: m.Settings })));
 const NotesPage = lazy(() => import('./views/NotesPage').then((m) => ({ default: m.NotesPage })));
+const UtilitiesDocumentPage = lazy(() =>
+  import('./views/UtilitiesDocumentPage').then((m) => ({ default: m.UtilitiesDocumentPage })),
+);
 const TeamDashboard = lazy(() => import('./views/TeamDashboard').then((m) => ({ default: m.TeamDashboard })));
 // All four People routes share the same chunk (they import each other) — using
 // individual lazy() calls is fine: Rollup keeps them in one file and Vite
@@ -181,6 +184,7 @@ function AppRoutes() {
             <Route path="todos" element={<TodosPage />} />
             <Route path="agenda" element={<AgendaPage />} />
             <Route path="notes" element={<NotesPage />} />
+            <Route path="utilities/document" element={<UtilitiesDocumentPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="profile" element={<ProfilePage />} />
             <Route path="settings" element={<Settings />} />

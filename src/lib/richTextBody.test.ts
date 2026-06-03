@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { noteBodyPatchIsNoOp, plainTextFromBodyFields } from './richTextBody';
+import { canonicalDocSignature, noteBodyPatchIsNoOp, plainTextFromBodyFields } from './richTextBody';
 import { serializeRichDoc, EMPTY_RICH_DOC } from './richText';
 
 describe('plainTextFromBodyFields', () => {
@@ -21,6 +21,17 @@ describe('plainTextFromBodyFields', () => {
     expect(plainTextFromBodyFields({ body: '# Title\n\nBody', bodyFormat: 'markdown' })).toBe(
       '# Title\n\nBody',
     );
+  });
+});
+
+describe('canonicalDocSignature', () => {
+  it('matches editor body with trailing space (avoids caret-reset echo)', () => {
+    const doc = {
+      type: 'doc' as const,
+      content: [{ type: 'paragraph' as const, content: [{ type: 'text' as const, text: 'hello ' }] }],
+    };
+    const body = serializeRichDoc(doc);
+    expect(canonicalDocSignature(body, 'prosemirror')).toBe(canonicalDocSignature(doc, 'prosemirror'));
   });
 });
 

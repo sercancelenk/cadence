@@ -16,6 +16,7 @@ import type {
   TodoItem,
   TodoStatus,
   UserProfile,
+  UtilityDocument,
 } from '../model';
 import { isLeaderPerson, isSelfPerson, nowIso, selfPersonIdForTeam, leaderPersonIdForTeam } from '../model';
 
@@ -911,4 +912,22 @@ export function setNotesLock(data: AppData, lock: NotesLock | undefined): AppDat
     return rest as AppData;
   }
   return { ...data, notesLock: lock };
+}
+
+export function patchUtilityDocument(
+  data: AppData,
+  patch: Partial<Pick<UtilityDocument, 'body' | 'bodyFormat' | 'bodyPlainText'>>,
+): AppData {
+  const prev: UtilityDocument = data.utilityDocument ?? {
+    body: '',
+    updatedAt: nowIso(),
+  };
+  return {
+    ...data,
+    utilityDocument: {
+      ...prev,
+      ...patch,
+      updatedAt: nowIso(),
+    },
+  };
 }

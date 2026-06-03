@@ -71,6 +71,27 @@ describe('collectReferencedAttachmentIds', () => {
     expect(ids).toContain('todo-xyz-222222222222');
   });
 
+  it('collects ids from utilities document body', () => {
+    const data = baseData();
+    data.utilityDocument = {
+      body: serializeRichDoc({
+        type: 'doc',
+        content: [
+          {
+            type: 'image',
+            attrs: {
+              attachmentId: 'utility-scratch-333333333333',
+              src: 'cadence-attachment://utility-scratch-333333333333',
+            },
+          },
+        ],
+      }),
+      bodyFormat: 'prosemirror',
+      updatedAt: '2020-01-01T00:00:00.000Z',
+    };
+    expect(collectReferencedAttachmentIds(data)).toContain('utility-scratch-333333333333');
+  });
+
   it('ignores legacy markdown bodies', () => {
     const data = baseData();
     data.notes = [

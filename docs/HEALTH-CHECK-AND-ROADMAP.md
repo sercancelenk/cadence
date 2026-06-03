@@ -1,6 +1,6 @@
 # Cadence — Health Check & Product Roadmap
 
-**Document version:** 1.3  
+**Document version:** 1.4  
 **Date:** 2026-05-31  
 **App version reviewed:** `0.2.0`  
 **Scope:** Static architecture review, data/security audit, test & CI assessment, mobile/PWA UX gap analysis  
@@ -150,6 +150,8 @@ Reference implementations in:
 - **Rich-text (Tiptap / ProseMirror)** — legacy markdown bodies load unchanged until first edit; `bodyFormat` optional; sidecar attachments are additive (inline `data:image` in old markdown unaffected by orphan GC)
 - **Notes list stability** — editor mount no longer bumps `updatedAt` via no-op patch guard + onChange dedupe
 - **Notes preview/edit** — Preview/Edit tabs on note body; toolbar only in edit mode; double-click to edit
+- **Editor UX (shared pane)** — `RichTextDocumentPane`: sticky Preview/Edit tabs, sticky toolbar, Esc → preview, autosave indicator (Saving… / Saved), ⌘B/⌘I/⌘Z hints
+- **Utilities → Document** — sidebar section with standalone scratch document (`utilityDocument` in workspace JSON); not a note or todo
 - **Global search → todos** — palette deep-links with `?focus=`; filters relax so the row is visible
 
 ### Recent delivery log (since v1.0 health check)
@@ -165,11 +167,15 @@ Reference implementations in:
 | **Architecture (Phase B2, partial)** | `src/features/todos/` — row, section, toolbar, hooks; `TodosPage` ~317 lines |
 | **Architecture (Phase B2, notes)** | `src/features/notes/` — sidebar, editor, lock dialogs, hooks; `NotesPage` ~207 lines |
 | **Notes UX** | Preview/Edit mode on note body; toolbar hidden until Edit |
+| **Editor UX** | Shared `RichTextDocumentPane`; Esc → preview; sticky tabs + toolbar; save status |
+| **Utilities** | Sidebar **Utilities** section; **Document** scratch pad (`/utilities/document`) |
 
 *Not done yet — still on the roadmap below.*
 
 | Area | Status |
 |---|---|
+| Slash commands / floating toolbar in editor | Planned (editor polish) |
+| JSON / YAML editor (format, validate, diff) | Planned (Utilities, C8) |
 | Todos toolbar / section / inline-add extract | **Done** (B2 todos) |
 | Split `NotesPage` | **Done** (B2 notes) |
 | Split `Settings.tsx` | Planned (B1) |
@@ -348,8 +354,11 @@ Prioritized by **risk reduction × user impact × effort**. Each item has an ID 
 | **C5** | Field-level sync merge (LWW per item) | README 2.5 | XL |
 | **C6** | Manual note ↔ todo linking | README post-MVP 4.7 | M |
 | **C7** | Cross-link integrity on delete | README 4.9 | S |
+| **C8** | **Utilities: JSON / YAML editor** — format, validate, diff | Product | M |
 
 These are **product** bets, not health fixes. Schedule after Phase A unless user demand says otherwise.
+
+*Editor polish (not Phase C bets): slash commands, floating toolbar — deferred from current sprint.*
 
 ---
 
@@ -398,12 +407,13 @@ Use this doc as the agenda. Recommended order:
 | Mutations | `src/core/actions/index.ts` (shim: `src/actions.ts`) |
 | React providers | `src/providers/index.ts` (barrel), individual `*Context.tsx` |
 | Feature flags | `src/lib/features.tsx` |
-| Rich text | `src/components/ui/RichTextEditor.tsx`, `src/lib/richTextBody.ts` |
+| Rich text | `src/components/ui/RichTextEditor.tsx`, `src/components/ui/RichTextDocumentPane.tsx`, `src/lib/richTextBody.ts` |
 | Attachments | `electron/main.cjs` (GC, backup), `src/lib/richTextAttachmentStore.ts`, `src/lib/lanAttachmentSync.ts` |
 | Sync safety | `src/lib/syncSnapshotGuard.ts`, `src/lib/useSyncAutoSync.ts` |
 | Mobile shell | `src/components/Layout.tsx`, `src/app.css` (`@media max-width: 700px`) |
 | Todos UI | `src/views/TodosPage.tsx`, `src/features/todos/` |
 | Notes UI | `src/views/NotesPage.tsx`, `src/features/notes/` |
+| Utilities | `src/views/UtilitiesDocumentPage.tsx`, `PATH_UTILITIES_DOCUMENT` in `src/lib/routes.ts` |
 | Settings surface | `src/views/Settings.tsx` |
 | CI | `.github/workflows/ci.yml`, `.github/workflows/release.yml` |
 | Operator docs | `README.md`, `docs/DEPLOYMENT-AND-POLICY.md`, `docs/ENTERPRISE.md` |
@@ -415,6 +425,7 @@ Use this doc as the agenda. Recommended order:
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
+| 1.4 | 2026-05-31 | Editor UX + Utilities | `RichTextDocumentPane`; Esc/sticky/save status; Utilities sidebar + Document; C8 JSON/YAML editor on roadmap |
 | 1.3 | 2026-05-31 | B2 notes complete — `features/notes/` module; NotesPage ~207 lines; preview/edit mode |
 | 1.2 | 2026-05-31 | B2 todos complete — `features/todos/` module; TodosPage ~315 lines |
 | 1.1 | 2026-05-31 | Architecture refactor session | B0 layout (`providers/`, `core/`); rich-text & attachment delivery log; updated scores & appendix |

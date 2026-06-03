@@ -22,6 +22,7 @@ import {
   markAllCompleteInGroup as markAllCompleteInGroupFn,
   moveTodoGroup as moveTodoGroupFn,
   patchNote as patchNoteFn,
+  patchUtilityDocument as patchUtilityDocumentFn,
   removeNote as removeNoteFn,
   reorderTodoGroup as reorderTodoGroupFn,
   reorderTodoItem as reorderTodoItemFn,
@@ -61,6 +62,7 @@ import type {
   TodoItem,
   TodoStatus,
   UserProfile,
+  UtilityDocument,
 } from '../core/model';
 import { normalizeData, shapeOfData } from '../core/model';
 
@@ -242,6 +244,9 @@ type Api = {
   ) => void;
   removeNote: (id: string) => void;
   setNotesLock: (lock: NotesLock | undefined) => void;
+  patchUtilityDocument: (
+    patch: Partial<Pick<UtilityDocument, 'body' | 'bodyFormat' | 'bodyPlainText'>>,
+  ) => void;
 };
 
 const Ctx = createContext<Api | null>(null);
@@ -720,6 +725,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       patchNote: (id, patch) => update((x) => patchNoteFn(x, id, patch)),
       removeNote: (id) => update((x) => removeNoteFn(x, id)),
       setNotesLock: (lock) => update((x) => setNotesLockFn(x, lock)),
+      patchUtilityDocument: (patch) => update((x) => patchUtilityDocumentFn(x, patch)),
     };
   }, [data, ready, update, replaceAll, reload, lastSaveError, lastSavedAt, saving, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
 

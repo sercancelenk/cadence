@@ -7062,15 +7062,37 @@ details summary {
   gap: 10px;
 }
 
-.notes-page__body-mode {
+/* Shared Preview/Edit pane (Notes body + Utilities document). */
+.rich-doc-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+}
+
+.rich-doc-pane__chrome {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--panel) 94%, var(--bg));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.rich-doc-pane__header {
+  flex-shrink: 0;
+}
+
+.rich-doc-pane__mode {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
   flex-shrink: 0;
+  padding: 4px 0 8px;
 }
 
-.notes-page__body-mode-tab {
+.rich-doc-pane__mode-tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -7086,28 +7108,124 @@ details summary {
   transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
 
-.notes-page__body-mode-tab:hover {
+.rich-doc-pane__mode-tab:hover {
   border-color: rgba(126, 176, 255, 0.5);
   color: var(--text);
 }
 
-.notes-page__body-mode-tab--active {
+.rich-doc-pane__mode-tab--active {
   background: var(--accent-soft);
   border-color: rgba(133, 154, 175, 0.5);
   color: var(--text);
 }
 
-.notes-page__body-mode-hint {
+.rich-doc-pane__hint {
   margin-left: auto;
   font-style: italic;
 }
 
-.notes-page__body-surface--preview {
+.rich-doc-pane__kbd-hint {
+  margin-left: auto;
+  font-size: 11.5px;
+  letter-spacing: -0.01em;
+}
+
+.rich-doc-pane__save {
+  margin-left: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.rich-doc-pane__save--pending {
+  color: var(--accent);
+}
+
+.rich-doc-pane__surface {
+  flex: 1;
+  min-height: 0;
+}
+
+.rich-doc-pane__toolbar-host .rich-editor__toolbar {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.rich-doc-pane .rich-editor {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top: 0;
+}
+
+.rich-doc-pane .rich-editor__surface {
+  overflow: visible;
+}
+
+.rich-doc-pane__surface--preview {
   cursor: text;
 }
 
-.notes-page__body-surface--preview .rich-editor__surface .tiptap:focus {
+.rich-doc-pane__surface--preview .rich-editor__surface .tiptap:focus {
   outline: none;
+}
+
+.rich-doc-pane__loading {
+  padding: 16px;
+}
+
+.utilities-doc-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.utilities-doc-page__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.utilities-doc-page__title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.utilities-doc-page__lead {
+  margin: 0;
+  max-width: 52ch;
+}
+
+.utilities-doc-page__meta {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.utilities-doc-page__future {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* Sticky formatting toolbar (inline editor contexts outside rich-doc-pane). */
+.rich-editor--sticky-toolbar {
+  overflow: hidden;
+}
+
+.rich-editor--sticky-toolbar .rich-editor__toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .notes-page__locked {

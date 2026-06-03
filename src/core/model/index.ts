@@ -371,6 +371,19 @@ export interface AppData {
   notes: Note[];
   /** Workspace-level lock for notes (verifier blob). Absent until the user enables note locking. */
   notesLock?: NotesLock;
+  /**
+   * Standalone scratch document (Utilities → Document). Not a Note or Todo —
+   * a free-form workspace for drafts, paste buffers, etc.
+   */
+  utilityDocument?: UtilityDocument;
+}
+
+/** Persisted rich-text scratch pad under Utilities. */
+export interface UtilityDocument {
+  body: string;
+  bodyFormat?: 'markdown' | 'prosemirror';
+  bodyPlainText?: string;
+  updatedAt: string;
 }
 
 export function nowIso(): string {
@@ -843,6 +856,7 @@ export function normalizeData(raw: unknown): AppData {
 
   const notes = parseNotes(o.notes);
   let notesLock = parseNotesLock(o.notesLock);
+  const utilityDocument = parseUtilityDocument(o.utilityDocument);
 
   // Defensive: orphan notesLock cleanup. The lock object can survive on
   // disk after the user clears the notes passphrase if the corresponding
@@ -871,6 +885,7 @@ export function normalizeData(raw: unknown): AppData {
     aiSettings: parseAISettings(o.aiSettings),
     notes,
     notesLock,
+    utilityDocument,
     profile: parseProfile(o.profile),
   };
 
@@ -978,6 +993,19 @@ function parseNotes(raw: unknown): Note[] {
     });
   }
   return out;
+}
+
+function parseUtilityDocument(raw: unknown): UtilityDocument | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.body !== 'string') return undefined;
+  return {
+    body: o.body,
+    bodyFormat:
+      o.bodyFormat === 'markdown' || o.bodyFormat === 'prosemirror' ? o.bodyFormat : undefined,
+    bodyPlainText: typeof o.bodyPlainText === 'string' ? o.bodyPlainText : undefined,
+    updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
+  };
 }
 
 function parseNotesLock(raw: unknown): NotesLock | undefined {

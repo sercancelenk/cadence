@@ -10,6 +10,7 @@ import {
   PATH_SETTINGS,
   PATH_TEAMS,
   PATH_TODOS,
+  PATH_UTILITIES_DOCUMENT,
 } from '../lib/routes';
 import { plainTextFromBodyFields } from '../lib/richTextBody';
 import { teamBase, teamPeople, teamPerson } from '../lib/teamPaths';
@@ -17,6 +18,7 @@ import type { Item, Note, Person, Team, TodoItem } from '../model';
 import {
   IcArrowRight,
   IcCalendar,
+  IcFileText,
   IcFolder,
   IcHome,
   IcListTodo,
@@ -276,6 +278,13 @@ function buildCommands(
       label: 'Go to Notes',
       icon: <IcStickyNote size={16} />,
       run: () => navigate(PATH_NOTES),
+    },
+    {
+      id: 'nav-utilities-document',
+      group: 'Navigate',
+      label: 'Go to Document (Utilities)',
+      icon: <IcFileText size={16} />,
+      run: () => navigate(PATH_UTILITIES_DOCUMENT),
     },
     {
       id: 'nav-profile',

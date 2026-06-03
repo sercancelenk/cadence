@@ -2,6 +2,7 @@ import { NavLink, useMatch } from 'react-router-dom';
 import {
   IcCalendar,
   IcChartBar,
+  IcFileText,
   IcFolder,
   IcHome,
   IcLayoutGrid,
@@ -14,7 +15,7 @@ import {
 } from './icons';
 import { useAppData } from '../AppDataContext';
 import { brandIconUrl } from '../lib/appBranding';
-import { PATH_HOME, PATH_TEAMS } from '../lib/routes';
+import { PATH_HOME, PATH_TEAMS, PATH_UTILITIES_DOCUMENT } from '../lib/routes';
 import { teamLeader, teamMe, teamPeople as teamPeopleRoute, teamBase } from '../lib/teamPaths';
 
 const linkCls = ({ isActive }: { isActive: boolean }) => `app-sidebar__link${isActive ? ' app-sidebar__link--active' : ''}`;
@@ -131,6 +132,16 @@ export function AppSidebar({ collapsed }: Props) {
               <IcFolder size={18} />
             </span>
             {!collapsed ? <span>Teams</span> : null}
+          </NavLink>
+        </div>
+
+        <div className="app-sidebar__section">
+          {!collapsed ? <div className="app-sidebar__section-label">Utilities</div> : null}
+          <NavLink to={PATH_UTILITIES_DOCUMENT} className={linkCls} title="Document — scratch pad">
+            <span className="app-sidebar__ic">
+              <IcFileText size={18} />
+            </span>
+            {!collapsed ? <span>Document</span> : null}
           </NavLink>
         </div>
 

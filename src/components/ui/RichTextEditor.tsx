@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { RichTextBodyFormat, RichTextDoc, RichTextPayload } from '../../lib/richText';
-import { serializeRichDoc } from '../../lib/richText';
 import {
   isRichTextOverSoftLimit,
   RICH_TEXT_HARD_CHAR_LIMIT,
   RICH_TEXT_SOFT_CHAR_LIMIT,
 } from '../../lib/richText';
+import { canonicalDocSignature } from '../../lib/richTextBody';
 import { createRichTextExtensions } from '../../lib/richTextEditorExtensions';
 import {
   attachmentUri,
@@ -49,23 +50,26 @@ export type RichTextEditorProps = {
   attachmentScope?: RichTextAttachmentScope;
   /** Signed-in user id — scopes attachments on disk / IndexedDB. */
   attachmentUserId?: string;
-  /** Focus the editor when `editable` becomes true (e.g. entering edit mode). */
-  autoFocus?: boolean;
+  /** When true, toolbar stays visible while scrolling the surrounding pane. */
+  stickyToolbar?: boolean;
+  /** When set, the toolbar renders into this element (e.g. sticky chrome above the editor). */
+  toolbarMountEl?: HTMLElement | null;
+  /** Called when the user presses Escape while editing (e.g. switch to preview). */
+  onRequestPreview?: () => void;
+  /** Fired when local edits are pending vs flushed to `onChange`. */
+  onSaveStateChange?: (state: 'idle' | 'pending' | 'saved') => void;
 };
 
 function contentKey(
   value: RichTextDoc | string | null | undefined,
   valueFormat: RichTextBodyFormat | 'auto',
 ): string {
-  try {
-    return `${valueFormat}:${typeof value === 'string' ? value : JSON.stringify(value ?? null)}`;
-  } catch {
-    return '';
-  }
+  const formatArg = valueFormat === 'auto' ? undefined : valueFormat;
+  return `${valueFormat}:${canonicalDocSignature(value, formatArg)}`;
 }
 
-function changeSignature(doc: RichTextDoc, plainText: string): string {
-  return `${serializeRichDoc(normalizeDocAttachmentsForStorage(doc))}\0${plainText}`;
+function docSignatureFromEditor(ed: Editor): string {
+  return canonicalDocSignature(ed.getJSON() as RichTextDoc, 'prosemirror');
 }
 
 function payloadFromEditor(ed: Editor): RichTextPayload {
@@ -73,6 +77,34 @@ function payloadFromEditor(ed: Editor): RichTextPayload {
     doc: normalizeDocAttachmentsForStorage(ed.getJSON() as RichTextDoc),
     plainText: ed.getText(),
   };
+}
+
+const HYDRATION_TX_META = 'cadenceHydration';
+
+/**
+ * Replace document from props without moving the caret unless the structure
+ * makes the previous selection invalid (never force end-of-doc).
+ */
+function setExternalContentPreservingSelection(editor: Editor, content: RichTextDoc): void {
+  const { from, to, empty } = editor.state.selection;
+  const hadFocus = editor.view.hasFocus();
+
+  editor.commands.setContent(content, false);
+
+  if (!hadFocus) return;
+
+  const docSize = editor.state.doc.content.size;
+  const safeFrom = Math.max(0, Math.min(from, docSize));
+  const safeTo = Math.max(0, Math.min(to, docSize));
+
+  try {
+    editor.commands.setTextSelection(
+      empty ? { from: safeFrom, to: safeFrom } : { from: safeFrom, to: safeTo },
+    );
+    editor.view.focus();
+  } catch {
+    // Structural mismatch — leave ProseMirror default; do not jump to end.
+  }
 }
 
 async function hydrateAttachmentImages(editor: Editor, userId: string): Promise<void> {
@@ -102,12 +134,22 @@ async function hydrateAttachmentImages(editor: Editor, userId: string): Promise<
     });
     changed = true;
   }
-  if (changed) editor.view.dispatch(tr);
+  if (changed) {
+    tr.setMeta('addToHistory', false);
+    tr.setMeta(HYDRATION_TX_META, true);
+    editor.view.dispatch(tr);
+  }
 }
 
 /**
  * Reusable Cadence rich-text editor (Tiptap / ProseMirror).
  * Legacy markdown in → ProseMirror JSON out. Never persists HTML.
+ *
+ * Caret policy: the selection never moves unless the user moves it (click,
+ * arrow keys, toolbar on a selection, paste, etc.). Autosave echoes and
+ * attachment hydration must not call setContent or focus when content is
+ * already equivalent; external setContent restores the prior selection when
+ * possible and never jumps to end-of-document on failure.
  */
 export function RichTextEditor({
   value,
@@ -124,7 +166,10 @@ export function RichTextEditor({
   onEditorNotice,
   attachmentScope,
   attachmentUserId,
-  autoFocus = false,
+  stickyToolbar = false,
+  toolbarMountEl = null,
+  onRequestPreview,
+  onSaveStateChange,
 }: RichTextEditorProps) {
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -149,6 +194,12 @@ export function RichTextEditor({
   onChangeRef.current = onChange;
   const onBlurRef = useRef(onBlur);
   onBlurRef.current = onBlur;
+  const onRequestPreviewRef = useRef(onRequestPreview);
+  onRequestPreviewRef.current = onRequestPreview;
+  const onSaveStateChangeRef = useRef(onSaveStateChange);
+  onSaveStateChangeRef.current = onSaveStateChange;
+  const editableRef = useRef(editable);
+  editableRef.current = editable;
   const debounceMsRef = useRef(onChangeDebounceMs);
   debounceMsRef.current = onChangeDebounceMs;
   const pendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -182,23 +233,27 @@ export function RichTextEditor({
   );
 
   const syncBaselineFromEditor = useCallback((ed: Editor) => {
-    const payload = payloadFromEditor(ed);
-    lastEmittedSig.current = changeSignature(payload.doc, payload.plainText);
-    setCharCount(payload.plainText.length);
+    lastEmittedSig.current = docSignatureFromEditor(ed);
+    setCharCount(ed.getText().length);
   }, []);
 
   const flushChange = useCallback((ed: Editor) => {
     const payload = payloadFromEditor(ed);
-    const sig = changeSignature(payload.doc, payload.plainText);
-    if (sig === lastEmittedSig.current) return;
+    const sig = docSignatureFromEditor(ed);
+    if (sig === lastEmittedSig.current) {
+      onSaveStateChangeRef.current?.('idle');
+      return;
+    }
     lastEmittedSig.current = sig;
     onChangeRef.current?.(payload);
+    onSaveStateChangeRef.current?.('saved');
     setCharCount(payload.plainText.length);
   }, []);
 
   const scheduleChange = useCallback(
     (ed: Editor) => {
       setCharCount(ed.getText().length);
+      onSaveStateChangeRef.current?.('pending');
       const ms = debounceMsRef.current;
       if (ms <= 0) {
         flushChange(ed);
@@ -292,6 +347,14 @@ export function RichTextEditor({
         class: 'rich-editor__prose',
         spellcheck: 'true',
       },
+      handleKeyDown: (_view, event) => {
+        if (event.key === 'Escape' && editableRef.current && onRequestPreviewRef.current) {
+          event.preventDefault();
+          onRequestPreviewRef.current();
+          return true;
+        }
+        return false;
+      },
       handlePaste: (_view, event) => {
         if (!attachmentScopeRef.current || !attachmentUserIdRef.current) return false;
         const file = readClipboardImageFile(event.clipboardData);
@@ -301,8 +364,13 @@ export function RichTextEditor({
         return true;
       },
     },
-    onUpdate: ({ editor: ed }) => {
+    onUpdate: ({ editor: ed, transaction }) => {
       editorRef.current = ed;
+      if (!transaction.docChanged) return;
+      if (transaction.getMeta(HYDRATION_TX_META)) {
+        syncBaselineFromEditor(ed);
+        return;
+      }
       scheduleChange(ed);
     },
     onCreate: ({ editor: ed }) => {
@@ -325,8 +393,23 @@ export function RichTextEditor({
   useEffect(() => {
     if (!editor) return;
     if (externalKey === lastExternalKey.current) return;
+
+    const incomingSig = canonicalDocSignature(value, formatArg);
+    const liveSig = docSignatureFromEditor(editor);
+
+    // Parent echoed our own onChange, or editor already matches — never setContent.
+    if (incomingSig === lastEmittedSig.current || incomingSig === liveSig) {
+      lastExternalKey.current = externalKey;
+      lastEmittedSig.current = liveSig;
+      return;
+    }
+
     lastExternalKey.current = externalKey;
-    editor.commands.setContent(resolveRichTextContent(value, formatArg), false);
+    lastEmittedSig.current = incomingSig;
+    setExternalContentPreservingSelection(
+      editor,
+      resolveRichTextContent(value, formatArg),
+    );
     syncBaselineFromEditor(editor);
     const uid = attachmentUserIdRef.current;
     if (uid) {
@@ -337,10 +420,7 @@ export function RichTextEditor({
   useEffect(() => {
     if (!editor) return;
     editor.setEditable(editable);
-    if (editable && autoFocus) {
-      editor.commands.focus('end');
-    }
-  }, [editor, editable, autoFocus]);
+  }, [editor, editable]);
 
   useEffect(() => {
     if (!editor || !attachmentUserId) return;
@@ -350,18 +430,22 @@ export function RichTextEditor({
   const overSoft = showSizeWarning && isRichTextOverSoftLimit(charCount);
   const overHard = charCount > RICH_TEXT_HARD_CHAR_LIMIT;
 
+  const toolbarNode =
+    toolbar && editor ? (
+      <RichTextToolbar
+        editor={editor}
+        onNotice={showEditorNotice}
+        onInsertImageFile={insertImageFromFile}
+      />
+    ) : null;
+
   return (
     <div
-      className={`rich-editor${className ? ` ${className}` : ''}`}
+      className={`rich-editor${stickyToolbar ? ' rich-editor--sticky-toolbar' : ''}${className ? ` ${className}` : ''}`}
       style={{ '--rich-editor-min-h': `${minHeight}px` } as CSSProperties}
     >
-      {toolbar && editor ? (
-        <RichTextToolbar
-          editor={editor}
-          onNotice={showEditorNotice}
-          onInsertImageFile={insertImageFromFile}
-        />
-      ) : null}
+      {toolbarNode && !toolbarMountEl ? toolbarNode : null}
+      {toolbarNode && toolbarMountEl ? createPortal(toolbarNode, toolbarMountEl) : null}
       {editorNotice ? (
         <div className="rich-editor__notice" role="status">
           {editorNotice}

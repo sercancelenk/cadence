@@ -61,12 +61,20 @@ export function plainTextFromBodyFields(fields: {
   return raw;
 }
 
+/** Canonical JSON key for comparing stored vs in-editor document (ignores key order). */
+export function canonicalDocSignature(
+  value: RichTextDoc | string | null | undefined,
+  format?: RichTextBodyFormat,
+): string {
+  const doc = resolveRichTextContent(value ?? '', format);
+  return serializeRichDoc(normalizeDocAttachmentsForStorage(doc));
+}
+
 function canonicalBodyKey(fields: {
   body?: string;
   bodyFormat?: RichTextBodyFormat;
 }): string {
-  const doc = resolveRichTextContent(fields.body ?? '', fields.bodyFormat);
-  return serializeRichDoc(normalizeDocAttachmentsForStorage(doc));
+  return canonicalDocSignature(fields.body ?? '', fields.bodyFormat);
 }
 
 /** True when a body patch would not change stored content — skip to avoid bumping `updatedAt`. */

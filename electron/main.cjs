@@ -299,6 +299,8 @@ function collectReferencedAttachmentIdsFromPayload(payload) {
   };
   for (const n of payload?.notes || []) scan(n.body, n.bodyFormat);
   for (const t of payload?.todoItems || []) scan(t.body, t.bodyFormat);
+  const util = payload?.utilityDocument;
+  if (util) scan(util.body, util.bodyFormat);
   return ids;
 }
 

@@ -18,10 +18,13 @@ function scanBody(
   for (const id of collectAttachmentIds(doc)) sink.add(id);
 }
 
-/** All sidecar attachment ids referenced by notes and todos. */
+/** All sidecar attachment ids referenced by notes, todos, and the utilities document. */
 export function collectReferencedAttachmentIds(data: AppData): string[] {
   const ids = new Set<string>();
   for (const n of data.notes) scanBody(n.body, n.bodyFormat, ids);
   for (const t of data.todoItems) scanBody(t.body, t.bodyFormat, ids);
+  if (data.utilityDocument) {
+    scanBody(data.utilityDocument.body, data.utilityDocument.bodyFormat, ids);
+  }
   return [...ids];
 }
