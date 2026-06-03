@@ -1,4 +1,3 @@
-const { Notification } = require('electron');
 const { osNotificationId } = require('./reminderNotify.cjs');
 
 /** @typedef {import('./types.cjs').ReminderSlot} ReminderSlot */
@@ -91,6 +90,12 @@ function createInProcessScheduler({ onFireSlot, onCancelOsSlot }) {
  * @param {(() => void) | undefined} [onClick]
  */
 function showImmediateNotification(slot, onClick) {
+  let Notification;
+  try {
+    ({ Notification } = require('electron'));
+  } catch {
+    return false;
+  }
   if (!Notification.isSupported()) return false;
   try {
     const n = new Notification({
