@@ -94,7 +94,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.x'
-          cache: true
+          # No packages.lock.json — helper csproj has no NuGet deps; cache would fail the job.
 
       - name: Validate release config and helper
         run: |
