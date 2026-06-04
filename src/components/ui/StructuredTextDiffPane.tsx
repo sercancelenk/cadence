@@ -17,19 +17,29 @@ import {
 } from '../../lib/structuredTextEditorExtensions';
 import {
   commitLocalStructuredTextEdit,
+  applyVisualStructuredTextDoc,
   syncStructuredTextDocFromProp,
 } from '../../lib/structuredTextEditorSync';
-import { observeStructuredTextMergeHostResize, openStructuredTextSearch } from '../../lib/structuredTextEditorLayout';
+import { observeStructuredTextMergeHostResize, openStructuredTextSearch, jumpStructuredTextToPath } from '../../lib/structuredTextEditorLayout';
 import {
   formatStructuredText,
   validateStructuredText,
+  alignStructuredTextSidesForDiff,
+  applyStructuredEditToRawText,
   type StructuredTextLanguage,
   type StructuredTextValidation,
 } from '../../lib/structuredText';
+import { StructuredTextSemanticDiffPanel } from './StructuredTextSemanticDiffPanel';
 import { useDebouncedEmit } from '../../hooks/useDebouncedEmit';
 import { useEphemeralNotice } from '../../hooks/useEphemeralNotice';
+import { useVerticalSplitResize } from '../../hooks/useVerticalSplitResize';
 
 const DEFAULT_DEBOUNCE_MS = 150;
+const SEMANTIC_DEFAULT_HEIGHT = 220;
+const SEMANTIC_MIN_HEIGHT = 72;
+const MERGE_MIN_HEIGHT = 240;
+
+export type StructuredTextDiffCompareMode = 'line' | 'structured' | 'both';
 
 export type StructuredTextDiffPaneProps = {
   valueA: string;
@@ -56,13 +66,14 @@ export function StructuredTextDiffPane({
   onChangeB,
   language,
   onLanguageChange,
-  labelA = 'Before',
-  labelB = 'After',
+  labelA = 'Left',
+  labelB = 'Right',
   minHeight = 480,
   onChangeDebounceMs = DEFAULT_DEBOUNCE_MS,
   className = '',
 }: StructuredTextDiffPaneProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const mergeRef = useRef<MergeView | null>(null);
   const compartmentsRef = useRef<{
     a: ReturnType<typeof createStructuredTextCompartments>;
@@ -86,12 +97,24 @@ export function StructuredTextDiffPane({
   const [validationB, setValidationB] = useState<StructuredTextValidation>(() =>
     validateStructuredText(valueB, language),
   );
+  const [liveA, setLiveA] = useState(valueA);
+  const [liveB, setLiveB] = useState(valueB);
+  const [compareMode, setCompareMode] = useState<StructuredTextDiffCompareMode>('both');
+  const [alignKeys, setAlignKeys] = useState(false);
+  const alignKeysRef = useRef(alignKeys);
+  alignKeysRef.current = alignKeys;
+  const valueARef = useRef(valueA);
+  valueARef.current = valueA;
+  const valueBRef = useRef(valueB);
+  valueBRef.current = valueB;
 
   const refreshMeta = useCallback(() => {
     const merge = mergeRef.current;
     if (!merge) return;
     const textA = merge.a.state.doc.toString();
     const textB = merge.b.state.doc.toString();
+    setLiveA(textA);
+    setLiveB(textB);
     setValidationA(validateStructuredText(textA, languageRef.current));
     setValidationB(validateStructuredText(textB, languageRef.current));
   }, []);
@@ -107,10 +130,66 @@ export function StructuredTextDiffPane({
   });
   const { notice, showNotice, clearNotice } = useEphemeralNotice();
 
+  const applyVisualAlignKeys = useCallback(
+    (merge: MergeView, lang: StructuredTextLanguage, rawA?: string, rawB?: string) => {
+      const textA = rawA ?? merge.a.state.doc.toString();
+      const textB = rawB ?? merge.b.state.doc.toString();
+      const aligned = alignStructuredTextSidesForDiff(textA, textB, lang);
+      if (!aligned.ok) return false;
+      let changed = false;
+      if (aligned.changedA) {
+        applyVisualStructuredTextDoc(merge.a, aligned.textA, holdPropSyncARef);
+        changed = true;
+      }
+      if (aligned.changedB) {
+        applyVisualStructuredTextDoc(merge.b, aligned.textB, holdPropSyncBRef);
+        changed = true;
+      }
+      if (changed) refreshMeta();
+      return true;
+    },
+    [refreshMeta],
+  );
+
+  const runAlignKeys = useCallback(() => {
+    const merge = mergeRef.current;
+    if (!merge) return;
+    if (!applyVisualAlignKeys(merge, languageRef.current)) {
+      showNotice('Align keys skipped — fix parse errors on one or both sides.', 5000);
+    } else {
+      clearNotice();
+    }
+  }, [applyVisualAlignKeys, showNotice, clearNotice]);
+
+  const restoreRawFromProps = useCallback(
+    (merge: MergeView) => {
+      holdPropSyncARef.current = false;
+      holdPropSyncBRef.current = false;
+      commitLocalStructuredTextEdit(merge.a, valueARef.current, emitA.lastEmitted, holdPropSyncARef);
+      commitLocalStructuredTextEdit(merge.b, valueBRef.current, emitB.lastEmitted, holdPropSyncBRef);
+      emitA.lastEmitted.current = valueARef.current;
+      emitB.lastEmitted.current = valueBRef.current;
+      holdPropSyncARef.current = false;
+      holdPropSyncBRef.current = false;
+      refreshMeta();
+    },
+    [emitA, emitB, refreshMeta],
+  );
+
   const scheduleA = useCallback(
     (text: string) => {
       setValidationA(validateStructuredText(text, languageRef.current));
-      emitA.schedule(text);
+      const persistText = alignKeysRef.current
+        ? (() => {
+            const merged = applyStructuredEditToRawText(
+              valueARef.current,
+              text,
+              languageRef.current,
+            );
+            return merged.ok ? merged.text : text;
+          })()
+        : text;
+      emitA.schedule(persistText);
     },
     [emitA],
   );
@@ -118,7 +197,17 @@ export function StructuredTextDiffPane({
   const scheduleB = useCallback(
     (text: string) => {
       setValidationB(validateStructuredText(text, languageRef.current));
-      emitB.schedule(text);
+      const persistText = alignKeysRef.current
+        ? (() => {
+            const merged = applyStructuredEditToRawText(
+              valueBRef.current,
+              text,
+              languageRef.current,
+            );
+            return merged.ok ? merged.text : text;
+          })()
+        : text;
+      emitB.schedule(persistText);
     },
     [emitB],
   );
@@ -166,8 +255,6 @@ export function StructuredTextDiffPane({
       parent: host,
       gutter: true,
       highlightChanges: true,
-      collapseUnchanged: { margin: 3, minSize: 4 },
-      revertControls: 'a-to-b',
     });
     mergeRef.current = merge;
     refreshMeta();
@@ -214,6 +301,27 @@ export function StructuredTextDiffPane({
     refreshMeta();
   }, [language, refreshMeta]);
 
+  const runAlignKeysRef = useRef(runAlignKeys);
+  runAlignKeysRef.current = runAlignKeys;
+  const restoreRawFromPropsRef = useRef(restoreRawFromProps);
+  restoreRawFromPropsRef.current = restoreRawFromProps;
+
+  useEffect(() => {
+    const merge = mergeRef.current;
+    if (!merge) return;
+    if (alignKeys) {
+      runAlignKeysRef.current();
+    } else {
+      restoreRawFromPropsRef.current(merge);
+    }
+    // Intentionally alignKeys + language only — not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alignKeys, language]);
+
+  const toggleAlignKeys = () => {
+    setAlignKeys((on) => !on);
+  };
+
   const runFormatBoth = () => {
     const merge = mergeRef.current;
     if (!merge) return;
@@ -244,10 +352,87 @@ export function StructuredTextDiffPane({
         ? `${side}: error line ${validation.line + 1}`
         : `${side}: invalid`;
 
+  const jumpToPath = useCallback((side: 'a' | 'b', path: string) => {
+    setCompareMode((mode) => (mode === 'structured' ? 'both' : mode));
+    requestAnimationFrame(() => {
+      const merge = mergeRef.current;
+      if (!merge) return;
+      const view = side === 'b' ? merge.b : merge.a;
+      if (!jumpStructuredTextToPath(view, path)) {
+        openStructuredTextSearch(view);
+      }
+    });
+  }, []);
+
+  const showSemantic = compareMode === 'structured' || compareMode === 'both';
+  const showLineMerge = compareMode === 'line' || compareMode === 'both';
+  const showSplit = showSemantic && showLineMerge;
+
+  const { topSize: semanticHeight, begin: beginSplit, move: moveSplit, end: endSplit } =
+    useVerticalSplitResize({
+      containerRef: bodyRef,
+      defaultSize: SEMANTIC_DEFAULT_HEIGHT,
+      minTop: SEMANTIC_MIN_HEIGHT,
+      minBottom: MERGE_MIN_HEIGHT,
+    });
+
+  useEffect(() => {
+    const merge = mergeRef.current;
+    if (!merge) return;
+    merge.a.requestMeasure();
+    merge.b.requestMeasure();
+  }, [semanticHeight, showSplit, showLineMerge]);
+
   return (
     <div className={`structured-text-diff-pane${className ? ` ${className}` : ''}`}>
       <div className="structured-text-editor__toolbar" role="toolbar" aria-label="Diff tools">
         <StructuredTextLanguageToggle language={language} onLanguageChange={onLanguageChange} />
+        <span className="structured-text-editor__toolbar-divider" aria-hidden />
+        <div className="structured-text-editor__lang" role="group" aria-label="Compare mode">
+          {(
+            [
+              ['both', 'Line + summary'],
+              ['line', 'Line only'],
+              ['structured', 'Summary only'],
+            ] as const
+          ).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              className={`structured-text-editor__lang-btn${compareMode === mode ? ' structured-text-editor__lang-btn--active' : ''}`}
+              aria-pressed={compareMode === mode}
+              title={
+                mode === 'structured'
+                  ? 'Structural diff only — added/removed keys and changed values, no side-by-side text'
+                  : mode === 'line'
+                    ? 'Side-by-side line diff only'
+                    : 'Line diff plus structural summary'
+              }
+              onClick={() => setCompareMode(mode)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="structured-text-editor__toolbar-divider" aria-hidden />
+        <button
+          type="button"
+          className={`structured-text-editor__lang-btn${alignKeys ? ' structured-text-editor__lang-btn--active' : ''}`}
+          aria-pressed={alignKeys}
+          title={
+            alignKeys
+              ? 'Visual only — sorts keys for line diff. Turn off for normal editing (recommended).'
+              : 'Sort keys visually for easier line diff (editing while on may feel different from Edit mode)'
+          }
+          onClick={toggleAlignKeys}
+          onDoubleClick={(e) => {
+            e.preventDefault();
+            if (!alignKeys) return;
+            runAlignKeys();
+          }}
+        >
+          Align keys
+        </button>
         <span className="structured-text-editor__toolbar-divider" aria-hidden />
         <div className="structured-text-editor__toolbar-actions">
           <StructuredTextToolbarButton
@@ -295,33 +480,78 @@ export function StructuredTextDiffPane({
           {notice}
         </div>
       ) : null}
-      <div className="structured-text-diff-pane__labels">
-        <span
-          className={`structured-text-diff-pane__label${validationA.valid ? '' : ' structured-text-diff-pane__label--err'}`}
-        >
-          {labelA}
-          <span className="structured-text-diff-pane__label-meta muted small">
-            {statusFor(validationA, labelA)}
-          </span>
-        </span>
-        <span
-          className={`structured-text-diff-pane__label${validationB.valid ? '' : ' structured-text-diff-pane__label--err'}`}
-        >
-          {labelB}
-          <span className="structured-text-diff-pane__label-meta muted small">
-            {statusFor(validationB, labelB)}
-          </span>
-        </span>
-      </div>
       <div
-        ref={hostRef}
-        className="structured-text-diff-pane__host"
-        style={
-          minHeight > 0
-            ? ({ ['--structured-text-min-height' as string]: `${minHeight}px` } as CSSProperties)
-            : undefined
-        }
-      />
+        ref={bodyRef}
+        className={`structured-text-diff-pane__body${compareMode === 'structured' ? ' structured-text-diff-pane__body--summary-only' : ''}`}
+      >
+        {showSemantic ? (
+          <div
+            className={`structured-text-diff-pane__semantic-wrap${
+              showSplit
+                ? ' structured-text-diff-pane__semantic-wrap--split'
+                : ' structured-text-diff-pane__semantic-wrap--fill'
+            }`}
+            style={showSplit ? { height: semanticHeight } : undefined}
+          >
+            <StructuredTextSemanticDiffPanel
+              valueA={liveA}
+              valueB={liveB}
+              language={language}
+              leftLabel={labelA}
+              rightLabel={labelB}
+              onJumpToPath={jumpToPath}
+            />
+          </div>
+        ) : null}
+        {showSplit ? (
+          <div
+            className="structured-text-diff-pane__splitter"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize semantic summary and line diff"
+            title="Drag to resize panels"
+            onPointerDown={beginSplit}
+            onPointerMove={moveSplit}
+            onPointerUp={endSplit}
+            onPointerCancel={endSplit}
+          />
+        ) : null}
+        <div
+          className={`structured-text-diff-pane__merge${showLineMerge ? '' : ' structured-text-diff-pane__merge--hidden'}`}
+          aria-hidden={!showLineMerge}
+        >
+          <div className="structured-text-diff-pane__labels">
+            <span
+              className={`structured-text-diff-pane__label${validationA.valid ? '' : ' structured-text-diff-pane__label--err'}`}
+            >
+              {labelA}
+              <span className="structured-text-diff-pane__label-meta muted small">
+                {statusFor(validationA, labelA)}
+              </span>
+            </span>
+            <span
+              className={`structured-text-diff-pane__label${validationB.valid ? '' : ' structured-text-diff-pane__label--err'}`}
+            >
+              {labelB}
+              <span className="structured-text-diff-pane__label-meta muted small">
+                {statusFor(validationB, labelB)}
+              </span>
+            </span>
+          </div>
+          <p className="structured-text-diff-pane__legend muted small">
+            Highlighted lines differ between {labelA} and {labelB} — same color on both sides.
+          </p>
+          <div
+            ref={hostRef}
+            className="structured-text-diff-pane__host"
+            style={
+              minHeight > 0
+                ? ({ ['--structured-text-min-height' as string]: `${minHeight}px` } as CSSProperties)
+                : undefined
+            }
+          />
+        </div>
+      </div>
     </div>
   );
 }

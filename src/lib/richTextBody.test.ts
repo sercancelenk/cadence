@@ -42,6 +42,12 @@ describe('canonicalDocSignature', () => {
     const body = serializeRichDoc(doc);
     expect(canonicalDocSignature(body, 'prosemirror')).toBe(canonicalDocSignature(doc, 'prosemirror'));
   });
+
+  it('treats empty auto body and empty prosemirror JSON as the same doc', () => {
+    const emptyBody = serializeRichDoc(EMPTY_RICH_DOC);
+    expect(canonicalDocSignature('', undefined)).toBe(canonicalDocSignature(emptyBody, 'prosemirror'));
+    expect(canonicalDocSignature('', 'prosemirror')).toBe(canonicalDocSignature(emptyBody, 'prosemirror'));
+  });
 });
 
 describe('noteBodyPatchIsNoOp', () => {

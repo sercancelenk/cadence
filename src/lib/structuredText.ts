@@ -42,6 +42,151 @@ function parseJsonDocumentValue(text: string): unknown {
   return unwrapStringifiedJsonDocument(JSON.parse(text.trim()));
 }
 
+/** Parse document to a JS value — shared by format, semantic diff, and canonicalize. */
+export function parseStructuredDocumentValue(
+  text: string,
+  language: StructuredTextLanguage,
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: true, value: {} };
+
+  if (language === 'json') {
+    try {
+      return { ok: true, value: parseJsonDocumentValue(trimmed) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Invalid JSON' };
+    }
+  }
+
+  try {
+    return { ok: true, value: parseYaml(trimmed, { strict: true }) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Invalid YAML' };
+  }
+}
+
+/** Recursively sort object keys so line diff aligns fields regardless of source order. */
+export function deepSortStructuredValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(deepSortStructuredValue);
+  }
+  if (value !== null && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(obj).sort((a, b) => a.localeCompare(b))) {
+      sorted[key] = deepSortStructuredValue(obj[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+/**
+ * Pretty-print with stable key order — use before structural line diff so moved
+ * fields highlight as unchanged instead of false whole-document rewrites.
+ */
+export function canonicalizeStructuredTextForDiff(
+  text: string,
+  language: StructuredTextLanguage,
+): StructuredTextFormatResult {
+  const parsed = parseStructuredDocumentValue(text, language);
+  if (!parsed.ok) return parsed;
+
+  const sorted = deepSortStructuredValue(parsed.value);
+  if (language === 'json') {
+    return { ok: true, text: `${JSON.stringify(sorted, null, 2)}\n` };
+  }
+
+  try {
+    const yamlText = stringifyYaml(sorted, { indent: 2, sortMapEntries: true });
+    return { ok: true, text: yamlText.endsWith('\n') ? yamlText : `${yamlText}\n` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Invalid YAML' };
+  }
+}
+
+export function alignStructuredTextSidesForDiff(
+  textA: string,
+  textB: string,
+  language: StructuredTextLanguage,
+):
+  | { ok: true; textA: string; textB: string; changedA: boolean; changedB: boolean }
+  | { ok: false; error: string } {
+  const canonA = canonicalizeStructuredTextForDiff(textA, language);
+  if (!canonA.ok) return canonA;
+  const canonB = canonicalizeStructuredTextForDiff(textB, language);
+  if (!canonB.ok) return canonB;
+  return {
+    ok: true,
+    textA: canonA.text,
+    textB: canonB.text,
+    changedA: canonA.text !== textA,
+    changedB: canonB.text !== textB,
+  };
+}
+
+/** Merge an aligned editor document back into raw text, preserving original key order. */
+export function mergeStructuredEditPreservingKeyOrder(raw: unknown, edited: unknown): unknown {
+  if (Array.isArray(raw) && Array.isArray(edited)) {
+    if (raw.length !== edited.length) return edited;
+    return raw.map((item, index) => mergeStructuredEditPreservingKeyOrder(item, edited[index]));
+  }
+
+  if (
+    raw !== null &&
+    typeof raw === 'object' &&
+    !Array.isArray(raw) &&
+    edited !== null &&
+    typeof edited === 'object' &&
+    !Array.isArray(edited)
+  ) {
+    const rawRecord = raw as Record<string, unknown>;
+    const editedRecord = edited as Record<string, unknown>;
+    const merged: Record<string, unknown> = {};
+
+    for (const key of Object.keys(rawRecord)) {
+      if (Object.prototype.hasOwnProperty.call(editedRecord, key)) {
+        merged[key] = mergeStructuredEditPreservingKeyOrder(rawRecord[key], editedRecord[key]);
+      }
+    }
+
+    for (const key of Object.keys(editedRecord)) {
+      if (!Object.prototype.hasOwnProperty.call(merged, key)) {
+        merged[key] = editedRecord[key];
+      }
+    }
+
+    return merged;
+  }
+
+  return edited;
+}
+
+/** When align-keys is on, persist value edits onto the raw document without reordering keys. */
+export function applyStructuredEditToRawText(
+  rawText: string,
+  editedText: string,
+  language: StructuredTextLanguage,
+): StructuredTextFormatResult {
+  const rawParsed = parseStructuredDocumentValue(rawText, language);
+  if (!rawParsed.ok) return { ok: true, text: editedText };
+  const editedParsed = parseStructuredDocumentValue(editedText, language);
+  if (!editedParsed.ok) return { ok: true, text: editedText };
+
+  const merged = mergeStructuredEditPreservingKeyOrder(rawParsed.value, editedParsed.value);
+
+  if (language === 'json') {
+    return { ok: true, text: `${JSON.stringify(merged, null, 2)}\n` };
+  }
+
+  try {
+    const yamlText = stringifyYaml(merged, { indent: 2, sortMapEntries: false });
+    return { ok: true, text: yamlText.endsWith('\n') ? yamlText : `${yamlText}\n` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Invalid YAML' };
+  }
+}
+
 export function validateStructuredText(
   text: string,
   language: StructuredTextLanguage,

@@ -30,4 +30,21 @@ describe('useDebouncedEmit', () => {
 
     expect(onEmit).toHaveBeenCalledTimes(1);
   });
+
+  it('debounces emits when delay is greater than zero', () => {
+    vi.useFakeTimers();
+    const onEmit = vi.fn();
+    const { result } = renderHook(() => useDebouncedEmit(150, onEmit));
+
+    act(() => {
+      result.current.schedule('draft');
+    });
+    expect(onEmit).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    expect(onEmit).toHaveBeenCalledWith('draft');
+    vi.useRealTimers();
+  });
 });

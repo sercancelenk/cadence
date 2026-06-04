@@ -753,6 +753,8 @@ describe('notes and utilities', () => {
     d = patchUtilityStructuredText(d, { diffContent: '[]', language: 'json' });
     expect(d.utilityStructuredText?.diffContent).toBe('[]');
     expect(d.utilityStructuredText?.language).toBe('json');
+    d = patchUtilityStructuredText(d, { diffContentLeft: '{"left":true}\n' });
+    expect(d.utilityStructuredText?.diffContentLeft).toBe('{"left":true}\n');
   });
 
   it('patchUtilityStructuredText seeds default content when first write is diff-only', () => {

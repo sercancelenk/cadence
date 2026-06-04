@@ -964,7 +964,9 @@ const DEFAULT_UTILITY_STRUCTURED_CONTENT = '{\n}\n';
 
 export function patchUtilityStructuredText(
   data: AppData,
-  patch: Partial<Pick<UtilityStructuredText, 'content' | 'diffContent' | 'language'>>,
+  patch: Partial<
+    Pick<UtilityStructuredText, 'content' | 'diffContentLeft' | 'diffContent' | 'language'>
+  >,
 ): AppData {
   const prev: UtilityStructuredText = data.utilityStructuredText ?? {
     content: DEFAULT_UTILITY_STRUCTURED_CONTENT,

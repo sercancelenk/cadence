@@ -7,6 +7,8 @@ import {
   observeStructuredTextHostResize,
   observeStructuredTextMergeHostResize,
   openStructuredTextSearch,
+  jumpStructuredTextToQuery,
+  jumpStructuredTextToPath,
 } from './structuredTextEditorLayout';
 
 vi.mock('@codemirror/search', () => ({
@@ -126,5 +128,55 @@ describe('openStructuredTextSearch', () => {
   it('no-ops when neither view nor merge is provided', () => {
     openStructuredTextSearch(null, null);
     expect(openSearchPanel).not.toHaveBeenCalled();
+  });
+});
+
+describe('jumpStructuredTextToPath', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('walks nested path segments in document order', () => {
+    const view = mountView('{\n  "adres2": {\n    "ilce": "Maltepe"\n  }\n}\n');
+    const ok = jumpStructuredTextToPath(view, '$.adres2.ilce');
+    expect(ok).toBe(true);
+    const selected = view.state.doc.sliceString(
+      view.state.selection.main.from,
+      view.state.selection.main.to,
+    );
+    expect(selected).toBe('"ilce"');
+    view.destroy();
+  });
+
+  it('returns false when an intermediate segment is missing', () => {
+    const view = mountView('{\n  "a": 1\n}\n');
+    expect(jumpStructuredTextToPath(view, '$.missing.field')).toBe(false);
+    view.destroy();
+  });
+});
+
+describe('jumpStructuredTextToQuery', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('selects the first matching substring', () => {
+    const view = mountView('{\n  "name": "cadence"\n}\n');
+    const ok = jumpStructuredTextToQuery(view, '"name"');
+    expect(ok).toBe(true);
+    expect(view.state.selection.main.from).toBeGreaterThan(0);
+    view.destroy();
+  });
+
+  it('returns false for empty query', () => {
+    const view = mountView('hello');
+    expect(jumpStructuredTextToQuery(view, '   ')).toBe(false);
+    view.destroy();
+  });
+
+  it('returns false when query is not found', () => {
+    const view = mountView('hello');
+    expect(jumpStructuredTextToQuery(view, 'missing')).toBe(false);
+    view.destroy();
   });
 });

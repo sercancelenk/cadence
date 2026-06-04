@@ -2,8 +2,26 @@ import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { forceLinting, forEachDiagnostic } from '@codemirror/lint';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('yaml', () => ({
+  parse: (text: string) => {
+    if (!text.includes('invalid-yaml')) {
+      return {};
+    }
+    const err = new Error('bad yaml') as Error & {
+      linePos?: { line: number; col: number }[];
+    };
+    if (text.includes('with-linepos')) {
+      err.linePos = [{ line: 2, col: 4 }];
+    }
+    throw err;
+  },
+}));
+
 import {
   buildStructuredTextExtensions,
+  cadenceStructuredTextHighlightStyle,
+  collectStructuredTextYamlDiagnostics,
   createStructuredTextCompartments,
   structuredTextLanguageExtensions,
 } from './structuredTextEditorExtensions';
@@ -87,6 +105,36 @@ describe('yamlParseLinter via EditorView', () => {
     view.destroy();
   });
 
+  it('reports diagnostics for invalid YAML documents', () => {
+    const diagnostics = collectStructuredTextYamlDiagnostics('invalid-yaml', () => ({ from: 0, to: 6 }));
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toBe('bad yaml');
+  });
+
+  it('returns no diagnostics for whitespace-only YAML', () => {
+    expect(collectStructuredTextYamlDiagnostics('   \n', () => ({ from: 0, to: 0 }))).toEqual([]);
+  });
+
+  it('maps YAML linePos metadata when the parser provides it', () => {
+    const diagnostics = collectStructuredTextYamlDiagnostics('invalid-yaml with-linepos', () => ({
+      from: 20,
+      to: 24,
+    }));
+    expect(diagnostics[0]).toMatchObject({ from: 23, to: 24, message: 'bad yaml' });
+  });
+
+  it('falls back to the document start when YAML line lookup fails', () => {
+    const diagnostics = collectStructuredTextYamlDiagnostics('invalid-yaml with-linepos', () => {
+      throw new Error('missing line');
+    });
+    expect(diagnostics[0]).toMatchObject({ from: 0, to: 1, message: 'bad yaml' });
+  });
+});
+
+describe('cadenceStructuredTextHighlightStyle', () => {
+  it('defines theme-aware token colours', () => {
+    expect(cadenceStructuredTextHighlightStyle).toBeDefined();
+  });
 });
 
 describe('buildStructuredTextExtensions', () => {
@@ -128,6 +176,13 @@ describe('buildStructuredTextExtensions', () => {
   it('wires the full extension bundle including lint gutter', () => {
     const view = mountFullView('name: cadence\n', 'yaml');
     expect(view.state.doc.toString()).toContain('cadence');
+    view.destroy();
+  });
+
+  it('applies syntax highlighting to JSON tokens', () => {
+    const view = mountFullView('{\n  "name": "cadence",\n  "count": 42,\n  "ok": true\n}\n', 'json');
+    const highlighted = view.contentDOM.querySelectorAll('span[class^="ͼ"]');
+    expect(highlighted.length).toBeGreaterThan(4);
     view.destroy();
   });
 });

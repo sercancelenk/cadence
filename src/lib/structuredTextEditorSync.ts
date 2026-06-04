@@ -1,4 +1,4 @@
-import { Transaction } from '@codemirror/state';
+import { ChangeSet, Transaction } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import type { MutableRefObject } from 'react';
 
@@ -14,10 +14,12 @@ export function replaceStructuredTextDoc(
   text: string,
   { preserveSelection = true, recordHistory = true }: ReplaceDocOptions = {},
 ) {
-  if (text === view.state.doc.toString()) return;
+  const doc = view.state.doc;
+  if (text === doc.toString()) return;
+  const changeSet = ChangeSet.of([{ from: 0, to: doc.length, insert: text }], doc.length);
   view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: text },
-    ...(preserveSelection ? { selection: view.state.selection } : {}),
+    changes: changeSet,
+    ...(preserveSelection ? { selection: view.state.selection.map(changeSet) } : {}),
     ...(recordHistory ? {} : { annotations: Transaction.addToHistory.of(false) }),
   });
 }
@@ -34,6 +36,15 @@ export function commitLocalStructuredTextEdit(
 ): void {
   replaceStructuredTextDoc(view, text);
   lastEmitted.current = text;
+  holdPropSync.current = true;
+}
+
+export function applyVisualStructuredTextDoc(
+  view: EditorView,
+  text: string,
+  holdPropSync: MutableRefObject<boolean>,
+): void {
+  replaceStructuredTextDoc(view, text, { preserveSelection: true, recordHistory: false });
   holdPropSync.current = true;
 }
 

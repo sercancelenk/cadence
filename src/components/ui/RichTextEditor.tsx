@@ -66,7 +66,10 @@ function contentKey(
   valueFormat: RichTextBodyFormat | 'auto',
 ): string {
   const formatArg = valueFormat === 'auto' ? undefined : valueFormat;
-  return `${valueFormat}:${canonicalDocSignature(value, formatArg)}`;
+  // Signature only — `bodyFormat` can flip (auto → prosemirror) before the
+  // parent body string catches up; a format-prefixed key would run setContent
+  // with stale empty props and reset the caret on the first keystroke.
+  return canonicalDocSignature(value, formatArg);
 }
 
 function docSignatureFromEditor(ed: Editor): string {
@@ -349,6 +352,7 @@ export function RichTextEditor({
     extensions,
     content: resolvedDoc,
     editable,
+    shouldRerenderOnTransaction: false,
     editorProps: {
       attributes: {
         class: 'rich-editor__prose',
@@ -408,6 +412,15 @@ export function RichTextEditor({
     if (incomingSig === lastEmittedSig.current || incomingSig === liveSig) {
       lastExternalKey.current = externalKey;
       lastEmittedSig.current = liveSig;
+      return;
+    }
+
+    // Parent props lag local typing (debounced onChange) or body/format split —
+    // never clobber focused/pending editor state with stale empty content.
+    if (
+      incomingSig !== liveSig &&
+      (editor.view.hasFocus() || pendingTimer.current !== null)
+    ) {
       return;
     }
 

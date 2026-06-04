@@ -227,7 +227,9 @@ type Api = {
     patch: Partial<Pick<UtilityDocument, 'body' | 'bodyFormat' | 'bodyPlainText'>>,
   ) => void;
   patchUtilityStructuredText: (
-    patch: Partial<Pick<UtilityStructuredText, 'content' | 'diffContent' | 'language'>>,
+    patch: Partial<
+      Pick<UtilityStructuredText, 'content' | 'diffContentLeft' | 'diffContent' | 'language'>
+    >,
   ) => void;
 };
 

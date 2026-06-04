@@ -392,8 +392,11 @@ export interface UtilityDocument {
 }
 
 export interface UtilityStructuredText {
+  /** Edit-mode buffer only. */
   content: string;
-  /** Second buffer for side-by-side diff (After). */
+  /** Diff left pane (Before). Independent from `content` after first Diff open. */
+  diffContentLeft?: string;
+  /** Diff right pane (After). */
   diffContent?: string;
   language: 'json' | 'yaml';
   updatedAt: string;
@@ -1033,6 +1036,7 @@ function parseUtilityStructuredText(raw: unknown): UtilityStructuredText | undef
   if (typeof o.content !== 'string') return undefined;
   return {
     content: o.content,
+    diffContentLeft: typeof o.diffContentLeft === 'string' ? o.diffContentLeft : undefined,
     diffContent: typeof o.diffContent === 'string' ? o.diffContent : undefined,
     language: o.language === 'yaml' ? 'yaml' : 'json',
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),

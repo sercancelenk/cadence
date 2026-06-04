@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { useAppData } from '../AppDataContext';
 import { StructuredTextDiffPane } from '../components/ui/StructuredTextDiffPane';
 import { StructuredTextEditor } from '../components/ui/StructuredTextEditor';
-import { IcLayoutGrid, IcPencil } from '../components/icons';
+import { StructuredTextHelpDialog } from '../components/ui/StructuredTextHelpDialog';
+import { IcHelpCircle, IcLayoutGrid, IcPencil } from '../components/icons';
 import type { StructuredTextLanguage } from '../lib/structuredText';
 
 const DEFAULT_JSON = '{\n}\n';
@@ -13,9 +14,11 @@ export function UtilitiesStructuredPage() {
   const { data, patchUtilityStructuredText } = useAppData();
   const stored = data.utilityStructuredText;
   const [mode, setMode] = useState<StructuredMode>('edit');
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const content = stored?.content ?? DEFAULT_JSON;
-  const diffContent = stored?.diffContent ?? content;
+  const diffContentLeft = stored?.diffContentLeft ?? DEFAULT_JSON;
+  const diffContentRight = stored?.diffContent ?? DEFAULT_JSON;
   const language: StructuredTextLanguage = stored?.language ?? 'json';
 
   const lastUpdated = useMemo(() => {
@@ -33,8 +36,14 @@ export function UtilitiesStructuredPage() {
     patchUtilityStructuredText({ content: next });
   };
 
-  const onDiffChange = (next: string) => {
-    const prev = stored?.diffContent ?? content;
+  const onDiffLeftChange = (next: string) => {
+    const prev = stored?.diffContentLeft ?? DEFAULT_JSON;
+    if (next === prev) return;
+    patchUtilityStructuredText({ diffContentLeft: next });
+  };
+
+  const onDiffRightChange = (next: string) => {
+    const prev = stored?.diffContent ?? DEFAULT_JSON;
     if (next === prev) return;
     patchUtilityStructuredText({ diffContent: next });
   };
@@ -48,11 +57,40 @@ export function UtilitiesStructuredPage() {
     patchUtilityStructuredText({ content, language: nextLanguage });
   };
 
+  const openDiff = () => {
+    const editContent = stored?.content ?? DEFAULT_JSON;
+    const patch: {
+      diffContentLeft?: string;
+      diffContent?: string;
+    } = {};
+    if (stored?.diffContentLeft === undefined) {
+      patch.diffContentLeft = editContent;
+    }
+    if (stored?.diffContent === undefined) {
+      patch.diffContent = editContent;
+    }
+    if (Object.keys(patch).length > 0) {
+      patchUtilityStructuredText(patch);
+    }
+    setMode('diff');
+  };
+
   return (
     <div className="page page--wide utilities-structured-page">
       <header className="utilities-doc-page__head">
         <div>
-          <h1 className="utilities-doc-page__title">JSON / YAML</h1>
+          <div className="utilities-doc-page__title-row">
+            <h1 className="utilities-doc-page__title">JSON / YAML</h1>
+            <button
+              type="button"
+              className="icon-btn utilities-doc-page__help-btn"
+              aria-label="How to use JSON / YAML editor"
+              title="How to use this editor"
+              onClick={() => setHelpOpen(true)}
+            >
+              <IcHelpCircle size={18} />
+            </button>
+          </div>
           <p className="utilities-doc-page__lead muted">
             Edit, convert, and diff structured data with folding and validation. Auto-saved to your
             workspace — not a note or todo.
@@ -63,7 +101,9 @@ export function UtilitiesStructuredPage() {
         ) : null}
       </header>
 
-      <div className="structured-text-workspace">
+      {helpOpen ? <StructuredTextHelpDialog onClose={() => setHelpOpen(false)} /> : null}
+
+      <div className={`structured-text-workspace${mode === 'diff' ? ' structured-text-workspace--diff' : ''}`}>
         <div className="rich-doc-pane__chrome structured-text-workspace__chrome">
           <div className="rich-doc-pane__mode" role="tablist" aria-label="Structured text mode">
             <button
@@ -81,7 +121,7 @@ export function UtilitiesStructuredPage() {
               className={`rich-doc-pane__mode-tab${mode === 'diff' ? ' rich-doc-pane__mode-tab--active' : ''}`}
               role="tab"
               aria-selected={mode === 'diff'}
-              onClick={() => setMode('diff')}
+              onClick={openDiff}
             >
               <IcLayoutGrid size={14} />
               <span>Diff</span>
@@ -101,10 +141,10 @@ export function UtilitiesStructuredPage() {
             />
           ) : (
             <StructuredTextDiffPane
-              valueA={content}
-              valueB={diffContent}
-              onChangeA={onChange}
-              onChangeB={onDiffChange}
+              valueA={diffContentLeft}
+              valueB={diffContentRight}
+              onChangeA={onDiffLeftChange}
+              onChangeB={onDiffRightChange}
               language={language}
               onLanguageChange={onLanguageChange}
               minHeight={0}

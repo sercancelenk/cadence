@@ -9,11 +9,14 @@ import {
   codeFolding,
   foldGutter,
   foldKeymap,
+  HighlightStyle,
   indentOnInput,
+  syntaxHighlighting,
 } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
-import { parseDocument } from 'yaml';
+import { parse as parseYaml } from 'yaml';
 import type { StructuredTextLanguage } from './structuredText';
 
 export type StructuredTextCompartments = {
@@ -28,28 +31,43 @@ export function createStructuredTextCompartments(): StructuredTextCompartments {
   };
 }
 
+export type StructuredTextYamlDiagnostic = {
+  from: number;
+  to: number;
+  severity: 'error';
+  message: string;
+};
+
+/** Pure YAML lint helper — exported for unit tests and the CodeMirror linter. */
+export function collectStructuredTextYamlDiagnostics(
+  text: string,
+  lineAt: (lineNumber: number) => { from: number; to: number },
+): StructuredTextYamlDiagnostic[] {
+  if (!text.trim()) return [];
+  try {
+    parseYaml(text, { strict: true });
+    return [];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Invalid YAML';
+    const linePos = (err as { linePos?: { line: number; col: number }[] }).linePos;
+    if (linePos?.[0]) {
+      try {
+        const line = lineAt(linePos[0].line);
+        const from = line.from + Math.max(0, linePos[0].col - 1);
+        const to = Math.min(line.to, from + 1);
+        return [{ from, to, severity: 'error', message }];
+      } catch {
+        /* fall through */
+      }
+    }
+    return [{ from: 0, to: Math.min(text.length, 1), severity: 'error', message }];
+  }
+}
+
 function yamlParseLinter() {
   return linter((view) => {
     const text = view.state.doc.toString();
-    if (!text.trim()) return [];
-    try {
-      parseDocument(text, { strict: true });
-      return [];
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Invalid YAML';
-      const linePos = (err as { linePos?: { line: number; col: number }[] }).linePos;
-      if (linePos?.[0]) {
-        try {
-          const line = view.state.doc.line(linePos[0].line);
-          const from = line.from + Math.max(0, linePos[0].col - 1);
-          const to = Math.min(line.to, from + 1);
-          return [{ from, to, severity: 'error' as const, message }];
-        } catch {
-          /* fall through */
-        }
-      }
-      return [{ from: 0, to: Math.min(text.length, 1), severity: 'error' as const, message }];
-    }
+    return collectStructuredTextYamlDiagnostics(text, (lineNumber) => view.state.doc.line(lineNumber));
   });
 }
 
@@ -59,6 +77,34 @@ export function structuredTextLanguageExtensions(language: StructuredTextLanguag
   }
   return [yamlLang(), yamlParseLinter()];
 }
+
+/** Theme-aware token colours — CSS vars switch with `:root[data-theme]`. */
+export const cadenceStructuredTextHighlightStyle = HighlightStyle.define([
+  { tag: [t.propertyName, t.labelName, t.name], color: 'var(--cm-property)' },
+  { tag: t.definition(t.propertyName), color: 'var(--cm-property)', fontWeight: '600' },
+  { tag: [t.string, t.special(t.string)], color: 'var(--cm-string)' },
+  { tag: [t.number, t.integer, t.float], color: 'var(--cm-number)' },
+  { tag: t.bool, color: 'var(--cm-bool)' },
+  { tag: [t.null, t.keyword], color: 'var(--cm-null)' },
+  { tag: t.comment, color: 'var(--cm-comment)', fontStyle: 'italic' },
+  { tag: [t.meta, t.processingInstruction], color: 'var(--cm-meta)' },
+  { tag: [t.bracket, t.brace, t.paren, t.squareBracket], color: 'var(--cm-bracket)' },
+  { tag: [t.punctuation, t.separator, t.operator, t.derefOperator], color: 'var(--cm-punctuation)' },
+  { tag: [t.className, t.typeName], color: 'var(--cm-type)' },
+  { tag: t.invalid, color: 'var(--cm-invalid)', textDecoration: 'underline wavy' },
+]);
+
+const structuredTextFoldGutter = foldGutter({
+  openText: '▾',
+  closedText: '▸',
+  markerDOM: (open) => {
+    const span = document.createElement('span');
+    span.className = `cm-fold-marker${open ? ' cm-fold-marker--open' : ' cm-fold-marker--closed'}`;
+    span.textContent = open ? '▾' : '▸';
+    span.setAttribute('aria-hidden', 'true');
+    return span;
+  },
+});
 
 export const cadenceStructuredTextTheme = EditorView.theme(
   {
@@ -107,12 +153,28 @@ export const cadenceStructuredTextTheme = EditorView.theme(
     },
     '.cm-foldGutter span': {
       cursor: 'pointer',
-      color: 'var(--muted)',
+      color: 'var(--cm-fold)',
       fontSize: '11px',
-      padding: '0 2px',
+      lineHeight: '1',
+      padding: '0 3px',
+      borderRadius: '3px',
+      transition: 'color 120ms ease, background-color 120ms ease',
     },
-    '.cm-foldGutter span:hover': {
-      color: 'var(--text)',
+    '.cm-foldGutter span:hover, .cm-fold-marker:hover': {
+      color: 'var(--cm-fold-hover)',
+      backgroundColor: 'color-mix(in srgb, var(--accent) 14%, transparent)',
+    },
+    '.cm-fold-marker': {
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: '14px',
+      fontSize: '10px',
+      fontWeight: '700',
+      color: 'var(--cm-fold)',
+    },
+    '.cm-fold-marker--open': {
+      color: 'var(--accent)',
     },
     '.cm-foldPlaceholder': {
       backgroundColor: 'color-mix(in srgb, var(--accent) 12%, var(--panel))',
@@ -182,8 +244,9 @@ export function buildStructuredTextExtensions(
 ): Extension[] {
   return [
     cadenceStructuredTextTheme,
+    syntaxHighlighting(cadenceStructuredTextHighlightStyle, { fallback: true }),
     lineNumbers(),
-    foldGutter(),
+    structuredTextFoldGutter,
     codeFolding(),
     highlightActiveLine(),
     drawSelection(),

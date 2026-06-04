@@ -29,8 +29,12 @@ export function useNotesEditor(
 
   const editorReady = !!selected && (!selected.locked || !!decryptedForSelected);
 
-  const editorBodyFormat: RichTextBodyFormat | 'auto' =
-    selected?.bodyFormat ?? decryptedForSelected?.bodyFormat ?? 'auto';
+  // Unlocked notes read body/format only from `selected` so a debounced
+  // `setDecrypted` cannot run ahead of `patchNote` and flash prosemirror
+  // format with an empty body (that echo resets the caret mid-type).
+  const editorBodyFormat: RichTextBodyFormat | 'auto' = selected?.locked
+    ? (decryptedForSelected?.bodyFormat ?? selected?.bodyFormat ?? 'auto')
+    : (selected?.bodyFormat ?? 'auto');
 
   const editorBody = !selected
     ? ''
@@ -77,7 +81,6 @@ export function useNotesEditor(
       : { body: '', bodyFormat: undefined, bodyPlainText: undefined };
     if (noteBodyPatchIsNoOp(selected, fields)) return;
     if (!selected.locked) {
-      setDecrypted({ noteId: selected.id, ...fields });
       patchNote(selected.id, fields);
       return;
     }

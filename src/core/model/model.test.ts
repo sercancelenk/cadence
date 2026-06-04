@@ -1493,9 +1493,21 @@ describe('normalizeData — exhaustive parse/load/migration', () => {
       normalizeData({
         ...baseV3(),
         utilityDocument: { body: 'doc', bodyFormat: 'prosemirror', bodyPlainText: 'p', updatedAt: TS },
-        utilityStructuredText: { content: '{}', diffContent: '[]', language: 'yaml', updatedAt: TS },
+        utilityStructuredText: {
+          content: '{}',
+          diffContentLeft: '{"a":1}',
+          diffContent: '[]',
+          language: 'yaml',
+          updatedAt: TS,
+        },
       }).utilityStructuredText,
-    ).toEqual({ content: '{}', diffContent: '[]', language: 'yaml', updatedAt: TS });
+    ).toEqual({
+      content: '{}',
+      diffContentLeft: '{"a":1}',
+      diffContent: '[]',
+      language: 'yaml',
+      updatedAt: TS,
+    });
     expect(
       normalizeData({
         ...baseV3(),
