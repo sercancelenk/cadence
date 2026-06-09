@@ -4,8 +4,11 @@ import { useAppData } from '../AppDataContext';
 import { kindLabel } from '../lib/labels';
 import {
   PATH_AGENDA,
+  PATH_ANALYTICS,
+  PATH_ANALYTICS_ACTIVITY,
   PATH_HOME,
   PATH_NOTES,
+  PATH_PLANNING,
   PATH_PROFILE,
   PATH_SETTINGS,
   PATH_TEAMS,
@@ -16,10 +19,12 @@ import {
 import { plainTextFromBodyFields } from '../lib/richTextBody';
 import { teamBase, teamPeople, teamPerson } from '../lib/teamPaths';
 import type { Item, Note, Person, Team, TodoItem } from '../model';
+import { isNoteArchived, isTodoItemArchived } from '../model';
 import {
   IcArrowRight,
   IcBraces,
   IcCalendar,
+  IcChartBar,
   IcFileText,
   IcFolder,
   IcHome,
@@ -27,6 +32,7 @@ import {
   IcLock,
   IcSettings,
   IcStickyNote,
+  IcTarget,
   IcUser,
   IcUsers,
 } from './icons';
@@ -275,6 +281,13 @@ function buildCommands(
       run: () => navigate(PATH_AGENDA),
     },
     {
+      id: 'nav-planning',
+      group: 'Navigate',
+      label: 'Go to Planning',
+      icon: <IcTarget size={16} />,
+      run: () => navigate(PATH_PLANNING),
+    },
+    {
       id: 'nav-notes',
       group: 'Navigate',
       label: 'Go to Notes',
@@ -294,6 +307,21 @@ function buildCommands(
       label: 'Go to JSON / YAML (Utilities)',
       icon: <IcBraces size={16} />,
       run: () => navigate(PATH_UTILITIES_STRUCTURED),
+    },
+    {
+      id: 'nav-analytics',
+      group: 'Navigate',
+      label: 'Go to Analytics',
+      icon: <IcChartBar size={16} />,
+      run: () => navigate(PATH_ANALYTICS),
+    },
+    {
+      id: 'nav-activity',
+      group: 'Navigate',
+      label: 'Go to Activity report',
+      hint: 'Completed, opened, and open tasks by period',
+      icon: <IcChartBar size={16} />,
+      run: () => navigate(PATH_ANALYTICS_ACTIVITY),
     },
     {
       id: 'nav-profile',
@@ -362,6 +390,7 @@ function buildCommands(
   }
 
   for (const t of data.todoItems as TodoItem[]) {
+    if (isTodoItemArchived(t)) continue;
     const bodyPlain = (plainTextFromBodyFields(t) || t.body || '').trim();
     const title = (t.title || '').trim();
     if (!title && !bodyPlain) continue;
@@ -398,6 +427,7 @@ function buildCommands(
   // re-selecting. To-do hits use /todos?focus=<id> for the same deep-link
   // scroll + highlight behaviour TodosPage already implements for backlinks.
   for (const n of data.notes as Note[]) {
+    if (isNoteArchived(n)) continue;
     const title = (n.title || '').trim();
     if (!title && n.locked) continue; // nothing to search/show
     cmds.push({

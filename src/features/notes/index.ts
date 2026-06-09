@@ -14,7 +14,9 @@ export {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
   SORT_OPTIONS,
-  type NoteSortMode,
+  filterNotesForView,
+  NOTE_VIEW_OPTIONS,
+  type NoteViewMode,
 } from './notePreferences';
 export { prefetchRichTextEditor } from './prefetchRichTextEditor';
 export { sortNotes } from './sortNotes';
@@ -29,4 +31,5 @@ export { useNotesLock } from './useNotesLock';
 export { useNotesManualReorder } from './useNotesManualReorder';
 export { useNotesSelection } from './useNotesSelection';
 export { useNotesSort } from './useNotesSort';
+export { useNotesViewMode } from './useNotesViewMode';
 export { useSidebarResize } from './useSidebarResize';

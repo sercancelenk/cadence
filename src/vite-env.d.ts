@@ -183,6 +183,9 @@ interface CadenceApi {
         data: unknown,
       ) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
       importDataBundle?: () => Promise<{ ok: boolean; importedFrom?: string; canceled?: boolean; error?: string }>;
+      importWorkspace?: (
+        payload: unknown,
+      ) => Promise<{ ok: boolean; writeGeneration?: number; error?: string; reason?: string }>;
       getAppVersion: () => Promise<string>;
       checkForUpdates: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
       installUpdate: () => Promise<{ ok: boolean; reason?: string; error?: string }>;

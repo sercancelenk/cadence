@@ -1,7 +1,17 @@
 import { IcSearch, IcSliders, IcSparkles, IcX } from '../../components/icons';
-import { SORT_OPTIONS, STATUS_FILTER_OPTIONS, type SortMode, type StatusFilter } from './todoPreferences';
+import {
+  SORT_OPTIONS,
+  STATUS_FILTER_OPTIONS,
+  TODO_ITEM_VIEW_OPTIONS,
+  type SortMode,
+  type StatusFilter,
+  type TodoItemViewMode,
+} from './todoPreferences';
 
 type Props = {
+  itemViewMode: TodoItemViewMode;
+  onItemViewModeChange: (mode: TodoItemViewMode) => void;
+  archivedCount: number;
   search: string;
   onSearchChange: (q: string) => void;
   sortMode: SortMode;
@@ -19,6 +29,9 @@ type Props = {
 };
 
 export function TodosToolbar({
+  itemViewMode,
+  onItemViewModeChange,
+  archivedCount,
   search,
   onSearchChange,
   sortMode,
@@ -49,6 +62,22 @@ export function TodosToolbar({
 
   return (
     <section className="card todos-toolbar">
+      <div className="seg todos-toolbar__view-seg" role="group" aria-label="Task view">
+        {TODO_ITEM_VIEW_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            className={`seg__btn${itemViewMode === opt.value ? ' seg__btn--on' : ''}`}
+            onClick={() => onItemViewModeChange(opt.value)}
+          >
+            {opt.label}
+            {opt.value === 'archived' && archivedCount > 0 ? (
+              <span className="todos-toolbar__view-badge">{archivedCount}</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+
       <div className="todos-toolbar__row">
         <div className="todos-toolbar__search-wrap">
           <span className="todos-toolbar__search-ic" aria-hidden>
@@ -57,7 +86,7 @@ export function TodosToolbar({
           <input
             type="search"
             className="todos-toolbar__search"
-            placeholder="Search tasks…"
+            placeholder={itemViewMode === 'archived' ? 'Search archived tasks…' : 'Search tasks…'}
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
             aria-label="Search tasks"
@@ -93,7 +122,7 @@ export function TodosToolbar({
               </span>
             ) : null}
           </button>
-          {aiEnabled ? (
+          {aiEnabled && itemViewMode === 'active' ? (
             <button
               type="button"
               className="btn btn--ghost todos-toolbar__ai"
@@ -142,14 +171,16 @@ export function TodosToolbar({
             <input type="checkbox" checked={hideDone} onChange={(e) => onHideDoneChange(e.target.checked)} />
             <span className="small">Hide closed</span>
           </label>
-          <label className="todos-toolbar__check">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => onShowArchivedChange(e.target.checked)}
-            />
-            <span className="small">Show archived</span>
-          </label>
+          {itemViewMode === 'active' ? (
+            <label className="todos-toolbar__check">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => onShowArchivedChange(e.target.checked)}
+              />
+              <span className="small">Show archived lists</span>
+            </label>
+          ) : null}
           {activeCount > 0 ? (
             <button
               type="button"

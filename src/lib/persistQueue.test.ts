@@ -72,4 +72,36 @@ describe('createPersistQueue', () => {
     await queue.enqueue(2);
     expect(queue.latestSeq()).toBe(2);
   });
+
+  it('cancelPending drops stale in-flight failure results', async () => {
+    let resolveFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((r) => {
+      resolveFirst = r;
+    });
+    const write = vi.fn(async (n: number) => {
+      if (n === 1) {
+        await firstGate;
+        return { ok: false as const, reason: 'write-conflict', writeGeneration: 5 };
+      }
+      return { ok: true as const };
+    });
+    const queue = createPersistQueue(write);
+    const p1 = queue.enqueue(1);
+    queue.cancelPending();
+    resolveFirst?.();
+    await expect(p1).resolves.toEqual({ ok: true });
+  });
+
+  it('passes writeGeneration on failed writes', async () => {
+    const queue = createPersistQueue(async () => ({
+      ok: false as const,
+      reason: 'write-conflict',
+      writeGeneration: 12,
+    }));
+    await expect(queue.enqueue({})).resolves.toEqual({
+      ok: false,
+      reason: 'write-conflict',
+      writeGeneration: 12,
+    });
+  });
 });

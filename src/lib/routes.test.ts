@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   PATH_AGENDA,
+  PATH_ANALYTICS,
+  PATH_ANALYTICS_ACTIVITY,
   PATH_HOME,
   PATH_LOGIN,
   PATH_NOTES,
+  PATH_PLANNING,
   PATH_PROFILE,
   PATH_REGISTER,
   PATH_SETTINGS,
@@ -19,9 +22,12 @@ describe('protected route constants', () => {
     PATH_TEAMS,
     PATH_TODOS,
     PATH_AGENDA,
+    PATH_PLANNING,
     PATH_NOTES,
     PATH_UTILITIES_DOCUMENT,
     PATH_UTILITIES_STRUCTURED,
+    PATH_ANALYTICS,
+    PATH_ANALYTICS_ACTIVITY,
     PATH_PROFILE,
     PATH_SETTINGS,
     PATH_LOGIN,
@@ -33,9 +39,12 @@ describe('protected route constants', () => {
     expect(PATH_TEAMS).toBe('/teams');
     expect(PATH_TODOS).toBe('/todos');
     expect(PATH_AGENDA).toBe('/agenda');
+    expect(PATH_PLANNING).toBe('/planning');
     expect(PATH_NOTES).toBe('/notes');
     expect(PATH_UTILITIES_DOCUMENT).toBe('/utilities/document');
     expect(PATH_UTILITIES_STRUCTURED).toBe('/utilities/structured');
+    expect(PATH_ANALYTICS).toBe('/analytics');
+    expect(PATH_ANALYTICS_ACTIVITY).toBe('/analytics/activity');
     expect(PATH_PROFILE).toBe('/profile');
     expect(PATH_SETTINGS).toBe('/settings');
     expect(PATH_LOGIN).toBe('/login');

@@ -7,8 +7,12 @@
  * are the failure modes that actually showed up in development.
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseRemoteSnapshot } from './syncSnapshotGuard';
+import { filterPlanningHubItems } from './planningMatrix';
+import { collectActivityRecords } from './todoActivityReport';
 
 describe('parseRemoteSnapshot', () => {
   it('accepts a snapshot with teams', () => {
@@ -48,10 +52,39 @@ describe('parseRemoteSnapshot', () => {
     expect(result.kind).toBe('invalid');
   });
 
+  it('accepts a commit-envelope rolling backup export', () => {
+    const result = parseRemoteSnapshot({
+      magic: 'CDNC1',
+      writeGeneration: 3,
+      workspace: {
+        version: 3,
+        teams: [{ id: 't1', name: 'A', createdAt: '2026-01-01T00:00:00.000Z', status: 'active' }],
+        notes: [{ id: 'n1', title: 'Note', body: 'hi', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
+      },
+    });
+    expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') return;
+    expect(result.data.notes).toHaveLength(1);
+  });
+
   it('returns a normalised AppData with at least one team', () => {
     const result = parseRemoteSnapshot({ teams: [], people: [] });
     expect(result.kind).toBe('ok');
     if (result.kind !== 'ok') return;
     expect(result.data.teams.length).toBeGreaterThan(0); // normaliser seeds a default
+  });
+
+  it('accepts the screenshot demo workspace JSON', () => {
+    const raw = JSON.parse(
+      readFileSync(resolve(process.cwd(), 'docs/demo/cadence-screenshot-demo.json'), 'utf8'),
+    );
+    const result = parseRemoteSnapshot(raw);
+    expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') return;
+    expect(result.data.notes.length).toBeGreaterThanOrEqual(6);
+    expect(result.data.todoItems.length).toBeGreaterThanOrEqual(15);
+    expect(filterPlanningHubItems(result.data.todoItems).length).toBeGreaterThanOrEqual(5);
+    const activity = collectActivityRecords(result.data, { source: 'personal' });
+    expect(activity.length).toBeGreaterThan(0);
   });
 });

@@ -1,7 +1,8 @@
-import { TODO_STATUS_OPTIONS, isTodoOpen, type TodoStatus } from '../../model';
+import { TODO_STATUS_OPTIONS, isTodoItemArchived, isTodoOpen, type TodoStatus, type TodoItem } from '../../model';
 
 const LS_TODO_SECTIONS = 'cadence.todos.sectionsOpen.v1';
 const LS_TODO_SHOW_ARCHIVED = 'cadence.todos.showArchived.v1';
+const LS_TODO_ITEM_VIEW = 'cadence.todos.itemView.v1';
 const LS_TODO_HIDE_DONE = 'cadence.todos.hideDone.v1';
 const LS_TODO_SORT_MODE = 'cadence.todos.sortMode.v1';
 const LS_TODO_STATUS_FILTER = 'cadence.todos.statusFilter.v1';
@@ -12,6 +13,10 @@ export function todoSectionsStorageKey(userId: string) {
 
 export function todoShowArchivedKey(userId: string) {
   return `${LS_TODO_SHOW_ARCHIVED}:${userId}`;
+}
+
+export function todoItemViewKey(userId: string) {
+  return `${LS_TODO_ITEM_VIEW}:${userId}`;
 }
 
 export function todoHideDoneKey(userId: string) {
@@ -48,6 +53,19 @@ export const SORT_OPTIONS: { value: SortMode; label: string }[] = [
 export const ALLOWED_SORT_MODES: SortMode[] = SORT_OPTIONS.map((o) => o.value);
 
 export type StatusFilter = 'all' | 'open' | TodoStatus;
+
+export type TodoItemViewMode = 'active' | 'archived';
+
+export const TODO_ITEM_VIEW_OPTIONS: { value: TodoItemViewMode; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'archived', label: 'Archived' },
+];
+
+export function filterTodoItemsForView(items: TodoItem[], mode: TodoItemViewMode): TodoItem[] {
+  return items.filter((it) =>
+    mode === 'archived' ? isTodoItemArchived(it) : !isTodoItemArchived(it),
+  );
+}
 
 export const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: 'all', label: 'All statuses' },

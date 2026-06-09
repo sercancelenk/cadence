@@ -5,7 +5,7 @@ import { PRIORITY_OPTIONS, isTodoOpen } from '../../model';
 import type { Priority, TodoGroup, TodoItem } from '../../model';
 import { prefetchRichTextEditor } from './prefetchRichTextEditor';
 import { emptyInlineAddDraft, todoBodyPatchFromFields, type InlineAddDraft } from './todoBody';
-import { matchesStatusFilter, isSectionOpen, type SortMode, type StatusFilter } from './todoPreferences';
+import { matchesStatusFilter, isSectionOpen, type SortMode, type StatusFilter, type TodoItemViewMode } from './todoPreferences';
 import { todoMatchesSearchQuery } from './sortTodoItemsByGroup';
 import { TodoTaskRow } from './TodoTaskRow';
 
@@ -34,6 +34,7 @@ export type TodoListSectionCallbacks = {
         | 'status'
         | 'remindAt'
         | 'remindRepeat'
+        | 'archived'
       >
     >,
   ) => void;
@@ -58,6 +59,7 @@ export type TodoListSectionProps = {
   searchQuery: string;
   statusFilter: StatusFilter;
   hideDone: boolean;
+  itemsViewMode: TodoItemViewMode;
   sortMode: SortMode;
   compact: boolean;
   aiEnabled: boolean;
@@ -95,6 +97,7 @@ export function TodoListSection(props: TodoListSectionProps) {
     searchQuery: q,
     statusFilter,
     hideDone,
+    itemsViewMode,
     sortMode,
     compact,
     aiEnabled,
@@ -124,6 +127,9 @@ export function TodoListSection(props: TodoListSectionProps) {
     actions,
   } = props;
 
+  const archivedView = itemsViewMode === 'archived';
+  if (archivedView && list.length === 0) return null;
+
   const matchedList = list.filter(
     (it) => todoMatchesSearchQuery(it, q) && matchesStatusFilter(it.status, statusFilter),
   );
@@ -148,8 +154,8 @@ export function TodoListSection(props: TodoListSectionProps) {
     group: groupById.get(it.groupId) ?? g,
     groups: allGroupsSorted,
     compact,
-    aiEnabled,
-    allowDrag,
+    aiEnabled: aiEnabled && !archivedView,
+    allowDrag: allowDrag && !archivedView,
     isDragSrc: allowDrag && dragItemId === it.id,
     isDropTgt: allowDrag && dropItemTargetId === it.id && dragItemId !== it.id,
     sourceNote: it.sourceNoteId
@@ -248,6 +254,7 @@ export function TodoListSection(props: TodoListSectionProps) {
             if (v && v !== g.name) actions.updateTodoGroup(g.id, { name: v });
           }}
         />
+        {!archivedView ? (
         <button
           type="button"
           className={`todos-section__add${isAdding ? ' todos-section__add--active' : ''}`}
@@ -263,6 +270,7 @@ export function TodoListSection(props: TodoListSectionProps) {
         >
           <IcPlus size={18} strokeWidth={2.5} />
         </button>
+        ) : null}
         <span className="todos-section__counts" title="Open · Total">
           {totalActive}
           <span className="muted"> / {totalActive + totalClosed}</span>
@@ -314,6 +322,8 @@ export function TodoListSection(props: TodoListSectionProps) {
               </select>
             </div>
             <div className="todos-section__menu-sep" />
+            {!archivedView ? (
+            <>
             <button
               type="button"
               className="todos-section__menu-item"
@@ -339,6 +349,8 @@ export function TodoListSection(props: TodoListSectionProps) {
             >
               Clear closed ({totalClosed})
             </button>
+            </>
+            ) : null}
             {totalGroupCount > 1 ? (
               <>
                 <div className="todos-section__menu-sep" />
@@ -361,7 +373,7 @@ export function TodoListSection(props: TodoListSectionProps) {
 
       {sectionOpen ? (
         <>
-          {isAdding ? (
+          {isAdding && !archivedView ? (
             <form
               className="todos-add-inline todos-add-inline--multi"
               onSubmit={(e: FormEvent) => {
@@ -429,6 +441,8 @@ export function TodoListSection(props: TodoListSectionProps) {
                   ? 'No tasks match this status filter.'
                   : hideDone && closed.length > 0
                     ? `${closed.length} closed task${closed.length === 1 ? '' : 's'} hidden.`
+                  : archivedView
+                    ? 'No archived tasks in this list.'
                     : 'No tasks in this list.'}
             </p>
           ) : (

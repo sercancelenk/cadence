@@ -16,6 +16,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 
 [**🌐 Marketing site**](https://sercancelenk.github.io/cadence/) ·
+[**📖 User guide**](docs/USER-GUIDE.md) ·
 [**🚀 Try the web app**](https://sercancelenk.github.io/cadence/app/) ·
 [**⬇️ Download for macOS**](https://github.com/sercancelenk/cadence/releases/latest)
 
@@ -42,47 +43,41 @@ A planner that doesn't ship your day to someone else's server. Four trade-offs w
 
 A quick tour of the desktop app. Every page below is the **macOS Electron build** in dark mode — the light theme mirrors the same layouts.
 
-### Home — global search and quick access
+### Home — dashboard and quick access
 
-![Home page with the global search pill in the top bar, stat cards and quick-access tiles](docs/screenshots/home.png)
+![Home page with stat cards, today schedule and quick-access tiles](docs/screenshots/home.png)
 
-> The top bar carries a Bootstrap-style **global search pill** with a `⌘ K` / `Ctrl K` shortcut badge — clicking it (or pressing the shortcut) opens the command palette that fuzzy-searches across navigation targets, teams, people, items, to-dos **and notes (titles + content)**.
+> Greets you with overdue counts, open to-dos and today's schedule. Stat cards for teams, tasks and people; quick-access tiles to Agenda, To-dos, Teams and Notes. The top bar carries a **global search pill** with a `⌘ K` / `Ctrl K` shortcut badge — clicking it (or pressing the shortcut) opens the command palette that fuzzy-searches across navigation targets, teams, people, items, to-dos **and notes (titles + content)**.
 
 ### To-dos — Kanban-shaped status, Markdown details, drag-reorder
 
 ![To-dos page with status filter, sort modes and per-list add row](docs/screenshots/todos.png)
 
-> Each row carries a **status**: *To do · In progress · Done · Cancelled*. Filter by status (All / Open / individual states), sort by **Manual / Priority / Due date / Status (Kanban order)**, and drag rows by the grip handle to reorder manually. Completion rate excludes cancelled rows — dropping a task on purpose shouldn't drag your numbers down. The list still supports hide-closed, archive, per-list priority and cross-list search. Quick-add a task with the **`+` icon next to each list title** or via the floating **Quick add** button (bottom-right) for "Add task / Add note" anywhere in the app. Every task can carry optional **Markdown details** — double-click the title to switch the row into a unified Markdown editor (same Write / Preview affordances as Notes). Search matches **title and details**, not just the one-liner.
+> Each row carries a **status**: *To do · In progress · Done · Cancelled*. **Active · Archived** segment for tasks and lists. Filter by status, sort by **Manual / Priority / Due date / Status (Kanban order)**, and drag rows by the grip handle to reorder manually. Every task can carry optional **Markdown details**. Recurring reminders fire as desktop notifications.
 
 ### Notes — resizable sidebar, sort modes, Markdown toolbar
 
-![Notes page with resizable sidebar, sort dropdown, Write/Preview tabs and Markdown toolbar](docs/screenshots/notes.png)
+![Notes page with resizable sidebar, sort dropdown, Write/Preview tabs and Markdown preview](docs/screenshots/notes.png)
 
-> Drag the divider between the sidebar and the editor to resize the list (220–560 px). The sidebar offers five sort modes (**Last updated / Last opened / Created / Title / Manual**) — in *Manual* a grip handle appears on each row for drag-reorder. Notes open in *Preview* by default; switching to *Write* reveals a full Markdown formatting toolbar (B / I / S / H1–H3 / lists / link / inline code / code block / divider, with ⌘B / ⌘I / ⌘K shortcuts). Locked notes are AES-256-GCM-encrypted at rest and the *Remove notes passphrase* button always re-prompts for the passphrase.
+> Two-pane macOS-Notes-style view with **Active · Archived** in the sidebar. Drag the divider to resize (220–560 px). Five sort modes plus drag-reorder inside the pinned tier. Notes open in *Preview* by default; switching to *Write* reveals a full Markdown formatting toolbar. Optional per-note passphrase lockbox.
 
 ### Agenda — Today / This week / Overdue
 
-![Agenda page showing today, this week and overdue tasks unified](docs/screenshots/agenda.png)
+![Agenda page showing overdue, today and upcoming tasks unified](docs/screenshots/agenda.png)
 
 > One unified view of every reminder, due task and personal to-do for the next seven days, plus an *Overdue* bucket up top.
 
-### ⌘K command palette — search anything, deep-link to it
+### Planning — Eisenhower matrix for personal tasks
 
-![Command palette open with Navigate / Teams / People groups](docs/screenshots/palette.png)
+![Planning hub with Eisenhower quadrants and today focus strip](docs/screenshots/planning.png)
 
-> Hit `⌘K` (or `Ctrl+K`) from anywhere to open the palette. It indexes **titles and body text** across notes, tasks, items and team scratchpads, highlights matches with contextual snippets, and Enter takes you straight to the source — no scrolling required. Locked notes are searchable by title only (their bodies stay encrypted).
-
-### Analytics — fully local dashboard
-
-![Analytics dashboard with stat cards, created vs completed chart and per-team performance](docs/screenshots/analytics.png)
-
-> Completion rate, a daily / weekly / monthly / yearly created-vs-completed SVG chart, per-team performance bars and a top-contributors table. The dedicated **To-do status breakdown** section adds counts for *To do / In progress / Done / Cancelled* plus a horizontal stacked bar that visualises the proportions. Completion rate excludes cancelled. Nothing leaves your device — the chart is rendered as inline SVG.
+> Drag tasks from your personal to-do lists into **Do first**, **Schedule**, **Delegate**, or **Eliminate**. Pin up to three for today's focus strip. The matrix is a planning view — tasks stay linked to their original lists.
 
 ### Settings — grouped by relationship: security, data, sync, integrations, about
 
-![Settings page with Stay-signed-in and PIN protection cards under the Account & security group](docs/screenshots/settings.png)
+![Settings page with account, backup, sync and integrations groups](docs/screenshots/settings.png)
 
-> Cards are organised into five named groups: **Account & security** (Stay-signed-in via OS keychain + PIN lock with rate-limited recovery), **Data & backup** (JSON export/import, rolling snapshot recovery with per-snapshot counts, storage diagnostics), **Sync** (LAN + Cloud), **Integrations** (AI assistant — BYO API key for Claude / ChatGPT / Gemini — and OS notifications) and **About** (app profile / policy, version info, auto-update controls). The theme toggle has moved to the top bar — one click instead of two.
+> Cards are organised into five named groups: **Account & security**, **Data & backup** (unified Backup & recovery with export/import + rolling snapshots, workspace storage breakdown), **Sync** (LAN + Cloud), **Integrations** (AI assistant and OS notifications) and **About** (app profile, version info, auto-update controls).
 
 ---
 
@@ -92,12 +87,13 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 | | |
 |---|---|
-| 📝 **Notes** | macOS-Notes-style two-pane view, **resizable sidebar** (220–560 px), preview-by-default with a one-click flip into a Markdown editor + formatting toolbar (B / I / S / H1–H3 / lists / link / inline code / code block / divider, with `⌘B` / `⌘I` / `⌘K` shortcuts). Five sort modes plus drag-to-reorder inside the pinned tier. Optional per-note passphrase lockbox. |
-| ✅ **To-dos** | Lists grouped by project, each with its own priority (Urgent / High / Normal / Low) and per-row **status** (To do / In progress / Done / Cancelled). Optional **Markdown details** per task (Notes-grade editor). Sort by Manual / Priority / Due date / Status (Kanban order). Filter by status. Drag items between groups and within. Recurring reminders (daily / weekly / monthly) fire as desktop notifications. Hide / show closed, archive, search (title **and** details), bulk ops. Clear warnings when every list is archived but tasks still exist on disk. |
+| 📝 **Notes** | macOS-Notes-style two-pane view, **resizable sidebar** (220–560 px), preview-by-default with a one-click flip into a Markdown editor + formatting toolbar (B / I / S / H1–H3 / lists / link / inline code / code block / divider, with `⌘B` / `⌘I` / `⌘K` shortcuts). Five sort modes plus drag-to-reorder inside the pinned tier. **Active \| Archived** segment to shelve notes without deleting. Optional per-note passphrase lockbox. |
+| ✅ **To-dos** | Lists grouped by project, each with its own priority (Urgent / High / Normal / Low) and per-row **status** (To do / In progress / Done / Cancelled). Optional **Markdown details** per task (Notes-grade editor). Sort by Manual / Priority / Due date / Status (Kanban order). Filter by status. **Active \| Archived** for tasks and lists. Drag items between groups and within. Recurring reminders (daily / weekly / monthly) fire as desktop notifications. Hide / show closed, archive, search (title **and** details), bulk ops. |
 | 📅 **Agenda** | Unified Today / This-week / Overdue view combining reminders + due tasks + personal to-dos. Lives offline; never asks for calendar permission. |
+| 🎯 **Planning** | Personal Eisenhower matrix — drag tasks into Do first / Schedule / Delegate / Eliminate by urgency and importance. |
 | 👥 **Teams + People** | Group people into teams, give each a private scratchpad and a running agenda. **1:1 mode** with a persistent markdown meeting agenda + archive of past meetings; unchecked items carry over. **Person Timeline** for review prep. |
-| 🔎 **⌘K command palette** | Global search across notes, tasks, items, people and navigation targets. Indexes **body text** (not just titles), highlights matches with contextual snippets, deep-links straight to the result. Locked notes searchable by title only. |
-| 📊 **Analytics** | Local-only dashboard: completion rate, daily / weekly / monthly / yearly created-vs-completed SVG chart, per-team performance bars, top-contributors table. |
+| 🔎 **⌘K command palette** | Global search across notes, tasks, items, people and navigation targets. Indexes **body text** (not just titles), highlights matches with contextual snippets, deep-links straight to the result. Locked notes searchable by title only. Archived notes excluded from search. |
+| 📊 **Analytics** | Local-only dashboard: completion rate, daily / weekly / monthly / yearly created-vs-completed SVG chart, per-team performance bars, top-contributors table. **Activity report** tab for a chronological change log. |
 | 🧰 **Utilities** | Sidebar scratch **Document** (rich-text, autosaved, not a note/todo) plus **JSON / YAML** editor: syntax highlighting, validation, code folding, pretty-print, side-by-side **Diff** (Before/After), JSON-only compact & stringify. |
 
 ### Powered by your device
@@ -107,7 +103,8 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | 🔒 **Encrypted at rest** | AES-256-GCM data file keyed via `scrypt(password)`. Notes get an additional PBKDF2 → AES-256-GCM lockbox with a non-extractable `CryptoKey`. |
 | 🔑 **Stay signed in (opt-out)** | After your first login, Cadence wraps the data-encryption key with Electron's `safeStorage` and persists it in your OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). Restarts skip the password prompt; **Logout** always purges the cached key, and Settings → *Stay signed in* gives you a one-click "ask on every launch" toggle. On Linux without libsecret we refuse to cache rather than fall back to a hardcoded-obfuscation key — same security promise on every platform. |
 | 🛟 **Durable saves** | Atomic `open → write → fsync → close → rename` cycle plus directory fsync. A power loss or kernel panic leaves either the old file or the new file — never a torn one. Worst case: ≤ 400 ms of unflushed typing. |
-| 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Each snapshot shows teams / lists / tasks / notes counts; **Reveal in Finder** for manual inspection. Refuse-to-overwrite guard if the live file is undecipherable. |
+| 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Each snapshot shows teams / lists / tasks / notes counts; **Reveal in Finder** for manual inspection. Refuse-to-overwrite guard if the live file is undecipherable. **Settings → Backup & recovery** merges manual export/import and snapshot restore in one place. |
+| 📦 **Workspace storage** | Desktop app splits large workspaces into monthly files for efficiency while keeping a full copy in the base file for downgrade safety. **Settings → Storage & cache** shows a per-area size breakdown (notes, tasks, teams, archives). |
 | 🛡️ **Data-integrity guard** | After every successful save, a per-device fingerprint records how much content you had. On the next boot, if the loaded file is meaningfully smaller, an amber banner spells out the before/after counts and links straight to *Backups & recovery* — so "my data vanished" is caught before you panic. |
 | 📡 **Optional LAN sync** | Token-protected **HTTPS** server inside Electron (off by default) with self-signed TLS (RSA 2048 / SHA-256), constant-time token compare, DNS-rebinding resistance, same-LAN CORS, ETag optimistic concurrency and payload-shape validation. The host also serves the PWA itself, so an iPhone can scan the QR code and open `https://<host-ip>:9787/` directly — no cloud round-trip. |
 | 🚫 **No telemetry** | Zero network calls outside of (a) the auto-updater hitting GitHub Releases, and (b) the AI assistant hitting whichever provider you configured. Nothing else dials home. |
@@ -136,6 +133,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 **For users**
 
+- [User guide](docs/USER-GUIDE.md) — daily use, archive, backups, storage
 - [Why Cadence](#why-cadence)
 - [Screenshots](#screenshots)
 - [What's in the box](#whats-in-the-box)

@@ -383,6 +383,26 @@ describe('actions mutation — deterministic reducers', () => {
       expect(todoById(d, id).doneAt).toBe(firstDoneAt);
     });
 
+    it('archiving clears focus and reminders', () => {
+      const base = freshData();
+      let d = addTodoItem(base, firstGroupId(base), 'Row');
+      const id = latestTodo(d).id;
+      d = updateTodoItem(d, id, {
+        planFocusToday: true,
+        remindAt: '2030-06-01T10:00:00.000Z',
+        remindRepeat: 'daily',
+      });
+      d = updateTodoItem(d, id, { archived: true });
+      expect(todoById(d, id)).toMatchObject({
+        archived: true,
+        planFocusToday: false,
+        remindAt: undefined,
+        remindRepeat: undefined,
+      });
+      d = updateTodoItem(d, id, { archived: false });
+      expect(todoById(d, id).archived).toBeUndefined();
+    });
+
     it('clears body format fields when body is whitespace', () => {
       const base = freshData();
       let d = addTodoItem(base, firstGroupId(base), 'Rich', {
@@ -504,6 +524,15 @@ describe('actions mutation — deterministic reducers', () => {
         updatedAt: stamped,
         sortOrder: 3,
       });
+    });
+
+    it('sets and clears archived without touching other fields', () => {
+      const base = freshData();
+      let d = addNote(base, 'note-3');
+      d = patchNote(d, 'note-3', { archived: true });
+      expect(d.notes[0]?.archived).toBe(true);
+      d = patchNote(d, 'note-3', { archived: false });
+      expect(d.notes[0]?.archived).toBeUndefined();
     });
   });
 

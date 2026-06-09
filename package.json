@@ -32,7 +32,8 @@
     "test:coverage": "vitest run --coverage",
     "test:mutation": "stryker run",
     "test:e2e": "playwright test",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "demo:generate": "node scripts/generate-screenshot-demo.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.0",

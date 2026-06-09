@@ -89,6 +89,22 @@ const {
   isValidSnapshotPayload,
 } = require('./persistence/writeGeneration.cjs');
 const { unwrapStoredWorkspace, wrapCommitEnvelope } = require('./persistence/commitEnvelope.cjs');
+const {
+  splitWorkspaceForMonthlyShards,
+  mergeMonthlyShardPartials,
+  monthlyShardFilename,
+  listMonthlyShardMonths,
+  unwrapShardPayload,
+  wrapShardPayload,
+  backupSnapshotKey,
+  backupShardFilename,
+  baseCoreForShardMerge,
+  countShardableEntities,
+  shardRoundTripMatches,
+  isMonthlyShardBackupFilename,
+  resolveBackupSetBasePath,
+  mergeWorkspaceFromBackupParts,
+} = require('./persistence/monthlyShards.cjs');
 const { initCrashReporting } = require('./crashReporting.cjs');
 const { requirePolicyFeature } = require('./ipc/policyGuard.cjs');
 
@@ -326,6 +342,90 @@ function legacyDataPath() {
 
 function dataPathForUser(userId) {
   return path.join(app.getPath('userData'), `${DATA_FILE_PREFIX}-data-${userId}.json`);
+}
+
+function monthlyShardPathForUser(userId, monthKey) {
+  return path.join(
+    app.getPath('userData'),
+    monthlyShardFilename(DATA_FILE_PREFIX, userId, monthKey),
+  );
+}
+
+function listMonthlyShardPathsForUser(userId) {
+  const userData = app.getPath('userData');
+  return listMonthlyShardMonths(userData, DATA_FILE_PREFIX, userId).map((monthKey) => ({
+    monthKey,
+    path: monthlyShardPathForUser(userId, monthKey),
+  }));
+}
+
+/** Sum bytes of the base data file plus every monthly shard. */
+function userDataFilesBytes(userId) {
+  let bytes = fileSizeBytes(dataPathForUser(userId));
+  for (const { path: shardPath } of listMonthlyShardPathsForUser(userId)) {
+    bytes += fileSizeBytes(shardPath);
+  }
+  return bytes;
+}
+
+/**
+ * Read a single on-disk JSON blob (encrypted or plaintext) into a parsed object.
+ * @returns {{ ok: true; parsed: unknown; encrypted: boolean } | { ok: false; reason: string; error?: string; encrypted?: boolean }}
+ */
+function readParsedFile(userId, filePath) {
+  if (!fs.existsSync(filePath)) {
+    return { ok: false, reason: 'missing', error: 'File not found.' };
+  }
+  let text;
+  try {
+    text = fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    return { ok: false, reason: 'io', error: String(err) };
+  }
+  const key = dataKeys.get(userId);
+  if (isEncryptedFile(text)) {
+    if (!key) {
+      return { ok: false, reason: 'no-key', encrypted: true };
+    }
+    const plain = decryptPayload(text, key);
+    if (plain == null) {
+      return { ok: false, reason: 'bad-key', encrypted: true };
+    }
+    try {
+      return { ok: true, parsed: JSON.parse(plain), encrypted: true };
+    } catch {
+      return { ok: false, reason: 'parse', encrypted: true };
+    }
+  }
+  try {
+    return { ok: true, parsed: JSON.parse(text), encrypted: false };
+  } catch {
+    return { ok: false, reason: 'parse', encrypted: false };
+  }
+}
+
+/** @returns {ReturnType<typeof readUserDataResult>} */
+function readSingleWorkspaceFileResult(userId, filePath) {
+  const r = readParsedFile(userId, filePath);
+  if (!r.ok) return r;
+  try {
+    const { workspace, writeGeneration, enveloped } = unwrapStoredWorkspace(r.parsed);
+    return {
+      ok: true,
+      data: workspace,
+      encrypted: r.encrypted,
+      writeGeneration: enveloped ? writeGeneration : undefined,
+    };
+  } catch {
+    return { ok: false, reason: 'parse', encrypted: r.encrypted };
+  }
+}
+
+function writeEncryptedObject(userId, filePath, obj) {
+  const key = dataKeys.get(userId);
+  const json = JSON.stringify(obj);
+  const out = key ? encryptPayload(json, key) : json;
+  return writeJsonText(filePath, out);
 }
 
 function writeMetaPathForUser(userId) {
@@ -912,51 +1012,68 @@ function parseAttachmentUrl(urlString) {
  * to refuse writes instead of silently overwriting a key-mismatched file.
  */
 function readUserDataResult(userId) {
-  const file = dataPathForUser(userId);
-  if (!fs.existsSync(file)) return { ok: true, data: null, encrypted: false };
-  let text;
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch (err) {
-    console.error('[cadence] failed to read user data', err);
-    return { ok: false, reason: 'io', error: String(err) };
+  const basePath = dataPathForUser(userId);
+  const shardPaths = listMonthlyShardPathsForUser(userId);
+
+  // Legacy single-file workspace — no monthly shards on disk yet.
+  if (shardPaths.length === 0) {
+    if (!fs.existsSync(basePath)) return { ok: true, data: null, encrypted: false };
+    return readSingleWorkspaceFileResult(userId, basePath);
   }
-  const key = dataKeys.get(userId);
-  if (isEncryptedFile(text)) {
-    if (!key) {
-      console.warn('[cadence] data file is encrypted but no key in memory for', userId);
-      return { ok: false, reason: 'no-key', encrypted: true };
-    }
-    const plain = decryptPayload(text, key);
-    if (plain == null) {
-      console.warn('[cadence] data file decrypt failed for', userId, '— wrong key?');
-      return { ok: false, reason: 'bad-key', encrypted: true };
-    }
-    try {
-      const parsed = JSON.parse(plain);
-      const { workspace, writeGeneration, enveloped } = unwrapStoredWorkspace(parsed);
-      return {
-        ok: true,
-        data: workspace,
-        encrypted: true,
-        writeGeneration: enveloped ? writeGeneration : undefined,
-      };
-    } catch {
-      return { ok: false, reason: 'parse', encrypted: true };
-    }
+
+  let baseResult;
+  if (fs.existsSync(basePath)) {
+    baseResult = readSingleWorkspaceFileResult(userId, basePath);
+  } else {
+    baseResult = { ok: true, data: {}, encrypted: false };
   }
-  try {
-    const parsed = JSON.parse(text);
-    const { workspace, writeGeneration, enveloped } = unwrapStoredWorkspace(parsed);
-    return {
-      ok: true,
-      data: workspace,
-      encrypted: false,
-      writeGeneration: enveloped ? writeGeneration : undefined,
-    };
-  } catch {
-    return { ok: false, reason: 'parse', encrypted: false };
+  if (!baseResult.ok) return baseResult;
+
+  const baseWorkspace =
+    baseResult.data && typeof baseResult.data === 'object'
+      ? /** @type {Record<string, unknown>} */ (baseResult.data)
+      : {};
+
+  /** @type {Array<{ notes: unknown[]; todoItems: unknown[]; items: unknown[] }>} */
+  const shardPartials = [];
+  let anyEncrypted = !!baseResult.encrypted;
+  let shardReadFailures = 0;
+
+  for (const { monthKey, path: shardPath } of shardPaths) {
+    const sr = readParsedFile(userId, shardPath);
+    if (!sr.ok) {
+      shardReadFailures += 1;
+      console.warn(
+        '[cadence] monthly shard unreadable — will fall back to base file bulk if needed',
+        { monthKey, shardPath, reason: sr.reason },
+      );
+      continue;
+    }
+    anyEncrypted = anyEncrypted || sr.encrypted;
+    shardPartials.push(unwrapShardPayload(sr.parsed));
   }
+
+  // Shards are canonical for bulk; base may still hold a full monolithic copy for older app versions.
+  const merged = mergeMonthlyShardPartials(baseCoreForShardMerge(baseWorkspace), shardPartials);
+  const mergedCounts = countShardableEntities(merged);
+  const baseCounts = countShardableEntities(baseWorkspace);
+
+  let data = merged;
+  if (mergedCounts.total < baseCounts.total && baseCounts.total > 0) {
+    console.warn('[cadence] shard merge incomplete — serving full base file bulk', {
+      shardReadFailures,
+      mergedTotal: mergedCounts.total,
+      baseTotal: baseCounts.total,
+    });
+    data = baseWorkspace;
+  }
+
+  return {
+    ok: true,
+    data,
+    encrypted: anyEncrypted,
+    writeGeneration: baseResult.writeGeneration,
+  };
 }
 
 /** Back-compat: returns plain object or null. New code should prefer `readUserDataResult`. */
@@ -977,19 +1094,36 @@ function readUserData(userId) {
  */
 function snapshotCurrentDataFile(userId, label = 'pre-write') {
   try {
-    const live = dataPathForUser(userId);
-    if (!fs.existsSync(live)) return null;
-    const stat = fs.statSync(live);
-    if (!stat.size) return null;
     const dir = backupsDirForUser(userId);
     fs.mkdirSync(dir, { recursive: true });
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const name = `data-${label}-${ts}.json`;
-    const target = path.join(dir, name);
-    fs.copyFileSync(live, target);
+    const baseLive = dataPathForUser(userId);
+    let copied = false;
+
+    if (fs.existsSync(baseLive)) {
+      const stat = fs.statSync(baseLive);
+      if (stat.size) {
+        const name = `data-${label}-${ts}.json`;
+        fs.copyFileSync(baseLive, path.join(dir, name));
+        copied = true;
+      }
+    }
+
+    for (const { monthKey, path: shardLive } of listMonthlyShardPathsForUser(userId)) {
+      if (!fs.existsSync(shardLive)) continue;
+      const stat = fs.statSync(shardLive);
+      if (!stat.size) continue;
+      const baseName = `data-${label}-${ts}.json`;
+      const shardName = backupShardFilename(baseName, monthKey);
+      fs.copyFileSync(shardLive, path.join(dir, shardName));
+      copied = true;
+    }
+
+    if (!copied) return null;
+
     snapshotAttachmentsForUser(userId, label, ts);
     pruneBackups(dir);
-    return target;
+    return path.join(dir, `data-${label}-${ts}.json`);
   } catch (err) {
     console.warn('[cadence] snapshot failed (continuing)', err);
     return null;
@@ -1001,28 +1135,49 @@ function pruneBackups(dir) {
     const entries = fs
       .readdirSync(dir)
       .filter((n) => n.startsWith('data-') && n.endsWith('.json'))
-      .map((n) => ({ name: n, full: path.join(dir, n), mtime: fs.statSync(path.join(dir, n)).mtimeMs }))
-      .sort((a, b) => b.mtime - a.mtime);
-    for (const old of entries.slice(BACKUPS_KEEP_MAX)) {
-      try {
-        fs.unlinkSync(old.full);
-      } catch {
-        /* ignore */
+      .map((n) => ({
+        name: n,
+        full: path.join(dir, n),
+        mtime: fs.statSync(path.join(dir, n)).mtimeMs,
+        setKey: backupSnapshotKey(n),
+      }));
+
+    /** @type {Map<string, { mtime: number; files: { name: string; full: string }[] }>} */
+    const sets = new Map();
+    for (const entry of entries) {
+      const existing = sets.get(entry.setKey);
+      if (!existing) {
+        sets.set(entry.setKey, { mtime: entry.mtime, files: [{ name: entry.name, full: entry.full }] });
+      } else {
+        existing.mtime = Math.max(existing.mtime, entry.mtime);
+        existing.files.push({ name: entry.name, full: entry.full });
       }
-      const attName = old.name.replace(/^data-/, 'attachments-').replace(/\.json$/, '');
-      const attDir = path.join(dir, attName);
-      if (fs.existsSync(attDir)) {
+    }
+
+    const sortedSets = Array.from(sets.values()).sort((a, b) => b.mtime - a.mtime);
+    const keptSets = sortedSets.slice(0, BACKUPS_KEEP_MAX);
+    for (const old of sortedSets.slice(BACKUPS_KEEP_MAX)) {
+      for (const file of old.files) {
         try {
-          fs.rmSync(attDir, { recursive: true, force: true });
+          fs.unlinkSync(file.full);
         } catch {
           /* ignore */
+        }
+        const attName = file.name.replace(/^data-/, 'attachments-').replace(/\.json$/, '');
+        const attDir = path.join(dir, attName);
+        if (fs.existsSync(attDir)) {
+          try {
+            fs.rmSync(attDir, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
         }
       }
     }
     // Drop orphaned attachment-only folders left from older builds.
     const keptAtt = new Set(
-      entries.slice(0, BACKUPS_KEEP_MAX).map((e) =>
-        e.name.replace(/^data-/, 'attachments-').replace(/\.json$/, ''),
+      keptSets.flatMap((set) =>
+        set.files.map((f) => f.name.replace(/^data-/, 'attachments-').replace(/\.json$/, '')),
       ),
     );
     for (const name of fs.readdirSync(dir)) {
@@ -1110,14 +1265,34 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
 
   snapshotCurrentDataFile(userId, 'pre-save');
 
-  const body =
-    writeGeneration != null ? wrapCommitEnvelope(writeGeneration, payload) : payload;
-  const json = JSON.stringify(body);
-  const out = key ? encryptPayload(json, key) : json;
-  const writeResult = writeJsonText(file, out);
-  if (writeResult.ok) {
-    pruneOrphanAttachments(userId, payload);
+  const hadShards = listMonthlyShardPathsForUser(userId).length > 0;
+  const { baseWorkspace, shards } = splitWorkspaceForMonthlyShards(
+    payload && typeof payload === 'object' ? payload : {},
+    { retainBaseBulk: true },
+  );
+  const willHaveShards = Object.keys(shards).length > 0;
+  if (!hadShards && willHaveShards) {
+    snapshotCurrentDataFile(userId, 'pre-monthly-layout');
   }
+
+  const writtenMonths = new Set();
+  for (const [monthKey, partial] of Object.entries(shards)) {
+    const shardBody = wrapShardPayload(monthKey, partial);
+    const shardPath = monthlyShardPathForUser(userId, monthKey);
+    const shardWrite = writeEncryptedObject(userId, shardPath, shardBody);
+    if (!shardWrite.ok) {
+      return {
+        ok: false,
+        reason: shardWrite.reason ?? 'io',
+        error: shardWrite.error ?? 'I/O error while writing monthly shard.',
+      };
+    }
+    writtenMonths.add(monthKey);
+  }
+
+  const body =
+    writeGeneration != null ? wrapCommitEnvelope(writeGeneration, baseWorkspace) : baseWorkspace;
+  const writeResult = writeEncryptedObject(userId, file, body);
   if (!writeResult.ok) {
     return {
       ok: false,
@@ -1127,6 +1302,29 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
         'I/O error while writing data file.',
     };
   }
+
+  for (const { monthKey, path: shardPath } of listMonthlyShardPathsForUser(userId)) {
+    if (!writtenMonths.has(monthKey)) {
+      try {
+        fs.unlinkSync(shardPath);
+      } catch (err) {
+        console.warn('[cadence] failed to remove empty monthly shard', shardPath, err);
+      }
+    }
+  }
+
+  const verify = readUserDataResult(userId);
+  if (verify.ok && verify.data && !shardRoundTripMatches(payload, verify.data)) {
+    console.error('[cadence] post-save shard round-trip verification failed', { userId });
+    return {
+      ok: false,
+      reason: 'verify-failed',
+      error:
+        'Save verification failed: re-read workspace does not match what was written. Your previous files were snapshotted — use Settings → Backups & Recovery to restore.',
+    };
+  }
+
+  pruneOrphanAttachments(userId, payload);
   return { ok: true };
 }
 
@@ -2459,6 +2657,8 @@ function setupAutoUpdater() {
 
 // Coordinated quit: ask renderer to flush debounced saves before teardown.
 let appQuittingConfirmed = false;
+/** While set, renderer saves are deferred (import/replace on main process). */
+let workspaceImportLockUid = null;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let pendingQuitFlushTimeout = null;
 
@@ -2555,6 +2755,15 @@ function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRende
   const metaPath = writeMetaPathForUser(uid);
   const meta = readWriteMeta(metaPath, fs);
   const resolvedGeneration = Math.max(meta.generation, readStoredWriteGeneration(uid));
+
+  if (workspaceImportLockUid && workspaceImportLockUid === uid) {
+    return {
+      ok: false,
+      reason: 'import-in-progress',
+      writeGeneration: resolvedGeneration,
+    };
+  }
+
   if (!canCommitWriteGeneration(expectedGeneration, resolvedGeneration)) {
     console.warn('[cadence] refusing data:save — write generation conflict', {
       expectedGeneration,
@@ -2568,9 +2777,8 @@ function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRende
         'Another save updated your data file before this one finished (for example LAN sync or a second app instance). Reload from disk or pull the latest snapshot, then retry your edits.',
       writeGeneration: resolvedGeneration,
     };
-    if (notifyRenderer && mainWindow) {
-      try { mainWindow.webContents.send('data:saveError', conflict); } catch { /* ignore */ }
-    }
+    // Stale renderer saves lose the race quietly — the IPC response carries
+    // the current generation so the client can resync without alarming the user.
     return conflict;
   }
 
@@ -2677,6 +2885,90 @@ function inspectDataFile(filePath, uid) {
   }
 }
 
+/**
+ * Inspect the merged live workspace (base + monthly shards) for Settings recovery UI.
+ */
+function inspectLiveUserData(uid) {
+  const basePath = dataPathForUser(uid);
+  const shardPaths = listMonthlyShardPathsForUser(uid);
+  if (!fs.existsSync(basePath) && shardPaths.length === 0) return null;
+
+  let mtime = '';
+  try {
+    let maxMtime = 0;
+    if (fs.existsSync(basePath)) maxMtime = Math.max(maxMtime, fs.statSync(basePath).mtimeMs);
+    for (const { path: shardPath } of shardPaths) {
+      if (fs.existsSync(shardPath)) maxMtime = Math.max(maxMtime, fs.statSync(shardPath).mtimeMs);
+    }
+    if (maxMtime) mtime = new Date(maxMtime).toISOString();
+  } catch {
+    /* ignore */
+  }
+
+  const result = readUserDataResult(uid);
+  if (!result.ok) {
+    const fallback = inspectDataFile(basePath, uid);
+    if (fallback) {
+      fallback.bytes = userDataFilesBytes(uid);
+      fallback.sharded = shardPaths.length > 0;
+      fallback.shardCount = shardPaths.length;
+    }
+    return fallback;
+  }
+
+  const counts = result.data ? summarizeAppData(result.data) : null;
+  return {
+    path: basePath,
+    name: path.basename(basePath),
+    bytes: userDataFilesBytes(uid),
+    mtime,
+    encrypted: !!result.encrypted,
+    decryptable: true,
+    parsedOk: !!result.data,
+    counts,
+    sharded: shardPaths.length > 0,
+    shardCount: shardPaths.length,
+  };
+}
+
+/**
+ * Load a workspace from a backup base file plus any sibling monthly shard backups.
+ */
+function loadWorkspaceFromBackupSet(uid, backupPath) {
+  const resolved = resolveBackupSetBasePath(backupPath, (dir) => fs.readdirSync(dir));
+  if (!resolved.ok) return { ok: false, reason: 'invalid-backup', error: resolved.error };
+
+  const baseBackupPath = resolved.basePath;
+  const r = readParsedFile(uid, baseBackupPath);
+  if (!r.ok) return r;
+
+  const dir = path.dirname(baseBackupPath);
+  const setKey = backupSnapshotKey(path.basename(baseBackupPath));
+  /** @type {Array<{ notes: unknown[]; todoItems: unknown[]; items: unknown[] }>} */
+  const shardPartials = [];
+
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (err) {
+    return { ok: false, reason: 'io', error: String(err) };
+  }
+
+  for (const name of names) {
+    if (name === path.basename(baseBackupPath)) continue;
+    if (backupSnapshotKey(name) !== setKey) continue;
+    if (!name.includes('-shard-')) continue;
+    const sr = readParsedFile(uid, path.join(dir, name));
+    if (!sr.ok) {
+      console.warn('[cadence] skipping unreadable shard backup', name, sr.reason);
+      continue;
+    }
+    shardPartials.push(unwrapShardPayload(sr.parsed));
+  }
+
+  return mergeWorkspaceFromBackupParts(r.parsed, shardPartials, unwrapStoredWorkspace);
+}
+
 function summarizeAppData(obj) {
   if (!obj || typeof obj !== 'object') return null;
   obj = workspaceForSummary(obj);
@@ -2732,13 +3024,13 @@ ipcMain.handle('data:listSources', () => {
   };
 
   if (uid) {
-    out.live = inspectDataFile(dataPathForUser(uid), uid);
+    out.live = inspectLiveUserData(uid);
     const backupsDir = backupsDirForUser(uid);
     if (fs.existsSync(backupsDir)) {
       try {
         const entries = fs
           .readdirSync(backupsDir)
-          .filter((n) => n.endsWith('.json'))
+          .filter((n) => n.endsWith('.json') && !isMonthlyShardBackupFilename(n))
           .map((n) => inspectDataFile(path.join(backupsDir, n), uid))
           .filter(Boolean)
           .sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
@@ -2757,7 +3049,8 @@ ipcMain.handle('data:listSources', () => {
   // `leeadman-data-*.json` ones so a pre-migration file lying around in the
   // userData dir (e.g. a manually copied backup) still shows up here.
   const ORPHAN_RE = new RegExp(
-    `^(?:${DATA_FILE_PREFIX}|${DATA_FILE_PREFIX_LEGACY})-data-([0-9a-fA-F-]{8,})\\.json$`,
+    `^(?:${DATA_FILE_PREFIX}|${DATA_FILE_PREFIX_LEGACY})-data-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\.json$`,
+    'i',
   );
   try {
     for (const name of fs.readdirSync(userData)) {
@@ -2814,44 +3107,34 @@ ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
   }
   if (!fs.existsSync(resolved)) return { ok: false, error: 'File no longer exists.' };
 
-  let text;
-  try {
-    text = fs.readFileSync(resolved, 'utf8');
-  } catch (err) {
-    return { ok: false, error: `Could not read source file: ${err.message ?? err}` };
-  }
-
   let payload;
-  if (isEncryptedFile(text)) {
-    const key = dataKeys.get(uid);
-    if (!key) return { ok: false, error: 'Session key missing. Please sign in again and retry.' };
-    const plain = decryptPayload(text, key);
-    if (plain == null) {
+  const loaded = loadWorkspaceFromBackupSet(uid, resolved);
+  if (!loaded.ok) {
+    if (loaded.reason === 'no-key') {
+      return { ok: false, error: 'Session key missing. Please sign in again and retry.' };
+    }
+    if (loaded.reason === 'bad-key') {
       return {
         ok: false,
         error: 'This backup is encrypted but cannot be decrypted with your current password. It probably belongs to a different account.',
       };
     }
-    try {
-      payload = JSON.parse(plain);
-    } catch (err) {
-      return { ok: false, error: `Decrypted contents are not valid JSON: ${err.message ?? err}` };
-    }
-  } else {
-    try {
-      payload = JSON.parse(text);
-    } catch (err) {
-      return { ok: false, error: `Source file is not valid JSON: ${err.message ?? err}` };
-    }
+    return { ok: false, error: loaded.error || 'Could not read backup.' };
   }
+  payload = loaded.workspace;
 
   // Snapshot the existing live file under a "pre-restore" label so the user
   // can undo the restore if they picked the wrong source.
   snapshotCurrentDataFile(uid, 'pre-restore');
   const attBackup = pairedAttachmentsBackupDir(resolved);
   if (attBackup) restoreAttachmentsFromBackupDir(uid, attBackup);
-  const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
-  return w.ok ? { ok: true, restoredFrom: path.basename(resolved), writeGeneration: w.writeGeneration } : w;
+  workspaceImportLockUid = uid;
+  try {
+    const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
+    return w.ok ? { ok: true, restoredFrom: path.basename(resolved), writeGeneration: w.writeGeneration } : w;
+  } finally {
+    workspaceImportLockUid = null;
+  }
 });
 
 /**
@@ -2962,7 +3245,7 @@ ipcMain.handle('cache:stats', () => {
     const userDataDir = app.getPath('userData');
     const userId = readSessionUserId();
 
-    const dataFileBytes = userId ? fileSizeBytes(dataPathForUser(userId)) : 0;
+    const dataFileBytes = userId ? userDataFilesBytes(userId) : 0;
     const legacyBytes = fileSizeBytes(legacyDataPath());
 
     const backupsRoot = path.join(userDataDir, BACKUPS_DIRNAME);
@@ -3143,6 +3426,12 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
 /**
  * Import a bundle folder (data.json + optional attachments/) over the live workspace.
  */
+function plausibilityCheckWorkspacePayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const collections = ['teams', 'people', 'items', 'todoGroups', 'todoItems', 'notes'];
+  return collections.some((k) => Array.isArray(/** @type {Record<string, unknown>} */ (payload)[k]));
+}
+
 ipcMain.handle('data:importBundle', async () => {
   const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
   if (blocked) return blocked;
@@ -3159,17 +3448,59 @@ ipcMain.handle('data:importBundle', async () => {
   if (!fs.existsSync(dataPath)) {
     return { ok: false, error: 'No data.json found in that folder.' };
   }
-  let payload;
+  let raw;
   try {
-    payload = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+    raw = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
   } catch (err) {
     return { ok: false, error: `Invalid data.json: ${err.message ?? err}` };
+  }
+  const { workspace } = unwrapStoredWorkspace(raw);
+  const payload =
+    workspace && typeof workspace === 'object' ? workspace : raw;
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, error: 'data.json does not contain a workspace object.' };
+  }
+  if (!plausibilityCheckWorkspacePayload(payload)) {
+    return {
+      ok: false,
+      error: 'data.json does not look like a Cadence workspace export (no recognised collections).',
+    };
   }
   snapshotCurrentDataFile(uid, 'pre-import');
   const attSrc = path.join(folder, 'attachments');
   if (fs.existsSync(attSrc)) importAttachmentsFromDir(uid, attSrc);
-  const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
-  return w.ok ? { ok: true, importedFrom: path.basename(folder), writeGeneration: w.writeGeneration } : w;
+  workspaceImportLockUid = uid;
+  try {
+    const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
+    return w.ok ? { ok: true, importedFrom: path.basename(folder), writeGeneration: w.writeGeneration } : w;
+  } finally {
+    workspaceImportLockUid = null;
+  }
+});
+
+/**
+ * Replace the live workspace from a parsed JSON import (renderer-side file picker).
+ * Commits on the main process without optimistic-concurrency checks — same as
+ * folder import — so a stale renderer writeGeneration cannot block the import.
+ */
+ipcMain.handle('data:importWorkspace', (_evt, payload) => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  if (!plausibilityCheckWorkspacePayload(payload)) {
+    return {
+      ok: false,
+      error: 'The JSON does not look like a Cadence workspace export (no recognised collections).',
+    };
+  }
+  snapshotCurrentDataFile(uid, 'pre-import');
+  workspaceImportLockUid = uid;
+  try {
+    return commitUserData(uid, payload, { allowOverwriteUnreadable: true });
+  } finally {
+    workspaceImportLockUid = null;
+  }
 });
 
 ipcMain.handle('app:getVersion', () => app.getVersion());

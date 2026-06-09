@@ -1,4 +1,5 @@
 import {
+  IcArchive,
   IcArrowLeft,
   IcEyeOff,
   IcKey,
@@ -22,6 +23,7 @@ export type NotesDetailHeaderProps = {
   onChangeTitle: (title: string) => void;
   onExtractTasks: () => void;
   onTogglePinned: () => void;
+  onToggleArchive: () => void;
   onRequestAction: (intent: PendingIntent) => void;
   onHideSelected: () => void;
   onConfirmRemove: () => void;
@@ -36,6 +38,7 @@ export function NotesDetailHeader({
   onChangeTitle,
   onExtractTasks,
   onTogglePinned,
+  onToggleArchive,
   onRequestAction,
   onHideSelected,
   onConfirmRemove,
@@ -78,6 +81,14 @@ export function NotesDetailHeader({
           pressed={!!selected.pinned}
         >
           <IcStar size={16} />
+        </NotesIconButton>
+
+        <NotesIconButton
+          onClick={onToggleArchive}
+          label={selected.archived ? 'Restore to active notes' : 'Archive note'}
+          tooltip={selected.archived ? 'Restore to active notes' : 'Archive note'}
+        >
+          <IcArchive size={16} />
         </NotesIconButton>
 
         {!selected.locked ? (

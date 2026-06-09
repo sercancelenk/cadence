@@ -1,14 +1,15 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
-import { isTodoOpen } from '../../model';
+import { isTodoOpen, isTodoItemArchived } from '../../model';
 import type { TodoGroup, TodoItem } from '../../model';
-import { matchesStatusFilter, type StatusFilter } from './todoPreferences';
+import { matchesStatusFilter, type StatusFilter, type TodoItemViewMode } from './todoPreferences';
 
 type FocusSetters = {
   setSearch: (q: string) => void;
   setStatusFilter: (f: StatusFilter) => void;
   setHideDone: (v: boolean) => void;
   setShowArchived: (v: boolean) => void;
+  setItemViewMode: (mode: TodoItemViewMode) => void;
   setSectionOpenMap: Dispatch<SetStateAction<Record<string, boolean>>>;
 };
 
@@ -36,6 +37,7 @@ export function useTodoFocus(
   statusFilter: StatusFilter,
   hideDone: boolean,
   showArchived: boolean,
+  itemViewMode: TodoItemViewMode,
   setters: FocusSetters,
 ) {
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
@@ -58,6 +60,9 @@ export function useTodoFocus(
       if (group?.archived && !showArchived) {
         setters.setShowArchived(true);
       }
+      if (isTodoItemArchived(target) && itemViewMode !== 'archived') {
+        setters.setItemViewMode('archived');
+      }
       setters.setSectionOpenMap((prev) =>
         prev[target.groupId] === false ? { ...prev, [target.groupId]: true } : prev,
       );
@@ -79,10 +84,12 @@ export function useTodoFocus(
     statusFilter,
     hideDone,
     showArchived,
+    itemViewMode,
     setters.setSearch,
     setters.setStatusFilter,
     setters.setHideDone,
     setters.setShowArchived,
+    setters.setItemViewMode,
     setters.setSectionOpenMap,
   ]);
 

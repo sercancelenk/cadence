@@ -9,7 +9,6 @@ import { useToast } from '../components/ui/Toast';
 import { askAI, AIError, defaultModel } from '../lib/ai';
 import {
   APP_SLUG,
-  DATA_FILE_PREFIX,
   SYNC_FINGERPRINT,
   SYNC_FINGERPRINT_LEGACY,
 } from '../lib/appBranding';
@@ -33,6 +32,7 @@ import {
   type LanSyncPair,
 } from '../lib/lanSyncClient';
 import { parseRemoteSnapshot } from '../lib/syncSnapshotGuard';
+import { estimateWorkspaceStorage } from '../lib/workspaceStorageStats';
 import { isElectronApp } from '../lib/runtime';
 import {
   getLastSyncEvent,
@@ -201,11 +201,10 @@ function RemindersSettingsSection() {
 }
 
 export function Settings() {
-  const { data, replaceAll, reload } = useAppData();
+  const { data, importWorkspace, syncFromDisk } = useAppData();
   const { pinEnabled, refresh: refreshSession, lockSession } = useSession();
   const toast = useToast();
   const { features, managed, source, setPreset } = useFeatures();
-  const [path, setPath] = useState<string>('');
   const [appVersion, setAppVersion] = useState<string>('');
   const [newPin, setNewPin] = useState('');
   const [newPin2, setNewPin2] = useState('');
@@ -216,8 +215,6 @@ export function Settings() {
 
   useEffect(() => {
     void (async () => {
-      const p = await window.cadence?.userDataPath?.();
-      if (p) setPath(p);
       const v = await window.cadence?.getAppVersion?.();
       if (v) setAppVersion(v);
       await refreshSession();
@@ -270,7 +267,7 @@ export function Settings() {
     const r = await window.cadence.importDataBundle();
     if (r?.canceled) return;
     if (r?.ok) {
-      await reload();
+      await syncFromDisk();
       toast.showSuccess('Backup imported', r.importedFrom ? `Restored from ${r.importedFrom}.` : 'Workspace restored.');
       return;
     }
@@ -384,32 +381,24 @@ export function Settings() {
 
       <SettingsGroup
         eyebrow="Data & backup"
-        description="Where your workspace lives on disk, how to copy it elsewhere, and how to restore an earlier state."
+        description="Automatic snapshots, manual export, and restore — everything in one place."
       >
-        {features.dataExport ? (
-          <CollapsibleCard id="backup" title="Backup">
-            <div className="row">
-              <Button type="button" variant="primary" icon={<IcDownload size={17} />} onClick={exportJson}>
-                Export JSON
-              </Button>
-              <Button type="button" variant="secondary" icon={<IcDownload size={17} />} onClick={() => void exportFullBundle()}>
-                Export full backup
-              </Button>
-              <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={() => fileRef.current?.click()}>
-                Import JSON
-              </Button>
-              <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={() => void importFullBundle()}>
-                Import folder
-              </Button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="application/json,.json"
-                hidden
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = '';
-                  if (!f) return;
+        <BackupsRecoverySection
+          canExport={features.dataExport}
+          onExportJson={exportJson}
+          onExportFullBundle={() => void exportFullBundle()}
+          onImportJson={() => fileRef.current?.click()}
+          onImportFolder={() => void importFullBundle()}
+          fileInput={
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (!f) return;
                 try {
                   if (
                     !window.confirm(
@@ -428,7 +417,11 @@ export function Settings() {
                     );
                     return;
                   }
-                  replaceAll(parsed.data);
+                  const imported = await importWorkspace(parsed.data);
+                  if (!imported.ok) {
+                    toast.showError('Could not import that file', imported.error);
+                    return;
+                  }
                   toast.showSuccess('Backup imported', 'Your workspace was replaced with the contents of the file.');
                 } catch {
                   toast.showError(
@@ -436,38 +429,10 @@ export function Settings() {
                     'It is unreadable or the JSON is malformed. Your existing workspace was not touched.',
                   );
                 }
-                }}
-              />
-            </div>
-            <p className="muted small" style={{ marginTop: 8 }}>
-              Importing replaces your existing data. Always export a backup first. Use{' '}
-              <strong>Export full backup</strong> in the desktop app to include note/todo images; JSON-only
-              exports keep attachment pointers but not the image files. Rolling in-app backups also copy the
-              attachments folder beside each snapshot.
-            </p>
-          </CollapsibleCard>
-        ) : null}
-
-        {/* Backups & Recovery is the IN-APP restore flow (snapshots stored on
-            disk by the main process). It does NOT exfiltrate data — even on
-            work-strict, IT typically wants users to be able to recover their
-            own workspace. We keep this visible regardless of the dataExport
-            flag, which only governs file-out / file-in. */}
-        <BackupsRecoverySection />
-
-        {isElectron ? (
-        <CollapsibleCard id="data-location" title="Data location" defaultOpen={false}>
-          {path ? <pre className="pre">{path}</pre> : <p className="muted">No Electron data path available.</p>}
-          <p className="muted small">File name pattern: {DATA_FILE_PREFIX}-data-&lt;userId&gt;.json</p>
-        </CollapsibleCard>
-        ) : (
-        <CollapsibleCard id="mobile-storage" title="Mobile storage" defaultOpen={false}>
-          <p className="muted">
-            Your workspace is stored in this browser&apos;s local storage on this device. Export JSON backups regularly —
-            clearing site data or switching browsers will erase your workspace.
-          </p>
-        </CollapsibleCard>
-        )}
+              }}
+            />
+          }
+        />
 
         <StorageCacheSection />
       </SettingsGroup>
@@ -2542,7 +2507,21 @@ function AISettingsSection() {
 // into the live file. Every restore takes a "pre-restore" snapshot of the
 // current state so the operation is itself undoable.
 
-function BackupsRecoverySection() {
+function BackupsRecoverySection({
+  canExport,
+  onExportJson,
+  onExportFullBundle,
+  onImportJson,
+  onImportFolder,
+  fileInput,
+}: {
+  canExport: boolean;
+  onExportJson: () => void;
+  onExportFullBundle: () => void;
+  onImportJson: () => void;
+  onImportFolder: () => void;
+  fileInput: ReactNode;
+}) {
   const { reload } = useAppData();
   const isElectron = typeof window !== 'undefined' && !!window.cadence?.dataListSources;
   const [sources, setSources] = useState<DataSources | null>(null);
@@ -2568,7 +2547,7 @@ function BackupsRecoverySection() {
     return off;
   }, []);
 
-  if (!isElectron) {
+  if (!isElectron && !canExport) {
     return null;
   }
 
@@ -2629,21 +2608,102 @@ function BackupsRecoverySection() {
   };
 
   const totalSnapshots = sources?.backups.length ?? 0;
+  const liveCounts = sources?.live?.counts;
+  const liveSummary = liveCounts
+    ? `${liveCounts.teams ?? 0} team${(liveCounts.teams ?? 0) === 1 ? '' : 's'}, ` +
+      `${liveCounts.todoItems ?? 0} task${(liveCounts.todoItems ?? 0) === 1 ? '' : 's'}, ` +
+      `${liveCounts.notes ?? 0} note${(liveCounts.notes ?? 0) === 1 ? '' : 's'}`
+    : null;
+  const hasLegacy =
+    !!sources?.legacy && (sources.legacy.bytes ?? 0) > 0;
 
   return (
     <CollapsibleCard
       id="backups"
-      title="Backups & recovery"
+      title="Backup & recovery"
       defaultOpen={false}
-      badge={sources ? `${totalSnapshots} snapshot${totalSnapshots === 1 ? '' : 's'}` : undefined}
+      badge={
+        isElectron && sources
+          ? `${totalSnapshots} snapshot${totalSnapshots === 1 ? '' : 's'}`
+          : undefined
+      }
     >
-      <p className="muted small" style={{ marginBottom: 12 }}>
-        Cadence snapshots your data file every time it saves, after every sign-in, and at app launch. If something looks
-        wrong (e.g. your data appeared empty after an update), you can restore from any snapshot below — your <em>current</em>
-        state is always backed up first, so this is reversible.
-      </p>
+      {canExport ? (
+        <>
+          <p className="muted small" style={{ marginBottom: 10 }}>
+            Copy your workspace elsewhere, or replace it from a file. Import always overwrites — export first if
+            you&apos;re unsure.
+          </p>
+          <div className="row" style={{ marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+            <Button
+              type="button"
+              variant="primary"
+              icon={<IcDownload size={17} />}
+              title="Download your workspace as a single JSON file (text and settings; no embedded images)"
+              onClick={onExportJson}
+            >
+              Export JSON
+            </Button>
+            {isElectron ? (
+              <Button
+                type="button"
+                variant="secondary"
+                icon={<IcDownload size={17} />}
+                title="Save a folder with data.json plus note and task image files"
+                onClick={onExportFullBundle}
+              >
+                Export full backup
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="secondary"
+              icon={<IcUpload size={17} />}
+              title="Replace your entire workspace from a JSON file (export first if unsure)"
+              onClick={onImportJson}
+            >
+              Import JSON
+            </Button>
+            {isElectron ? (
+              <Button
+                type="button"
+                variant="secondary"
+                icon={<IcUpload size={17} />}
+                title="Replace workspace and attachments from a full backup folder"
+                onClick={onImportFolder}
+              >
+                Import folder
+              </Button>
+            ) : null}
+            {fileInput}
+          </div>
+          {isElectron ? (
+            <p className="muted small" style={{ marginBottom: 16 }}>
+              <strong>Full backup</strong> includes note and task images. JSON-only exports keep text and attachment
+              pointers; rolling snapshots also copy the attachments folder beside each snapshot.
+            </p>
+          ) : (
+            <p className="muted small" style={{ marginBottom: 16 }}>
+              JSON export works in the browser. Full folder backup (with images) requires the desktop app.
+            </p>
+          )}
+        </>
+      ) : null}
 
-      {saveError ? (
+      {isElectron ? (
+        <>
+          <p className="muted small" style={{ marginBottom: 12 }}>
+            Cadence saves automatic snapshots at launch, sign-in, and before each save. Restore any snapshot below —
+            your current state is backed up first, so you can undo a restore.
+            {liveSummary ? (
+              <>
+                {' '}
+                <strong>Current workspace:</strong> {liveSummary}.
+              </>
+            ) : null}
+          </p>
+
+          {saveError ? (
         <div
           style={{
             marginBottom: 12,
@@ -2663,11 +2723,23 @@ function BackupsRecoverySection() {
         </div>
       ) : null}
 
-      <div className="row" style={{ marginBottom: 12 }}>
-        <Button type="button" variant="secondary" icon={<IcRefresh size={16} />} onClick={refresh} disabled={busy}>
+      <div className="row" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <Button
+          type="button"
+          variant="secondary"
+          icon={<IcRefresh size={16} />}
+          title="Reload the snapshot list from disk"
+          onClick={refresh}
+          disabled={busy}
+        >
           Refresh
         </Button>
-        <Button type="button" variant="ghost" onClick={openFolder}>
+        <Button
+          type="button"
+          variant="ghost"
+          title="Open the Cadence data folder in Finder / Explorer"
+          onClick={openFolder}
+        >
           Open data folder
         </Button>
       </div>
@@ -2686,18 +2758,14 @@ function BackupsRecoverySection() {
 
       {sources ? (
         <>
-          <DataSourceRow
-            label="Current data file"
-            sub="The live file the app reads from."
-            info={sources.live}
-            onRestore={null}
-          />
-          <DataSourceRow
-            label="Legacy single-user file (leeadman-data.json — pre-rename)"
-            sub="From the pre-accounts version (Leeadman). Restoring imports it into your current account."
-            info={sources.legacy}
-            onRestore={(f) => restore(f, 'legacy data file')}
-          />
+          {hasLegacy ? (
+            <DataSourceRow
+              label="Legacy Leeadman data"
+              sub="Pre-rename single-user file. Restoring imports it into your current account."
+              info={sources.legacy}
+              onRestore={(f) => restore(f, 'legacy data file')}
+            />
+          ) : null}
 
           {sources.backups.length > 0 ? (
             <>
@@ -2739,6 +2807,8 @@ function BackupsRecoverySection() {
       ) : (
         <p className="muted small">Loading…</p>
       )}
+        </>
+      ) : null}
     </CollapsibleCard>
   );
 }
@@ -2752,6 +2822,8 @@ function BackupsRecoverySection() {
 // tasks, notes, AI keys, backups or account list.
 
 function StorageCacheSection() {
+  const { data } = useAppData();
+  const workspace = useMemo(() => estimateWorkspaceStorage(data), [data]);
   const isElectron =
     typeof window !== 'undefined' && !!window.cadence?.cacheStats && !!window.cadence?.clearChromiumCache;
   const [stats, setStats] = useState<CacheStats | null>(null);
@@ -2830,15 +2902,67 @@ function StorageCacheSection() {
       badge={stats && stats.ok ? formatBytes(stats.totalBytes) : undefined}
     >
       <p className="muted small" style={{ marginBottom: 12 }}>
-        How much disk Cadence uses on this device, and a safe way to reclaim space. Your tasks, notes, AI keys and
-        backups are <strong>never</strong> touched by the cache buttons below.
+        Workspace size by area, plus disk usage on desktop. Cache buttons never touch your tasks, notes, or backups.
       </p>
+
+      <div style={{ marginBottom: 16 }}>
+        <p className="small" style={{ margin: '0 0 8px', fontWeight: 600 }}>
+          Workspace content
+        </p>
+        <ul className="cache-stats">
+          <CacheRow
+            label={`Notes · ${workspace.counts.notes} active`}
+            bytes={workspace.notesBytes}
+            hint="Unlocked note titles and bodies in the active list."
+          />
+          {workspace.counts.notesArchived > 0 ? (
+            <CacheRow
+              label={`Notes · ${workspace.counts.notesArchived} archived`}
+              bytes={workspace.notesArchivedBytes}
+              hint="Shelved notes — hidden from Active but still in your workspace file."
+            />
+          ) : null}
+          <CacheRow
+            label={`To-dos · ${workspace.counts.todoItems} active`}
+            bytes={workspace.todoItemsBytes}
+            hint="Open and completed tasks in active lists."
+          />
+          {workspace.counts.todoItemsArchived > 0 ? (
+            <CacheRow
+              label={`To-dos · ${workspace.counts.todoItemsArchived} archived`}
+              bytes={workspace.todoItemsArchivedBytes}
+              hint="Shelved tasks — hidden from Active but still in your workspace file."
+            />
+          ) : null}
+          <CacheRow
+            label={`Team work · ${workspace.counts.teamItems} items`}
+            bytes={workspace.teamItemsBytes}
+            hint="Agenda items, goals, and 1:1 notes across teams."
+          />
+          <CacheRow
+            label="Teams & people"
+            bytes={workspace.teamsAndPeopleBytes}
+            hint="Team metadata, roster, and profile."
+          />
+          <CacheRow
+            label="Settings & other"
+            bytes={workspace.otherBytes}
+            hint="Todo lists, AI settings, utility docs, lock state, reminders."
+          />
+          <CacheRow
+            label="Workspace JSON total"
+            bytes={workspace.totalBytes}
+            emphasis
+            hint="Sum of the rows above — approximate in-memory size before encryption."
+          />
+        </ul>
+      </div>
 
       {!isElectron ? (
         <>
           <p className="muted small">
-            Disk diagnostics are only available in the desktop app. The PWA stores everything in this browser&apos;s
-            local storage (tiny — a few KB at most).
+            Disk diagnostics are only available in the desktop app. The PWA stores your workspace in this browser&apos;s
+            local storage — the breakdown above reflects your current data size.
           </p>
           <div className="row" style={{ marginTop: 10, flexWrap: 'wrap' }}>
             <Button
@@ -2859,7 +2983,11 @@ function StorageCacheSection() {
       ) : stats && stats.ok ? (
         <>
           <ul className="cache-stats">
-            <CacheRow label="Encrypted data file" bytes={stats.dataFileBytes} hint="Your tasks, notes, AI key. Never touched by cache buttons." />
+            <CacheRow
+              label="Encrypted workspace files"
+              bytes={stats.dataFileBytes}
+              hint="Your workspace on disk (desktop app). Never touched by cache buttons."
+            />
             {stats.legacyBytes > 0 ? (
               <CacheRow label="Legacy data file" bytes={stats.legacyBytes} hint="Pre-accounts era single-user file. Kept until you delete it manually." />
             ) : null}
@@ -2918,7 +3046,7 @@ function StorageCacheSection() {
           </div>
 
           <p className="muted small" style={{ marginTop: 10 }}>
-            Want to see the folder yourself? Use <strong>Backups &amp; recovery → Open data folder</strong> above.
+            Want to browse the folder? Use <strong>Backup &amp; recovery → Open data folder</strong> above.
           </p>
         </>
       ) : stats && !stats.ok ? (

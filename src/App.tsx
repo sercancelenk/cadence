@@ -26,6 +26,12 @@ const RegisterPage = lazy(() => import('./views/RegisterPage').then((m) => ({ de
 const TodosPage = lazy(() => import('./views/TodosPage').then((m) => ({ default: m.TodosPage })));
 const AgendaPage = lazy(() => import('./views/AgendaPage').then((m) => ({ default: m.AgendaPage })));
 const AnalyticsPage = lazy(() => import('./views/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
+const AnalyticsLayout = lazy(() =>
+  import('./views/AnalyticsLayout').then((m) => ({ default: m.AnalyticsLayout })),
+);
+const ActivityReportPage = lazy(() =>
+  import('./views/ActivityReportPage').then((m) => ({ default: m.ActivityReportPage })),
+);
 const ProfilePage = lazy(() => import('./views/ProfilePage').then((m) => ({ default: m.ProfilePage })));
 const Settings = lazy(() => import('./views/Settings').then((m) => ({ default: m.Settings })));
 const NotesPage = lazy(() => import('./views/NotesPage').then((m) => ({ default: m.NotesPage })));
@@ -34,6 +40,9 @@ const UtilitiesDocumentPage = lazy(() =>
 );
 const UtilitiesStructuredPage = lazy(() =>
   import('./views/UtilitiesStructuredPage').then((m) => ({ default: m.UtilitiesStructuredPage })),
+);
+const PlanningPage = lazy(() =>
+  import('./views/PlanningPage').then((m) => ({ default: m.PlanningPage })),
 );
 const TeamDashboard = lazy(() => import('./views/TeamDashboard').then((m) => ({ default: m.TeamDashboard })));
 // All four People routes share the same chunk (they import each other) — using
@@ -190,10 +199,14 @@ function AppRoutes() {
             <Route path={PATH_TEAMS.replace(/^\//, '')} element={<HomeTeams />} />
             <Route path="todos" element={<TodosPage />} />
             <Route path="agenda" element={<AgendaPage />} />
+            <Route path="planning" element={<PlanningPage />} />
             <Route path="notes" element={<NotesPage />} />
             <Route path="utilities/document" element={<UtilitiesDocumentPage />} />
             <Route path="utilities/structured" element={<UtilitiesStructuredPage />} />
-            <Route path="analytics" element={<AnalyticsPage />} />
+            <Route path="analytics" element={<AnalyticsLayout />}>
+              <Route index element={<AnalyticsPage />} />
+              <Route path="activity" element={<ActivityReportPage />} />
+            </Route>
             <Route path="profile" element={<ProfilePage />} />
             <Route path="settings" element={<Settings />} />
             <Route path="teams/:teamId" element={<TeamLayout />}>

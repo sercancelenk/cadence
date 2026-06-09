@@ -17,7 +17,7 @@ import {
 import { useAppDataSelector } from '../AppDataContext';
 import { brandIconUrl } from '../lib/appBranding';
 import { useMobileWeb } from '../lib/runtime';
-import { PATH_HOME, PATH_TEAMS, PATH_UTILITIES_DOCUMENT, PATH_UTILITIES_STRUCTURED } from '../lib/routes';
+import { PATH_HOME, PATH_PLANNING, PATH_TEAMS, PATH_UTILITIES_DOCUMENT, PATH_UTILITIES_STRUCTURED } from '../lib/routes';
 import { teamLeader, teamMe, teamPeople as teamPeopleRoute, teamBase } from '../lib/teamPaths';
 import { AppSidebarFooter } from './AppSidebarFooter';
 
@@ -57,13 +57,15 @@ export function AppSidebar({ collapsed }: Props) {
   const todoSummary = (() => {
     const totalGroups = sidebarData.todoGroups.length;
     const archivedGroups = sidebarData.todoGroups.filter((g) => g.archived).length;
-    const openTodos = sidebarData.todoItems.filter((t) => t.status !== 'done' && t.status !== 'cancelled').length;
+    const openTodos = sidebarData.todoItems.filter(
+      (t) => t.status !== 'done' && t.status !== 'cancelled' && t.archived !== true,
+    ).length;
     const allArchived = totalGroups > 0 && archivedGroups === totalGroups;
     return { openTodos, allArchived, archivedGroups, totalGroups };
   })();
   const notesSummary = (() => {
-    const total = sidebarData.notes.length;
-    const locked = sidebarData.notes.filter((n) => n.locked).length;
+    const total = sidebarData.notes.filter((n) => n.archived !== true).length;
+    const locked = sidebarData.notes.filter((n) => n.locked && n.archived !== true).length;
     return { total, locked };
   })();
 
@@ -101,6 +103,12 @@ export function AppSidebar({ collapsed }: Props) {
               <IcCalendar size={18} />
             </span>
             {!collapsed ? <span>Agenda</span> : null}
+          </NavLink>
+          <NavLink to={PATH_PLANNING} className={linkCls} title="Planning — personal Eisenhower matrix">
+            <span className="app-sidebar__ic">
+              <IcTarget size={18} />
+            </span>
+            {!collapsed ? <span>Planning</span> : null}
           </NavLink>
           <NavLink
             to="/todos"

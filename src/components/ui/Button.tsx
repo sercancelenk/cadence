@@ -37,12 +37,10 @@ export function Button({
   const hasRightIcon = !!iconRight;
   const hasAnyIcon = hasLeftIcon || hasRightIcon;
   const textLabel = labelFromChildren(children);
-  const tooltip = titleProp ?? (hasAnyIcon ? textLabel : undefined);
-  const ariaLabel = ariaLabelProp ?? (hasAnyIcon ? tooltip : undefined);
-  const showText = !hasAnyIcon && children != null && children !== false && children !== '';
-
-  const iconOnly =
-    size === 'icon' || (hasAnyIcon && !showText) || (!children && !iconRight && !!icon) || (!children && !icon && !!iconRight);
+  const showText = children != null && children !== false && children !== '';
+  const iconOnly = size === 'icon' || (hasAnyIcon && !showText);
+  const tooltip = titleProp ?? (iconOnly && textLabel ? textLabel : undefined);
+  const ariaLabel = ariaLabelProp ?? (iconOnly && textLabel ? textLabel : undefined);
 
   const classes = [
     'btn',

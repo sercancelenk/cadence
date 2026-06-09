@@ -28,7 +28,9 @@ function breadcrumbFromPath(data: AppData, pathname: string): string {
   if (pathname === PATH_TEAMS) return 'Teams';
   if (pathname === '/todos') return 'To-dos';
   if (pathname === '/agenda') return 'Agenda';
+  if (pathname === '/planning') return 'Planning';
   if (pathname === '/analytics') return 'Analytics';
+  if (pathname === '/analytics/activity') return 'Analytics · Activity';
   if (pathname === '/profile') return 'Profile';
   if (pathname === '/settings') return 'Settings';
   if (pathname === '/utilities/document') return 'Utilities · Document';

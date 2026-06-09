@@ -240,8 +240,26 @@ export interface TodoItem {
    * only advisory.
    */
   sourceNoteId?: string;
+  /**
+   * Personal planning hub (Eisenhower matrix) — optional; does not affect
+   * list views or team todo workflows when unset/false.
+   */
+  planInHub?: boolean;
+  /** Manual importance axis for planning hub. */
+  planImportant?: boolean;
+  /** Manual urgency axis for planning hub. */
+  planUrgent?: boolean;
+  /** Pin to today's focus strip (max 3 in UI). */
+  planFocusToday?: boolean;
+  /** When true, hidden from active lists until unarchived. */
+  archived?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** True when the task is shelved in the archived view (not deleted). */
+export function isTodoItemArchived(item: Pick<TodoItem, 'archived'>): boolean {
+  return item.archived === true;
 }
 
 export const DATA_VERSION = 3 as const;
@@ -323,8 +341,15 @@ export interface Note {
    *  Notes page treats a missing value as "never opened" and falls back to
    *  `updatedAt` when sorting by Opened. */
   lastOpenedAt?: string;
+  /** When true, hidden from the active notes list until unarchived. */
+  archived?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** True when the note is shelved in the archived view (not deleted). */
+export function isNoteArchived(note: Pick<Note, 'archived'>): boolean {
+  return note.archived === true;
 }
 
 /**
@@ -593,6 +618,11 @@ function parseTodoStatus(raw: unknown, done: boolean): TodoStatus {
   return done ? 'done' : 'todo';
 }
 
+function parseOptionalBoolean(value: unknown): boolean | undefined {
+  if (value === true || value === false) return value;
+  return undefined;
+}
+
 function parseTodoItems(raw: unknown[]): TodoItem[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -674,6 +704,11 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
         remindRepeat,
         sortOrder: typeof x.sortOrder === 'number' ? x.sortOrder : i,
         sourceNoteId,
+        planInHub: parseOptionalBoolean(x.planInHub),
+        planImportant: parseOptionalBoolean(x.planImportant),
+        planUrgent: parseOptionalBoolean(x.planUrgent),
+        planFocusToday: parseOptionalBoolean(x.planFocusToday),
+        archived: parseOptionalBoolean(x.archived) === true ? true : undefined,
         createdAt: typeof x.createdAt === 'string' ? x.createdAt : nowIso(),
         updatedAt: typeof x.updatedAt === 'string' ? x.updatedAt : nowIso(),
       };
@@ -1010,6 +1045,7 @@ function parseNotes(raw: unknown): Note[] {
       pinned: !!o.pinned,
       sortOrder: typeof o.sortOrder === 'number' ? o.sortOrder : undefined,
       lastOpenedAt: typeof o.lastOpenedAt === 'string' ? o.lastOpenedAt : undefined,
+      archived: o.archived === true ? true : undefined,
       createdAt: typeof o.createdAt === 'string' ? o.createdAt : nowIso(),
       updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
     });

@@ -10,10 +10,19 @@ import type { Note } from '../../model';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
 import { notePlainText } from './notePlainText';
 import { NotesIconButton } from './NotesIconButton';
-import { PLACEHOLDER_TITLE, SORT_OPTIONS, type NoteSortMode } from './notePreferences';
+import {
+  NOTE_VIEW_OPTIONS,
+  PLACEHOLDER_TITLE,
+  SORT_OPTIONS,
+  type NoteSortMode,
+  type NoteViewMode,
+} from './notePreferences';
 
 export type NotesSidebarProps = {
   notes: Note[];
+  viewMode: NoteViewMode;
+  onViewModeChange: (mode: NoteViewMode) => void;
+  archivedCount: number;
   sortMode: NoteSortMode;
   onSortModeChange: (mode: NoteSortMode) => void;
   selectedId: string | null;
@@ -34,6 +43,9 @@ export type NotesSidebarProps = {
 
 export function NotesSidebar({
   notes,
+  viewMode,
+  onViewModeChange,
+  archivedCount,
   sortMode,
   onSortModeChange,
   selectedId,
@@ -51,6 +63,8 @@ export function NotesSidebar({
   onRowDrop,
   onRowDragEnd,
 }: NotesSidebarProps) {
+  const archivedView = viewMode === 'archived';
+
   return (
     <aside className="notes-page__sidebar">
       <header className="notes-page__sidebar-header">
@@ -88,17 +102,45 @@ export function NotesSidebar({
               <IcLockOff size={16} />
             </NotesIconButton>
           ) : null}
-          <NotesIconButton onClick={onCreateNote} label="New note" tooltip="New note" variant="primary">
-            <IcPlus size={16} />
-          </NotesIconButton>
+          {!archivedView ? (
+            <NotesIconButton onClick={onCreateNote} label="New note" tooltip="New note" variant="primary">
+              <IcPlus size={16} />
+            </NotesIconButton>
+          ) : null}
         </div>
       </header>
+
+      <div className="seg notes-page__view-seg" role="group" aria-label="Notes view">
+        {NOTE_VIEW_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            className={`seg__btn${viewMode === opt.value ? ' seg__btn--on' : ''}`}
+            onClick={() => onViewModeChange(opt.value)}
+          >
+            {opt.label}
+            {opt.value === 'archived' && archivedCount > 0 ? (
+              <span className="notes-page__view-badge">{archivedCount}</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+
       {notes.length === 0 ? (
         <div className="notes-page__empty">
-          <p>No notes yet.</p>
-          <button type="button" className="btn btn--primary" onClick={onCreateNote}>
-            Create your first note
-          </button>
+          {archivedView ? (
+            <>
+              <p>No archived notes.</p>
+              <p className="muted small">Archive a note from the Active view using the archive icon in the header.</p>
+            </>
+          ) : (
+            <>
+              <p>No notes yet.</p>
+              <button type="button" className="btn btn--primary" onClick={onCreateNote}>
+                Create your first note
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <ul className="notes-page__list">
@@ -111,13 +153,14 @@ export function NotesSidebar({
               : notePlainText(n);
             const preview = previewText.replace(/\s+/g, ' ').slice(0, 80);
             const title = (n.title || PLACEHOLDER_TITLE).trim() || PLACEHOLDER_TITLE;
-            const isManual = sortMode === 'manual';
+            const isManual = sortMode === 'manual' && !archivedView;
             const isDragging = draggingId === n.id;
             const isDropTarget = dropTargetId === n.id;
             const liClass = [
               'notes-page__list-row',
               isDragging ? 'notes-page__list-row--dragging' : '',
               isDropTarget ? 'notes-page__list-row--drop-target' : '',
+              n.archived ? ' notes-page__list-row--archived' : '',
             ]
               .filter(Boolean)
               .join(' ');

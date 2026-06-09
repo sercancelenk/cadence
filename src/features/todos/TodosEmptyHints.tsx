@@ -44,6 +44,18 @@ export function TodosFilteredEmptyHint({
   );
 }
 
+export function TodosArchivedEmptyHint() {
+  return (
+    <section className="card todos-empty-hint">
+      <h3 className="todos-empty-hint__title">No archived tasks</h3>
+      <p className="muted small todos-empty-hint__body">
+        Archive a task from the <strong>Active</strong> view using the archive icon on its row. Archived
+        tasks stay on disk and can be restored anytime.
+      </p>
+    </section>
+  );
+}
+
 export function TodosNoListsHint() {
   return (
     <section className="card todos-empty-hint">

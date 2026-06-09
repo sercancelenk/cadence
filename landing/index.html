@@ -123,6 +123,7 @@
               <li><span aria-hidden>●</span> macOS desktop · iOS / Android PWA</li>
               <li><span aria-hidden>●</span> Cross-device sync over your own Wi-Fi</li>
               <li><span aria-hidden>●</span> Auto-snapshots + boot integrity checks</li>
+              <li><span aria-hidden>●</span> Planning hub + activity report</li>
               <li><span aria-hidden>●</span> Free and open source</li>
             </ul>
           </div>
@@ -231,6 +232,27 @@
 
         <div class="feature">
           <div class="feature__copy">
+            <div class="feature__eyebrow">Home</div>
+            <h3>Your day, teams and quick access in one glance.</h3>
+            <p>
+              The dashboard greets you with overdue counts, open to-dos and
+              today&apos;s schedule. Jump straight to Agenda, Notes or any
+              team from quick-access tiles — or press <kbd>⌘K</kbd> to search
+              titles and bodies across the workspace.
+            </p>
+            <ul class="checklist">
+              <li>Stat cards for teams, tasks and people</li>
+              <li>Continue where you left off on your last team</li>
+              <li>Global search pill in the top bar</li>
+            </ul>
+          </div>
+          <figure class="feature__media">
+            <img src="./screenshots/home.png" alt="Cadence home dashboard with stat cards, today schedule and quick access tiles" loading="lazy" />
+          </figure>
+        </div>
+
+        <div class="feature feature--reverse">
+          <div class="feature__copy">
             <div class="feature__eyebrow">Notes</div>
             <h3>A Markdown notebook with a real lockbox.</h3>
             <p>
@@ -250,6 +272,7 @@
             </p>
             <ul class="checklist">
               <li>Five sort modes + drag-reorder inside the pinned tier</li>
+              <li>Active · Archived segment — shelve without deleting</li>
               <li>Pin, soft-delete, restore</li>
               <li>Search indexes note bodies, not just titles</li>
             </ul>
@@ -259,7 +282,7 @@
           </figure>
         </div>
 
-        <div class="feature feature--reverse">
+        <div class="feature">
           <div class="feature__copy">
             <div class="feature__eyebrow">Tasks</div>
             <h3>Lists that respect priority — with room for real notes.</h3>
@@ -274,9 +297,9 @@
               notifications even when the window is in the background.
             </p>
             <ul class="checklist">
+              <li>Active · Archived for tasks and lists</li>
               <li>Recurring reminders that catch up gracefully after sleep</li>
               <li>Search matches title <em>and</em> details, not just the one-liner</li>
-              <li>Clear warning when every list is archived but tasks still exist</li>
               <li>Pinned groups float to the top of the sidebar</li>
             </ul>
           </div>
@@ -285,7 +308,7 @@
           </figure>
         </div>
 
-        <div class="feature">
+        <div class="feature feature--reverse">
           <div class="feature__copy">
             <div class="feature__eyebrow">Agenda</div>
             <h3>Tomorrow at a glance, this month in context.</h3>
@@ -297,76 +320,56 @@
             </p>
           </div>
           <figure class="feature__media">
-            <img src="./screenshots/agenda.png" alt="Cadence agenda calendar grid" loading="lazy" />
-          </figure>
-        </div>
-
-        <div class="feature feature--reverse">
-          <div class="feature__copy">
-            <div class="feature__eyebrow">People + teams</div>
-            <h3>1:1 prep that doesn't live in a Slack DM.</h3>
-            <p>
-              Group people into teams, give each a private scratchpad and a
-              running agenda. Capture items, goals and feedback that survive
-              the meeting. Drop a wall of meeting notes into the AI extractor
-              and get a clean task list back, ready to drop into any project.
-            </p>
-          </div>
-          <figure class="feature__media">
-            <img src="./screenshots/home.png" alt="Cadence home view with teams and people" loading="lazy" />
+            <img src="./screenshots/agenda.png" alt="Cadence agenda with overdue, today and upcoming tasks" loading="lazy" />
           </figure>
         </div>
 
         <div class="feature">
           <div class="feature__copy">
-            <div class="feature__eyebrow">Global search</div>
-            <h3>⌘K finds whatever you typed, body included.</h3>
+            <div class="feature__eyebrow">Planning</div>
+            <h3>Eisenhower matrix for your personal tasks.</h3>
             <p>
-              The command palette indexes every title <em>and body</em>
-              across notes, personal to-dos (title + Markdown details), team
-              items and people's scratchpads. Matched terms get highlighted with
-              surrounding-context snippets so you know <em>why</em> each result
-              appeared. Press Enter to deep-link straight to the note or task —
-              no scrolling required.
+              The <strong>Planning</strong> hub pulls tasks from your personal
+              to-do lists into a four-quadrant matrix: <em>Do first</em>,
+              <em>Schedule</em>, <em>Delegate</em>, and <em>Eliminate</em>.
+              Drag to reprioritise by urgency and importance — the matrix is
+              a view, not a duplicate copy of your tasks.
             </p>
+            <ul class="checklist">
+              <li>Linked to your existing to-do lists</li>
+              <li>Drag between quadrants</li>
+              <li>100% local — no sync required to plan</li>
+            </ul>
           </div>
           <figure class="feature__media">
-            <img src="./screenshots/palette.png" alt="Cadence command palette open with search results across notes, todos and teams" loading="lazy" />
+            <img src="./screenshots/planning.png" alt="Cadence Planning hub with Eisenhower matrix quadrants" loading="lazy" />
           </figure>
         </div>
 
         <div class="feature feature--reverse">
           <div class="feature__copy">
-            <div class="feature__eyebrow">Multi-device sync</div>
-            <h3>Scan once. Stay in step. No cloud in the loop.</h3>
+            <div class="feature__eyebrow">Settings</div>
+            <h3>Security, backup, sync and integrations — grouped clearly.</h3>
             <p>
-              <em>Settings → Multi-device sync</em> flips a TLS-secured
-              server on your desktop. The host card renders a scannable
-              QR code; point your iPhone or Android camera at it, accept
-              the one-time security warning, and the bundled PWA pairs
-              automatically. A green <strong>Connected · synced 2 min
-              ago</strong> badge lights up and the two devices keep each
-              other in step in the background.
-            </p>
-            <p>
-              Encrypted on disk with AES-256-GCM, encrypted on the wire
-              with TLS 1.2+, gated by a 192-bit bearer token and an
-              ETag-driven conflict guard. Your bytes never leave your
-              house — and there's no Cadence service in the middle to
-              breach, throttle or shut down.
+              Everything about your workspace lives on your device. Settings
+              are organised into <strong>Account &amp; security</strong>,
+              <strong>Data &amp; backup</strong> (export, import and 50 rolling
+              snapshots), <strong>Sync</strong> (LAN + Google Drive),
+              <strong>Integrations</strong> (AI and reminders) and
+              <strong>About</strong>.
             </p>
             <ul class="checklist">
-              <li>QR-code pairing — no IPs, no tokens to retype</li>
-              <li>Bidirectional auto-sync on launch / focus / online</li>
-              <li>412 Precondition Failed guards against silent overwrites</li>
+              <li>One-click backup &amp; recovery with snapshot counts</li>
+              <li>Workspace storage breakdown on desktop</li>
+              <li>Opt-in LAN sync with QR pairing · optional cloud sync</li>
             </ul>
           </div>
           <figure class="feature__media">
-            <img src="./screenshots/settings.png" alt="Cadence Settings showing the LAN sync host card with QR code and Connected badge" loading="lazy" />
+            <img src="./screenshots/settings.png" alt="Cadence Settings overview with account, backup, sync and integrations groups" loading="lazy" />
           </figure>
         </div>
 
-        <div class="feature feature--reverse">
+        <div class="feature">
           <div class="feature__copy">
             <div class="feature__eyebrow">Utilities</div>
             <h3>Scratch pad and structured-data bench.</h3>
@@ -799,10 +802,32 @@
               <code>launch</code> / <code>post-login</code> /
               <code>pre-save</code> / <code>pre-pwchange</code> /
               <code>pre-restore</code> — oldest pruned automatically so disk
-              use stays bounded. Settings → Backups &amp; recovery shows
-              teams / lists / tasks / notes per snapshot, flags snapshots where
-              every todo list is archived, and restores with a clear
-              "Loaded: …" confirmation.
+              use stays bounded. <strong>Settings → Backup &amp; recovery</strong>
+              combines manual export/import with snapshot restore; each snapshot
+              shows teams / lists / tasks / notes counts and restores with a
+              clear &quot;Loaded: …&quot; confirmation.
+            </p>
+          </div>
+
+          <div class="privacy-card">
+            <h3>Archive without deleting</h3>
+            <p>
+              Notes and to-dos support an <strong>Active · Archived</strong>
+              segment. Shelving hides items from default views (and archived
+              notes from ⌘K search) while keeping them in your encrypted
+              workspace until you delete them. Settings shows a per-area
+              storage breakdown so you can see what archived content still
+              occupies.
+            </p>
+          </div>
+
+          <div class="privacy-card">
+            <h3>Efficient desktop storage</h3>
+            <p>
+              Large workspaces are split into monthly files on disk for
+              performance, while the base file keeps a full copy for safety
+              if you ever open an older Cadence build. You never need to
+              manage these files — the app reads and writes them automatically.
             </p>
           </div>
 
@@ -945,6 +970,7 @@
         <nav class="footer__links" aria-label="Footer">
           <a href="https://github.com/sercancelenk/cadence" rel="noopener noreferrer" target="_blank">Source</a>
           <a href="https://github.com/sercancelenk/cadence/releases" rel="noopener noreferrer" target="_blank">Releases</a>
+          <a href="https://github.com/sercancelenk/cadence/blob/main/docs/USER-GUIDE.md" rel="noopener noreferrer" target="_blank">User guide</a>
           <a href="https://github.com/sercancelenk/cadence#readme" rel="noopener noreferrer" target="_blank">README</a>
           <a href="https://github.com/sercancelenk/cadence/issues" rel="noopener noreferrer" target="_blank">Issues</a>
         </nav>

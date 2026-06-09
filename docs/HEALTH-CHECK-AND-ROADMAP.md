@@ -262,35 +262,40 @@ CI (`.github/workflows/ci.yml`) on every push/PR: `tsc` → `npm test` → `buil
 
 ---
 
-## Mobile / PWA UX gaps
+## Mobile / PWA UX
 
-The PWA **works** (drawer nav, safe-area, launch → `/todos`, offline shell). It is not yet a **curated lite product surface**.
+The PWA **works** as a **companion** surface (drawer nav, safe-area, launch → `/todos`, offline shell, LAN sync pair/pull). Desktop remains the primary workspace; phone = capture, agenda, quick edits, sync from host.
 
-### Desktop-only features still visible on mobile web
+### Product definition (agreed 2026-06)
 
-| Surface | Desktop | PWA today | Desired |
-|---|---|---|---|
-| Backups & Recovery | Full restore UI | Empty card: "desktop only" | **Hide entirely** |
-| PIN protection | Works | Form visible, IPC missing | **Hide entirely** |
-| Stay signed in | Electron Keychain | Hidden (OK) | — |
-| Data location | Shows path | "No Electron path" | **Hide or replace with PWA storage note** |
-| Save / integrity banners | "Open Backups" | Links to dead-end | **"Export JSON" CTA** |
-| Sidebar nav | Full | Home, Teams, Analytics, etc. | **Lite nav**: Todos, Notes, Agenda, Profile, Settings |
-| Top bar team switcher | Full | Crowded on ≤700px | **Simplify on mobile web** |
+| Role | Mobile (PWA) | Desktop (Electron) |
+|---|---|---|
+| Primary use | To-dos, Agenda, Notes capture, LAN pull | Full workspace: Teams, 1:1, Planning matrix, backups, restore |
+| Data authority | Same account; often synced from desktop host | Authoritative encrypted file + rolling snapshots |
+| Navigation | Lite sidebar via `isMobileWeb()` | Full sidebar |
 
-### Principle for mobile lite mode
+**Core mobile features (ship / keep):** To-dos, Agenda, Notes, Quick add, Search, Export JSON, LAN sync, PWA reminders (where OS supports).
 
-> **If a feature cannot work on this runtime, do not show its link, button, or settings card.**  
-> Routes may still exist for deep links / command palette power users, but primary navigation should not advertise them.
+**Hide or defer on mobile:** snapshot restore, folder import, PIN, Teams/People editing, Utilities editors, Analytics/Activity (read-only deep links OK).
 
-Proposed runtime detection (single module):
+### Lite-mode status (`src/lib/runtime.ts`)
 
 ```ts
-// src/lib/runtime.ts (proposed)
-isElectronApp()   // !!window.cadence?.saveData
+isElectronApp()    // !!window.cadence?.saveData
 isMobileViewport() // matchMedia('(max-width: 700px)')
-isMobileWeb()     // mobile viewport && !isElectronApp()
+isMobileWeb()      // mobile viewport && !isElectronApp()
 ```
+
+| Surface | Status | Notes |
+|---|---|---|
+| Backups & Recovery restore UI | **Done 1.8** | Electron-only block; PWA gets JSON export |
+| PIN protection | **Done 1.8** | Hidden when not Electron |
+| Save / integrity banners | **Done 1.8** | PWA → Export backup; desktop → Open Backups |
+| Lite sidebar nav | **Done 0.3** | Agenda, Planning, To-dos, Notes, Profile, Settings |
+| PWA storage card | **Done 1.8** | Workspace breakdown + Reload web assets |
+| Top bar team switcher | **Phase M1** | Still visible on ≤700px; hide when not in team context |
+| Planning touch UX | **Phase M1** | Matrix stacks on narrow screens; drag weak on touch — add tap-to-quadrant |
+| Bottom tab bar | **Phase M2** | Optional; drawer OK for now |
 
 ---
 
@@ -324,7 +329,7 @@ Prioritized by **risk reduction × user impact × effort**. Each item has an ID 
 
 | ID | Item | Effort | Impact | Notes |
 |---|---|---|---|---|
-| **A1** | **Mobile lite navigation** | M | High | **Done 1.8** | Sidebar lite on `isMobileWeb()`: Todos, Notes, Agenda, Profile, Settings |
+| **A1** | **Mobile lite navigation** | M | High | **Done 0.3** | Sidebar lite on `isMobileWeb()`: Agenda, Planning, Todos, Notes, Profile, Settings |
 | **A2** | **Hide desktop-only Settings sections on PWA** | S | High | **Done 1.8** | Backups/PIN hidden; mobile storage card |
 | **A3** | **Context-aware error banners** | S | Medium | **Done 1.8** | PWA → Export backup; desktop → Open Backups |
 | **A4** | **Smoke E2E test (1 scenario)** | M | High | **Done 1.8** | Playwright: register → add todo → reload |
@@ -332,6 +337,30 @@ Prioritized by **risk reduction × user impact × effort**. Each item has an ID 
 | **A6** | **CI coverage gate (lib/)** | S | Medium | **Done 1.8** | `npm run test:coverage` in CI |
 
 **Exit criteria for Phase A:** A new user on iPhone PWA sees no link that leads to "desktop only" text. CI blocks PRs that break the smoke path.
+
+---
+
+### Phase M — Mobile companion polish (post-0.3.0)
+
+*Goal: Responsive, touch-friendly companion UX without pretending the phone is a desktop app. **Scheduled after v0.3.0 release** — do not block the desktop/docs ship.*
+
+| ID | Item | Effort | Impact | Status | Notes |
+|---|---|---|---|---|---|
+| **M1** | **TopBar team switcher on mobile web** | S | Medium | Planned | Hide `team-switcher` when `isMobileWeb()` and user is not on a `/teams/:id` route |
+| **M1** | **Planning touch UX** | M | Medium | Planned | Quadrant picker menu on cards (tap) alongside drag; focus strip stays scrollable |
+| **M1** | **Sidebar order + labels** | S | Low | Planned | Agenda → To-dos → Notes → Planning → Account; optional badge hints |
+| **M1** | **Settings sync copy on PWA** | S | Low | Planned | LAN QR block: explicit "pair from desktop host" when `isMobileWeb()` |
+| **M2** | **Bottom tab bar (optional)** | M | Medium | Planned | To-dos \| Agenda \| Notes \| More (Planning, Profile, Settings); drawer remains fallback |
+| **M2** | **Planning nav on small phones** | S | Low | Planned | Consider moving Planning under "More" only on `<600px` if matrix feels cramped |
+| **M2** | **Short mobile welcome tour** | S | Low | Planned | Fewer steps; skip Teams/Analytics callouts |
+| **M3** | **Teams read-only deep links** | M | Low | Deferred | Notification / palette → person agenda preview; no full People editor on phone |
+| **M3** | **Analytics read-only on tablet** | S | Low | Deferred | Show Analytics in nav only when `min-width: 900px` PWA |
+
+**Exit criteria for Phase M1:** iPhone PWA user can complete daily loop (agenda → todo → note) without horizontal scroll or dead-end; Planning classifiable without drag.
+
+**Principle (unchanged):**
+
+> If a feature cannot work on this runtime, do not show its link, button, or settings card in primary navigation. Routes may remain for deep links and command palette.
 
 ---
 
@@ -485,8 +514,7 @@ Use this doc as the agenda. Recommended order:
 1. **Do we agree on the 7.8 composite score and the Phase A priority?**  
    Mobile lite UX (A1–A3) vs smoke E2E (A4) — which ships first?
 
-2. **PWA product definition**  
-   Is mobile **companion** (sync from desktop) or **standalone** (full teams/people on phone)? That decides whether Teams/Analytics stay in lite nav.
+2. **PWA product definition** — **Decided (2026-06): companion.** Teams/Analytics stay out of lite nav; Phase **M** tracks touch polish. See [USER-GUIDE.md](./USER-GUIDE.md).
 
 3. **"Near-flawless" definition**  
    Pick 2–3 non-negotiables, e.g.:  
@@ -498,7 +526,7 @@ Use this doc as the agenda. Recommended order:
    Phase C items compete for the same weeks as Phase B refactors. Prefer stability (B) before OKRs (C)?
 
 5. **Release cadence**  
-   Phase A complete → tag `0.3.0`? Or continuous `0.2.<run>` with changelog themes?
+   **v0.3.0** ships desktop feature set + docs; **Phase M** follows as mobile-only PRs. Release workflow bumps `0.3.<run_number>`.
 
 ---
 
@@ -516,7 +544,7 @@ Use this doc as the agenda. Recommended order:
 | Sync safety | `src/lib/syncSnapshotGuard.ts`, `src/lib/useSyncAutoSync.ts`, [docs/LAN-SYNC.md](./LAN-SYNC.md) |
 | Production persist | `electron/persistence/commitEnvelope.cjs`, `electron/persistence/writeGeneration.cjs`, `src/lib/persistQueue.ts` |
 | Reminders | `electron/reminder/`, `src/lib/reminderDelivery/`, `public/sw.js` |
-| Mobile shell | `src/components/Layout.tsx`, `src/app.css` (`@media max-width: 700px`) |
+| Mobile shell | `src/lib/runtime.ts`, `src/components/Layout.tsx`, `src/components/AppSidebar.tsx`, `src/app.css` (`@media max-width: 700px`) |
 | Todos UI | `src/views/TodosPage.tsx`, `src/features/todos/` |
 | Notes UI | `src/views/NotesPage.tsx`, `src/features/notes/` |
 | Utilities | `src/views/UtilitiesDocumentPage.tsx`, `src/views/UtilitiesStructuredPage.tsx`, `PATH_UTILITIES_*` in `src/lib/routes.ts`, `src/lib/structuredText.ts` |
@@ -531,6 +559,7 @@ Use this doc as the agenda. Recommended order:
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
+| 2.0 | 2026-06-10 | v0.3.0 release prep | Phase **M** mobile companion polish (post-0.3.0); PWA product definition locked; mobile UX table updated; A1 includes Planning; release cadence → 0.3.x |
 | 1.9 | 2026-06-04 | Production release prep | Phase F production hardening (verified smoke QA); Phase G LAN polish backlog; [LAN-SYNC.md](./LAN-SYNC.md); scores 8.5 composite; sandbox done; 866 tests |
 | 1.8 | 2026-05-31 | Production hardening | E1 auto-sync guard; Phase A1–A6 (mobile UX, E2E, actions tests, coverage CI); person-delete reminder cancel |
 | 1.7 | 2026-05-31 | Reminder QA + import safety | Phase E; P0/P1 bug fixes (import/LAN guard, reminder merge, focus deep links, delete cancel, SW reschedule); removed `reminder-scheduling-plan.md` |

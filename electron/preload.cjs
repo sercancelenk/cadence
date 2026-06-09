@@ -83,6 +83,7 @@ const api = {
   attachmentGc: () => ipcRenderer.invoke('attachment:gc'),
   exportDataBundle: (data) => ipcRenderer.invoke('data:exportBundle', { data }),
   importDataBundle: () => ipcRenderer.invoke('data:importBundle'),
+  importWorkspace: (payload) => ipcRenderer.invoke('data:importWorkspace', payload),
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   checkForUpdates: () => ipcRenderer.invoke('app:checkUpdates'),
   installUpdate: () => ipcRenderer.invoke('app:installUpdate'),

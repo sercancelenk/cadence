@@ -15,7 +15,7 @@ export function collectFutureReminderSlots(appData: AppData, nowMs = Date.now())
   const out: ReminderSlot[] = [];
 
   for (const t of appData.todoItems) {
-    if (!t.remindAt || !isTodoOpen(t.status)) continue;
+    if (t.archived === true || !t.remindAt || !isTodoOpen(t.status)) continue;
     const ts = Date.parse(t.remindAt);
     if (Number.isNaN(ts) || ts <= nowMs) continue;
     if (isReminderSlotNotified(notified, t.id, t.remindAt)) continue;

@@ -4,12 +4,14 @@
  */
 
 export type PersistOk = { ok: true };
-export type PersistFail = { ok: false; reason: string; error?: string };
+export type PersistFail = { ok: false; reason: string; error?: string; writeGeneration?: number };
 export type PersistResult = PersistOk | PersistFail;
 
 export type PersistQueue<T> = {
   enqueue: (payload: T) => Promise<PersistResult>;
   flush: () => Promise<void>;
+  /** Drop queued results from in-flight jobs (does not cancel IPC already sent). */
+  cancelPending: () => void;
   /** Latest sequence number accepted (for tests/diagnostics). */
   latestSeq: () => number;
 };
@@ -46,6 +48,10 @@ export function createPersistQueue<T>(
 
     async flush(): Promise<void> {
       await tail;
+    },
+
+    cancelPending(): void {
+      latestSeq = ++seq;
     },
   };
 }

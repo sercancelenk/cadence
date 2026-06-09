@@ -538,7 +538,9 @@ export function maybeHandleOAuthRedirect(): boolean {
     }
   }
   // Always close ourselves, even if no opener — leaves a clean tab state.
-  setTimeout(() => window.close(), 50);
+  setTimeout(() => {
+    if (typeof window !== 'undefined') window.close();
+  }, 50);
   return true;
 }
 

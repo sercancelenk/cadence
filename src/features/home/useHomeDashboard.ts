@@ -39,7 +39,7 @@ export function useHomeDashboard() {
       (it) => !it.done && it.kind === 'task' && data.people.some((p) => p.id === it.personId),
     ).length;
 
-    const openTodos = data.todoItems.filter((t) => isTodoOpen(t.status)).length;
+    const openTodos = data.todoItems.filter((t) => isTodoOpen(t.status) && t.archived !== true).length;
 
     const peopleCount = data.people.filter((p) => !p.id.startsWith('__')).length;
 

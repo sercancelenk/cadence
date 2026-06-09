@@ -77,7 +77,7 @@ import type {
 } from '../core/model';
 import { isUnsupportedDataVersionError, normalizeData, shapeOfData } from '../core/model';
 import { parseSaveDataResult } from '../lib/appDataSave';
-import { createPersistQueue } from '../lib/persistQueue';
+import { createPersistQueue, type PersistResult } from '../lib/persistQueue';
 import {
   createAppDataSnapshotStore,
   createPersistStatusStore,
@@ -99,6 +99,17 @@ type Api = {
    * Recovery flow to refresh the UI after a restore.
    */
   reload: () => Promise<void>;
+  /**
+   * Replace the entire workspace from an import (JSON file or similar).
+   * Waits for in-flight saves to finish, commits via the main process on
+   * desktop (bypassing write-generation conflicts), then reloads from disk.
+   */
+  importWorkspace: (next: AppData) => Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * Re-read the workspace from disk after the main process wrote it (folder
+   * import, restore). Discards pending debounced edits and clears save errors.
+   */
+  syncFromDisk: () => Promise<void>;
   update: (fn: (d: AppData) => AppData) => void;
   /**
    * Most recent unrecoverable save failure (or null). Subscribe to this from
@@ -202,6 +213,11 @@ type Api = {
         | 'priority'
         | 'remindAt'
         | 'remindRepeat'
+        | 'planInHub'
+        | 'planImportant'
+        | 'planUrgent'
+        | 'planFocusToday'
+        | 'archived'
       >
     >,
   ) => void;
@@ -217,7 +233,7 @@ type Api = {
     patch: Partial<
       Pick<
         Note,
-        'title' | 'body' | 'bodyFormat' | 'bodyPlainText' | 'pinned' | 'sortOrder' | 'lastOpenedAt'
+        'title' | 'body' | 'bodyFormat' | 'bodyPlainText' | 'pinned' | 'sortOrder' | 'lastOpenedAt' | 'archived'
       >
     >,
   ) => void;
@@ -443,7 +459,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   // synchronously on tab close / unmount.
   const pendingSave = useRef<AppData | null>(null);
   const writeGenerationRef = useRef(0);
-  const persistQueueRef = useRef(createPersistQueue<AppData>(async () => ({ ok: true })));
+  /** Ignore stale main-process save errors briefly after import/restore sync. */
+  const suppressSaveErrorsUntilRef = useRef(0);
+  const persistWriteRef = useRef<(payload: AppData) => Promise<PersistResult>>(async () => ({ ok: true }));
+  const persistQueueRef = useRef(createPersistQueue<AppData>(async (p) => persistWriteRef.current(p)));
   const snapshotStoreRef = useRef(createAppDataSnapshotStore());
   const persistStoreRef = useRef(
     createPersistStatusStore({
@@ -481,6 +500,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   // not from a rejected IPC call.
   useEffect(() => {
     const off = window.cadence?.onSaveError?.((evt) => {
+      if (Date.now() < suppressSaveErrorsUntilRef.current) {
+        if (typeof evt?.writeGeneration === 'number') {
+          writeGenerationRef.current = evt.writeGeneration;
+        }
+        return;
+      }
+      if (evt?.reason === 'write-conflict' || evt?.reason === 'import-in-progress') {
+        if (typeof evt?.writeGeneration === 'number') {
+          writeGenerationRef.current = evt.writeGeneration;
+        }
+        return;
+      }
       setLastSaveError({
         reason: evt?.reason ?? 'main-process',
         error: evt?.error ?? 'Main process reported a save error.',
@@ -492,8 +523,28 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const syncWriteGenerationFromDisk = useCallback(async () => {
+    if (!window.cadence?.loadDataResult) return;
+    try {
+      const r = await window.cadence.loadDataResult();
+      if (typeof r.writeGeneration === 'number') {
+        writeGenerationRef.current = r.writeGeneration;
+      }
+    } catch {
+      /* best effort */
+    }
+  }, []);
+
+  const recreatePersistQueue = useCallback(() => {
+    persistQueueRef.current = createPersistQueue((payload) => persistWriteRef.current(payload));
+  }, []);
+
+  const shouldSurfacePersistError = useCallback((reason: string | undefined) => {
+    return reason !== 'write-conflict' && reason !== 'import-in-progress';
+  }, []);
+
   useEffect(() => {
-    persistQueueRef.current = createPersistQueue(async (payload) => {
+    persistWriteRef.current = async (payload) => {
       const uid = userIdRef.current;
       if (!uid) return { ok: false, reason: 'no-user' };
       const gen = writeGenerationRef.current;
@@ -508,8 +559,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         writeGenerationRef.current = r.writeGeneration;
       }
       return r;
-    });
-  }, [userId]);
+    };
+    recreatePersistQueue();
+  }, [userId, recreatePersistQueue]);
 
   const runPersist = useCallback(async (uid: string, payload: AppData) => {
     setSaving(true);
@@ -520,12 +572,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         setLastSaveError(null);
         try { writeLastShape(uid, shapeOfData(payload)); } catch { /* best effort */ }
       } else {
-        setLastSaveError({ reason: r.reason, error: r.error, at: Date.now() });
+        if (typeof r.writeGeneration === 'number') {
+          writeGenerationRef.current = r.writeGeneration;
+        }
+        if (shouldSurfacePersistError(r.reason)) {
+          setLastSaveError({ reason: r.reason, error: r.error, at: Date.now() });
+        }
       }
     } finally {
       setSaving(false);
     }
-  }, []);
+  }, [shouldSurfacePersistError]);
 
   const applyPersistOutcome = useCallback((uid: string, payload: AppData, r: ReturnType<typeof parseSaveDataResult>) => {
     if (r.ok) {
@@ -539,9 +596,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (typeof r.writeGeneration === 'number') {
         writeGenerationRef.current = r.writeGeneration;
       }
-      setLastSaveError({ reason: r.reason, error: r.error, at: Date.now() });
+      if (shouldSurfacePersistError(r.reason)) {
+        setLastSaveError({ reason: r.reason, error: r.error, at: Date.now() });
+      }
     }
-  }, []);
+  }, [shouldSurfacePersistError]);
 
   const flushPendingSave = useCallback(async () => {
     if (saveTimer.current) {
@@ -724,18 +783,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [runPersist],
   );
 
-  const reload = useCallback(async () => {
-    const uid = userIdRef.current;
-    if (!uid) return;
-    // Cancel any pending debounced save so we don't immediately re-overwrite
-    // the file we just restored from disk.
+  const discardPendingLocalEdits = useCallback(async () => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
     pendingSave.current = null;
-    setReady(false);
-    const loaded = await loadInitial(uid);
+    persistQueueRef.current.cancelPending();
+    await persistQueueRef.current.flush();
+  }, []);
+
+  const prepareForExternalWorkspaceReplace = useCallback(async () => {
+    suppressSaveErrorsUntilRef.current = Date.now() + 10_000;
+    setLastSaveError(null);
+    await syncWriteGenerationFromDisk();
+    await discardPendingLocalEdits();
+    setLastSaveError(null);
+  }, [discardPendingLocalEdits, syncWriteGenerationFromDisk]);
+
+  const applyLoadedWorkspace = useCallback((uid: string, loaded: LoadInitialResult) => {
     writeGenerationRef.current = loaded.writeGeneration;
     if (loaded.loadError) {
       setLastSaveError({
@@ -748,18 +814,76 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
     setData(loaded.data);
     setReady(true);
-    // After a restore/reload the on-disk file is, by definition, the source
-    // of truth again — any earlier save-rejection banner refers to a
-    // problem that no longer exists. Clearing it prevents the confusing
-    // "uyarı çıktı + data yüklendi" stacked state the user reported.
-    setLastSaveError(null);
-    // Likewise: a restore is the user's positive acknowledgement that the
-    // file is now what they want. Clear the data-loss suspicion AND
-    // update the fingerprint to the restored shape so the next boot
-    // doesn't re-fire the banner against the older (pre-restore) marker.
     setDataLossSuspicion(null);
-    try { writeLastShape(uid, shapeOfData(loaded.data)); } catch { /* best effort */ }
+    setLastSavedAt(Date.now());
+    try {
+      writeLastShape(uid, shapeOfData(loaded.data));
+    } catch {
+      /* best effort */
+    }
   }, []);
+
+  const syncFromDisk = useCallback(async () => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    await prepareForExternalWorkspaceReplace();
+    setReady(false);
+    const loaded = await loadInitial(uid);
+    applyLoadedWorkspace(uid, loaded);
+    recreatePersistQueue();
+    setLastSaveError(null);
+  }, [applyLoadedWorkspace, prepareForExternalWorkspaceReplace, recreatePersistQueue]);
+
+  const importWorkspace = useCallback(
+    async (next: AppData): Promise<{ ok: true } | { ok: false; error: string }> => {
+      const normalized = normalizeData(next);
+      const uid = userIdRef.current;
+      if (!uid) return { ok: false, error: 'Not signed in.' };
+
+      await prepareForExternalWorkspaceReplace();
+
+      if (window.cadence?.importWorkspace) {
+        try {
+          const r = await window.cadence.importWorkspace(normalized);
+          if (!r?.ok) {
+            return {
+              ok: false,
+              error: r?.error ?? r?.reason ?? 'Import failed.',
+            };
+          }
+          if (typeof r.writeGeneration === 'number') {
+            writeGenerationRef.current = r.writeGeneration;
+          }
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : 'Import failed.',
+          };
+        }
+      } else {
+        try {
+          localStorage.setItem(storageKeyForUser(uid), JSON.stringify(normalized));
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : 'Could not write to browser storage.',
+          };
+        }
+      }
+
+      setReady(false);
+      const loaded = await loadInitial(uid);
+      applyLoadedWorkspace(uid, loaded);
+      recreatePersistQueue();
+      setLastSaveError(null);
+      return { ok: true };
+    },
+    [applyLoadedWorkspace, prepareForExternalWorkspaceReplace, recreatePersistQueue],
+  );
+
+  const reload = useCallback(async () => {
+    await syncFromDisk();
+  }, [syncFromDisk]);
 
   const dismissDataLossSuspicion = useCallback(() => {
     setDataLossSuspicion(null);
@@ -784,6 +908,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       ready: ready && data !== null,
       replaceAll,
       reload,
+      importWorkspace,
+      syncFromDisk,
       lastSaveError,
       lastSavedAt,
       saving,
@@ -856,7 +982,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       patchUtilityDocument: (patch) => update((x) => patchUtilityDocumentFn(x, patch)),
       patchUtilityStructuredText: (patch) => update((x) => patchUtilityStructuredTextFn(x, patch)),
     };
-  }, [data, ready, update, replaceAll, reload, lastSaveError, lastSavedAt, saving, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
+  }, [data, ready, update, replaceAll, reload, importWorkspace, syncFromDisk, lastSaveError, lastSavedAt, saving, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
 
   const actionsBridgeRef = useRef(api);
   actionsBridgeRef.current = api;
@@ -865,6 +991,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     () => ({
       replaceAll: (next: AppData) => actionsBridgeRef.current.replaceAll(next),
       reload: () => actionsBridgeRef.current.reload(),
+      importWorkspace: (next: AppData) => actionsBridgeRef.current.importWorkspace(next),
+      syncFromDisk: () => actionsBridgeRef.current.syncFromDisk(),
       update: (fn: (d: AppData) => AppData) => actionsBridgeRef.current.update(fn),
       clearSaveError: () => actionsBridgeRef.current.clearSaveError(),
       dismissDataLossSuspicion: () => actionsBridgeRef.current.dismissDataLossSuspicion(),

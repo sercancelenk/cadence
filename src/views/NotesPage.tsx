@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { useAccount } from '../AccountContext';
@@ -8,6 +8,7 @@ import {
   NotesLockDialogs,
   NotesLockedView,
   NotesSidebar,
+  filterNotesForView,
   notePlainText,
   prefetchRichTextEditor,
   useNotesEditor,
@@ -15,6 +16,7 @@ import {
   useNotesManualReorder,
   useNotesSelection,
   useNotesSort,
+  useNotesViewMode,
   useSidebarResize,
 } from '../features/notes';
 import { isAIConfigured } from '../lib/ai';
@@ -62,11 +64,21 @@ export function NotesPage() {
     null,
   );
 
+  const { viewMode, setViewMode } = useNotesViewMode(user?.id ?? '');
+  const archivedCount = useMemo(
+    () => notesWorkspace.notes.filter((n) => n.archived === true).length,
+    [notesWorkspace.notes],
+  );
+  const visibleNotes = useMemo(
+    () => filterNotesForView(notesWorkspace.notes, viewMode),
+    [notesWorkspace.notes, viewMode],
+  );
+
   useEffect(() => {
     prefetchRichTextEditor();
   }, []);
 
-  const { sortMode, setSortMode, notes } = useNotesSort(notesWorkspace.notes);
+  const { sortMode, setSortMode, notes } = useNotesSort(visibleNotes);
   const { selectedId, setSelectedId, selected } = useNotesSelection(
     notes,
     notesWorkspace.notes,
@@ -74,6 +86,8 @@ export function NotesPage() {
     setSearchParams,
     sortMode,
     patchNote,
+    viewMode,
+    setViewMode,
   );
 
   const editorState = useNotesEditor(selected, patchNote, replaceNote, unlock);
@@ -114,6 +128,7 @@ export function NotesPage() {
 
   const onCreate = () => {
     const id = addNote();
+    setViewMode('active');
     setSelectedId(id);
     setDecrypted(null);
   };
@@ -123,6 +138,15 @@ export function NotesPage() {
     patchNote(selected.id, { pinned: !selected.pinned });
   };
 
+  const onToggleArchive = () => {
+    if (!selected) return;
+    const nextArchived = selected.archived !== true;
+    patchNote(selected.id, { archived: nextArchived ? true : false });
+    if (nextArchived) {
+      setSelectedId(null);
+    }
+  };
+
   return (
     <div
       className={`notes-page${selected ? ' notes-page--mobile-detail' : ' notes-page--mobile-list'}`}
@@ -130,6 +154,9 @@ export function NotesPage() {
     >
       <NotesSidebar
         notes={notes}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        archivedCount={archivedCount}
         sortMode={sortMode}
         onSortModeChange={setSortMode}
         selectedId={selectedId}
@@ -161,7 +188,11 @@ export function NotesPage() {
 
       <section className="notes-page__main">
         {!selected ? (
-          <div className="notes-page__placeholder">Select a note on the left, or create a new one.</div>
+          <div className="notes-page__placeholder">
+            {viewMode === 'archived'
+              ? 'Select an archived note on the left, or switch to Active.'
+              : 'Select a note on the left, or create a new one.'}
+          </div>
         ) : (
           <>
             <NotesDetailHeader
@@ -178,6 +209,7 @@ export function NotesPage() {
                 })
               }
               onTogglePinned={onTogglePinned}
+              onToggleArchive={onToggleArchive}
               onRequestAction={lock.requestAction}
               onHideSelected={hideSelected}
               onConfirmRemove={() => lock.setConfirmRemoveId(selected.id)}
@@ -217,7 +249,7 @@ export function NotesPage() {
         </Suspense>
       ) : null}
 
-      <NotesLockDialogs notes={notes} data={notesWorkspace as AppData} lock={lock} />
+      <NotesLockDialogs notes={notesWorkspace.notes} data={notesWorkspace as AppData} lock={lock} />
     </div>
   );
 }

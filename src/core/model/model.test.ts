@@ -14,6 +14,8 @@ import {
   isLeaderPerson,
   isSelfPerson,
   isTodoOpen,
+  isTodoItemArchived,
+  isNoteArchived,
   leaderPersonIdForTeam,
   normalizeData,
   nowIso,
@@ -667,6 +669,18 @@ describe('model helpers', () => {
     expect(isTodoOpen('cancelled')).toBe(false);
   });
 
+  it('isTodoItemArchived is true only when archived flag is set', () => {
+    expect(isTodoItemArchived({ archived: true })).toBe(true);
+    expect(isTodoItemArchived({ archived: undefined })).toBe(false);
+    expect(isTodoItemArchived({ archived: false })).toBe(false);
+  });
+
+  it('isNoteArchived is true only when archived flag is set', () => {
+    expect(isNoteArchived({ archived: true })).toBe(true);
+    expect(isNoteArchived({ archived: undefined })).toBe(false);
+    expect(isNoteArchived({ archived: false })).toBe(false);
+  });
+
   it('self/leader helpers resolve seeded people for a team', () => {
     const d = emptyData();
     const teamId = d.teams[0]!.id;
@@ -1190,6 +1204,42 @@ describe('normalizeData — exhaustive parse/load/migration', () => {
     });
   });
 
+  it('parses optional planning hub fields on todos', () => {
+    const norm = normalizeData({
+      ...baseV3(),
+      todoItems: [
+        {
+          id: 'p1',
+          groupId: 'g1',
+          title: 'Plan me',
+          status: 'todo',
+          done: false,
+          planInHub: true,
+          planImportant: true,
+          planUrgent: false,
+          planFocusToday: true,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+        {
+          id: 'p2',
+          groupId: 'g1',
+          title: 'Legacy',
+          status: 'todo',
+          done: false,
+          planInHub: 'yes',
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+    });
+    expect(norm.todoItems[0]?.planInHub).toBe(true);
+    expect(norm.todoItems[0]?.planImportant).toBe(true);
+    expect(norm.todoItems[0]?.planUrgent).toBe(false);
+    expect(norm.todoItems[0]?.planFocusToday).toBe(true);
+    expect(norm.todoItems[1]?.planInHub).toBeUndefined();
+  });
+
   it('creates Genel todo group when todoGroups array is empty', () => {
     const norm = normalizeData({ ...baseV3(), todoGroups: [] });
     expect(norm.todoGroups).toHaveLength(1);
@@ -1255,6 +1305,34 @@ describe('normalizeData — exhaustive parse/load/migration', () => {
       expect.objectContaining({ id: 'n-lock', body: '', locked: true, cipher: { ivB64: 'iv', cipherB64: 'ct' } }),
     );
     expect(norm.notes[2]?.cipher).toBeUndefined();
+  });
+
+  it('parses notes archived flag only when true', () => {
+    const norm = normalizeData({
+      ...baseV3(),
+      notes: [
+        {
+          id: 'n-arch',
+          title: 'Archived',
+          body: '',
+          locked: false,
+          archived: true,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+        {
+          id: 'n-active',
+          title: 'Active',
+          body: '',
+          locked: false,
+          archived: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+    });
+    expect(norm.notes[0]?.archived).toBe(true);
+    expect(norm.notes[1]?.archived).toBeUndefined();
   });
 
   it('drops notesLock when verifier fields are incomplete', () => {

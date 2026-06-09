@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAppData } from '../AppDataContext';
 import type { AppData, Person, Team, TodoItem, TodoStatus } from '../model';
 import { isLeaderPerson, isSelfPerson, TODO_STATUS_OPTIONS } from '../model';
+import { PATH_ANALYTICS_ACTIVITY } from '../lib/routes';
 
 type Range = 'day' | 'week' | 'month' | 'year';
 
@@ -306,7 +308,11 @@ export function AnalyticsPage() {
         <h1>Analytics</h1>
         <p className="muted">
           A simple overview of your tasks: how many were created and completed, who's keeping up,
-          and where you're falling behind. All numbers are local to this device.
+          and where you're falling behind. All numbers are local to this device.{' '}
+          <Link to={PATH_ANALYTICS_ACTIVITY} className="activity-page__link">
+            Open activity report
+          </Link>{' '}
+          for task-level lists by period.
         </p>
       </header>
 

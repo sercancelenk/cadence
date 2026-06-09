@@ -35,13 +35,24 @@ import { normalizeData, type AppData } from '../model';
 
 const KNOWN_COLLECTION_KEYS = ['teams', 'people', 'items', 'todoGroups', 'todoItems', 'notes'] as const;
 
+/** Accept plain AppData exports and commit-envelope snapshots from rolling backups. */
+function workspaceCandidate(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const o = raw as Record<string, unknown>;
+  if (o.magic === 'CDNC1' && o.workspace != null && typeof o.workspace === 'object') {
+    return o.workspace;
+  }
+  return raw;
+}
+
 export type SnapshotParseResult =
   | { kind: 'ok'; data: AppData }
   | { kind: 'invalid' };
 
 export function parseRemoteSnapshot(raw: unknown): SnapshotParseResult {
-  if (!raw || typeof raw !== 'object') return { kind: 'invalid' };
-  const o = raw as Record<string, unknown>;
+  const candidate = workspaceCandidate(raw);
+  if (!candidate || typeof candidate !== 'object') return { kind: 'invalid' };
+  const o = candidate as Record<string, unknown>;
   let plausible = false;
   for (const key of KNOWN_COLLECTION_KEYS) {
     if (Array.isArray(o[key])) {
@@ -50,5 +61,5 @@ export function parseRemoteSnapshot(raw: unknown): SnapshotParseResult {
     }
   }
   if (!plausible) return { kind: 'invalid' };
-  return { kind: 'ok', data: normalizeData(raw) };
+  return { kind: 'ok', data: normalizeData(candidate) };
 }

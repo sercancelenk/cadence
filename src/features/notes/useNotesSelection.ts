@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Note } from '../../model';
-import type { NoteSortMode } from './notePreferences';
+import type { NoteSortMode, NoteViewMode } from './notePreferences';
 
 /**
  * Selection + deep-link handling for the notes two-pane view.
@@ -12,20 +12,26 @@ export function useNotesSelection(
   setSearchParams: (next: URLSearchParams, opts?: { replace?: boolean }) => void,
   sortMode: NoteSortMode,
   patchNote: (id: string, patch: Partial<Note>) => void,
+  viewMode: NoteViewMode,
+  setViewMode: (mode: NoteViewMode) => void,
 ) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     const id = searchParams.get('id');
     if (!id) return;
-    if (allNotes.some((n) => n.id === id)) {
+    const target = allNotes.find((n) => n.id === id);
+    if (target) {
+      if (target.archived && viewMode !== 'archived') {
+        setViewMode('archived');
+      }
       setSelectedId(id);
     }
     const next = new URLSearchParams(searchParams);
     next.delete('id');
     setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, allNotes, viewMode, setViewMode]);
 
   const [isNarrowViewport, setIsNarrowViewport] = useState(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return false;
@@ -52,13 +58,17 @@ export function useNotesSelection(
   useEffect(() => {
     const focusId = searchParams.get('focus');
     if (!focusId) return;
-    if (allNotes.some((n) => n.id === focusId)) {
+    const target = allNotes.find((n) => n.id === focusId);
+    if (target) {
+      if (target.archived && viewMode !== 'archived') {
+        setViewMode('archived');
+      }
       setSelectedId(focusId);
     }
     const next = new URLSearchParams(searchParams);
     next.delete('focus');
     setSearchParams(next, { replace: true });
-  }, [searchParams, allNotes, setSearchParams]);
+  }, [searchParams, allNotes, setSearchParams, viewMode, setViewMode]);
 
   useEffect(() => {
     if (!selectedId || sortMode !== 'opened') return;

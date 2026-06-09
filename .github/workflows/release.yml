@@ -2,7 +2,7 @@
 # when you want a new signed/notarized build. Steps:
 #   1. Release CI gate (typecheck + unit tests + web build + E2E smoke).
 #      Skips only coverage (duplicate test run) and PWA (not shipped in desktop).
-#   2. Auto-bump version to 0.2.<run_number> (per-workflow counter).
+#   2. Auto-bump version to 0.3.<run_number> (per-workflow counter).
 #   3. macOS + Windows in parallel: package, sign, publish to GitHub Release.
 
 name: Release
@@ -42,7 +42,7 @@ jobs:
         run: node scripts/patch-publish.mjs "${{ github.repository_owner }}"
 
       - name: Otomatik sürüm numarası
-        run: npm pkg set version=0.2.${{ github.run_number }}
+        run: npm pkg set version=0.3.${{ github.run_number }}
 
       - run: npm ci --no-audit --no-fund
 
@@ -87,7 +87,7 @@ jobs:
         run: node scripts/patch-publish.mjs "${{ github.repository_owner }}"
 
       - name: Otomatik sürüm numarası
-        run: npm pkg set version=0.2.${{ github.run_number }}
+        run: npm pkg set version=0.3.${{ github.run_number }}
 
       - run: npm ci --no-audit --no-fund
 

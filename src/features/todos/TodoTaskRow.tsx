@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import {
+  IcArchive,
   IcCalendar,
   IcCheck,
   IcClock,
@@ -71,6 +72,7 @@ export type TodoTaskRowProps = {
         | 'status'
         | 'remindAt'
         | 'remindRepeat'
+        | 'archived'
       >
     >,
   ) => void;
@@ -240,6 +242,7 @@ export function TodoTaskRow({
   // an active task". We branch on status here and pass that through to
   // every visual the row uses.
   const isTerminal = item.status === 'done' || item.status === 'cancelled';
+  const isArchived = item.archived === true;
 
   return (
     <li
@@ -247,8 +250,8 @@ export function TodoTaskRow({
       className={`todos-row${compact ? ' todos-row--compact' : ''}${isTerminal ? ' todos-row--done' : ''}${
         item.status === 'cancelled' ? ' todos-row--cancelled' : ''
       }${item.status === 'in_progress' ? ' todos-row--wip' : ''}${
-        item.priority ? ` todos-row--prio-${item.priority}` : ''
-      }${isDragSrc ? ' todos-row--dragging' : ''}${isDropTgt ? ' todos-row--drop-target' : ''}${
+        isArchived ? ' todos-row--archived-item' : ''
+      }${item.priority ? ` todos-row--prio-${item.priority}` : ''}${isDragSrc ? ' todos-row--dragging' : ''}${isDropTgt ? ' todos-row--drop-target' : ''}${
         isFocused ? ' todos-row--focused' : ''
       }`}
       style={ringStyle(item.groupId)}
@@ -590,6 +593,15 @@ export function TodoTaskRow({
                 <IcSparkles size={15} />
               </button>
             ) : null}
+            <button
+              type="button"
+              className="todos-row__icon-btn"
+              title={isArchived ? 'Restore to active list' : 'Archive task'}
+              aria-label={isArchived ? 'Unarchive task' : 'Archive task'}
+              onClick={() => onPatch(item.id, { archived: isArchived ? false : true })}
+            >
+              <IcArchive size={16} />
+            </button>
             <button
               type="button"
               className={`todos-row__icon-btn${confirmDelete ? ' todos-row__icon-btn--confirm' : ''}`}

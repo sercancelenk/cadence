@@ -567,7 +567,12 @@ export function clearCompletedInGroup(data: AppData, groupId: string): AppData {
   return {
     ...data,
     todoItems: data.todoItems.filter(
-      (t) => !(t.groupId === groupId && (t.status === 'done' || t.status === 'cancelled')),
+      (t) =>
+        !(
+          t.groupId === groupId &&
+          !t.archived &&
+          (t.status === 'done' || t.status === 'cancelled')
+        ),
     ),
   };
 }
@@ -582,7 +587,9 @@ export function markAllCompleteInGroup(data: AppData, groupId: string): AppData 
   return {
     ...data,
     todoItems: data.todoItems.map((t) =>
-      t.groupId === groupId && (t.status === 'todo' || t.status === 'in_progress')
+      t.groupId === groupId &&
+      !t.archived &&
+      (t.status === 'todo' || t.status === 'in_progress')
         ? { ...t, status: 'done', done: true, doneAt: t.doneAt ?? now, updatedAt: now }
         : t,
     ),
@@ -679,6 +686,11 @@ export function updateTodoItem(
       | 'priority'
       | 'remindAt'
       | 'remindRepeat'
+      | 'planInHub'
+      | 'planImportant'
+      | 'planUrgent'
+      | 'planFocusToday'
+      | 'archived'
     >
   >,
 ): AppData {
@@ -715,6 +727,17 @@ export function updateTodoItem(
       const priority =
         patch.priority !== undefined ? (patch.priority || undefined) : x.priority;
 
+      const planInHub = patch.planInHub !== undefined ? patch.planInHub : x.planInHub;
+      const planImportant =
+        patch.planImportant !== undefined ? patch.planImportant : x.planImportant;
+      const planUrgent = patch.planUrgent !== undefined ? patch.planUrgent : x.planUrgent;
+      const planFocusToday =
+        patch.planFocusToday !== undefined ? patch.planFocusToday : x.planFocusToday;
+      const nextArchived =
+        patch.archived !== undefined ? (patch.archived ? true : undefined) : x.archived;
+      const resolvedPlanFocusToday =
+        nextArchived === true ? false : planFocusToday === true ? true : undefined;
+
       // Reminder fields. `undefined` in the patch means "clear" (a small
       // ergonomic departure from spread semantics — but matches how the
       // rest of this function treats `dueAt` clearing). Repeating a
@@ -729,7 +752,7 @@ export function updateTodoItem(
       // surprise ping the moment the user re-opens the row (the watcher
       // checks the field on every tick, but a past timestamp would fire
       // immediately when status flips back to `todo`).
-      if (nextStatus === 'done' || nextStatus === 'cancelled') {
+      if (nextStatus === 'done' || nextStatus === 'cancelled' || nextArchived === true) {
         remindAt = undefined;
         remindRepeat = undefined;
       }
@@ -766,6 +789,11 @@ export function updateTodoItem(
         done: nextDone,
         doneAt: nextDoneAt,
         priority,
+        planInHub,
+        planImportant,
+        planUrgent,
+        planFocusToday: resolvedPlanFocusToday,
+        archived: nextArchived,
         remindAt,
         remindRepeat,
         updatedAt,
@@ -908,7 +936,7 @@ export function patchNote(
   patch: Partial<
     Pick<
       Note,
-      'title' | 'body' | 'bodyFormat' | 'bodyPlainText' | 'pinned' | 'sortOrder' | 'lastOpenedAt'
+      'title' | 'body' | 'bodyFormat' | 'bodyPlainText' | 'pinned' | 'sortOrder' | 'lastOpenedAt' | 'archived'
     >
   >,
 ): AppData {
@@ -922,7 +950,11 @@ export function patchNote(
     ...data,
     notes: data.notes.map((n) => {
       if (n.id !== id) return n;
-      const next: Note = { ...n, ...patch };
+      const next: Note = {
+        ...n,
+        ...patch,
+        archived: patch.archived !== undefined ? (patch.archived ? true : undefined) : n.archived,
+      };
       if (isContentChange) next.updatedAt = nowIso();
       return next;
     }),

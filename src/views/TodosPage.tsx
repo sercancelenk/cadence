@@ -9,6 +9,7 @@ import {
   sortGroups,
   TodoListSection,
   TodosFilteredEmptyHint,
+  TodosArchivedEmptyHint,
   TodosGroupDropTail,
   TodosNoListsHint,
   TodosPageHeader,
@@ -16,6 +17,7 @@ import {
   todoBodyPatchFromFields,
   emptyInlineAddDraft,
   buildItemsByGroup,
+  filterTodoItemsForView,
   useTodoFocus,
   useTodoPagePreferences,
   type InlineAddDraft,
@@ -87,6 +89,8 @@ export function TodosPage() {
     setSearch,
     showArchived,
     setShowArchived,
+    itemViewMode,
+    setItemViewMode,
     hideDone,
     setHideDone,
     sortMode,
@@ -100,10 +104,21 @@ export function TodosPage() {
   const { features: appFeatures } = useFeatures();
   const aiEnabled = appFeatures.ai && isAIConfigured(workspace.aiSettings);
   const allGroupsSorted = useMemo(() => sortGroups(workspace.todoGroups), [workspace.todoGroups]);
-  const visibleGroups = useMemo(
-    () => allGroupsSorted.filter((g) => showArchived || !g.archived),
-    [allGroupsSorted, showArchived],
+  const archivedItemCount = useMemo(
+    () => workspace.todoItems.filter((it) => it.archived === true).length,
+    [workspace.todoItems],
   );
+  const visibleTodoItems = useMemo(
+    () => filterTodoItemsForView(workspace.todoItems, itemViewMode),
+    [workspace.todoItems, itemViewMode],
+  );
+  const visibleGroups = useMemo(() => {
+    if (itemViewMode === 'archived') {
+      const groupIds = new Set(visibleTodoItems.map((it) => it.groupId));
+      return allGroupsSorted.filter((g) => groupIds.has(g.id));
+    }
+    return allGroupsSorted.filter((g) => showArchived || !g.archived);
+  }, [allGroupsSorted, itemViewMode, showArchived, visibleTodoItems]);
 
   useEffect(() => {
     prefetchRichTextEditor();
@@ -130,18 +145,20 @@ export function TodosPage() {
     statusFilter,
     hideDone,
     showArchived,
+    itemViewMode,
     {
       setSearch,
       setStatusFilter,
       setHideDone,
       setShowArchived,
+      setItemViewMode,
       setSectionOpenMap,
     },
   );
 
   const itemsByGroup = useMemo(
-    () => buildItemsByGroup(workspace.todoGroups, workspace.todoItems, sortMode),
-    [workspace.todoGroups, workspace.todoItems, sortMode],
+    () => buildItemsByGroup(workspace.todoGroups, visibleTodoItems, sortMode),
+    [workspace.todoGroups, visibleTodoItems, sortMode],
   );
   const groupById = useMemo(() => new Map(allGroupsSorted.map((g) => [g.id, g])), [allGroupsSorted]);
 
@@ -199,6 +216,9 @@ export function TodosPage() {
       />
 
       <TodosToolbar
+        itemViewMode={itemViewMode}
+        onItemViewModeChange={setItemViewMode}
+        archivedCount={archivedItemCount}
         search={search}
         onSearchChange={setSearch}
         sortMode={sortMode}
@@ -215,7 +235,9 @@ export function TodosPage() {
         onOpenExtractor={() => setExtractorOpen(true)}
       />
 
-      {visibleGroups.length === 0 && allGroupsSorted.length > 0 ? (
+      {itemViewMode === 'archived' && archivedItemCount === 0 ? <TodosArchivedEmptyHint /> : null}
+
+      {itemViewMode === 'active' && visibleGroups.length === 0 && allGroupsSorted.length > 0 ? (
         <TodosFilteredEmptyHint
           allGroupsSorted={allGroupsSorted}
           todoItems={workspace.todoItems}
@@ -233,6 +255,7 @@ export function TodosPage() {
           searchQuery={search}
           statusFilter={statusFilter}
           hideDone={hideDone}
+          itemsViewMode={itemViewMode}
           sortMode={sortMode}
           compact={compact}
           aiEnabled={aiEnabled}
@@ -271,6 +294,7 @@ export function TodosPage() {
         />
       ))}
 
+      {itemViewMode === 'active' ? (
       <TodosGroupDropTail
         active={!!dragGroupId}
         isDropTarget={dropTargetId === '__end__'}
@@ -290,6 +314,7 @@ export function TodosPage() {
           setDropTargetId(null);
         }}
       />
+      ) : null}
 
       {allGroupsSorted.length === 0 ? <TodosNoListsHint /> : null}
 

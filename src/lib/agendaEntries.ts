@@ -1,4 +1,4 @@
-import { isTodoOpen, type AppData, type Item, type TodoItem } from '../model';
+import { isTodoOpen, isTodoItemArchived, type AppData, type Item, type TodoItem } from '../model';
 import { PATH_AGENDA, PATH_TODOS } from './routes';
 import { teamPerson } from './teamPaths';
 
@@ -83,6 +83,7 @@ export function collectAgendaEntries(
   }
 
   for (const t of data.todoItems) {
+    if (isTodoItemArchived(t)) continue;
     if (t.status === 'cancelled') continue;
     if (!isTodoOpen(t.status) && !showCompleted) continue;
     if (!t.dueAt) continue;

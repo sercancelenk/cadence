@@ -1,4 +1,23 @@
+import type { Note } from '../../model';
+
 export const PLACEHOLDER_TITLE = 'New note';
+
+export type NoteViewMode = 'active' | 'archived';
+
+export const NOTE_VIEW_OPTIONS: { value: NoteViewMode; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'archived', label: 'Archived' },
+];
+
+const LS_NOTE_VIEW = 'cadence.notes.viewMode.v1';
+
+export function noteViewModeKey(userId: string) {
+  return `${LS_NOTE_VIEW}:${userId}`;
+}
+
+export function filterNotesForView(notes: Note[], mode: NoteViewMode) {
+  return notes.filter((n) => (mode === 'archived' ? n.archived === true : n.archived !== true));
+}
 
 /**
  * Sort modes available in the sidebar dropdown. `manual` is special — it's
