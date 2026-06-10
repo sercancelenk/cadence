@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RichTextPayload, RichTextBodyFormat } from '../../lib/richText';
 import {
   noteBodyPatchIsNoOp,
-  plainTextFromBodyFields,
   richTextPayloadToBodyFields,
   type RichTextBodyFields,
 } from '../../lib/richTextBody';
@@ -58,15 +57,7 @@ export function useNotesEditor(
       setBodyEditing(false);
       return;
     }
-    const fields: RichTextBodyFields | null = selected.locked
-      ? decryptedForSelected
-      : {
-          body: selected.body ?? '',
-          bodyFormat: selected.bodyFormat,
-          bodyPlainText: selected.bodyPlainText,
-        };
-    setBodyEditing(!plainTextFromBodyFields(fields ?? { body: '' }).trim());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setBodyEditing(false);
   }, [selected?.id, editorReady]);
 
   const onChangeTitle = (next: string) => {

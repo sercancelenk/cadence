@@ -5,6 +5,7 @@ import {
   buildActivityReportFromData,
   collectActivityRecords,
   getActivityPeriod,
+  getActivityPeriodFromDates,
   wasOpenAt,
 } from './todoActivityReport';
 
@@ -52,6 +53,26 @@ describe('getActivityPeriod', () => {
     expect(p.end.getMonth()).toBe(0);
     expect(p.end.getDate()).toBe(1);
   });
+
+  it('falls back to a single-day custom period', () => {
+    const p = getActivityPeriod('custom', REF);
+    expect(p.preset).toBe('custom');
+    expect(p.start.getDate()).toBe(p.end.getDate() - 1);
+  });
+});
+
+describe('getActivityPeriodFromDates', () => {
+  it('normalizes reversed dates and uses exclusive end', () => {
+    const p = getActivityPeriodFromDates(
+      new Date('2026-06-10T15:00:00.000Z'),
+      new Date('2026-06-04T08:00:00.000Z'),
+    );
+    expect(p.preset).toBe('custom');
+    expect(p.start.getDate()).toBe(4);
+    expect(p.end.getDate()).toBe(11);
+    expect(p.label).toContain('4');
+    expect(p.label).toContain('10');
+  });
 });
 
 describe('collectActivityRecords', () => {
@@ -64,6 +85,7 @@ describe('collectActivityRecords', () => {
     });
     const records = collectActivityRecords(data, { source: 'personal' });
     expect(records.map((r) => r.id).sort()).toEqual(['a', 'b']);
+    expect(records.find((r) => r.id === 'a')?.navPath).toBe('/todos?focus=a');
   });
 
   it('filters planning hub only when planningHubOnly is set', () => {
@@ -96,6 +118,7 @@ describe('collectActivityRecords', () => {
     expect(records).toHaveLength(1);
     expect(records[0]?.source).toBe('team');
     expect(records[0]?.contextLabel).toContain('Alpha');
+    expect(records[0]?.navPath).toBe('/teams/t1/people/p1?focus=i1');
   });
 });
 
@@ -170,5 +193,17 @@ describe('buildActivityReportFromData', () => {
     });
     expect(report.summary.completed).toBe(0);
     expect(report.summary.opened).toBe(0);
+  });
+
+  it('accepts an explicit custom period', () => {
+    const period = getActivityPeriodFromDates(
+      new Date('2026-06-01T00:00:00'),
+      new Date('2026-06-07T00:00:00'),
+    );
+    const report = buildActivityReportFromData(emptyData(), {
+      source: 'personal',
+      period,
+    });
+    expect(report.period.preset).toBe('custom');
   });
 });

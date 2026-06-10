@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { SYNC_BEFORE_APPLY } from '../../lib/syncApplyGuard';
 import { createPortal } from 'react-dom';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
@@ -382,6 +382,10 @@ export function RichTextEditor({
         syncBaselineFromEditor(ed);
         return;
       }
+      if (!editableRef.current) {
+        syncBaselineFromEditor(ed);
+        return;
+      }
       scheduleChange(ed);
     },
     onCreate: ({ editor: ed }) => {
@@ -441,6 +445,15 @@ export function RichTextEditor({
     if (!editor) return;
     editor.setEditable(editable);
   }, [editor, editable]);
+
+  const prevEditableRef = useRef(editable);
+  useLayoutEffect(() => {
+    const wasEditable = prevEditableRef.current;
+    prevEditableRef.current = editable;
+    if (wasEditable && !editable) {
+      flushPending();
+    }
+  }, [editable, flushPending]);
 
   useEffect(() => {
     if (!editor || !attachmentUserId) return;

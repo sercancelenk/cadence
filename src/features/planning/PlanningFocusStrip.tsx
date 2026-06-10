@@ -1,6 +1,8 @@
+import { Link } from 'react-router-dom';
 import type { TodoGroup, TodoItem, TodoStatus } from '../../model';
 import { TODO_STATUS_OPTIONS } from '../../model';
 import { PLANNING_FOCUS_MAX } from '../../lib/planningMatrix';
+import { PATH_TODOS } from '../../lib/routes';
 
 export type PlanningFocusStripProps = {
   items: TodoItem[];
@@ -44,7 +46,13 @@ export function PlanningFocusStrip({
                 onClick={() => onToggleComplete(item.id)}
               />
               <div className="planning-focus__body">
-                <span className="planning-focus__task-title">{item.title}</span>
+                <Link
+                  to={`${PATH_TODOS}?focus=${encodeURIComponent(item.id)}`}
+                  className="planning-focus__task-link"
+                  title={`Open "${item.title}" in to-dos`}
+                >
+                  {item.title}
+                </Link>
                 <span className="planning-focus__list-name muted small">
                   {groupById.get(item.groupId)?.name ?? 'List'}
                 </span>

@@ -517,7 +517,7 @@ function ProgressBar({ value }: { value: number }) {
   const v = Math.max(0, Math.min(1, value));
   return (
     <div className="progress" title={fmtPercent(v)}>
-      <span className="progress__bar" style={{ width: `${v * 100}%` }} />
+      <div className="progress__bar" style={{ width: `${v * 100}%` }} />
       <span className="progress__label">{fmtPercent(v)}</span>
     </div>
   );

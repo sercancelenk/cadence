@@ -5,6 +5,7 @@ import type { RichTextPayload } from '../../lib/richText';
 import type { RichTextBodyFormat } from '../../lib/richText';
 import type { RichTextDoc } from '../../lib/richText';
 import type { RichTextAttachmentScope } from '../../lib/richTextAttachmentUri';
+import { handleRichTextPreviewLinkClick } from '../../lib/richTextPreviewLinks';
 
 export type RichTextDocumentPaneProps = {
   editorKey?: string;
@@ -35,7 +36,7 @@ export function RichTextDocumentPane({
   minHeight = 360,
   attachmentScope,
   attachmentUserId,
-  previewHint = 'Double-click to edit',
+  previewHint = 'Use Edit to change this note · Click links to open · ⌘/Ctrl+click to copy',
   className = '',
 }: RichTextDocumentPaneProps) {
   const [saveState, setSaveState] = useState<'idle' | 'pending' | 'saved'>('idle');
@@ -63,8 +64,9 @@ export function RichTextDocumentPane({
   const saveLabel =
     saveState === 'pending' ? 'Saving…' : saveState === 'saved' ? 'Saved' : null;
 
-  const enterEdit = () => {
-    if (editable) onEditingChange(true);
+  const onPreviewSurfaceClick = (event: React.MouseEvent) => {
+    if (editing) return;
+    void handleRichTextPreviewLinkClick(event);
   };
 
   return (
@@ -86,7 +88,10 @@ export function RichTextDocumentPane({
             className={`rich-doc-pane__mode-tab${editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
             role="tab"
             aria-selected={editing}
-            onClick={() => onEditingChange(true)}
+            disabled={!editable}
+            onClick={() => {
+              if (editable) onEditingChange(true);
+            }}
           >
             <IcPencil size={14} />
             <span>Edit</span>
@@ -115,19 +120,13 @@ export function RichTextDocumentPane({
       </div>
       <div
         className={`rich-doc-pane__surface${editing ? '' : ' rich-doc-pane__surface--preview'}`}
-        onClick={() => {
-          if (!editing && editable) enterEdit();
-        }}
-        onDoubleClick={() => {
-          if (!editing && editable) enterEdit();
-        }}
-        title={editing ? undefined : previewHint}
+        onClickCapture={onPreviewSurfaceClick}
       >
         <RichTextEditor
           key={editorKey}
           value={value}
           valueFormat={valueFormat}
-          onChange={editing ? onChange : undefined}
+          onChange={onChange}
           placeholder={placeholder}
           minHeight={editing ? minHeight : Math.min(minHeight, 120)}
           editable={editable && editing}

@@ -99,7 +99,8 @@
     "wait-on": "^8.0.1"
   },
   "overrides": {
-    "qs": "6.15.2"
+    "qs": "6.15.2",
+    "shell-quote": ">=1.8.4"
   },
   "build": {
     "appId": "com.cadence.app",

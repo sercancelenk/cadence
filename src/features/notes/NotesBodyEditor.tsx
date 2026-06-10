@@ -46,7 +46,7 @@ export function NotesBodyEditor({
         minHeight={360}
         attachmentScope={{ documentKind: 'note', documentId: noteId }}
         attachmentUserId={attachmentUserId}
-        previewHint="Double-click the note to edit"
+        previewHint="Use Edit to change this note · Click links to open · ⌘/Ctrl+click to copy"
       />
 
       <NoteBacklinks

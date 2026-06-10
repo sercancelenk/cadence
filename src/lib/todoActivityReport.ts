@@ -1,8 +1,17 @@
 import type { AppData, Item, Person, Team, TodoGroup, TodoStatus } from '../model';
 import { isTodoItemArchived, isTodoOpen } from '../model';
 import { isPlanningHubItem } from './planningMatrix';
+import { calendarStartOfDay, formatCalendarRangeLabel } from './calendarGrid';
+import { PATH_TODOS } from './routes';
+import { teamPerson } from './teamPaths';
 
-export type ActivityPeriodPreset = 'today' | 'this_week' | 'this_month' | 'this_year' | 'last_year';
+export type ActivityPeriodPreset =
+  | 'today'
+  | 'this_week'
+  | 'this_month'
+  | 'this_year'
+  | 'last_year'
+  | 'custom';
 
 export type ActivitySource = 'personal' | 'team';
 
@@ -33,6 +42,8 @@ export type ActivityRecord = {
   contextLabel: string;
   teamId?: string;
   planInHub?: boolean;
+  /** In-app navigation when the row is clicked. */
+  navPath?: string;
 };
 
 export type ActivityReportEntry = ActivityRecord & {
@@ -60,6 +71,7 @@ export const ACTIVITY_PERIOD_OPTIONS: { value: ActivityPeriodPreset; label: stri
   { value: 'this_month', label: 'This month' },
   { value: 'this_year', label: 'This year' },
   { value: 'last_year', label: 'Last year' },
+  { value: 'custom', label: 'Custom' },
 ];
 
 export const ACTIVITY_SOURCE_OPTIONS: { value: ActivitySource; label: string }[] = [
@@ -97,6 +109,22 @@ export function parseActivityDate(v: string | Date | undefined | null): Date | n
   if (!v) return null;
   const d = v instanceof Date ? v : new Date(v);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Inclusive local-date range; `end` is stored exclusive (midnight after last day). */
+export function getActivityPeriodFromDates(start: Date, end: Date): ActivityPeriod {
+  const a = calendarStartOfDay(start);
+  const b = calendarStartOfDay(end);
+  const lo = a.getTime() <= b.getTime() ? a : b;
+  const hi = a.getTime() <= b.getTime() ? b : a;
+  const endExclusive = new Date(hi);
+  endExclusive.setDate(endExclusive.getDate() + 1);
+  return {
+    preset: 'custom',
+    start: lo,
+    end: endExclusive,
+    label: formatCalendarRangeLabel(lo, hi),
+  };
 }
 
 export function getActivityPeriod(preset: ActivityPeriodPreset, ref = new Date()): ActivityPeriod {
@@ -144,6 +172,9 @@ export function getActivityPeriod(preset: ActivityPeriodPreset, ref = new Date()
       end,
       label: String(start.getFullYear()),
     };
+  }
+  if (preset === 'custom') {
+    return getActivityPeriodFromDates(ref, ref);
   }
   const start = startOfYear(now);
   start.setFullYear(start.getFullYear() - 1);
@@ -220,6 +251,7 @@ export function collectActivityRecords(
         dueAt: parseActivityDate(item.dueAt),
         contextLabel: groupById.get(item.groupId)?.name ?? 'List',
         planInHub: item.planInHub === true,
+        navPath: `${PATH_TODOS}?focus=${encodeURIComponent(item.id)}`,
       });
     }
     return out;
@@ -244,6 +276,9 @@ export function collectActivityRecords(
       dueAt: parseActivityDate(item.dueAt),
       contextLabel: team ? `${team.name} · ${person?.name ?? 'Member'}` : person?.name ?? 'Team',
       teamId: person?.teamId,
+      navPath: person
+        ? `${teamPerson(person.teamId, item.personId)}?focus=${encodeURIComponent(item.id)}`
+        : undefined,
     });
   }
 
@@ -306,12 +341,15 @@ export function buildActivityReportFromData(
   options: {
     source: ActivitySource;
     planningHubOnly?: boolean;
-    preset: ActivityPeriodPreset;
+    preset?: ActivityPeriodPreset;
+    period?: ActivityPeriod;
     teamId?: string;
     ref?: Date;
   },
 ): ActivityReport {
-  const period = getActivityPeriod(options.preset, options.ref);
+  const period =
+    options.period ??
+    getActivityPeriod(options.preset ?? 'this_week', options.ref);
   const records = collectActivityRecords(data, {
     source: options.source,
     planningHubOnly: options.planningHubOnly,

@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { IcGrip } from '../../components/icons';
 import type { TodoGroup, TodoItem, TodoStatus } from '../../model';
 import { TODO_STATUS_OPTIONS } from '../../model';
 import type { PlanningQuadrant } from '../../lib/planningMatrix';
+import { PATH_TODOS } from '../../lib/routes';
 
 export type PlanningTaskCardProps = {
   item: TodoItem;
@@ -108,7 +110,13 @@ export function PlanningTaskCard({
         >
           <span className="planning-card__check-box" aria-hidden />
         </button>
-        <p className="planning-card__title">{item.title}</p>
+        <Link
+          to={`${PATH_TODOS}?focus=${encodeURIComponent(item.id)}`}
+          className="planning-card__title-link"
+          title={`Open "${item.title}" in to-dos`}
+        >
+          {item.title}
+        </Link>
         <button
           type="button"
           className={`planning-card__star${focused ? ' planning-card__star--on' : ''}`}

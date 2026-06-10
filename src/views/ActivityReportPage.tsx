@@ -2,10 +2,13 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppData } from '../AppDataContext';
 import { TODO_STATUS_OPTIONS } from '../model';
+import { DateRangePicker } from '../components/ui/DateRangePicker';
 import {
   ACTIVITY_PERIOD_OPTIONS,
   ACTIVITY_SOURCE_OPTIONS,
   buildActivityReportFromData,
+  getActivityPeriod,
+  getActivityPeriodFromDates,
   type ActivityPeriodPreset,
   type ActivityReportEntry,
   type ActivitySource,
@@ -23,6 +26,48 @@ function fmtWhen(d: Date): string {
 
 function statusLabel(status: ActivityReportEntry['status']): string {
   return TODO_STATUS_OPTIONS.find((o) => o.value === status)?.shortLabel ?? status;
+}
+
+function ActivityRow({
+  entry,
+  timestampLabel,
+}: {
+  entry: ActivityReportEntry;
+  timestampLabel: string;
+}) {
+  const body = (
+    <>
+      <div className="activity-section__main">
+        <span className="activity-section__task-title">{entry.title}</span>
+        <span className="activity-section__context muted small">{entry.contextLabel}</span>
+      </div>
+      <div className="activity-section__meta muted small">
+        <span className={`activity-section__status activity-section__status--${entry.status}`}>
+          {statusLabel(entry.status)}
+        </span>
+        {entry.planInHub ? (
+          <span className="activity-section__hub-tag" title="In planning hub">
+            Planning
+          </span>
+        ) : null}
+        <span className="activity-section__when" title={timestampLabel}>
+          {fmtWhen(entry.displayAt)}
+        </span>
+      </div>
+    </>
+  );
+
+  if (entry.navPath) {
+    return (
+      <li className="activity-section__item">
+        <Link to={entry.navPath} className="activity-section__row activity-section__row--link">
+          {body}
+        </Link>
+      </li>
+    );
+  }
+
+  return <li className="activity-section__row">{body}</li>;
 }
 
 function ActivitySection({
@@ -55,31 +100,23 @@ function ActivitySection({
         ) : (
           <ul className="activity-section__list">
             {entries.map((entry) => (
-              <li key={`${entry.source}-${entry.id}`} className="activity-section__row">
-                <div className="activity-section__main">
-                  <span className="activity-section__task-title">{entry.title}</span>
-                  <span className="activity-section__context muted small">{entry.contextLabel}</span>
-                </div>
-                <div className="activity-section__meta muted small">
-                  <span className={`activity-section__status activity-section__status--${entry.status}`}>
-                    {statusLabel(entry.status)}
-                  </span>
-                  {entry.planInHub ? (
-                    <span className="activity-section__hub-tag" title="In planning hub">
-                      Planning
-                    </span>
-                  ) : null}
-                  <span className="activity-section__when" title={timestampLabel}>
-                    {fmtWhen(entry.displayAt)}
-                  </span>
-                </div>
-              </li>
+              <ActivityRow
+                key={`${entry.source}-${entry.id}`}
+                entry={entry}
+                timestampLabel={timestampLabel}
+              />
             ))}
           </ul>
         )
       ) : null}
     </section>
   );
+}
+
+function presetEndInclusive(period: ReturnType<typeof getActivityPeriod>): Date {
+  const end = new Date(period.end);
+  end.setDate(end.getDate() - 1);
+  return end;
 }
 
 export function ActivityReportPage() {
@@ -89,16 +126,31 @@ export function ActivityReportPage() {
   const [planningHubOnly, setPlanningHubOnly] = useState(false);
   const [teamId, setTeamId] = useState<string>('');
 
+  const initialWeek = useMemo(() => getActivityPeriod('this_week'), []);
+  const [customStart, setCustomStart] = useState(() => initialWeek.start);
+  const [customEnd, setCustomEnd] = useState(() => presetEndInclusive(initialWeek));
+
   const report = useMemo(
     () =>
       buildActivityReportFromData(data, {
         source,
         planningHubOnly: source === 'personal' ? planningHubOnly : false,
-        preset,
+        preset: preset === 'custom' ? undefined : preset,
+        period:
+          preset === 'custom' ? getActivityPeriodFromDates(customStart, customEnd) : undefined,
         teamId: source === 'team' && teamId ? teamId : undefined,
       }),
-    [data, preset, source, planningHubOnly, teamId],
+    [data, preset, customStart, customEnd, source, planningHubOnly, teamId],
   );
+
+  function selectPreset(next: ActivityPeriodPreset) {
+    if (next === 'custom' && preset !== 'custom') {
+      const period = getActivityPeriod(preset);
+      setCustomStart(period.start);
+      setCustomEnd(presetEndInclusive(period));
+    }
+    setPreset(next);
+  }
 
   return (
     <div className="page page--wide activity-page">
@@ -114,7 +166,7 @@ export function ActivityReportPage() {
         </div>
       </header>
 
-      <div className="activity-page__toolbar">
+      <div className="activity-page__toolbar card">
         <div className="seg activity-page__source-seg" role="group" aria-label="Data source">
           {ACTIVITY_SOURCE_OPTIONS.map((opt) => (
             <button
@@ -139,7 +191,7 @@ export function ActivityReportPage() {
                 key={opt.value}
                 type="button"
                 className={`seg__btn${preset === opt.value ? ' seg__btn--on' : ''}`}
-                onClick={() => setPreset(opt.value)}
+                onClick={() => selectPreset(opt.value)}
               >
                 {opt.label}
               </button>
@@ -159,7 +211,7 @@ export function ActivityReportPage() {
             <label className="activity-page__scope">
               <span className="muted small">Team</span>
               <select
-                className="activity-page__select"
+                className="select select--compact activity-page__select"
                 value={teamId}
                 onChange={(e) => setTeamId(e.target.value)}
               >
@@ -173,6 +225,18 @@ export function ActivityReportPage() {
             </label>
           )}
         </div>
+
+        {preset === 'custom' ? (
+          <DateRangePicker
+            className="activity-page__range-picker"
+            start={customStart}
+            end={customEnd}
+            onChange={(start, end) => {
+              setCustomStart(start);
+              setCustomEnd(end);
+            }}
+          />
+        ) : null}
 
         {source === 'personal' && planningHubOnly ? (
           <p className="activity-page__scope-hint muted small">
