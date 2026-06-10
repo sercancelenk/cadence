@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { AppData, TodoItem } from '../model';
 import {
+  activityOpenReferenceAt,
   buildActivityReport,
   buildActivityReportFromData,
   collectActivityRecords,
   getActivityPeriod,
   getActivityPeriodFromDates,
+  isWithinActivityPeriod,
+  parseActivityDate,
   wasOpenAt,
 } from './todoActivityReport';
 
@@ -58,6 +61,12 @@ describe('getActivityPeriod', () => {
     const p = getActivityPeriod('custom', REF);
     expect(p.preset).toBe('custom');
     expect(p.start.getDate()).toBe(p.end.getDate() - 1);
+  });
+
+  it('builds week, month, and year presets', () => {
+    expect(getActivityPeriod('this_week', REF).preset).toBe('this_week');
+    expect(getActivityPeriod('this_month', REF).label).toContain('2026');
+    expect(getActivityPeriod('this_year', REF).label).toBe('2026');
   });
 });
 
@@ -120,6 +129,93 @@ describe('collectActivityRecords', () => {
     expect(records[0]?.contextLabel).toContain('Alpha');
     expect(records[0]?.navPath).toBe('/teams/t1/people/p1?focus=i1');
   });
+
+  it('maps team goal statuses and filters by teamId', () => {
+    const data = emptyData({
+      teams: [
+        { id: 't1', name: 'Alpha', createdAt: TS, status: 'active' },
+        { id: 't2', name: 'Beta', createdAt: TS, status: 'active' },
+      ],
+      people: [
+        { id: 'p1', teamId: 't1', name: 'Pat', createdAt: TS },
+        { id: 'p2', teamId: 't2', name: 'Sam', createdAt: TS },
+      ],
+      items: [
+        {
+          id: 'g-active',
+          personId: 'p1',
+          kind: 'goal',
+          title: 'Active goal',
+          body: '',
+          done: false,
+          goalStatus: 'active',
+          createdAt: TS,
+          updatedAt: TS,
+        },
+        {
+          id: 'g-done',
+          personId: 'p1',
+          kind: 'goal',
+          title: 'Done goal',
+          body: '',
+          done: true,
+          goalStatus: 'completed',
+          doneAt: TS,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+        {
+          id: 'g-cancel',
+          personId: 'p1',
+          kind: 'goal',
+          title: 'Cancelled goal',
+          body: '',
+          done: false,
+          goalStatus: 'cancelled',
+          createdAt: TS,
+          updatedAt: TS,
+        },
+        {
+          id: 'g-draft',
+          personId: 'p1',
+          kind: 'goal',
+          title: 'Draft goal',
+          body: '',
+          done: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+        {
+          id: 'other-team',
+          personId: 'p2',
+          kind: 'task',
+          title: 'Beta task',
+          body: '',
+          done: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+    });
+
+    const all = collectActivityRecords(data, { source: 'team' });
+    expect(all.map((r) => r.id).sort()).toEqual([
+      'g-active',
+      'g-cancel',
+      'g-done',
+      'g-draft',
+      'other-team',
+    ]);
+    expect(all.find((r) => r.id === 'g-active')?.status).toBe('in_progress');
+    expect(all.find((r) => r.id === 'g-done')?.status).toBe('done');
+    expect(all.find((r) => r.id === 'g-cancel')?.status).toBe('cancelled');
+    expect(all.find((r) => r.id === 'g-draft')?.status).toBe('todo');
+    expect(all.find((r) => r.id === 'g-done')?.doneAt).not.toBeNull();
+
+    const alphaOnly = collectActivityRecords(data, { source: 'team', teamId: 't1' });
+    expect(alphaOnly.every((r) => r.teamId === 't1')).toBe(true);
+    expect(alphaOnly.some((r) => r.id === 'other-team')).toBe(false);
+  });
 });
 
 describe('buildActivityReport', () => {
@@ -162,6 +258,25 @@ describe('buildActivityReport', () => {
     expect(report.summary.cancelled).toBe(1);
     expect(report.stillOpen.map((x) => x.id)).toContain('open');
     expect(report.stillOpen.map((x) => x.id)).not.toContain('done');
+  });
+
+  it('uses last-year period end for still-open reference', () => {
+    const period = getActivityPeriod('last_year', REF);
+    expect(activityOpenReferenceAt(period, REF).getTime()).toBe(period.end.getTime());
+  });
+});
+
+describe('activity helpers', () => {
+  it('parses invalid dates as null', () => {
+    expect(parseActivityDate('not-a-date')).toBeNull();
+    expect(parseActivityDate(null)).toBeNull();
+  });
+
+  it('checks period membership with exclusive end', () => {
+    const period = getActivityPeriod('today', REF);
+    expect(isWithinActivityPeriod(period.start, period)).toBe(true);
+    expect(isWithinActivityPeriod(period.end, period)).toBe(false);
+    expect(isWithinActivityPeriod(null, period)).toBe(false);
   });
 });
 

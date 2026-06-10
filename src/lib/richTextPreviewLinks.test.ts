@@ -83,4 +83,22 @@ describe('richTextPreviewLinks', () => {
     };
     await expect(handleRichTextPreviewLinkClick(event)).resolves.toBe(false);
   });
+
+  it('handleRichTextPreviewLinkClick opens safe links', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const anchor = document.createElement('a');
+    anchor.href = 'https://example.com/docs';
+    anchor.textContent = 'docs';
+    const event = {
+      target: anchor,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      metaKey: false,
+      ctrlKey: false,
+    };
+    await expect(handleRichTextPreviewLinkClick(event)).resolves.toBe(true);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith('https://example.com/docs', '_blank', 'noopener,noreferrer');
+    open.mockRestore();
+  });
 });
