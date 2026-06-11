@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { useAccount } from '../AccountContext';
@@ -8,9 +8,12 @@ import {
   NotesLockDialogs,
   NotesLockedView,
   NotesSidebar,
+  NotesVersionHistoryPanel,
   filterNotesForView,
   notePlainText,
   prefetchRichTextEditor,
+  useNoteRevisionCapture,
+  useNoteVersionHistory,
   useNotesEditor,
   useNotesLock,
   useNotesManualReorder,
@@ -37,7 +40,8 @@ const AITaskExtractorDialog = lazy(() =>
  * `docs/HEALTH-CHECK-AND-ROADMAP.md` (B2 notes module).
  */
 export function NotesPage() {
-  const { addNote, patchNote, replaceNote, removeNote, setNotesLock, update } = useAppDataActions();
+  const { addNote, patchNote, replaceNote, removeNote, setNotesLock, update, flushPendingSave } =
+    useAppDataActions();
   const notesWorkspace = useAppDataSelector(
     (d) => ({
       notes: d.notes,
@@ -90,7 +94,18 @@ export function NotesPage() {
     setViewMode,
   );
 
-  const editorState = useNotesEditor(selected, patchNote, replaceNote, unlock);
+  const revisionCaptureRef = useRef<ReturnType<typeof useNoteRevisionCapture> | null>(null);
+  const editorState = useNotesEditor(
+    selected,
+    patchNote,
+    replaceNote,
+    unlock,
+    (...args) => revisionCaptureRef.current?.captureAfterSave(...args),
+  );
+  const revisionCapture = useNoteRevisionCapture(selected, editorState.getRevisionSnapshot);
+  revisionCaptureRef.current = revisionCapture;
+  const { captureAfterSave } = revisionCapture;
+
   const {
     decrypted,
     setDecrypted,
@@ -105,6 +120,16 @@ export function NotesPage() {
     hideSelected,
   } = editorState;
 
+  const versionHistory = useNoteVersionHistory(
+    selected,
+    editorReady,
+    unlock,
+    patchNote,
+    replaceNote,
+    flushPendingSave,
+    setDecrypted,
+  );
+
   const lock = useNotesLock({
     data: notesWorkspace as AppData,
     selected,
@@ -115,6 +140,7 @@ export function NotesPage() {
     setNotesLock,
     update,
     removeNote,
+    captureRevision: captureAfterSave,
   });
 
   const {
@@ -213,6 +239,8 @@ export function NotesPage() {
               onRequestAction={lock.requestAction}
               onHideSelected={hideSelected}
               onConfirmRemove={() => lock.setConfirmRemoveId(selected.id)}
+              onOpenVersionHistory={() => versionHistory.setOpen(true)}
+              versionHistoryAvailable={versionHistory.available}
             />
 
             {selected.locked && !editorReady ? (
@@ -250,6 +278,14 @@ export function NotesPage() {
       ) : null}
 
       <NotesLockDialogs notes={notesWorkspace.notes} data={notesWorkspace as AppData} lock={lock} />
+
+      {selected ? (
+        <NotesVersionHistoryPanel
+          noteId={selected.id}
+          attachmentUserId={user?.id ?? 'anonymous'}
+          history={versionHistory}
+        />
+      ) : null}
     </div>
   );
 }

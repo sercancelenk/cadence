@@ -153,16 +153,57 @@ describe('richTextAttachmentStore', () => {
     expect(url.startsWith('blob:')).toBe(true);
   });
 
-  it('readClipboardImageFile prefers files over items', () => {
+  it('readDataTransferImageFile prefers files over items', () => {
     const file = new File(['x'], 'shot.png', { type: 'image/png' });
     const clipboard = {
       files: [file],
-      items: [{ type: 'image/png', getAsFile: () => file }],
+      items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }],
+      getData: () => '',
     } as unknown as DataTransfer;
     return loadStore().then((store) => {
+      expect(store.readDataTransferImageFile(clipboard)).toBe(file);
       expect(store.readClipboardImageFile(clipboard)).toBe(file);
-      expect(store.readClipboardImageFile(null)).toBeNull();
+      expect(store.dataTransferHasImageFiles(clipboard)).toBe(true);
+      expect(store.readDataTransferImageFile(null)).toBeNull();
     });
+  });
+
+  it('readDataTransferImageFile extracts embedded data URLs from HTML paste', () => {
+    const clipboard = {
+      files: [],
+      items: [],
+      getData: (type: string) =>
+        type === 'text/html'
+          ? '<img src="data:image/png;base64,iVBORw0KGgo=" />'
+          : '',
+    } as unknown as DataTransfer;
+    return loadStore().then((store) => {
+      const blob = store.readDataTransferImageFile(clipboard);
+      expect(blob).toBeInstanceOf(Blob);
+      expect(blob?.type).toBe('image/png');
+    });
+  });
+
+  it('storeRichTextImage caches a blob URL for immediate display', async () => {
+    vi.doMock('./richTextImagePipeline', () => ({
+      compressImageForAttachment: vi.fn().mockResolvedValue({
+        blob: new Blob(['webp'], { type: 'image/webp' }),
+        width: 10,
+        height: 10,
+        mimeType: 'image/webp',
+      }),
+      blobToBase64: vi.fn(),
+    }));
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('no protocol')));
+    const store = await loadStore();
+    const { attachmentId, src } = await store.storeRichTextImage(
+      new Blob(['x'], { type: 'image/png' }),
+      { documentKind: 'note', documentId: 'd' },
+      userId,
+    );
+    const url = await store.resolveAttachmentDisplayUrl(src, userId);
+    expect(url).toMatch(/^blob:/);
+    store.releaseAttachmentBlobUrls([attachmentId]);
   });
 
   it('importAttachmentBlob writes via Electron when available', async () => {
@@ -178,7 +219,7 @@ describe('richTextAttachmentStore', () => {
     const blob = new Blob(['x'], { type: 'image/jpeg' });
     await store.importAttachmentBlob(userId, attachmentId, blob);
     expect(attachmentWrite).toHaveBeenCalledWith(
-      expect.objectContaining({ attachmentId, userId, mimeType: 'image/jpeg' }),
+      expect.objectContaining({ attachmentId, mimeType: 'image/jpeg' }),
     );
   });
 
@@ -195,5 +236,52 @@ describe('richTextAttachmentStore', () => {
     const blob = await store.readAttachmentBlobForSync(attachmentId, userId);
     expect(blob?.type).toBe('image/png');
     expect(blob?.size).toBeGreaterThan(0);
+  });
+
+  it('loads attachment blob via custom protocol fetch when IPC is unavailable', async () => {
+    const payload = new Blob(['png-bytes'], { type: 'image/png' });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: async () => payload,
+      }),
+    );
+    const store = await loadStore();
+    const blob = await store.readAttachmentBlobForSync(attachmentId, userId);
+    expect(blob?.type).toBe('image/png');
+    expect(blob?.size).toBe(payload.size);
+  });
+
+  it('dataTransferHasImageFiles is false for empty transfers', async () => {
+    const store = await loadStore();
+    expect(store.dataTransferHasImageFiles(null)).toBe(false);
+    expect(
+      store.dataTransferHasImageFiles({
+        files: [],
+        items: [],
+        getData: () => '',
+      } as unknown as DataTransfer),
+    ).toBe(false);
+  });
+
+  it('electronAttachmentsAvailable reflects cadence IPC', async () => {
+    const store = await loadStore();
+    expect(store.electronAttachmentsAvailable()).toBe(false);
+    (window as { cadence?: { attachmentWrite?: ReturnType<typeof vi.fn> } }).cadence = {
+      attachmentWrite: vi.fn(),
+    };
+    expect(store.electronAttachmentsAvailable()).toBe(true);
+  });
+
+  it('importAttachmentBlob persists to IndexedDB when Electron is unavailable', async () => {
+    vi.doMock('./richTextImagePipeline', () => ({
+      compressImageForAttachment: vi.fn(),
+      blobToBase64: vi.fn(),
+    }));
+    const store = await loadStore();
+    const blob = new Blob(['local'], { type: 'image/webp' });
+    await store.importAttachmentBlob(userId, attachmentId, blob);
+    expect(await store.attachmentExistsLocally(attachmentId, userId)).toBe(true);
   });
 });

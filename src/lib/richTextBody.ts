@@ -30,6 +30,25 @@ export function richTextPayloadToBodyFields(payload: RichTextPayload): RichTextB
   };
 }
 
+/** True when the doc is structurally empty (no images, tables, or text). */
+export function richTextPayloadIsEmpty(payload: RichTextPayload): boolean {
+  return (
+    canonicalDocSignature(payload.doc, 'prosemirror') ===
+    canonicalDocSignature(EMPTY_RICH_DOC, 'prosemirror')
+  );
+}
+
+/**
+ * Map editor payload → persisted body fields.
+ * Image-only / table-only docs have empty plainText but must still save.
+ */
+export function richBodyFieldsFromPayload(payload: RichTextPayload): RichTextBodyFields {
+  if (richTextPayloadIsEmpty(payload)) {
+    return { body: '', bodyFormat: undefined, bodyPlainText: undefined };
+  }
+  return richTextPayloadToBodyFields(payload);
+}
+
 export function emptyRichBodyFields(): RichTextBodyFields {
   return {
     body: serializeRichDoc(EMPTY_RICH_DOC),
@@ -59,6 +78,24 @@ export function plainTextFromBodyFields(fields: {
   }
 
   return raw;
+}
+
+/** Canonical JSON for display — repairs blob/src drift and normalizes attachment URIs. */
+export function prepareStoredRichBodyForDisplay(
+  body: string,
+  bodyFormat?: RichTextBodyFormat,
+): string {
+  if (bodyFormat !== 'prosemirror' || !body.trim()) return body;
+  const doc = resolveRichTextContent(body, 'prosemirror');
+  return serializeRichDoc(normalizeDocAttachmentsForStorage(doc));
+}
+
+/** Canonical JSON for revision persistence — never store transient blob: image src. */
+export function prepareStoredRichBodyForRevision(
+  body: string,
+  bodyFormat?: RichTextBodyFormat,
+): string {
+  return prepareStoredRichBodyForDisplay(body, bodyFormat);
 }
 
 /** Canonical JSON key for comparing stored vs in-editor document (ignores key order). */

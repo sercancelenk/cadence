@@ -332,6 +332,10 @@ export interface Note {
   locked: boolean;
   /** When `locked === true`, the AES-GCM ciphertext + IV (no salt). */
   cipher?: { ivB64: string; cipherB64: string };
+  /** Attachment ids referenced inside a locked note body (GC + export). */
+  attachmentRefs?: string[];
+  /** Canonical plaintext signature for locked bodies (revision dedupe). */
+  lockedBodySignature?: string;
   /** Pinned notes float to the top of the list. */
   pinned?: boolean;
   /** Optional manual sort order; lower number first within the same pinned tier. */
@@ -1042,6 +1046,13 @@ function parseNotes(raw: unknown): Note[] {
         !locked && typeof o.bodyPlainText === 'string' ? o.bodyPlainText : undefined,
       locked,
       cipher,
+      attachmentRefs: locked && Array.isArray(o.attachmentRefs)
+        ? o.attachmentRefs.filter((id): id is string => typeof id === 'string' && !!id.trim())
+        : undefined,
+      lockedBodySignature:
+        locked && typeof o.lockedBodySignature === 'string' && o.lockedBodySignature
+          ? o.lockedBodySignature
+          : undefined,
       pinned: !!o.pinned,
       sortOrder: typeof o.sortOrder === 'number' ? o.sortOrder : undefined,
       lastOpenedAt: typeof o.lastOpenedAt === 'string' ? o.lastOpenedAt : undefined,

@@ -1,4 +1,5 @@
 import {
+  IcClock,
   IcArchive,
   IcArrowLeft,
   IcEyeOff,
@@ -27,6 +28,8 @@ export type NotesDetailHeaderProps = {
   onRequestAction: (intent: PendingIntent) => void;
   onHideSelected: () => void;
   onConfirmRemove: () => void;
+  onOpenVersionHistory?: () => void;
+  versionHistoryAvailable?: boolean;
 };
 
 export function NotesDetailHeader({
@@ -42,6 +45,8 @@ export function NotesDetailHeader({
   onRequestAction,
   onHideSelected,
   onConfirmRemove,
+  onOpenVersionHistory,
+  versionHistoryAvailable = false,
 }: NotesDetailHeaderProps) {
   return (
     <header className="notes-page__main-header">
@@ -71,6 +76,20 @@ export function NotesDetailHeader({
             tooltip="Extract tasks from this note"
           >
             <IcSparkles size={16} />
+          </NotesIconButton>
+        ) : null}
+
+        {onOpenVersionHistory ? (
+          <NotesIconButton
+            onClick={onOpenVersionHistory}
+            label="Version history"
+            tooltip={
+              versionHistoryAvailable
+                ? 'Version history'
+                : 'Version history (Cadence desktop app)'
+            }
+          >
+            <IcClock size={16} />
           </NotesIconButton>
         ) : null}
 

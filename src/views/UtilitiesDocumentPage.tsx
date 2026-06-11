@@ -3,7 +3,7 @@ import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import { RichTextDocumentPane } from '../components/ui/RichTextDocumentPane';
 import type { RichTextPayload } from '../lib/richText';
-import { noteBodyPatchIsNoOp, richTextPayloadToBodyFields } from '../lib/richTextBody';
+import { noteBodyPatchIsNoOp, richBodyFieldsFromPayload } from '../lib/richTextBody';
 import type { RichTextBodyFormat } from '../lib/richText';
 import { prefetchRichTextEditor } from '../features/notes/prefetchRichTextEditor';
 
@@ -35,9 +35,7 @@ export function UtilitiesDocumentPage() {
   }, [doc?.updatedAt]);
 
   const onChange = (payload: RichTextPayload) => {
-    const fields = payload.plainText.trim()
-      ? richTextPayloadToBodyFields(payload)
-      : { body: '', bodyFormat: undefined, bodyPlainText: undefined };
+    const fields = richBodyFieldsFromPayload(payload);
     const prev = {
       body: doc?.body ?? '',
       bodyFormat: doc?.bodyFormat,

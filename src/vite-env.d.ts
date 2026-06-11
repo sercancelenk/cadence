@@ -179,6 +179,19 @@ interface CadenceApi {
         attachmentId: string;
       }) => Promise<{ ok: boolean; dataBase64?: string; mimeType?: string; error?: string }>;
       attachmentGc?: () => Promise<{ ok: boolean; pruned?: number; error?: string }>;
+      noteHistoryList?: (payload: {
+        noteId: string;
+      }) => Promise<{ ok: boolean; revisions?: import('./lib/noteRevision/types').NoteRevisionMeta[]; error?: string }>;
+      noteHistoryRead?: (payload: {
+        noteId: string;
+        revisionId: string;
+      }) => Promise<{ ok: boolean; revision?: import('./lib/noteRevision/types').NoteRevisionPayload; error?: string }>;
+      noteHistoryAppend?: (
+        payload: import('./lib/noteRevision/types').NoteRevisionWriteInput,
+      ) => Promise<{ ok: boolean; revisionId?: string; pruned?: number; error?: string }>;
+      noteHistoryPurge?: (payload: {
+        noteId: string;
+      }) => Promise<{ ok: boolean; purged?: boolean; error?: string }>;
       exportDataBundle?: (
         data: unknown,
       ) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;

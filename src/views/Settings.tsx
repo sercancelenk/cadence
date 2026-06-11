@@ -2679,8 +2679,9 @@ function BackupsRecoverySection({
           </div>
           {isElectron ? (
             <p className="muted small" style={{ marginBottom: 16 }}>
-              <strong>Full backup</strong> includes note and task images. JSON-only exports keep text and attachment
-              pointers; rolling snapshots also copy the attachments folder beside each snapshot.
+              <strong>Full backup</strong> includes note and task images plus per-note version history (Notes).
+              JSON-only exports keep text and attachment pointers; rolling snapshots also copy attachments and note
+              history beside each snapshot.
             </p>
           ) : (
             <p className="muted small" style={{ marginBottom: 16 }}>

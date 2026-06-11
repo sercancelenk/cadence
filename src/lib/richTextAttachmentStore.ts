@@ -6,6 +6,7 @@ import {
   type RichTextAttachmentScope,
 } from './richTextAttachmentUri';
 import { blobToBase64, compressImageForAttachment } from './richTextImagePipeline';
+import { fetchRichTextAttachmentUserId } from './richTextAttachmentUser';
 
 export type StoredRichTextImage = {
   attachmentId: string;
@@ -30,6 +31,10 @@ function base64ToBlob(b64: string, mimeType: string): Blob {
 
 function hasElectronAttachments(): boolean {
   return typeof window !== 'undefined' && !!window.cadence?.attachmentWrite;
+}
+
+export function electronAttachmentsAvailable(): boolean {
+  return hasElectronAttachments();
 }
 
 function idbOpen(userId: string): Promise<IDBDatabase> {
@@ -72,7 +77,6 @@ async function idbGet(userId: string, attachmentId: string): Promise<Blob | null
 }
 
 async function storeViaElectron(
-  userId: string,
   attachmentId: string,
   blob: Blob,
   mimeType: string,
@@ -82,9 +86,27 @@ async function storeViaElectron(
     attachmentId,
     dataBase64,
     mimeType,
-    userId,
   });
   if (!r?.ok) throw new Error(r?.error ?? 'Could not save image attachment.');
+}
+
+async function mirrorAttachmentToIdb(
+  userId: string,
+  attachmentId: string,
+  blob: Blob,
+): Promise<void> {
+  const ids = new Set<string>();
+  if (userId) ids.add(userId);
+  const sessionId = await fetchRichTextAttachmentUserId(userId);
+  if (sessionId) ids.add(sessionId);
+  for (const uid of ids) {
+    try {
+      await idbPut(uid, attachmentId, blob);
+      return;
+    } catch {
+      /* try next scope */
+    }
+  }
 }
 
 /**
@@ -100,10 +122,17 @@ export async function storeRichTextImage(
   const attachmentId = createAttachmentId(scope.documentKind, scope.documentId);
 
   if (hasElectronAttachments()) {
-    await storeViaElectron(userId, attachmentId, compressed.blob, compressed.mimeType);
+    await storeViaElectron(attachmentId, compressed.blob, compressed.mimeType);
+    await mirrorAttachmentToIdb(userId, attachmentId, compressed.blob);
   } else {
     await idbPut(userId, attachmentId, compressed.blob);
   }
+
+  // Keep an in-memory blob URL so the image renders immediately after paste
+  // without a read-after-write round trip (Electron IPC / protocol can lag).
+  const prev = blobUrlCache.get(attachmentId);
+  if (prev) URL.revokeObjectURL(prev);
+  blobUrlCache.set(attachmentId, URL.createObjectURL(compressed.blob));
 
   return {
     attachmentId,
@@ -115,14 +144,7 @@ export async function storeRichTextImage(
 }
 
 async function loadAttachmentBlob(id: string, userId: string): Promise<Blob | null> {
-  try {
-    const resp = await fetch(attachmentUri(id));
-    if (resp.ok) return await resp.blob();
-  } catch {
-    /* not in Electron or protocol unavailable */
-  }
-
-  // 2) IPC read (older fallback when fetch is blocked).
+  // 1) IPC read — uses Electron session uid (no renderer userId needed).
   if (window.cadence?.attachmentRead) {
     try {
       const r = await window.cadence.attachmentRead({ attachmentId: id });
@@ -130,16 +152,35 @@ async function loadAttachmentBlob(id: string, userId: string): Promise<Blob | nu
         return base64ToBlob(r.dataBase64, r.mimeType ?? 'image/webp');
       }
     } catch {
-      /* stale main process — user should restart Electron */
+      /* stale main process — fall through */
     }
   }
 
-  // 3) Browser / PWA IndexedDB.
+  // 2) Custom protocol (Electron img + fetch previews).
   try {
-    return await idbGet(userId, id);
+    const resp = await fetch(attachmentUri(id));
+    if (resp.ok) {
+      const blob = await resp.blob();
+      if (blob.size > 0) return blob;
+    }
   } catch {
-    return null;
+    /* not in Electron or protocol unavailable */
   }
+
+  // 3) IndexedDB — try session scope then prop scope (PWA + Electron mirror).
+  const idbScopes = new Set<string>();
+  if (userId) idbScopes.add(userId);
+  const sessionId = await fetchRichTextAttachmentUserId(userId);
+  if (sessionId) idbScopes.add(sessionId);
+  for (const uid of idbScopes) {
+    try {
+      const blob = await idbGet(uid, id);
+      if (blob?.size) return blob;
+    } catch {
+      /* try next scope */
+    }
+  }
+  return null;
 }
 
 /**
@@ -195,10 +236,10 @@ export function pickImageFile(): Promise<File | null> {
 }
 
 /**
- * Read an image from the clipboard (macOS screenshot paste = image/png).
- * Must stay synchronous — ProseMirror `handlePaste` cannot await.
+ * Read an image from clipboard or drag-and-drop data transfer.
+ * Must stay synchronous — ProseMirror paste/drop handlers cannot await.
  */
-export function readClipboardImageFile(clipboardData: DataTransfer | null): Blob | null {
+export function readDataTransferImageFile(clipboardData: DataTransfer | null): Blob | null {
   if (!clipboardData) return null;
 
   for (const file of clipboardData.files) {
@@ -206,12 +247,42 @@ export function readClipboardImageFile(clipboardData: DataTransfer | null): Blob
   }
 
   for (const item of clipboardData.items) {
-    if (!item.type.startsWith('image/')) continue;
+    if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
     const file = item.getAsFile();
     if (file instanceof Blob && file.size > 0) return file;
   }
 
+  // macOS screenshot paste often ships HTML with a file:// src but no file item.
+  const html = clipboardData.getData('text/html') ?? '';
+  const dataUrlMatch = html.match(/\bsrc=["'](data:image\/[^"']+)["']/i);
+  if (dataUrlMatch?.[1]) {
+    try {
+      return dataUrlToBlob(dataUrlMatch[1]);
+    } catch {
+      /* fall through */
+    }
+  }
+
   return null;
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, b64] = dataUrl.split(',');
+  if (!b64) throw new Error('Invalid data URL.');
+  const mime = header?.match(/data:([^;]+)/)?.[1] ?? 'image/png';
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+/** @deprecated Use readDataTransferImageFile */
+export function readClipboardImageFile(clipboardData: DataTransfer | null): Blob | null {
+  return readDataTransferImageFile(clipboardData);
+}
+
+export function dataTransferHasImageFiles(dataTransfer: DataTransfer | null): boolean {
+  return readDataTransferImageFile(dataTransfer) !== null;
 }
 
 export async function attachmentExistsLocally(id: string, userId: string): Promise<boolean> {
@@ -231,8 +302,12 @@ export async function importAttachmentBlob(
 ): Promise<void> {
   const type = mimeType || blob.type || 'image/webp';
   if (hasElectronAttachments()) {
-    await storeViaElectron(userId, attachmentId, blob, type);
+    await storeViaElectron(attachmentId, blob, type);
+    await mirrorAttachmentToIdb(userId, attachmentId, blob);
   } else {
     await idbPut(userId, attachmentId, blob);
   }
+  const prev = blobUrlCache.get(attachmentId);
+  if (prev) URL.revokeObjectURL(prev);
+  blobUrlCache.set(attachmentId, URL.createObjectURL(blob));
 }

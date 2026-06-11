@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { SYNC_BEFORE_APPLY } from '../../lib/syncApplyGuard';
 import { createPortal } from 'react-dom';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
@@ -12,21 +12,31 @@ import { canonicalDocSignature } from '../../lib/richTextBody';
 import { createRichTextExtensions } from '../../lib/richTextEditorExtensions';
 import {
   attachmentUri,
-  ATTACHMENT_URI_PREFIX,
   parseAttachmentId,
   type RichTextAttachmentScope,
 } from '../../lib/richTextAttachmentUri';
 import {
+  dataTransferHasImageFiles,
+  electronAttachmentsAvailable,
   pickImageFile,
-  readClipboardImageFile,
+  readDataTransferImageFile,
   releaseAttachmentBlobUrls,
   resolveAttachmentDisplayUrl,
   storeRichTextImage,
 } from '../../lib/richTextAttachmentStore';
+import {
+  fetchRichTextAttachmentUserId,
+  primeRichTextAttachmentUserId,
+} from '../../lib/richTextAttachmentUser';
 import { collectAttachmentIds } from '../../lib/richTextDocAttachments';
 import { normalizeDocAttachmentsForStorage } from '../../lib/richTextDocAttachments';
 import { formatDateChipLabel, todayIsoDate } from '../../lib/richTextDateChip';
+import {
+  findRichTextEditorImage,
+  resolveRichTextImageLightboxSrc,
+} from '../../lib/richTextImageLightbox';
 import { resolveRichTextContent } from '../../lib/richTextImport';
+import { RichTextImageLightbox } from './RichTextImageLightbox';
 
 /** Coalesce parent updates — editor stays instant; persist layer debounces again. */
 const DEFAULT_ON_CHANGE_DEBOUNCE_MS = 120;
@@ -85,6 +95,12 @@ function payloadFromEditor(ed: Editor): RichTextPayload {
 
 const HYDRATION_TX_META = 'cadenceHydration';
 
+type ImageLightboxState = {
+  src: string;
+  alt: string;
+  loading: boolean;
+};
+
 /**
  * Replace document from props without moving the caret unless the structure
  * makes the previous selection invalid (never force end-of-doc).
@@ -112,32 +128,42 @@ function setExternalContentPreservingSelection(editor: Editor, content: RichText
 }
 
 async function hydrateAttachmentImages(editor: Editor, userId: string): Promise<void> {
-  const { state } = editor;
-  const pending: { pos: number; node: ReturnType<typeof state.doc.nodeAt>; id: string }[] = [];
-  state.doc.descendants((node, pos) => {
+  const pendingIds = new Set<string>();
+  editor.state.doc.descendants((node) => {
+    if (node.type.name !== 'image') return;
+    const src = String(node.attrs.src ?? '');
+    const id = (node.attrs.attachmentId as string) || parseAttachmentId(src);
+    if (id) pendingIds.add(id);
+  });
+  if (!pendingIds.size) return;
+
+  const displayById = new Map<string, string>();
+  await Promise.all(
+    [...pendingIds].map(async (id) => {
+      const displayUrl = await resolveAttachmentDisplayUrl(attachmentUri(id), userId);
+      if (!displayUrl.startsWith('blob:')) return;
+      displayById.set(id, displayUrl);
+    }),
+  );
+  if (!displayById.size) return;
+
+  let tr = editor.state.tr;
+  let changed = false;
+  editor.state.doc.descendants((node, pos) => {
     if (node.type.name !== 'image') return;
     const src = String(node.attrs.src ?? '');
     const id = (node.attrs.attachmentId as string) || parseAttachmentId(src);
     if (!id) return;
-    if (src.startsWith('blob:')) return;
-    if (!src.startsWith(ATTACHMENT_URI_PREFIX)) return;
-    pending.push({ pos, node, id });
-  });
-  if (!pending.length) return;
-
-  let tr = state.tr;
-  let changed = false;
-  for (const item of pending) {
-    if (!item.node) continue;
-    const displayUrl = await resolveAttachmentDisplayUrl(attachmentUri(item.id), userId);
-    if (displayUrl === item.node.attrs.src) continue;
-    tr = tr.setNodeMarkup(item.pos, undefined, {
-      ...item.node.attrs,
+    const displayUrl = displayById.get(id);
+    if (!displayUrl || displayUrl === src) return;
+    tr = tr.setNodeMarkup(pos, undefined, {
+      ...node.attrs,
       src: displayUrl,
-      attachmentId: item.id,
+      attachmentId: id,
     });
     changed = true;
-  }
+  });
+
   if (changed) {
     tr.setMeta('addToHistory', false);
     tr.setMeta(HYDRATION_TX_META, true);
@@ -176,6 +202,7 @@ export function RichTextEditor({
   onSaveStateChange,
 }: RichTextEditorProps) {
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
+  const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showEditorNotice = useCallback(
@@ -216,6 +243,9 @@ export function RichTextEditor({
   showEditorNoticeRef.current = showEditorNotice;
   const insertImageRef = useRef<(file: Blob | File, alt?: string) => Promise<void>>(async () => {});
   const attachmentIdsRef = useRef<Set<string>>(new Set());
+  const imageLightboxOpenRef = useRef(false);
+  const lightboxRequestRef = useRef(0);
+  const closeImageLightboxRef = useRef<() => void>(() => {});
   /** Suppress duplicate parent writes when mount/hydration normalizes JSON without edits. */
   const lastEmittedSig = useRef<string | null>(null);
 
@@ -301,18 +331,23 @@ export function RichTextEditor({
 
   const insertImageFromFile = useCallback(async (file: Blob | File, alt?: string) => {
     const scope = attachmentScopeRef.current;
-    const uid = attachmentUserIdRef.current;
     const ed = editorRef.current;
-    if (!scope || !uid) {
-      showEditorNoticeRef.current('Sign in and open a document to attach images.');
+    if (!scope) {
+      showEditorNoticeRef.current('Open a note or task to attach images.');
       return;
     }
     if (!ed) return;
+    const uid = await fetchRichTextAttachmentUserId(attachmentUserIdRef.current);
+    attachmentUserIdRef.current = uid;
+    if (electronAttachmentsAvailable() && uid === 'anonymous') {
+      showEditorNoticeRef.current('Sign in to attach images in the desktop app.');
+      return;
+    }
     try {
       const stored = await storeRichTextImage(file, scope, uid, alt);
       trackAttachmentId(stored.attachmentId);
-      const src = await resolveAttachmentDisplayUrl(stored.src, uid);
-      if (src.startsWith(ATTACHMENT_URI_PREFIX)) {
+      let src = await resolveAttachmentDisplayUrl(stored.src, uid);
+      if (!src.startsWith('blob:')) {
         showEditorNoticeRef.current(
           'Image saved but could not be displayed. Restart the app (⌘Q → npm run dev).',
         );
@@ -341,6 +376,63 @@ export function RichTextEditor({
 
   insertImageRef.current = insertImageFromFile;
 
+  const closeImageLightbox = useCallback(() => {
+    lightboxRequestRef.current += 1;
+    setImageLightbox(null);
+  }, []);
+  closeImageLightboxRef.current = closeImageLightbox;
+
+  useEffect(() => {
+    imageLightboxOpenRef.current = imageLightbox !== null;
+  }, [imageLightbox]);
+
+  const openImageLightbox = useCallback(
+    async (img: HTMLImageElement) => {
+      const requestId = ++lightboxRequestRef.current;
+      const alt = img.alt?.trim() || 'Image';
+      setImageLightbox({ src: '', alt, loading: true });
+      try {
+        const src = await resolveRichTextImageLightboxSrc(img, attachmentUserIdRef.current);
+        if (requestId !== lightboxRequestRef.current) return;
+        if (!src) {
+          setImageLightbox(null);
+          showEditorNoticeRef.current('Could not open this image.');
+          return;
+        }
+        setImageLightbox({ src, alt, loading: false });
+      } catch {
+        if (requestId !== lightboxRequestRef.current) return;
+        setImageLightbox(null);
+        showEditorNoticeRef.current('Could not open this image.');
+      }
+    },
+    [],
+  );
+
+  const handleEditorImageClick = useCallback(
+    (event: MouseEvent) => {
+      if (editableRef.current) return;
+      const img = findRichTextEditorImage(event.target);
+      if (!img) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void openImageLightbox(img);
+    },
+    [openImageLightbox],
+  );
+
+  const handleEditorImageDoubleClick = useCallback(
+    (event: MouseEvent) => {
+      if (!editableRef.current) return;
+      const img = findRichTextEditorImage(event.target);
+      if (!img) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void openImageLightbox(img);
+    },
+    [openImageLightbox],
+  );
+
   const hydrateAndTrack = useCallback(async (ed: Editor, userId: string) => {
     await hydrateAttachmentImages(ed, userId);
     for (const id of collectAttachmentIds(ed.getJSON() as RichTextDoc)) {
@@ -359,6 +451,11 @@ export function RichTextEditor({
         spellcheck: 'true',
       },
       handleKeyDown: (_view, event) => {
+        if (event.key === 'Escape' && imageLightboxOpenRef.current) {
+          event.preventDefault();
+          closeImageLightboxRef.current();
+          return true;
+        }
         if (event.key === 'Escape' && editableRef.current && onRequestPreviewRef.current) {
           event.preventDefault();
           onRequestPreviewRef.current();
@@ -367,12 +464,44 @@ export function RichTextEditor({
         return false;
       },
       handlePaste: (_view, event) => {
-        if (!attachmentScopeRef.current || !attachmentUserIdRef.current) return false;
-        const file = readClipboardImageFile(event.clipboardData);
+        if (!editableRef.current) return false;
+        if (!attachmentScopeRef.current) return false;
+        const file = readDataTransferImageFile(event.clipboardData);
+        if (file) {
+          event.preventDefault();
+          void insertImageRef.current(file);
+          return true;
+        }
+        const html = event.clipboardData?.getData('text/html') ?? '';
+        if (
+          /<img\b/i.test(html) &&
+          (html.includes('file://') || html.includes('webkit-fake-url'))
+        ) {
+          event.preventDefault();
+          showEditorNoticeRef.current(
+            'Could not read the pasted image. Try drag-and-drop, or use Copy Image from the source app.',
+          );
+          return true;
+        }
+        return false;
+      },
+      handleDrop: (_view, event) => {
+        if (!editableRef.current) return false;
+        if (!attachmentScopeRef.current) return false;
+        const file = readDataTransferImageFile(event.dataTransfer);
         if (!file) return false;
         event.preventDefault();
         void insertImageRef.current(file);
         return true;
+      },
+      handleDOMEvents: {
+        dragover: (_view, event) => {
+          if (!editableRef.current) return false;
+          if (!attachmentScopeRef.current) return false;
+          if (!dataTransferHasImageFiles(event.dataTransfer)) return false;
+          event.preventDefault();
+          return true;
+        },
       },
     },
     onUpdate: ({ editor: ed, transaction }) => {
@@ -391,10 +520,10 @@ export function RichTextEditor({
     onCreate: ({ editor: ed }) => {
       editorRef.current = ed;
       syncBaselineFromEditor(ed);
-      const uid = attachmentUserIdRef.current;
-      if (uid) {
+      void fetchRichTextAttachmentUserId(attachmentUserIdRef.current).then((uid) => {
+        attachmentUserIdRef.current = uid;
         void hydrateAndTrack(ed, uid).then(() => syncBaselineFromEditor(ed));
-      }
+      });
     },
     onBlur: () => {
       flushPending();
@@ -455,10 +584,29 @@ export function RichTextEditor({
     }
   }, [editable, flushPending]);
 
+  attachmentUserIdRef.current = attachmentUserId;
+  primeRichTextAttachmentUserId(attachmentUserId);
+
   useEffect(() => {
-    if (!editor || !attachmentUserId) return;
-    void hydrateAndTrack(editor, attachmentUserId).then(() => syncBaselineFromEditor(editor));
-  }, [editor, attachmentUserId, hydrateAndTrack, syncBaselineFromEditor]);
+    let cancelled = false;
+    void fetchRichTextAttachmentUserId(attachmentUserId).then((uid) => {
+      if (cancelled) return;
+      attachmentUserIdRef.current = uid;
+      if (editor) {
+        void hydrateAndTrack(editor, uid).then(() => syncBaselineFromEditor(editor));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachmentUserId, editor, hydrateAndTrack, syncBaselineFromEditor]);
+
+  useEffect(() => {
+    if (!editor) return;
+    const uid = attachmentUserIdRef.current;
+    if (!uid) return;
+    void hydrateAndTrack(editor, uid).then(() => syncBaselineFromEditor(editor));
+  }, [editor, externalKey, hydrateAndTrack, syncBaselineFromEditor]);
 
   const overSoft = showSizeWarning && isRichTextOverSoftLimit(charCount);
   const overHard = charCount > RICH_TEXT_HARD_CHAR_LIMIT;
@@ -476,6 +624,8 @@ export function RichTextEditor({
     <div
       className={`rich-editor${stickyToolbar ? ' rich-editor--sticky-toolbar' : ''}${className ? ` ${className}` : ''}`}
       style={{ '--rich-editor-min-h': `${minHeight}px` } as CSSProperties}
+      onClickCapture={handleEditorImageClick}
+      onDoubleClickCapture={handleEditorImageDoubleClick}
     >
       {toolbarNode && !toolbarMountEl ? toolbarNode : null}
       {toolbarNode && toolbarMountEl ? createPortal(toolbarNode, toolbarMountEl) : null}
@@ -505,6 +655,14 @@ export function RichTextEditor({
         </div>
       ) : null}
       <EditorContent editor={editor} className="rich-editor__surface" />
+      {imageLightbox ? (
+        <RichTextImageLightbox
+          src={imageLightbox.src}
+          alt={imageLightbox.alt}
+          loading={imageLightbox.loading}
+          onClose={closeImageLightbox}
+        />
+      ) : null}
     </div>
   );
 }

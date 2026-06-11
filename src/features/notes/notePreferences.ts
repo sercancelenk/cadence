@@ -2,6 +2,12 @@ import type { Note } from '../../model';
 
 export const PLACEHOLDER_TITLE = 'New note';
 
+/** Consistent note title for sidebar, headers, and version history. */
+export function displayNoteTitle(title?: string | null): string {
+  const trimmed = (title ?? '').trim();
+  return trimmed || PLACEHOLDER_TITLE;
+}
+
 export type NoteViewMode = 'active' | 'archived';
 
 export const NOTE_VIEW_OPTIONS: { value: NoteViewMode; label: string }[] = [

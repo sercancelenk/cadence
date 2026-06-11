@@ -7,8 +7,12 @@ import {
   noteBodyPatchIsNoOp,
   parseBodyFormat,
   plainTextFromBodyFields,
+  richBodyFieldsFromPayload,
+  richTextPayloadIsEmpty,
   richTextPayloadToBodyFields,
+  prepareStoredRichBodyForDisplay,
 } from './richTextBody';
+import { attachmentUri } from './richTextAttachmentUri';
 import { serializeRichDoc, EMPTY_RICH_DOC } from './richText';
 
 describe('plainTextFromBodyFields', () => {
@@ -47,6 +51,27 @@ describe('canonicalDocSignature', () => {
     const emptyBody = serializeRichDoc(EMPTY_RICH_DOC);
     expect(canonicalDocSignature('', undefined)).toBe(canonicalDocSignature(emptyBody, 'prosemirror'));
     expect(canonicalDocSignature('', 'prosemirror')).toBe(canonicalDocSignature(emptyBody, 'prosemirror'));
+  });
+});
+
+describe('prepareStoredRichBodyForDisplay', () => {
+  it('repairs blob image src using attachmentId for preview', () => {
+    const id = 'note-doc1-abc123456789';
+    const body = serializeRichDoc({
+      type: 'doc',
+      content: [
+        {
+          type: 'image',
+          attrs: {
+            attachmentId: id,
+            src: 'blob:http://localhost/dead-beef',
+          },
+        },
+      ],
+    });
+    const repaired = prepareStoredRichBodyForDisplay(body, 'prosemirror');
+    expect(repaired).toContain(attachmentUri(id));
+    expect(repaired).not.toContain('blob:');
   });
 });
 
@@ -105,6 +130,34 @@ describe('richTextPayloadToBodyFields', () => {
   it('drops empty plain text', () => {
     const fields = richTextPayloadToBodyFields({ doc: EMPTY_RICH_DOC, plainText: '   ' });
     expect(fields.bodyPlainText).toBeUndefined();
+  });
+});
+
+describe('richBodyFieldsFromPayload', () => {
+  it('persists image-only docs even when plainText is empty', () => {
+    const doc = {
+      type: 'doc' as const,
+      content: [
+        {
+          type: 'image' as const,
+          attrs: {
+            src: 'cadence-attachment://note-abc-111111111111',
+            attachmentId: 'note-abc-111111111111',
+          },
+        },
+      ],
+    };
+    const payload = { doc, plainText: '' };
+    expect(richTextPayloadIsEmpty(payload)).toBe(false);
+    const fields = richBodyFieldsFromPayload(payload);
+    expect(fields.bodyFormat).toBe('prosemirror');
+    expect(fields.bodyPlainText).toBeUndefined();
+    expect(JSON.parse(fields.body).content[0].type).toBe('image');
+  });
+
+  it('clears truly empty docs', () => {
+    const fields = richBodyFieldsFromPayload({ doc: EMPTY_RICH_DOC, plainText: '' });
+    expect(fields).toEqual({ body: '', bodyFormat: undefined, bodyPlainText: undefined });
   });
 });
 

@@ -10,6 +10,7 @@ export { FORCE_RESET_PHRASE, type PendingIntent } from './noteLockTypes';
 export { notePlainText, type DecryptedNoteBody } from './notePlainText';
 export {
   PLACEHOLDER_TITLE,
+  displayNoteTitle,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
@@ -26,6 +27,9 @@ export {
   unlockDialogButton,
   unlockDialogTitle,
 } from './notesUiUtils';
+export { NotesVersionHistoryPanel, type NotesVersionHistoryPanelProps } from './NotesVersionHistoryPanel';
+export { useNoteRevisionCapture } from './useNoteRevisionCapture';
+export { useNoteVersionHistory } from './useNoteVersionHistory';
 export { useNotesEditor } from './useNotesEditor';
 export { useNotesLock } from './useNotesLock';
 export { useNotesManualReorder } from './useNotesManualReorder';

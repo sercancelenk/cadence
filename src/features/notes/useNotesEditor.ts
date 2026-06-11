@@ -1,25 +1,61 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RichTextPayload, RichTextBodyFormat } from '../../lib/richText';
 import {
   noteBodyPatchIsNoOp,
-  richTextPayloadToBodyFields,
+  richBodyFieldsFromPayload,
+  richTextPayloadIsEmpty,
   type RichTextBodyFields,
 } from '../../lib/richTextBody';
 import { encryptBodyWithMaster } from '../../lib/notesCrypto';
+import { attachmentRefsFromBody } from '../../lib/richTextAttachmentIndex';
+import { canonicalDocSignature } from '../../lib/richTextBody';
+import { noteSnapshotFromNote } from '../../lib/noteRevision/noteRevisionStore';
+import type { NoteRevisionSnapshot } from '../../lib/noteRevision/types';
 import type { NotesUnlockApi } from '../../providers/NotesUnlockContext';
 import type { Note } from '../../model';
+import type { NoteRevisionTrigger } from '../../lib/noteRevision/types';
+
+export type NoteRevisionCapture = (
+  prev: Note,
+  next: Note,
+  trigger: NoteRevisionTrigger,
+  options?: { force?: boolean; label?: string },
+) => void;
+
+function noteForRevisionSnapshot(note: Note, fields?: RichTextBodyFields): Note {
+  if (!fields) return note;
+  const attachmentRefs = attachmentRefsFromBody(fields.body, fields.bodyFormat);
+  if (note.locked) {
+    return {
+      ...note,
+      body: '',
+      bodyFormat: fields.bodyFormat,
+      bodyPlainText: undefined,
+      attachmentRefs: attachmentRefs.length ? attachmentRefs : undefined,
+      lockedBodySignature: canonicalDocSignature(fields.body, fields.bodyFormat),
+    };
+  }
+  return {
+    ...note,
+    ...fields,
+    attachmentRefs: undefined,
+    lockedBodySignature: undefined,
+  };
+}
 
 export function useNotesEditor(
   selected: Note | null,
   patchNote: (id: string, patch: Partial<Note>) => void,
   replaceNote: (note: Note) => void,
   unlock: NotesUnlockApi,
+  captureRevision?: NoteRevisionCapture,
 ) {
   const [decrypted, setDecrypted] = useState<
     ({ noteId: string } & RichTextBodyFields) | null
   >(null);
   const [bodyEditing, setBodyEditing] = useState(false);
   const encryptGen = useRef(0);
+  const latestRevisionNoteRef = useRef<Note | null>(null);
 
   const decryptedForSelected = useMemo(() => {
     if (!selected || !decrypted || decrypted.noteId !== selected.id) return null;
@@ -42,8 +78,13 @@ export function useNotesEditor(
       : selected.body ?? '';
 
   useEffect(() => {
+    latestRevisionNoteRef.current = selected;
+  }, [selected]);
+
+  useEffect(() => {
     if (!selected) {
       setDecrypted(null);
+      latestRevisionNoteRef.current = null;
       return;
     }
     if (decrypted && decrypted.noteId !== selected.id) {
@@ -60,37 +101,60 @@ export function useNotesEditor(
     setBodyEditing(false);
   }, [selected?.id, editorReady]);
 
+  const rememberRevisionNote = useCallback((next: Note) => {
+    latestRevisionNoteRef.current = next;
+  }, []);
+
+  const getRevisionSnapshot = useCallback((): NoteRevisionSnapshot | null => {
+    const note = latestRevisionNoteRef.current;
+    if (!note) return null;
+    return noteSnapshotFromNote(note);
+  }, []);
+
   const onChangeTitle = (next: string) => {
     if (!selected) return;
+    const prev = selected;
+    const nextNote = { ...selected, title: next };
+    rememberRevisionNote(nextNote);
     patchNote(selected.id, { title: next });
+    captureRevision?.(prev, nextNote, 'autosave');
   };
 
   const onChangeBody = (payload: RichTextPayload) => {
     if (!selected) return;
-    const fields = payload.plainText.trim()
-      ? richTextPayloadToBodyFields(payload)
-      : { body: '', bodyFormat: undefined, bodyPlainText: undefined };
+    const fields = richBodyFieldsFromPayload(payload);
     if (noteBodyPatchIsNoOp(selected, fields)) return;
+    const prev = selected;
     if (!selected.locked) {
+      const nextNote = noteForRevisionSnapshot(selected, fields);
+      rememberRevisionNote(nextNote);
       patchNote(selected.id, fields);
+      captureRevision?.(prev, nextNote, 'autosave');
       return;
     }
     setDecrypted({ noteId: selected.id, ...fields });
+    rememberRevisionNote(noteForRevisionSnapshot(selected, fields));
     const key = unlock.read();
     if (!key) return;
-    if (!payload.plainText.trim()) return;
+    if (richTextPayloadIsEmpty(payload)) return;
     const myGen = ++encryptGen.current;
     void (async () => {
       const cipher = await encryptBodyWithMaster(key, fields.body);
       if (myGen !== encryptGen.current) return;
-      replaceNote({
+      const attachmentRefs = attachmentRefsFromBody(fields.body, fields.bodyFormat);
+      const nextNote: Note = {
         ...selected,
         body: '',
         locked: true,
         cipher,
         bodyFormat: fields.bodyFormat,
         bodyPlainText: undefined,
-      });
+        attachmentRefs: attachmentRefs.length ? attachmentRefs : undefined,
+        lockedBodySignature: canonicalDocSignature(fields.body, fields.bodyFormat),
+      };
+      rememberRevisionNote(nextNote);
+      replaceNote(nextNote);
+      captureRevision?.(prev, nextNote, 'autosave');
     })();
   };
 
@@ -113,5 +177,6 @@ export function useNotesEditor(
     onChangeTitle,
     onChangeBody,
     hideSelected,
+    getRevisionSnapshot,
   };
 }

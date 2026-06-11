@@ -21,6 +21,8 @@ export type RichTextDocumentPaneProps = {
   attachmentUserId?: string;
   /** Shown beside mode tabs in preview mode. */
   previewHint?: string;
+  /** When false, hide Preview/Edit tabs (read-only surfaces like version history). */
+  showModeToggle?: boolean;
   className?: string;
 };
 
@@ -36,7 +38,8 @@ export function RichTextDocumentPane({
   minHeight = 360,
   attachmentScope,
   attachmentUserId,
-  previewHint = 'Use Edit to change this note · Click links to open · ⌘/Ctrl+click to copy',
+  previewHint = 'Use Edit to change this note · Click images to enlarge · Click links to open · ⌘/Ctrl+click to copy',
+  showModeToggle = true,
   className = '',
 }: RichTextDocumentPaneProps) {
   const [saveState, setSaveState] = useState<'idle' | 'pending' | 'saved'>('idle');
@@ -72,48 +75,52 @@ export function RichTextDocumentPane({
   return (
     <div className={`rich-doc-pane${className ? ` ${className}` : ''}`}>
       <div className="rich-doc-pane__chrome">
-        <div className="rich-doc-pane__mode" role="tablist" aria-label="Document mode">
-          <button
-            type="button"
-            className={`rich-doc-pane__mode-tab${!editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
-            role="tab"
-            aria-selected={!editing}
-            onClick={() => onEditingChange(false)}
-          >
-            <IcCheck size={14} />
-            <span>Preview</span>
-          </button>
-          <button
-            type="button"
-            className={`rich-doc-pane__mode-tab${editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
-            role="tab"
-            aria-selected={editing}
-            disabled={!editable}
-            onClick={() => {
-              if (editable) onEditingChange(true);
-            }}
-          >
-            <IcPencil size={14} />
-            <span>Edit</span>
-          </button>
-          {!editing && previewHint ? (
-            <span className="rich-doc-pane__hint muted small">{previewHint}</span>
-          ) : null}
-          {editing ? (
-            <span className="rich-doc-pane__kbd-hint muted small">
-              ⌘B bold · ⌘I italic · ⌘Z undo · Esc preview
-            </span>
-          ) : null}
-          {editing && saveLabel ? (
-            <span
-              className={`rich-doc-pane__save${saveState === 'pending' ? ' rich-doc-pane__save--pending' : ''}`}
-              role="status"
-              aria-live="polite"
+        {showModeToggle ? (
+          <div className="rich-doc-pane__mode" role="tablist" aria-label="Document mode">
+            <button
+              type="button"
+              className={`rich-doc-pane__mode-tab${!editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
+              role="tab"
+              aria-selected={!editing}
+              onClick={() => onEditingChange(false)}
             >
-              {saveLabel}
-            </span>
-          ) : null}
-        </div>
+              <IcCheck size={14} />
+              <span>Preview</span>
+            </button>
+            <button
+              type="button"
+              className={`rich-doc-pane__mode-tab${editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
+              role="tab"
+              aria-selected={editing}
+              disabled={!editable}
+              onClick={() => {
+                if (editable) onEditingChange(true);
+              }}
+            >
+              <IcPencil size={14} />
+              <span>Edit</span>
+            </button>
+            {!editing && previewHint ? (
+              <span className="rich-doc-pane__hint muted small">{previewHint}</span>
+            ) : null}
+            {editing ? (
+              <span className="rich-doc-pane__kbd-hint muted small">
+                ⌘B bold · ⌘I italic · ⌘Z undo · Esc preview
+              </span>
+            ) : null}
+            {editing && saveLabel ? (
+              <span
+                className={`rich-doc-pane__save${saveState === 'pending' ? ' rich-doc-pane__save--pending' : ''}`}
+                role="status"
+                aria-live="polite"
+              >
+                {saveLabel}
+              </span>
+            ) : null}
+          </div>
+        ) : previewHint ? (
+          <p className="rich-doc-pane__hint muted small">{previewHint}</p>
+        ) : null}
         {editing ? (
           <div ref={setToolbarMountEl} className="rich-doc-pane__toolbar-host" />
         ) : null}

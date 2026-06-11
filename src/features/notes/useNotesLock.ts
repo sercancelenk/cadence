@@ -11,7 +11,11 @@ import {
 } from '../../lib/notesCrypto';
 import type { NotesUnlockApi } from '../../providers/NotesUnlockContext';
 import type { Note, NotesLock } from '../../model';
+import { purgeNoteRevisionHistory } from '../../lib/noteRevision/noteRevisionStore';
+import { attachmentRefsFromBody } from '../../lib/richTextAttachmentIndex';
+import { canonicalDocSignature } from '../../lib/richTextBody';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
+import type { NoteRevisionCapture } from './useNotesEditor';
 import { FORCE_RESET_PHRASE, type PendingIntent } from './noteLockTypes';
 import { PLACEHOLDER_TITLE } from './notePreferences';
 
@@ -36,6 +40,7 @@ type UseNotesLockArgs = {
   setNotesLock: (lock: NotesLock | undefined) => void;
   update: (fn: (d: AppData) => AppData) => void;
   removeNote: (id: string) => void;
+  captureRevision?: NoteRevisionCapture;
 };
 
 export function useNotesLock({
@@ -48,6 +53,7 @@ export function useNotesLock({
   setNotesLock,
   update,
   removeNote,
+  captureRevision,
 }: UseNotesLockArgs) {
   const account = useAccount();
 
@@ -111,15 +117,21 @@ export function useNotesLock({
                 ? decrypted.body
                 : targetNote.body
               : targetNote.body;
+            const bodyFormat = targetNote.bodyFormat ?? decrypted?.bodyFormat;
+            const attachmentRefs = attachmentRefsFromBody(bodyToLock, bodyFormat);
             const cipher = await encryptBodyWithMaster(key, bodyToLock);
-            replaceNote({
+            const nextNote: Note = {
               ...targetNote,
               body: '',
               locked: true,
               cipher,
-              bodyFormat: targetNote.bodyFormat ?? decrypted?.bodyFormat,
+              bodyFormat,
               bodyPlainText: undefined,
-            });
+              attachmentRefs: attachmentRefs.length ? attachmentRefs : undefined,
+              lockedBodySignature: canonicalDocSignature(bodyToLock, bodyFormat),
+            };
+            replaceNote(nextNote);
+            captureRevision?.(targetNote, nextNote, 'lock', { force: true });
             setDecrypted(null);
             unlock.clear();
           } finally {
@@ -145,6 +157,8 @@ export function useNotesLock({
               cipher: undefined,
               bodyFormat: targetNote.bodyFormat,
               bodyPlainText: targetNote.bodyPlainText,
+              attachmentRefs: undefined,
+              lockedBodySignature: undefined,
             });
             setDecrypted({
               noteId: targetNote.id,
@@ -226,6 +240,7 @@ export function useNotesLock({
 
   const confirmDelete = () => {
     if (!confirmRemoveId) return;
+    void purgeNoteRevisionHistory(confirmRemoveId);
     removeNote(confirmRemoveId);
     setConfirmRemoveId(null);
   };

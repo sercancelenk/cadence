@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { flushPendingSaveGlobal } from '../lib/pendingSaveFlush';
 import { STORAGE_PREFIX } from '../lib/appBranding';
+import { primeRichTextAttachmentUserId, clearRichTextAttachmentUserIdCache } from '../lib/richTextAttachmentUser';
 import { pbkdf2HashPassword, pbkdf2VerifyPassword } from '../lib/passwordPbkdf2';
 
 export type AccountUser = { id: string; email: string; displayName?: string };
@@ -119,6 +120,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         setPendingReauth(null);
       }
       setUser(r?.user ?? null);
+      primeRichTextAttachmentUserId(r?.user?.id);
       setLoading(false);
       await refreshLegacyHint();
       return;
@@ -136,6 +138,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       setUser(null);
     } else {
       setUser({ id: u.id, email: u.email, displayName: u.displayName });
+      primeRichTextAttachmentUserId(u.id);
     }
     setLoading(false);
   }, [refreshLegacyHint]);
@@ -151,6 +154,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         const r = await window.cadence.accountLogin({ email: em, password });
         if (r?.ok && r.user) {
           setUser(r.user);
+          primeRichTextAttachmentUserId(r.user.id);
           return { ok: true as const };
         }
         return { ok: false as const, error: r?.error ?? 'Sign-in failed.' };
@@ -179,6 +183,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       }
       writeDevSession(u.id);
       setUser({ id: u.id, email: u.email, displayName: u.displayName });
+      primeRichTextAttachmentUserId(u.id);
       return { ok: true as const };
     },
     [],
@@ -200,6 +205,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         });
         if (r?.ok && r.user) {
           setUser(r.user);
+          primeRichTextAttachmentUserId(r.user.id);
           return { ok: true as const, warn: r.warn };
         }
         return { ok: false as const, error: r?.error ?? 'Sign-up failed.' };
@@ -239,6 +245,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         };
       }
       setUser({ id, email: em, displayName: displayName || undefined });
+      primeRichTextAttachmentUserId(id);
       return { ok: true as const };
     },
     [],
@@ -252,6 +259,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       writeDevSession(null);
     }
     setUser(null);
+    clearRichTextAttachmentUserIdCache();
   }, []);
 
   const changePassword = useCallback(

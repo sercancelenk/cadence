@@ -365,7 +365,7 @@ export function TodoTaskRow({
           <div
             className="todos-row__body-preview"
             onDoubleClick={beginEdit}
-            title="Double-click to edit"
+            title="Click image to enlarge · Double-click to edit"
           >
             <Suspense fallback={<div className="muted small">Loading preview…</div>}>
               <RichTextEditor

@@ -78,7 +78,6 @@ export function createRichTextExtensions(placeholder = 'Write here…'): Extensi
       allowBase64: true,
       HTMLAttributes: {
         class: 'rich-editor-image',
-        loading: 'lazy',
       },
     }),
     Table.configure({

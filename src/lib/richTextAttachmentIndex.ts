@@ -18,10 +18,25 @@ function scanBody(
   for (const id of collectAttachmentIds(doc)) sink.add(id);
 }
 
+/** Attachment ids referenced by a single rich-text body. */
+export function attachmentRefsFromBody(
+  body: string | undefined,
+  bodyFormat: string | undefined,
+): string[] {
+  const ids = new Set<string>();
+  scanBody(body, bodyFormat, ids);
+  return [...ids];
+}
+
 /** All sidecar attachment ids referenced by notes, todos, and the utilities document. */
 export function collectReferencedAttachmentIds(data: AppData): string[] {
   const ids = new Set<string>();
-  for (const n of data.notes) scanBody(n.body, n.bodyFormat, ids);
+  for (const n of data.notes) {
+    scanBody(n.body, n.bodyFormat, ids);
+    if (Array.isArray(n.attachmentRefs)) {
+      for (const id of n.attachmentRefs) ids.add(id);
+    }
+  }
   for (const t of data.todoItems) scanBody(t.body, t.bodyFormat, ids);
   if (data.utilityDocument) {
     scanBody(data.utilityDocument.body, data.utilityDocument.bodyFormat, ids);

@@ -107,6 +107,20 @@ const {
 } = require('./persistence/monthlyShards.cjs');
 const { initCrashReporting } = require('./crashReporting.cjs');
 const { requirePolicyFeature } = require('./ipc/policyGuard.cjs');
+const {
+  NOTE_HISTORY_DIRNAME,
+  initNoteHistory,
+  appendNoteRevision,
+  listNoteRevisions,
+  readNoteRevision,
+  purgeNoteHistory,
+  snapshotNoteHistoryForUser,
+  pairedNoteHistoryBackupDir,
+  importNoteHistoryFromDir,
+  exportNoteHistoryToDir,
+  collectReferencedAttachmentIdsFromNoteHistory,
+  countNoteHistoryRevisions,
+} = require('./noteHistory.cjs');
 
 /** Reject IPC saves larger than the LAN sync POST limit (defence against OOM). */
 const MAX_SAVE_PAYLOAD_BYTES = 25 * 1024 * 1024;
@@ -144,6 +158,7 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: true,
       corsEnabled: true,
+      stream: true,
     },
   },
 ]);
@@ -571,7 +586,15 @@ function collectReferencedAttachmentIdsFromPayload(payload) {
       /* malformed doc — skip */
     }
   };
-  for (const n of payload?.notes || []) scan(n.body, n.bodyFormat);
+  for (const n of payload?.notes || []) {
+    scan(n.body, n.bodyFormat);
+    if (Array.isArray(n.attachmentRefs)) {
+      for (const id of n.attachmentRefs) {
+        const safe = sanitizeAttachmentId(id);
+        if (safe) ids.add(safe);
+      }
+    }
+  }
   for (const t of payload?.todoItems || []) scan(t.body, t.bodyFormat);
   const util = payload?.utilityDocument;
   if (util) scan(util.body, util.bodyFormat);
@@ -607,6 +630,9 @@ function deleteAttachmentFiles(userId, attachmentId) {
 function pruneOrphanAttachments(userId, payload) {
   try {
     const referenced = collectReferencedAttachmentIdsFromPayload(payload);
+    for (const id of collectReferencedAttachmentIdsFromNoteHistory(userId)) {
+      referenced.add(id);
+    }
     const now = Date.now();
     let pruned = 0;
     for (const id of listAttachmentIdsOnDisk(userId)) {
@@ -1122,6 +1148,7 @@ function snapshotCurrentDataFile(userId, label = 'pre-write') {
     if (!copied) return null;
 
     snapshotAttachmentsForUser(userId, label, ts);
+    snapshotNoteHistoryForUser(userId, label, ts);
     pruneBackups(dir);
     return path.join(dir, `data-${label}-${ts}.json`);
   } catch (err) {
@@ -1172,6 +1199,15 @@ function pruneBackups(dir) {
             /* ignore */
           }
         }
+        const histName = file.name.replace(/^data-/, 'note-history-').replace(/\.json$/, '');
+        const histDir = path.join(dir, histName);
+        if (fs.existsSync(histDir)) {
+          try {
+            fs.rmSync(histDir, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
+        }
       }
     }
     // Drop orphaned attachment-only folders left from older builds.
@@ -1180,13 +1216,25 @@ function pruneBackups(dir) {
         set.files.map((f) => f.name.replace(/^data-/, 'attachments-').replace(/\.json$/, '')),
       ),
     );
+    const keptHist = new Set(
+      keptSets.flatMap((set) =>
+        set.files.map((f) => f.name.replace(/^data-/, 'note-history-').replace(/\.json$/, '')),
+      ),
+    );
     for (const name of fs.readdirSync(dir)) {
-      if (!name.startsWith('attachments-')) continue;
-      if (keptAtt.has(name)) continue;
-      try {
-        fs.rmSync(path.join(dir, name), { recursive: true, force: true });
-      } catch {
-        /* ignore */
+      if (name.startsWith('attachments-') && !keptAtt.has(name)) {
+        try {
+          fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+      if (name.startsWith('note-history-') && !keptHist.has(name)) {
+        try {
+          fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
       }
     }
   } catch (err) {
@@ -1275,21 +1323,8 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
     snapshotCurrentDataFile(userId, 'pre-monthly-layout');
   }
 
-  const writtenMonths = new Set();
-  for (const [monthKey, partial] of Object.entries(shards)) {
-    const shardBody = wrapShardPayload(monthKey, partial);
-    const shardPath = monthlyShardPathForUser(userId, monthKey);
-    const shardWrite = writeEncryptedObject(userId, shardPath, shardBody);
-    if (!shardWrite.ok) {
-      return {
-        ok: false,
-        reason: shardWrite.reason ?? 'io',
-        error: shardWrite.error ?? 'I/O error while writing monthly shard.',
-      };
-    }
-    writtenMonths.add(monthKey);
-  }
-
+  // Write the base workspace first so a mid-save crash never leaves shards
+  // ahead of an outdated (or missing) base file.
   const body =
     writeGeneration != null ? wrapCommitEnvelope(writeGeneration, baseWorkspace) : baseWorkspace;
   const writeResult = writeEncryptedObject(userId, file, body);
@@ -1303,13 +1338,29 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
     };
   }
 
+  const writtenMonths = new Set();
+  for (const [monthKey, partial] of Object.entries(shards)) {
+    const shardBody = wrapShardPayload(monthKey, partial);
+    const shardPath = monthlyShardPathForUser(userId, monthKey);
+    const shardWrite = writeEncryptedObject(userId, shardPath, shardBody);
+    if (!shardWrite.ok) {
+      console.warn('[cadence] monthly shard write failed (non-fatal)', {
+        userId,
+        monthKey,
+        reason: shardWrite.reason,
+        error: shardWrite.error,
+      });
+      continue;
+    }
+    writtenMonths.add(monthKey);
+  }
+
   for (const { monthKey, path: shardPath } of listMonthlyShardPathsForUser(userId)) {
-    if (!writtenMonths.has(monthKey)) {
-      try {
-        fs.unlinkSync(shardPath);
-      } catch (err) {
-        console.warn('[cadence] failed to remove empty monthly shard', shardPath, err);
-      }
+    if (Object.prototype.hasOwnProperty.call(shards, monthKey)) continue;
+    try {
+      fs.unlinkSync(shardPath);
+    } catch (err) {
+      console.warn('[cadence] failed to remove empty monthly shard', shardPath, err);
     }
   }
 
@@ -1324,7 +1375,13 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
     };
   }
 
-  pruneOrphanAttachments(userId, payload);
+  setImmediate(() => {
+    try {
+      pruneOrphanAttachments(userId, payload);
+    } catch (err) {
+      console.warn('[cadence] deferred attachment GC failed', err);
+    }
+  });
   return { ok: true };
 }
 
@@ -3128,6 +3185,8 @@ ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
   snapshotCurrentDataFile(uid, 'pre-restore');
   const attBackup = pairedAttachmentsBackupDir(resolved);
   if (attBackup) restoreAttachmentsFromBackupDir(uid, attBackup);
+  const histBackup = pairedNoteHistoryBackupDir(resolved);
+  if (histBackup) importNoteHistoryFromDir(uid, histBackup);
   workspaceImportLockUid = uid;
   try {
     const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
@@ -3377,9 +3436,33 @@ ipcMain.handle('attachment:gc', (_evt, payload = {}) => {
   return pruneOrphanAttachments(uid, data);
 });
 
+ipcMain.handle('noteHistory:list', (_evt, { noteId } = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.', revisions: [] };
+  return listNoteRevisions(uid, noteId);
+});
+
+ipcMain.handle('noteHistory:read', (_evt, { noteId, revisionId } = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  return readNoteRevision(uid, noteId, revisionId);
+});
+
+ipcMain.handle('noteHistory:append', (_evt, payload = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  return appendNoteRevision(uid, payload);
+});
+
+ipcMain.handle('noteHistory:purge', (_evt, { noteId } = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  return purgeNoteHistory(uid, noteId);
+});
+
 /**
  * Export workspace JSON + attachment sidecars into a folder the user picks.
- * Folder layout: data.json, manifest.json, attachments/*
+ * Folder layout: data.json, manifest.json, attachments/*, note-history/*
  */
 ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
   const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
@@ -3402,9 +3485,10 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
       path.join(folder, 'manifest.json'),
       JSON.stringify(
         {
-          format: 'cadence-bundle-v1',
+          format: 'cadence-bundle-v2',
           exportedAt: new Date().toISOString(),
           attachmentCount: listAttachmentIdsOnDisk(uid).length,
+          noteHistoryRevisionCount: countNoteHistoryRevisions(uid),
         },
         null,
         2,
@@ -3417,6 +3501,7 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
     } else {
       fs.mkdirSync(path.join(folder, 'attachments'), { recursive: true });
     }
+    exportNoteHistoryToDir(uid, folder);
     return { ok: true, path: folder };
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
@@ -3467,8 +3552,11 @@ ipcMain.handle('data:importBundle', async () => {
     };
   }
   snapshotCurrentDataFile(uid, 'pre-import');
+  snapshotNoteHistoryForUser(uid, 'pre-import', Date.now());
   const attSrc = path.join(folder, 'attachments');
   if (fs.existsSync(attSrc)) importAttachmentsFromDir(uid, attSrc);
+  const histSrc = path.join(folder, NOTE_HISTORY_DIRNAME);
+  if (fs.existsSync(histSrc)) importNoteHistoryFromDir(uid, histSrc);
   workspaceImportLockUid = uid;
   try {
     const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
@@ -4762,6 +4850,7 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.whenReady().then(() => {
   initCrashReporting(app.getPath('userData'));
+  initNoteHistory(() => app.getPath('userData'));
   if (!process.defaultApp) {
     app.setAsDefaultProtocolClient('cadence');
   }
