@@ -211,6 +211,10 @@ export async function importPortableBackupFile(
   let attachmentsImported = 0;
   let attachmentsSkipped = 0;
   let attachmentsEncryptedSkipped = 0;
+
+  const r = await deps.importWorkspace(parsed.data);
+  if (!r.ok) return r;
+
   for (const [id, bytes] of bundle.attachments) {
     if (!bytes.length) {
       attachmentsSkipped += 1;
@@ -221,9 +225,6 @@ export async function importPortableBackupFile(
     else if (outcome === 'encrypted') attachmentsEncryptedSkipped += 1;
     else attachmentsSkipped += 1;
   }
-
-  const r = await deps.importWorkspace(parsed.data);
-  if (!r.ok) return r;
 
   revokeAttachmentBlobUrls();
   return {

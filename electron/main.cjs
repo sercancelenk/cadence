@@ -4408,8 +4408,12 @@ ipcMain.handle('account:register', (_evt, { email, password, migrateLegacy, disp
     createdAt: new Date().toISOString(),
     displayName: typeof displayName === 'string' && displayName.trim() ? displayName.trim() : undefined,
   });
-  writeAccounts(accounts);
-  writeSession(id);
+  if (!writeAccounts(accounts)) {
+    return { ok: false, error: 'Could not save account to disk.' };
+  }
+  if (!writeSession(id)) {
+    return { ok: false, error: 'Account was created but the session could not start. Try signing in.' };
+  }
   flushPendingDeepLink();
   const newKey = deriveDataKey(password, encSalt);
   dataKeys.set(id, newKey);
@@ -4428,8 +4432,11 @@ ipcMain.handle('account:register', (_evt, { email, password, migrateLegacy, disp
     if (created) {
       created.recoveryEnvelope = envelope;
       created.recoveryConfiguredAt = new Date().toISOString();
-      writeAccounts(accounts);
-      recoveryCodes = codes;
+      if (writeAccounts(accounts)) {
+        recoveryCodes = codes;
+      } else {
+        console.warn('[cadence] recovery envelope not persisted at register');
+      }
     }
   } catch (err) {
     console.warn('[cadence] recovery envelope setup failed at register', err);
@@ -4650,16 +4657,19 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
   if (!writeAccounts(accounts)) {
     if (previousKey) dataKeys.set(uid, previousKey);
     else dataKeys.delete(uid);
+    let restoredOk = false;
     if (preChangeSnapshot) {
       const restored = loadWorkspaceFromBackupSet(uid, preChangeSnapshot);
       if (restored.ok) {
-        commitUserData(uid, restored.workspace, { allowOverwriteUnreadable: true });
+        const rollbackCommit = commitUserData(uid, restored.workspace, { allowOverwriteUnreadable: true });
+        restoredOk = !!rollbackCommit?.ok;
       }
     }
     return {
       ok: false,
-      error:
-        'Could not save your new password to disk. Your workspace was restored to the previous password — try again.',
+      error: restoredOk
+        ? 'Could not save your new password to disk. Your workspace was restored to the previous password — try again.'
+        : 'Could not save your new password to disk and automatic restore failed. Use Settings → Backups & Recovery to restore from a snapshot.',
     };
   }
 
@@ -4817,16 +4827,19 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
   delete u.recoveryConfiguredAt;
   if (!writeAccounts(accounts)) {
     dataKeys.set(u.id, dataKey);
+    let restoredOk = false;
     if (preRecoverySnapshot) {
       const restored = loadWorkspaceFromBackupSet(u.id, preRecoverySnapshot);
       if (restored.ok) {
-        commitUserData(u.id, restored.workspace, { allowOverwriteUnreadable: true });
+        const rollbackCommit = commitUserData(u.id, restored.workspace, { allowOverwriteUnreadable: true });
+        restoredOk = !!rollbackCommit?.ok;
       }
     }
     return {
       ok: false,
-      error:
-        'Could not save your new password to disk. Your workspace was restored — try again or restore from backup.',
+      error: restoredOk
+        ? 'Could not save your new password to disk. Your workspace was restored — try again or restore from backup.'
+        : 'Could not save your new password to disk and automatic restore failed. Use Settings → Backups & Recovery to restore from a snapshot.',
     };
   }
 
@@ -4909,7 +4922,9 @@ ipcMain.handle('account:confirmRecoverySetup', () => {
 
   u.recoveryEnvelope = envelope;
   u.recoveryConfiguredAt = new Date().toISOString();
-  writeAccounts(accounts);
+  if (!writeAccounts(accounts)) {
+    return { ok: false, error: 'Could not save recovery codes to disk. Try again.' };
+  }
   pendingRecoveryEnvelopes.delete(uid);
   return { ok: true };
 });

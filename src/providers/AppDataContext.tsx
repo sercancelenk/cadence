@@ -82,6 +82,7 @@ import type {
 } from '../core/model';
 import { isUnsupportedDataVersionError, normalizeData, appDataToPersistJson, compactAppDataForPersist, shapeOfData } from '../core/model';
 import { parseSaveDataResult } from '../lib/appDataSave';
+import { prepareForRemoteApply } from '../lib/syncApplyGuard';
 import { createPersistQueue, type PersistResult } from '../lib/persistQueue';
 import {
   createAppDataSnapshotStore,
@@ -907,6 +908,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const syncFromDisk = useCallback(async () => {
     const uid = userIdRef.current;
     if (!uid) return;
+    await prepareForRemoteApply();
     await prepareForExternalWorkspaceReplace();
     setReady(false);
     const loaded = await loadInitial(uid);
@@ -932,6 +934,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const uid = userIdRef.current;
       if (!uid) return { ok: false, error: 'Not signed in.' };
 
+      await prepareForRemoteApply();
       await prepareForExternalWorkspaceReplace();
 
       const payload = compactAppDataForPersist(normalized);

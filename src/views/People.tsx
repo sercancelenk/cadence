@@ -253,6 +253,10 @@ export function PersonWorkspace({ personId }: { personId: string }) {
   }, [data, teamId]);
 
   const scratchpadDirty = person ? scratchpad !== (person.scratchpad ?? '') : false;
+  const scratchpadRef = useRef(scratchpad);
+  const scratchpadDirtyRef = useRef(scratchpadDirty);
+  scratchpadRef.current = scratchpad;
+  scratchpadDirtyRef.current = scratchpadDirty;
 
   useEffect(() => {
     if (!person) {
@@ -274,13 +278,17 @@ export function PersonWorkspace({ personId }: { personId: string }) {
     const timer = window.setTimeout(() => {
       updatePerson(personId, { scratchpad });
     }, 800);
+    return () => clearTimeout(timer);
+  }, [person?.id, scratchpad, scratchpadDirty, updatePerson]);
+
+  useEffect(() => {
+    const personId = person?.id;
     return () => {
-      clearTimeout(timer);
-      if (scratchpad !== (person.scratchpad ?? '')) {
-        updatePerson(personId, { scratchpad });
+      if (personId && scratchpadDirtyRef.current) {
+        updatePerson(personId, { scratchpad: scratchpadRef.current });
       }
     };
-  }, [person?.id, person?.scratchpad, scratchpad, scratchpadDirty, updatePerson]);
+  }, [person?.id, updatePerson]);
 
   useEffect(() => {
     const onBeforeSync = () => {
@@ -1248,6 +1256,10 @@ function PersonMeetingMode({
 }) {
   const [agenda, setAgenda] = useState<string>(person.agenda ?? defaultAgenda());
   const agendaDirty = agenda !== (person.agenda ?? defaultAgenda());
+  const agendaRef = useRef(agenda);
+  const agendaDirtyRef = useRef(agendaDirty);
+  agendaRef.current = agenda;
+  agendaDirtyRef.current = agendaDirty;
 
   useEffect(() => {
     if (!agendaDirty) {
@@ -1261,13 +1273,17 @@ function PersonMeetingMode({
     const timer = window.setTimeout(() => {
       updatePerson(personId, { agenda });
     }, 800);
+    return () => clearTimeout(timer);
+  }, [person.id, agenda, agendaDirty, updatePerson]);
+
+  useEffect(() => {
+    const personId = person.id;
     return () => {
-      clearTimeout(timer);
-      if (agenda !== (person.agenda ?? defaultAgenda())) {
-        updatePerson(personId, { agenda });
+      if (agendaDirtyRef.current) {
+        updatePerson(personId, { agenda: agendaRef.current });
       }
     };
-  }, [person.id, person.agenda, agenda, agendaDirty, updatePerson]);
+  }, [person.id, updatePerson]);
 
   useEffect(() => {
     const onBeforeSync = () => {
