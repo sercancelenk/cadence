@@ -111,6 +111,7 @@ export function UtilitiesStructuredPage() {
               className={`rich-doc-pane__mode-tab${mode === 'edit' ? ' rich-doc-pane__mode-tab--active' : ''}`}
               role="tab"
               aria-selected={mode === 'edit'}
+              title="Edit"
               onClick={() => setMode('edit')}
             >
               <IcPencil size={14} />
@@ -121,6 +122,7 @@ export function UtilitiesStructuredPage() {
               className={`rich-doc-pane__mode-tab${mode === 'diff' ? ' rich-doc-pane__mode-tab--active' : ''}`}
               role="tab"
               aria-selected={mode === 'diff'}
+              title="Diff"
               onClick={openDiff}
             >
               <IcLayoutGrid size={14} />

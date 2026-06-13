@@ -9,6 +9,7 @@ import {
   REMIND_REPEAT_OPTIONS,
   TODO_STATUS_OPTIONS,
   emptyData,
+  appDataToPersistJson,
   getLeaderPerson,
   getSelfPerson,
   isLeaderPerson,
@@ -1295,9 +1296,13 @@ describe('normalizeData — exhaustive parse/load/migration', () => {
       bodyPlainText: 'plain',
       locked: false,
       cipher: undefined,
+      attachmentRefs: undefined,
+      lockedBodySignature: undefined,
       pinned: true,
       sortOrder: 1,
       lastOpenedAt: TS,
+      archived: undefined,
+      groupId: undefined,
       createdAt: TS,
       updatedAt: TS,
     });
@@ -1305,6 +1310,98 @@ describe('normalizeData — exhaustive parse/load/migration', () => {
       expect.objectContaining({ id: 'n-lock', body: '', locked: true, cipher: { ivB64: 'iv', cipherB64: 'ct' } }),
     );
     expect(norm.notes[2]?.cipher).toBeUndefined();
+  });
+
+  it('does not create note lists or assign groupId when loading legacy workspaces', () => {
+    const norm = normalizeData({
+      ...baseV3(),
+      notes: [
+        {
+          id: 'n1',
+          title: 'Legacy note',
+          body: 'hello',
+          locked: false,
+          pinned: true,
+          sortOrder: 2,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+        {
+          id: 'n2',
+          title: 'Second',
+          body: '',
+          locked: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+    });
+    expect(norm.noteGroups).toEqual([]);
+    expect(norm.notes).toHaveLength(2);
+    expect(norm.notes.every((n) => n.groupId === undefined)).toBe(true);
+    expect(norm.notes[0]).toEqual(
+      expect.objectContaining({ id: 'n1', title: 'Legacy note', body: 'hello', pinned: true, sortOrder: 2 }),
+    );
+  });
+
+  it('preserves explicit note list membership from disk', () => {
+    const norm = normalizeData({
+      ...baseV3(),
+      noteGroups: [{ id: 'lg1', name: 'Work', sortOrder: 0, createdAt: TS }],
+      notes: [
+        {
+          id: 'n1',
+          title: 'In list',
+          body: '',
+          locked: false,
+          groupId: 'lg1',
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+    });
+    expect(norm.noteGroups).toEqual([{ id: 'lg1', name: 'Work', sortOrder: 0, createdAt: TS }]);
+    expect(norm.notes[0]?.groupId).toBe('lg1');
+  });
+
+  it('clears orphaned note groupId without reassigning to a default list', () => {
+    const norm = normalizeData({
+      ...baseV3(),
+      notes: [
+        {
+          id: 'n1',
+          title: 'Orphan',
+          body: '',
+          locked: false,
+          groupId: 'missing-list',
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+    });
+    expect(norm.noteGroups).toEqual([]);
+    expect(norm.notes[0]?.groupId).toBeUndefined();
+  });
+
+  it('omits unused note-list fields from persist JSON', () => {
+    const norm = normalizeData({
+      ...baseV3(),
+      notes: [
+        {
+          id: 'n1',
+          title: 'Keep me flat',
+          body: 'text',
+          locked: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+    });
+    const raw = JSON.parse(appDataToPersistJson(norm)) as Record<string, unknown>;
+    expect(raw.noteGroups).toBeUndefined();
+    const notes = raw.notes as Record<string, unknown>[];
+    expect(notes[0]?.groupId).toBeUndefined();
+    expect(notes[0]?.title).toBe('Keep me flat');
   });
 
   it('parses notes archived flag only when true', () => {

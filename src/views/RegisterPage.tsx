@@ -1,10 +1,12 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { IcPlus } from '../components/icons';
+import { AuthLocalFirstNotice } from '../components/AuthLocalFirstNotice';
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
 import { useAccount } from '../AccountContext';
 import { STORAGE_PREFIX } from '../lib/appBranding';
+import { stashPendingRecoveryCodes } from '../lib/pendingRecoveryCodes';
 
 export function RegisterPage() {
   const { user, loading, register, hasLegacyData, refreshLegacyHint } = useAccount();
@@ -38,7 +40,7 @@ export function RegisterPage() {
     <div className="auth-screen">
       <div className="auth-card auth-card--wide">
         <h1 className="auth-card__title">Create account</h1>
-        <p className="muted">Sign up with email and password to create an account on this device. Your data is stored locally in your user file.</p>
+        <AuthLocalFirstNotice variant="register" />
         <form
           className="auth-form"
           onSubmit={async (e: FormEvent) => {
@@ -55,9 +57,10 @@ export function RegisterPage() {
             const r = await register({ email, password, displayName, migrateLegacy: hasLegacyData ? migrateLegacy : false });
             if (r.ok) {
               if (displayName.trim()) sessionStorage.setItem(`${STORAGE_PREFIX}-profile-seed`, displayName.trim());
+              if (r.recoveryCodes?.length) stashPendingRecoveryCodes(r.recoveryCodes);
               navigate('/', { replace: true });
+              if (r.warn) toast.showWarning('Account created with a caveat', r.warn);
             } else setErr(r.error ?? 'Sign-up failed.');
-            if (r.warn) toast.showWarning('Account created with a caveat', r.warn);
           }}
         >
           <label className="field">

@@ -347,8 +347,22 @@ export interface Note {
   lastOpenedAt?: string;
   /** When true, hidden from the active notes list until unarchived. */
   archived?: boolean;
+  /** Optional personal note list. Never auto-assigned on load — only set by explicit user action. */
+  groupId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Named list grouping notes in the sidebar (mirrors TodoGroup, without priority). */
+export interface NoteGroup {
+  id: string;
+  name: string;
+  sortOrder: number;
+  /** Pinned groups sort above the rest. */
+  pinned?: boolean;
+  /** Archived groups are hidden from the active view by default. */
+  archived?: boolean;
+  createdAt: string;
 }
 
 /** True when the note is shelved in the archived view (not deleted). */
@@ -401,6 +415,8 @@ export interface AppData {
   aiSettings?: AISettings;
   /** Standalone Markdown notes (macOS-Notes-style). Always present (empty array when unused). */
   notes: Note[];
+  /** Personal note lists (folders). Always present after normalize. */
+  noteGroups: NoteGroup[];
   /** Workspace-level lock for notes (verifier blob). Absent until the user enables note locking. */
   notesLock?: NotesLock;
   /**
@@ -494,8 +510,15 @@ export function emptyData(): AppData {
     notifiedReminderIds: [],
     lastTeamId: teamId,
     profile: { displayName: 'Me', favoriteTeamIds: [] },
-    notes: [],
+    ...defaultNoteBundle(),
     ...defaultTodoBundle(),
+  };
+}
+
+function defaultNoteBundle(): { noteGroups: NoteGroup[]; notes: Note[] } {
+  return {
+    noteGroups: [],
+    notes: [],
   };
 }
 
@@ -770,7 +793,7 @@ function migrateV1ToV2(o: Record<string, unknown>): AppData {
         items,
         notifiedReminderIds: [...notified].filter((x): x is string => typeof x === 'string'),
         lastTeamId: teamId,
-        notes: [],
+        ...defaultNoteBundle(),
         ...defaultTodoBundle(),
       }),
     ),
@@ -875,9 +898,43 @@ function ensureTodoDomain(data: AppData): AppData {
   return { ...data, todoGroups, todoItems };
 }
 
+function ensureNoteDomain(data: AppData): AppData {
+  // Backward compatible: never create default lists or assign groupId on load.
+  // Only strip groupId when it points at a list that no longer exists.
+  const noteGroups = [...(data.noteGroups ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
+  const validIds = new Set(noteGroups.map((g) => g.id));
+  const notes = (data.notes ?? []).map((n) => ({
+    ...n,
+    groupId: n.groupId && validIds.has(n.groupId) ? n.groupId : undefined,
+  }));
+  return { ...data, noteGroups, notes };
+}
+
+/**
+ * Disk/sync snapshot. Omits unused note-list fields so workspaces created
+ * before grouping stay byte-compatible until the user opts in.
+ */
+export function compactAppDataForPersist(data: AppData): Record<string, unknown> {
+  const notes = data.notes.map((n) => {
+    if (n.groupId) return n;
+    const { groupId: _drop, ...rest } = n;
+    return rest;
+  });
+  if (data.noteGroups.length === 0) {
+    const { noteGroups: _drop, ...rest } = data;
+    return { ...rest, notes };
+  }
+  return { ...data, notes };
+}
+
+export function appDataToPersistJson(data: AppData): string {
+  return JSON.stringify(compactAppDataForPersist(data));
+}
+
 function patchDataToV3(data: AppData): AppData {
   let d: AppData = { ...data, version: DATA_VERSION };
   d = ensureTodoDomain(d);
+  d = ensureNoteDomain(d);
   d = { ...d, items: d.items.map(normalizeGoalItem) };
   return d;
 }
@@ -914,6 +971,7 @@ export function normalizeData(raw: unknown): AppData {
   }
 
   const notes = parseNotes(o.notes);
+  const noteGroups = parseNoteGroups(Array.isArray(o.noteGroups) ? o.noteGroups : []);
   let notesLock = parseNotesLock(o.notesLock);
   const utilityDocument = parseUtilityDocument(o.utilityDocument);
   const utilityStructuredText = parseUtilityStructuredText(o.utilityStructuredText);
@@ -944,6 +1002,7 @@ export function normalizeData(raw: unknown): AppData {
     todoItems,
     aiSettings: parseAISettings(o.aiSettings),
     notes,
+    noteGroups,
     notesLock,
     utilityDocument,
     utilityStructuredText,
@@ -1019,6 +1078,20 @@ function parseAISettings(raw: unknown): AISettings | undefined {
   return { provider, apiKey, model, systemPrompt, extractionGuidance };
 }
 
+function parseNoteGroups(raw: unknown[]): NoteGroup[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object')
+    .map((g, i) => ({
+      id: typeof g.id === 'string' ? g.id : uuid(),
+      name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Notes',
+      sortOrder: typeof g.sortOrder === 'number' ? g.sortOrder : i,
+      pinned: g.pinned === true ? true : undefined,
+      archived: g.archived === true ? true : undefined,
+      createdAt: typeof g.createdAt === 'string' ? g.createdAt : nowIso(),
+    }));
+}
+
 function parseNotes(raw: unknown): Note[] {
   if (!Array.isArray(raw)) return [];
   const out: Note[] = [];
@@ -1057,6 +1130,7 @@ function parseNotes(raw: unknown): Note[] {
       sortOrder: typeof o.sortOrder === 'number' ? o.sortOrder : undefined,
       lastOpenedAt: typeof o.lastOpenedAt === 'string' ? o.lastOpenedAt : undefined,
       archived: o.archived === true ? true : undefined,
+      groupId: typeof o.groupId === 'string' && o.groupId ? o.groupId : undefined,
       createdAt: typeof o.createdAt === 'string' ? o.createdAt : nowIso(),
       updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
     });

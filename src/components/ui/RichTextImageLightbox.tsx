@@ -311,6 +311,7 @@ export function RichTextImageLightbox({
         type="button"
         className="rich-image-lightbox__close"
         aria-label="Close image viewer"
+        title="Close image viewer"
         onClick={(e) => {
           e.stopPropagation();
           onClose();
@@ -330,6 +331,7 @@ export function RichTextImageLightbox({
             type="button"
             className="rich-image-lightbox__tool"
             aria-label="Zoom out"
+            title="Zoom out"
             onClick={() => zoomFromToolbar(1 / BUTTON_ZOOM)}
           >
             −
@@ -338,6 +340,7 @@ export function RichTextImageLightbox({
             type="button"
             className="rich-image-lightbox__tool rich-image-lightbox__tool--label"
             aria-label="Reset zoom"
+            title="Reset zoom"
             onClick={resetToFit}
           >
             {zoomPercentLabel(transform.scale, fitScale)}
@@ -346,6 +349,7 @@ export function RichTextImageLightbox({
             type="button"
             className="rich-image-lightbox__tool"
             aria-label="Zoom in"
+            title="Zoom in"
             onClick={() => zoomFromToolbar(BUTTON_ZOOM)}
           >
             +

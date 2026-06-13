@@ -8,6 +8,7 @@ import type {
   Item,
   ItemKind,
   Note,
+  NoteGroup,
   NotesLock,
   Person,
   Priority,
@@ -909,14 +910,17 @@ export function removeTodoItem(data: AppData, id: string): AppData {
  * outside the reducer so React's `setState(updater)` rule (updaters MUST be
  * pure and re-runnable) holds, even under StrictMode double-invocation.
  */
-export function addNote(data: AppData, id: string): AppData {
+export function addNote(data: AppData, id: string, groupId?: string): AppData {
   const t = nowIso();
+  const gid =
+    groupId && data.noteGroups.some((g) => g.id === groupId) ? groupId : undefined;
   const note: Note = {
     id,
     title: '',
     body: '',
     locked: false,
     pinned: false,
+    ...(gid ? { groupId: gid } : {}),
     createdAt: t,
     updatedAt: t,
   };
@@ -936,7 +940,7 @@ export function patchNote(
   patch: Partial<
     Pick<
       Note,
-      'title' | 'body' | 'bodyFormat' | 'bodyPlainText' | 'pinned' | 'sortOrder' | 'lastOpenedAt' | 'archived'
+      'title' | 'body' | 'bodyFormat' | 'bodyPlainText' | 'pinned' | 'sortOrder' | 'lastOpenedAt' | 'archived' | 'groupId'
     >
   >,
 ): AppData {
@@ -955,6 +959,13 @@ export function patchNote(
         ...patch,
         archived: patch.archived !== undefined ? (patch.archived ? true : undefined) : n.archived,
       };
+      if ('groupId' in patch) {
+        const gid = patch.groupId;
+        next.groupId =
+          typeof gid === 'string' && gid && data.noteGroups.some((g) => g.id === gid)
+            ? gid
+            : undefined;
+      }
       if (isContentChange) next.updatedAt = nowIso();
       return next;
     }),
@@ -971,6 +982,48 @@ export function setNotesLock(data: AppData, lock: NotesLock | undefined): AppDat
     return rest as AppData;
   }
   return { ...data, notesLock: lock };
+}
+
+export function addNoteGroup(data: AppData, name: string, id?: string): AppData {
+  const t = nowIso();
+  const minOrder =
+    data.noteGroups.length > 0 ? Math.min(...data.noteGroups.map((g) => g.sortOrder)) : 0;
+  const g: NoteGroup = {
+    id: id ?? uuid(),
+    name: name.trim() || 'New list',
+    sortOrder: minOrder - 1,
+    createdAt: t,
+  };
+  return { ...data, noteGroups: [...data.noteGroups, g] };
+}
+
+export function updateNoteGroup(
+  data: AppData,
+  groupId: string,
+  patch: Partial<Pick<NoteGroup, 'name' | 'sortOrder' | 'pinned' | 'archived'>>,
+): AppData {
+  return {
+    ...data,
+    noteGroups: data.noteGroups.map((g) =>
+      g.id === groupId
+        ? {
+            ...g,
+            name: patch.name !== undefined ? patch.name.trim() || g.name : g.name,
+            sortOrder: patch.sortOrder !== undefined ? patch.sortOrder : g.sortOrder,
+            pinned: patch.pinned !== undefined ? (patch.pinned ? true : undefined) : g.pinned,
+            archived: patch.archived !== undefined ? (patch.archived ? true : undefined) : g.archived,
+          }
+        : g,
+    ),
+  };
+}
+
+export function removeNoteGroup(data: AppData, groupId: string): AppData {
+  const noteGroups = data.noteGroups.filter((g) => g.id !== groupId);
+  const notes = data.notes.map((n) =>
+    n.groupId === groupId ? { ...n, groupId: undefined } : n,
+  );
+  return { ...data, noteGroups, notes };
 }
 
 export function patchUtilityDocument(

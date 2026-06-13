@@ -3,7 +3,6 @@ import type { RichTextPayload, RichTextBodyFormat } from '../../lib/richText';
 import {
   noteBodyPatchIsNoOp,
   richBodyFieldsFromPayload,
-  richTextPayloadIsEmpty,
   type RichTextBodyFields,
 } from '../../lib/richTextBody';
 import { encryptBodyWithMaster } from '../../lib/notesCrypto';
@@ -54,8 +53,9 @@ export function useNotesEditor(
     ({ noteId: string } & RichTextBodyFields) | null
   >(null);
   const [bodyEditing, setBodyEditing] = useState(false);
-  const encryptGen = useRef(0);
+  const encryptGenByNote = useRef(new Map<string, number>());
   const latestRevisionNoteRef = useRef<Note | null>(null);
+  const latestBodyFieldsRef = useRef<({ noteId: string } & RichTextBodyFields) | null>(null);
 
   const decryptedForSelected = useMemo(() => {
     if (!selected || !decrypted || decrypted.noteId !== selected.id) return null;
@@ -85,6 +85,7 @@ export function useNotesEditor(
     if (!selected) {
       setDecrypted(null);
       latestRevisionNoteRef.current = null;
+      latestBodyFieldsRef.current = null;
       return;
     }
     if (decrypted && decrypted.noteId !== selected.id) {
@@ -124,6 +125,7 @@ export function useNotesEditor(
     if (!selected) return;
     const fields = richBodyFieldsFromPayload(payload);
     if (noteBodyPatchIsNoOp(selected, fields)) return;
+    latestBodyFieldsRef.current = { noteId: selected.id, ...fields };
     const prev = selected;
     if (!selected.locked) {
       const nextNote = noteForRevisionSnapshot(selected, fields);
@@ -132,15 +134,19 @@ export function useNotesEditor(
       captureRevision?.(prev, nextNote, 'autosave');
       return;
     }
+    const key = unlock.read();
+    if (!key) {
+      setDecrypted(null);
+      return;
+    }
     setDecrypted({ noteId: selected.id, ...fields });
     rememberRevisionNote(noteForRevisionSnapshot(selected, fields));
-    const key = unlock.read();
-    if (!key) return;
-    if (richTextPayloadIsEmpty(payload)) return;
-    const myGen = ++encryptGen.current;
+    const noteId = selected.id;
+    const myGen = (encryptGenByNote.current.get(noteId) ?? 0) + 1;
+    encryptGenByNote.current.set(noteId, myGen);
     void (async () => {
       const cipher = await encryptBodyWithMaster(key, fields.body);
-      if (myGen !== encryptGen.current) return;
+      if (encryptGenByNote.current.get(noteId) !== myGen) return;
       const attachmentRefs = attachmentRefsFromBody(fields.body, fields.bodyFormat);
       const nextNote: Note = {
         ...selected,
@@ -178,5 +184,6 @@ export function useNotesEditor(
     onChangeBody,
     hideSelected,
     getRevisionSnapshot,
+    getLatestBodyFields: () => latestBodyFieldsRef.current,
   };
 }

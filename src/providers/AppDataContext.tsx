@@ -12,6 +12,7 @@ import {
 import { useAccount } from './AccountContext';
 import { STORAGE_PREFIX } from '../lib/appBranding';
 import { registerFlushPendingSave, unregisterFlushPendingSave } from '../lib/pendingSaveFlush';
+import { revokeAttachmentBlobUrls } from '../lib/richTextAttachmentStore';
 import { isReminderSlotNotified, reminderNotifyKey } from '../lib/reminderNotify';
 import { supportsPwaOsSchedule } from '../lib/reminderDelivery/capabilities';
 import { collectFutureReminderSlots } from '../lib/reminderDelivery/collectReminderSlots';
@@ -23,6 +24,7 @@ import { uuid } from '../lib/uuid';
 import {
   addItem as addItemFn,
   addNote as addNoteFn,
+  addNoteGroup as addNoteGroupFn,
   addPerson as addPersonFn,
   addTeam as addTeamFn,
   addTodoGroup as addTodoGroupFn,
@@ -34,6 +36,7 @@ import {
   patchUtilityDocument as patchUtilityDocumentFn,
   patchUtilityStructuredText as patchUtilityStructuredTextFn,
   removeNote as removeNoteFn,
+  removeNoteGroup as removeNoteGroupFn,
   reorderTodoGroup as reorderTodoGroupFn,
   reorderTodoItem as reorderTodoItemFn,
   setTodoStatus as setTodoStatusFn,
@@ -53,6 +56,7 @@ import {
   updatePerson as updatePersonFn,
   updateTeam as updateTeamFn,
   updateTodoGroup as updateTodoGroupFn,
+  updateNoteGroup as updateNoteGroupFn,
   updateAISettings as updateAISettingsFn,
   updateTodoItem as updateTodoItemFn,
   updateUserProfile as updateUserProfileFn,
@@ -64,6 +68,7 @@ import type {
   Item,
   ItemKind,
   Note,
+  NoteGroup,
   NotesLock,
   Person,
   Priority,
@@ -75,7 +80,7 @@ import type {
   UtilityDocument,
   UtilityStructuredText,
 } from '../core/model';
-import { isUnsupportedDataVersionError, normalizeData, shapeOfData } from '../core/model';
+import { isUnsupportedDataVersionError, normalizeData, appDataToPersistJson, compactAppDataForPersist, shapeOfData } from '../core/model';
 import { parseSaveDataResult } from '../lib/appDataSave';
 import { createPersistQueue, type PersistResult } from '../lib/persistQueue';
 import {
@@ -104,7 +109,9 @@ type Api = {
    * Waits for in-flight saves to finish, commits via the main process on
    * desktop (bypassing write-generation conflicts), then reloads from disk.
    */
-  importWorkspace: (next: AppData) => Promise<{ ok: true } | { ok: false; error: string }>;
+  importWorkspace: (next: AppData) => Promise<
+    { ok: true; attachmentsRestored?: number } | { ok: false; error: string }
+  >;
   /**
    * Re-read the workspace from disk after the main process wrote it (folder
    * import, restore). Discards pending debounced edits and clears save errors.
@@ -226,14 +233,28 @@ type Api = {
   toggleTodoItem: (id: string) => void;
   setTodoStatus: (id: string, status: TodoStatus) => void;
   removeTodoItem: (id: string) => void;
-  addNote: () => string;
+  addNote: (groupId?: string) => string;
+  addNoteGroup: (name: string) => string;
+  updateNoteGroup: (
+    groupId: string,
+    patch: Partial<Pick<NoteGroup, 'name' | 'sortOrder' | 'pinned' | 'archived'>>,
+  ) => void;
+  removeNoteGroup: (groupId: string) => void;
   replaceNote: (note: Note) => void;
   patchNote: (
     id: string,
     patch: Partial<
       Pick<
         Note,
-        'title' | 'body' | 'bodyFormat' | 'bodyPlainText' | 'pinned' | 'sortOrder' | 'lastOpenedAt' | 'archived'
+        | 'title'
+        | 'body'
+        | 'bodyFormat'
+        | 'bodyPlainText'
+        | 'pinned'
+        | 'sortOrder'
+        | 'lastOpenedAt'
+        | 'archived'
+        | 'groupId'
       >
     >,
   ) => void;
@@ -349,10 +370,11 @@ async function persist(
   data: AppData,
   expectedGeneration: number,
 ): Promise<{ ok: true; writeGeneration?: number } | { ok: false; reason: string; error?: string; writeGeneration?: number }> {
+  const payload = compactAppDataForPersist(data);
   const api = window.cadence;
   if (api?.saveData) {
     try {
-      const raw = await api.saveData(data, userId, expectedGeneration);
+      const raw = await api.saveData(payload, userId, expectedGeneration);
       return parseSaveDataResult(raw);
     } catch (err) {
       return {
@@ -363,7 +385,7 @@ async function persist(
     }
   }
   try {
-    localStorage.setItem(storageKeyForUser(userId), JSON.stringify(data));
+    localStorage.setItem(storageKeyForUser(userId), appDataToPersistJson(data));
     return { ok: true };
   } catch (err) {
     return {
@@ -455,6 +477,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [saving, setSaving] = useState(false);
   const [dataLossSuspicion, setDataLossSuspicion] = useState<DataLossSuspicion | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistBlockedRef = useRef(false);
   // The most recent payload pending a debounced save, kept so we can flush it
   // synchronously on tab close / unmount.
   const pendingSave = useRef<AppData | null>(null);
@@ -506,10 +529,23 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         }
         return;
       }
-      if (evt?.reason === 'write-conflict' || evt?.reason === 'import-in-progress') {
+      if (evt?.reason === 'import-in-progress') {
         if (typeof evt?.writeGeneration === 'number') {
           writeGenerationRef.current = evt.writeGeneration;
         }
+        return;
+      }
+      if (evt?.reason === 'write-conflict') {
+        if (typeof evt?.writeGeneration === 'number') {
+          writeGenerationRef.current = evt.writeGeneration;
+        }
+        setLastSaveError({
+          reason: 'write-conflict',
+          error:
+            evt?.error ??
+            'Another device or tab updated your workspace. Reload from disk to continue editing.',
+          at: Date.now(),
+        });
         return;
       }
       setLastSaveError({
@@ -540,7 +576,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const shouldSurfacePersistError = useCallback((reason: string | undefined) => {
-    return reason !== 'write-conflict' && reason !== 'import-in-progress';
+    return reason !== 'import-in-progress';
   }, []);
 
   useEffect(() => {
@@ -564,6 +600,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [userId, recreatePersistQueue]);
 
   const runPersist = useCallback(async (uid: string, payload: AppData) => {
+    if (persistBlockedRef.current) return;
     setSaving(true);
     try {
       const r = await persistQueueRef.current.enqueue(payload);
@@ -576,7 +613,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           writeGenerationRef.current = r.writeGeneration;
         }
         if (shouldSurfacePersistError(r.reason)) {
-          setLastSaveError({ reason: r.reason, error: r.error, at: Date.now() });
+          setLastSaveError({
+            reason: r.reason,
+            error:
+              r.reason === 'write-conflict'
+                ? (r.error ??
+                  'Another device or tab updated your workspace. Reload from disk to continue editing.')
+                : r.error,
+            at: Date.now(),
+          });
         }
       }
     } finally {
@@ -597,7 +642,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         writeGenerationRef.current = r.writeGeneration;
       }
       if (shouldSurfacePersistError(r.reason)) {
-        setLastSaveError({ reason: r.reason, error: r.error, at: Date.now() });
+        setLastSaveError({
+          reason: r.reason,
+          error:
+            r.reason === 'write-conflict'
+              ? (r.error ??
+                'Another device or tab updated your workspace. Reload from disk to continue editing.')
+              : r.error,
+          at: Date.now(),
+        });
       }
     }
   }, [shouldSurfacePersistError]);
@@ -618,7 +671,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (window.cadence?.flushPendingSaveSync) {
       setSaving(true);
       try {
-        const raw = window.cadence.flushPendingSaveSync(next, uid, writeGenerationRef.current);
+        const raw = window.cadence.flushPendingSaveSync(
+          compactAppDataForPersist(next),
+          uid,
+          writeGenerationRef.current,
+        );
         applyPersistOutcome(uid, next, parseSaveDataResult(raw));
       } finally {
         setSaving(false);
@@ -648,11 +705,32 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   // Best-effort: flush before the tab goes away (Electron uses sendSync after queue drain).
   useEffect(() => {
+    const syncLocalStorageBestEffort = () => {
+      const uid = userIdRef.current;
+      if (!uid || persistBlockedRef.current || window.cadence?.saveData) return;
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      const payload = pendingSave.current ?? snapshotStoreRef.current.getSnapshot();
+      if (!payload) return;
+      pendingSave.current = null;
+      try {
+        localStorage.setItem(storageKeyForUser(uid), appDataToPersistJson(payload));
+      } catch {
+        /* best effort */
+      }
+    };
+
     const onPageHide = () => {
+      syncLocalStorageBestEffort();
       void flushPendingSave();
     };
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') void flushPendingSave();
+      if (document.visibilityState === 'hidden') {
+        syncLocalStorageBestEffort();
+        void flushPendingSave();
+      }
     };
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('beforeunload', onPageHide);
@@ -667,6 +745,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!userId) {
+      persistBlockedRef.current = false;
       setData(null);
       setReady(false);
       setDataLossSuspicion(null);
@@ -679,6 +758,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const loaded = await loadInitial(userId);
       if (cancelled) return;
+      persistBlockedRef.current = loaded.loadError?.reason === 'unsupported-version';
       writeGenerationRef.current = loaded.writeGeneration;
       if (loaded.loadError) {
         setLastSaveError({
@@ -732,7 +812,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const scheduleSave = useCallback((next: AppData) => {
     const uid = userIdRef.current;
-    if (!uid) return;
+    if (!uid || persistBlockedRef.current) return;
     pendingSave.current = next;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
@@ -745,6 +825,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const update = useCallback(
     (fn: (d: AppData) => AppData) => {
+      if (persistBlockedRef.current) return;
       setData((prev) => {
         if (!prev) return prev;
         const next = fn(prev);
@@ -834,17 +915,31 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setLastSaveError(null);
   }, [applyLoadedWorkspace, prepareForExternalWorkspaceReplace, recreatePersistQueue]);
 
+  useEffect(() => {
+    const off = window.cadence?.onRemoteUpdated?.(() => {
+      void syncFromDisk();
+    });
+    return () => {
+      if (typeof off === 'function') off();
+    };
+  }, [syncFromDisk]);
+
   const importWorkspace = useCallback(
-    async (next: AppData): Promise<{ ok: true } | { ok: false; error: string }> => {
+    async (next: AppData): Promise<
+      { ok: true; attachmentsRestored?: number } | { ok: false; error: string }
+    > => {
       const normalized = normalizeData(next);
       const uid = userIdRef.current;
       if (!uid) return { ok: false, error: 'Not signed in.' };
 
       await prepareForExternalWorkspaceReplace();
 
+      const payload = compactAppDataForPersist(normalized);
+      let attachmentsRestored: number | undefined;
+
       if (window.cadence?.importWorkspace) {
         try {
-          const r = await window.cadence.importWorkspace(normalized);
+          const r = await window.cadence.importWorkspace(payload);
           if (!r?.ok) {
             return {
               ok: false,
@@ -854,6 +949,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           if (typeof r.writeGeneration === 'number') {
             writeGenerationRef.current = r.writeGeneration;
           }
+          if (typeof r.attachmentsRestored === 'number') {
+            attachmentsRestored = r.attachmentsRestored;
+          }
         } catch (err) {
           return {
             ok: false,
@@ -862,7 +960,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         }
       } else {
         try {
-          localStorage.setItem(storageKeyForUser(uid), JSON.stringify(normalized));
+          localStorage.setItem(storageKeyForUser(uid), appDataToPersistJson(normalized));
         } catch (err) {
           return {
             ok: false,
@@ -876,7 +974,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       applyLoadedWorkspace(uid, loaded);
       recreatePersistQueue();
       setLastSaveError(null);
-      return { ok: true };
+      revokeAttachmentBlobUrls();
+      return { ok: true, attachmentsRestored };
     },
     [applyLoadedWorkspace, prepareForExternalWorkspaceReplace, recreatePersistQueue],
   );
@@ -970,11 +1069,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       // pure (a requirement for React's setState(updater) — StrictMode may
       // run it twice). The view gets the id back synchronously and selects
       // the new note without scanning the resulting list.
-      addNote: () => {
+      addNote: (groupId?: string) => {
         const id = uuid();
-        update((x) => addNoteFn(x, id));
+        update((x) => addNoteFn(x, id, groupId));
         return id;
       },
+      addNoteGroup: (name) => {
+        const id = uuid();
+        update((x) => addNoteGroupFn(x, name, id));
+        return id;
+      },
+      updateNoteGroup: (groupId, patch) => update((x) => updateNoteGroupFn(x, groupId, patch)),
+      removeNoteGroup: (groupId) => update((x) => removeNoteGroupFn(x, groupId)),
       replaceNote: (note) => update((x) => replaceNoteFn(x, note)),
       patchNote: (id, patch) => update((x) => patchNoteFn(x, id, patch)),
       removeNote: (id) => update((x) => removeNoteFn(x, id)),
@@ -1046,7 +1152,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setTodoStatus: (id: string, status: Parameters<Api['setTodoStatus']>[1]) =>
         actionsBridgeRef.current.setTodoStatus(id, status),
       removeTodoItem: (id: string) => actionsBridgeRef.current.removeTodoItem(id),
-      addNote: () => actionsBridgeRef.current.addNote(),
+      addNote: (groupId?: string) => actionsBridgeRef.current.addNote(groupId),
+      addNoteGroup: (name: string) => actionsBridgeRef.current.addNoteGroup(name),
+      updateNoteGroup: (groupId: string, patch: Parameters<Api['updateNoteGroup']>[1]) =>
+        actionsBridgeRef.current.updateNoteGroup(groupId, patch),
+      removeNoteGroup: (groupId: string) => actionsBridgeRef.current.removeNoteGroup(groupId),
       replaceNote: (note: Parameters<Api['replaceNote']>[0]) => actionsBridgeRef.current.replaceNote(note),
       patchNote: (id: string, patch: Parameters<Api['patchNote']>[1]) =>
         actionsBridgeRef.current.patchNote(id, patch),

@@ -73,6 +73,7 @@ export function NotesVersionHistoryPanel({
         type="button"
         className="notes-version-history__backdrop"
         aria-label="Close version history"
+        title="Close version history"
         onClick={() => setOpen(false)}
       />
       <aside className="notes-version-history__panel">
@@ -88,6 +89,7 @@ export function NotesVersionHistoryPanel({
             type="button"
             className="notes-version-history__close"
             aria-label="Close"
+            title="Close"
             onClick={() => setOpen(false)}
           >
             <IcX size={18} />

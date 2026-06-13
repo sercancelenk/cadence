@@ -11,6 +11,8 @@ export type NotesIconButtonProps = {
   variant?: 'ghost' | 'primary' | 'danger';
   /** When true, paints the button with the accent fill (e.g. pinned state). */
   pressed?: boolean;
+  /** For panel toggles — mirrors `aria-expanded` on the underlying button. */
+  ariaExpanded?: boolean;
 };
 
 /**
@@ -24,6 +26,7 @@ export function NotesIconButton({
   tooltip,
   variant = 'ghost',
   pressed,
+  ariaExpanded,
 }: NotesIconButtonProps) {
   const cls = [
     'notes-icon-btn',
@@ -40,6 +43,7 @@ export function NotesIconButton({
       disabled={disabled}
       aria-label={label}
       aria-pressed={pressed}
+      aria-expanded={ariaExpanded}
       title={tooltip ?? label}
     >
       {children}

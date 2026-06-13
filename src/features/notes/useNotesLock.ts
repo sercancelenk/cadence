@@ -16,7 +16,8 @@ import { attachmentRefsFromBody } from '../../lib/richTextAttachmentIndex';
 import { canonicalDocSignature } from '../../lib/richTextBody';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
 import type { NoteRevisionCapture } from './useNotesEditor';
-import { FORCE_RESET_PHRASE, type PendingIntent } from './noteLockTypes';
+import { FORCE_RESET_PHRASE, MIN_NOTES_PASSPHRASE_LENGTH, type PendingIntent } from './noteLockTypes';
+import { prepareForRemoteApply } from '../../lib/syncApplyGuard';
 import { PLACEHOLDER_TITLE } from './notePreferences';
 
 /**
@@ -41,6 +42,7 @@ type UseNotesLockArgs = {
   update: (fn: (d: AppData) => AppData) => void;
   removeNote: (id: string) => void;
   captureRevision?: NoteRevisionCapture;
+  getLatestBodyFields?: () => ({ noteId: string } & RichTextBodyFields) | null;
 };
 
 export function useNotesLock({
@@ -54,6 +56,7 @@ export function useNotesLock({
   update,
   removeNote,
   captureRevision,
+  getLatestBodyFields,
 }: UseNotesLockArgs) {
   const account = useAccount();
 
@@ -112,12 +115,19 @@ export function useNotesLock({
           if (!targetNote) return;
           setBusy(true);
           try {
-            const bodyToLock = targetNote.locked
-              ? decrypted?.noteId === targetNote.id
-                ? decrypted.body
-                : targetNote.body
-              : targetNote.body;
-            const bodyFormat = targetNote.bodyFormat ?? decrypted?.bodyFormat;
+            const pending = getLatestBodyFields?.();
+            const bodyToLock =
+              pending?.noteId === targetNote.id
+                ? pending.body
+                : targetNote.locked
+                  ? decrypted?.noteId === targetNote.id
+                    ? decrypted.body
+                    : targetNote.body
+                  : targetNote.body;
+            const bodyFormat =
+              pending?.noteId === targetNote.id
+                ? (pending.bodyFormat ?? targetNote.bodyFormat)
+                : targetNote.bodyFormat ?? decrypted?.bodyFormat;
             const attachmentRefs = attachmentRefsFromBody(bodyToLock, bodyFormat);
             const cipher = await encryptBodyWithMaster(key, bodyToLock);
             const nextNote: Note = {
@@ -209,31 +219,41 @@ export function useNotesLock({
         }
       }
     },
-    [data.notes, decrypted, replaceNote, setNotesLock, unlock, update, setDecrypted],
+    [data.notes, decrypted, replaceNote, setNotesLock, unlock, update, setDecrypted, getLatestBodyFields, captureRevision],
   );
 
   const requestAction = useCallback(
     (intent: PendingIntent) => {
-      if (intent === 'view') {
-        unlock.clear();
-      }
-      const key = intent === 'view' ? null : unlock.read();
-      if (key) {
-        void performAction(intent, key, selected);
-        return;
-      }
-      if (!data.notesLock) {
-        setSetupErr(null);
-        setSetupPw1('');
-        setSetupPw2('');
+      const run = async () => {
+        if (intent === 'lock') {
+          try {
+            await prepareForRemoteApply();
+          } catch {
+            /* best effort */
+          }
+        }
+        if (intent === 'view') {
+          unlock.clear();
+        }
+        const key = intent === 'view' ? null : unlock.read();
+        if (key) {
+          await performAction(intent, key, selected);
+          return;
+        }
+        if (!data.notesLock) {
+          setSetupErr(null);
+          setSetupPw1('');
+          setSetupPw2('');
+          setPendingIntent(intent);
+          setSetupOpen(true);
+          return;
+        }
+        setUnlockErr(null);
+        setUnlockPw('');
         setPendingIntent(intent);
-        setSetupOpen(true);
-        return;
-      }
-      setUnlockErr(null);
-      setUnlockPw('');
-      setPendingIntent(intent);
-      setUnlockOpen(true);
+        setUnlockOpen(true);
+      };
+      void run();
     },
     [unlock, performAction, selected, data.notesLock],
   );
@@ -249,8 +269,8 @@ export function useNotesLock({
     setSetupErr(null);
     const a = setupPw1;
     const b = setupPw2;
-    if (a.length < 6) {
-      setSetupErr('Choose a passphrase of at least 6 characters.');
+    if (a.length < MIN_NOTES_PASSPHRASE_LENGTH) {
+      setSetupErr(`Choose a passphrase of at least ${MIN_NOTES_PASSPHRASE_LENGTH} characters.`);
       return;
     }
     if (a !== b) {
@@ -407,9 +427,12 @@ export function useNotesLock({
 
   const openDisableLocking = () => {
     setDisableErr(null);
-    unlock.clear();
     setUnlockErr(null);
     setUnlockPw('');
+    if (unlock.read()) {
+      setConfirmDisableLock(true);
+      return;
+    }
     setPendingIntent('disable-locking');
     setUnlockOpen(true);
   };

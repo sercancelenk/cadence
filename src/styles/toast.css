@@ -1,0 +1,126 @@
+/* ─── Toast notifications ──────────────────────────────────────────────
+ *
+ * Fixed bottom-right stack of non-blocking notifications. Replaces the
+ * old `window.alert()` calls so the UI no longer freezes for an OS
+ * modal whenever Settings has something to say. Each toast auto-dismisses
+ * (the React provider owns the timer) — these styles only handle the
+ * presentation.
+ *
+ * Theming: uses theme variables only, so the toasts blend with both
+ * light + dark modes. Kind-specific accents (success / error / warning
+ * / info) come from a coloured side-bar inside the card, NOT from
+ * recolouring the whole panel — keeping the contrast against the
+ * background consistent regardless of theme.
+ */
+.toast-stack {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 12px;
+  padding: 12px 12px 12px 14px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--toast-accent, var(--accent));
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  pointer-events: auto;
+  animation: toast-in 180ms ease-out;
+  min-width: 280px;
+}
+.toast--success {
+  --toast-accent: #16a34a;
+}
+.toast--error {
+  --toast-accent: #dc2626;
+}
+.toast--warning {
+  --toast-accent: #d97706;
+}
+.toast--info {
+  --toast-accent: var(--accent);
+}
+.toast__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--toast-accent);
+  margin-top: 1px;
+}
+.toast__body {
+  min-width: 0;
+}
+.toast__title {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+}
+.toast__desc {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--text) 72%, transparent);
+  word-wrap: break-word;
+}
+.toast__close {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  margin-top: 1px;
+  transition: background 140ms ease, color 140ms ease;
+}
+.toast__close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.toast__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  color: var(--text);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@media (max-width: 600px) {
+  .toast-stack {
+    bottom: 16px;
+    right: 12px;
+    left: 12px;
+    max-width: none;
+  }
+  .toast {
+    min-width: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}

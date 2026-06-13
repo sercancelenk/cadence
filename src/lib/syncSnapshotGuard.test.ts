@@ -11,10 +11,84 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseRemoteSnapshot } from './syncSnapshotGuard';
+import { appDataToPersistJson } from '../model';
 import { filterPlanningHubItems } from './planningMatrix';
 import { collectActivityRecords } from './todoActivityReport';
 
 describe('parseRemoteSnapshot', () => {
+  const TS = '2026-06-01T12:00:00.000Z';
+
+  /** Typical pre–note-lists export from an older Cadence build. */
+  const LEGACY_BACKUP = {
+    version: 3,
+    teams: [{ id: 't1', name: 'Team', createdAt: TS, status: 'active' }],
+    people: [],
+    items: [],
+    notifiedReminderIds: [],
+    todoGroups: [{ id: 'g1', name: 'General', sortOrder: 0, createdAt: TS }],
+    todoItems: [{ id: 'td1', groupId: 'g1', title: 'Task', status: 'todo', sortOrder: 0, createdAt: TS, updatedAt: TS }],
+    notes: [
+      {
+        id: 'n1',
+        title: 'Legacy note',
+        body: 'Important content',
+        locked: false,
+        pinned: true,
+        createdAt: TS,
+        updatedAt: TS,
+      },
+    ],
+  };
+
+  it('accepts legacy backups without noteGroups and preserves note content', () => {
+    const result = parseRemoteSnapshot(LEGACY_BACKUP);
+    expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') return;
+    expect(result.data.noteGroups).toEqual([]);
+    expect(result.data.notes).toHaveLength(1);
+    expect(result.data.notes[0]).toEqual(
+      expect.objectContaining({
+        id: 'n1',
+        title: 'Legacy note',
+        body: 'Important content',
+        pinned: true,
+      }),
+    );
+    expect(result.data.notes[0]?.groupId).toBeUndefined();
+    expect(result.data.todoItems).toHaveLength(1);
+  });
+
+  it('legacy backup survives export round-trip and re-import', () => {
+    const first = parseRemoteSnapshot(LEGACY_BACKUP);
+    expect(first.kind).toBe('ok');
+    if (first.kind !== 'ok') return;
+
+    const exported = JSON.parse(appDataToPersistJson(first.data)) as Record<string, unknown>;
+    expect(exported.noteGroups).toBeUndefined();
+    const notes = exported.notes as Record<string, unknown>[];
+    expect(notes[0]?.groupId).toBeUndefined();
+    expect(notes[0]?.title).toBe('Legacy note');
+
+    const second = parseRemoteSnapshot(exported);
+    expect(second.kind).toBe('ok');
+    if (second.kind !== 'ok') return;
+    expect(second.data.notes[0]?.title).toBe('Legacy note');
+    expect(second.data.notes[0]?.body).toBe('Important content');
+    expect(second.data.todoItems[0]?.title).toBe('Task');
+  });
+
+  it('accepts legacy rolling-backup envelope without noteGroups', () => {
+    const result = parseRemoteSnapshot({
+      magic: 'CDNC1',
+      writeGeneration: 12,
+      workspace: LEGACY_BACKUP,
+    });
+    expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') return;
+    expect(result.data.notes[0]?.title).toBe('Legacy note');
+    expect(result.data.noteGroups).toEqual([]);
+  });
+
   it('accepts a snapshot with teams', () => {
     const result = parseRemoteSnapshot({ teams: [{ id: 't1', name: 'A' }] });
     expect(result.kind).toBe('ok');

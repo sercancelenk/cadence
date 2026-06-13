@@ -20,7 +20,9 @@
  * local data untouched and surfaces a clear error instead.
  *
  * The gate is intentionally lenient — we want to accept legitimate
- * snapshots from older Cadence versions too. The criteria are:
+ * snapshots from older Cadence versions too. Optional fields such as
+ * `noteGroups` are not required; missing lists must not block import.
+ * The criteria are:
  *
  *   - The input is a non-null object.
  *   - It has at least ONE of the recognised top-level collections

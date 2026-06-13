@@ -43,6 +43,7 @@ export function PlanningFocusStrip({
                 type="button"
                 className="planning-focus__check"
                 aria-label={`Mark "${item.title}" done`}
+                title={`Mark "${item.title}" done`}
                 onClick={() => onToggleComplete(item.id)}
               />
               <div className="planning-focus__body">
@@ -74,6 +75,7 @@ export function PlanningFocusStrip({
                 type="button"
                 className="planning-focus__unpin"
                 aria-label="Remove from today focus"
+                title="Remove from today focus"
                 onClick={() => onToggleFocus(item.id)}
               >
                 ★

@@ -169,6 +169,7 @@ function FilterTab({
       type="button"
       role="tab"
       aria-selected={active}
+      title={label}
       className={`structured-text-semantic-diff__filter${active ? ' structured-text-semantic-diff__filter--active' : ''}`}
       onClick={onClick}
     >

@@ -504,6 +504,7 @@ describe('actions mutation — deterministic reducers', () => {
         body: '',
         locked: false,
         pinned: false,
+        archived: undefined,
         createdAt: FIXED_NOW,
         updatedAt: FIXED_NOW,
       });
@@ -523,6 +524,7 @@ describe('actions mutation — deterministic reducers', () => {
         createdAt: FIXED_NOW,
         updatedAt: stamped,
         sortOrder: 3,
+        archived: undefined,
       });
     });
 

@@ -222,7 +222,7 @@ export function AITaskExtractorDialog({
                 : 'Paste a brain dump, meeting transcript or Slack thread. The assistant turns it into a list of crisp tasks you can drop into any of your lists.'}
             </p>
           </div>
-          <button type="button" className="ai-dialog__close" aria-label="Close" onClick={onClose}>
+          <button type="button" className="ai-dialog__close" aria-label="Close" title="Close" onClick={onClose}>
             <IcX size={18} />
           </button>
         </header>

@@ -75,9 +75,9 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 ### Settings — grouped by relationship: security, data, sync, integrations, about
 
-![Settings page with account, backup, sync and integrations groups](docs/screenshots/settings.png)
+![Settings page with account, backup, sync and recovery codes](docs/screenshots/settings.png)
 
-> Cards are organised into five named groups: **Account & security**, **Data & backup** (unified Backup & recovery with export/import + rolling snapshots, workspace storage breakdown), **Sync** (LAN + Cloud), **Integrations** (AI assistant and OS notifications) and **About** (app profile, version info, auto-update controls).
+> Cards are organised into five named groups: **Account & security** (recovery codes), **Data & backup** (portable ZIP, full folder, rolling snapshots), **Sync** (LAN + Cloud), **Integrations** (AI assistant and OS notifications) and **About** (user guide, version, auto-update).
 
 ---
 
@@ -103,7 +103,8 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | 🔒 **Encrypted at rest** | AES-256-GCM data file keyed via `scrypt(password)`. Notes get an additional PBKDF2 → AES-256-GCM lockbox with a non-extractable `CryptoKey`. |
 | 🔑 **Stay signed in (opt-out)** | After your first login, Cadence wraps the data-encryption key with Electron's `safeStorage` and persists it in your OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). Restarts skip the password prompt; **Logout** always purges the cached key, and Settings → *Stay signed in* gives you a one-click "ask on every launch" toggle. On Linux without libsecret we refuse to cache rather than fall back to a hardcoded-obfuscation key — same security promise on every platform. |
 | 🛟 **Durable saves** | Atomic `open → write → fsync → close → rename` cycle plus directory fsync. A power loss or kernel panic leaves either the old file or the new file — never a torn one. Worst case: ≤ 400 ms of unflushed typing. |
-| 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Each snapshot shows teams / lists / tasks / notes counts; **Reveal in Finder** for manual inspection. Refuse-to-overwrite guard if the live file is undecipherable. **Settings → Backup & recovery** merges manual export/import and snapshot restore in one place. |
+| 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Each snapshot shows teams / lists / tasks / notes counts; **Reveal in Finder** for manual inspection. Refuse-to-overwrite guard if the live file is undecipherable. **Settings → Backup & recovery** merges manual export/import and snapshot restore in one place — **portable ZIP** (all platforms, with images), **full backup folder** (desktop, with note history), and JSON (text-only). |
+| 🔐 **Recovery codes** | Optional MetaMask-style codes to reset your account password on this device without data loss. Generate at sign-up or in Settings; use `/recover` if you forget your password. Existing accounts without codes behave exactly as before. |
 | 📦 **Workspace storage** | Desktop app splits large workspaces into monthly files for efficiency while keeping a full copy in the base file for downgrade safety. **Settings → Storage & cache** shows a per-area size breakdown (notes, tasks, teams, archives). |
 | 🛡️ **Data-integrity guard** | After every successful save, a per-device fingerprint records how much content you had. On the next boot, if the loaded file is meaningfully smaller, an amber banner spells out the before/after counts and links straight to *Backups & recovery* — so "my data vanished" is caught before you panic. |
 | 📡 **Optional LAN sync** | Token-protected **HTTPS** server inside Electron (off by default) with self-signed TLS (RSA 2048 / SHA-256), constant-time token compare, DNS-rebinding resistance, same-LAN CORS, ETag optimistic concurrency and payload-shape validation. The host also serves the PWA itself, so an iPhone can scan the QR code and open `https://<host-ip>:9787/` directly — no cloud round-trip. |
@@ -133,7 +134,8 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 **For users**
 
-- [User guide](docs/USER-GUIDE.md) — daily use, archive, backups, storage
+- [Health check & roadmap](docs/HEALTH-CHECK-AND-ROADMAP.md) — living scores, phased backlog, QA checklists
+- [User guide](docs/USER-GUIDE.md) — daily use, archive, backups, recovery codes, storage (also in-app at `/guide`)
 - [Why Cadence](#why-cadence)
 - [Screenshots](#screenshots)
 - [What's in the box](#whats-in-the-box)
@@ -405,6 +407,11 @@ The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts
 - **Restore** is one click and reports what you got back (e.g. `Loaded: 1 team, 5 tasks, 2 notes`). The current state is itself snapshotted as `pre-restore` first, so the operation is reversible.
 - **Auto-migrate on login** — if you log in and your per-user data file doesn't exist yet, but the legacy single-user file (`leeadman-data.json` from pre-accounts builds) does, Cadence imports it into your account automatically. No more "I updated and my old data is gone" surprise.
 - **Open data folder** — jumps Finder straight to `~/Library/Application Support/Cadence/` if you want to copy a backup to iCloud / a USB stick.
+- **Portable ZIP** — on every platform; one file with workspace JSON and embedded images. Best for moving to another account or device.
+- **Full backup folder** — desktop only; includes note version history alongside attachments.
+- **JSON only** — text and settings; no images (advanced). Legacy imports still supported.
+
+**Existing users:** recovery codes, ZIP backups, and note history are **optional add-ons**. Old JSON and folder backups import exactly as before; no forced migration.
 
 ### Storage & cache
 
@@ -1234,6 +1241,12 @@ Google retired the Gemini 1.x family from the `v1beta` endpoint in late 2025. Op
 | 1.38 | **To-do Markdown details** — optional `body` per task with the same editor + toolbar as Notes; **Add details** on create, 📝 toggle per row, search matches title + body, AI assistant reads/writes details |
 | 1.39 | **Data-loss prevention UX** — boot-time integrity banner (fingerprint vs loaded shape), enriched backup viewer (per-snapshot counts, archived-list / orphan-lock warnings, Reveal in Finder, restore confirmation), sidebar badges when tasks are hidden by archive, explicit "all lists archived" alarm on the To-dos page, orphan `notesLock` auto-cleanup on load |
 | 1.40 | **Note ↔ Todo cross-linking** — tasks created by the AI extractor from a specific note keep a `sourceNoteId` back-reference; ✨ *Extract tasks* on a note pre-fills the dialog with that note's body; each linked task shows a tap-able 📝 chip that deep-links to `/notes?focus=<id>`; the note surfaces a *"Tasks from this note"* backlinks panel that deep-links the other way to `/todos?focus=<id>`, with smooth-scroll + 1.6s focus flash (reduced-motion safe); orphaned references (note deleted) render as a muted non-interactive chip so backup-restore can re-attach them |
+| 1.41 | **Account recovery codes** — optional MetaMask-style 8 codes for local password reset; `/recover` flow; welcome tour + Settings; envelope only persisted after user confirms they saved codes; changing password clears old codes |
+| 1.42 | **Portable ZIP backup** — cross-platform export/import (`data.json` + plaintext attachment sidecars); platform-aware backup UI (desktop: folder + ZIP; web/mobile: ZIP primary); legacy JSON and folder backups unchanged |
+| 1.43 | **Note version history** (desktop) — automatic revision capture; browse/restore panel; included in full backup folder |
+| 1.44 | **Notes sidebar collapse** — hide list panel on desktop for full-width editing; preference persisted per account |
+| 1.45 | **In-app user guide** — `/guide` route; Settings, ⌘K, Welcome tour, and Electron Help menu links |
+| 1.46 | **Cross-account attachment import** — portable `.bin` sidecars in ZIP/folder backups; salvage path for same-machine JSON import |
 
 ### Tier 2 — next
 

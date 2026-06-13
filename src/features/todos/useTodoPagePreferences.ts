@@ -41,7 +41,7 @@ export function useTodoPagePreferences(userId: string) {
           fromStorage = parsed as Record<string, boolean>;
         }
       }
-      setSectionOpenMap((prev) => ({ ...fromStorage, ...prev }));
+      setSectionOpenMap(fromStorage);
       setShowArchived(localStorage.getItem(todoShowArchivedKey(userId)) === '1');
       const viewRaw = localStorage.getItem(todoItemViewKey(userId));
       setItemViewMode(viewRaw === 'archived' ? 'archived' : 'active');

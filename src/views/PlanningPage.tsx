@@ -83,7 +83,7 @@ export function PlanningPage() {
       const next: TodoStatus = isTodoOpen(item.status) ? 'done' : 'todo';
       setTodoStatus(itemId, next);
       if (next === 'done') {
-        updateTodoItem(itemId, { planFocusToday: false });
+        updateTodoItem(itemId, { planFocusToday: false, planInHub: false });
       }
     },
     [setTodoStatus, todoItems, updateTodoItem],
@@ -93,7 +93,7 @@ export function PlanningPage() {
     (itemId: string, status: TodoStatus) => {
       setTodoStatus(itemId, status);
       if (status === 'done' || status === 'cancelled') {
-        updateTodoItem(itemId, { planFocusToday: false });
+        updateTodoItem(itemId, { planFocusToday: false, planInHub: false });
       }
     },
     [setTodoStatus, updateTodoItem],

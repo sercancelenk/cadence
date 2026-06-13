@@ -173,6 +173,7 @@ export function ActivityReportPage() {
               key={opt.value}
               type="button"
               className={`seg__btn${source === opt.value ? ' seg__btn--on' : ''}`}
+              title={opt.label}
               onClick={() => {
                 setSource(opt.value);
                 if (opt.value === 'team') setPlanningHubOnly(false);
@@ -191,6 +192,7 @@ export function ActivityReportPage() {
                 key={opt.value}
                 type="button"
                 className={`seg__btn${preset === opt.value ? ' seg__btn--on' : ''}`}
+                title={opt.label}
                 onClick={() => selectPreset(opt.value)}
               >
                 {opt.label}

@@ -19,6 +19,26 @@ export function isMobileWeb(): boolean {
   return isMobileViewport() && !isElectronApp();
 }
 
+export type BackupPlatform = 'desktop' | 'web' | 'mobile';
+
+/** Which backup affordances the Settings screen should surface. */
+export function backupPlatform(): BackupPlatform {
+  if (isElectronApp()) return 'desktop';
+  if (isMobileWeb()) return 'mobile';
+  return 'web';
+}
+
+export function backupPlatformLabel(platform: BackupPlatform): string {
+  switch (platform) {
+    case 'desktop':
+      return 'Desktop app';
+    case 'mobile':
+      return 'Mobile browser';
+    default:
+      return 'Web browser';
+  }
+}
+
 export function useMobileWeb(): boolean {
   const [mobileWeb, setMobileWeb] = useState(isMobileWeb);
 

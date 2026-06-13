@@ -3,6 +3,7 @@ import type { Note } from '../../model';
 import type { AppData } from '../../model';
 import { NotesDialog } from './NotesDialog';
 import type { useNotesLock } from './useNotesLock';
+import { MIN_NOTES_PASSPHRASE_LENGTH } from './noteLockTypes';
 import {
   unlockDialogBody,
   unlockDialogButton,
@@ -87,9 +88,12 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
             setSetupErr(null);
           }}
           footer={
-            <button type="button" className="btn btn--primary" onClick={submitSetup} disabled={busy}>
-              {busy ? 'Saving…' : 'Save passphrase'}
-            </button>
+            <div className="notes-dialog__footer-actions">
+              {setupErr ? <p className="text-error notes-dialog__footer-error">{setupErr}</p> : null}
+              <button type="button" className="btn btn--primary" onClick={submitSetup} disabled={busy}>
+                {busy ? 'Saving…' : 'Save passphrase'}
+              </button>
+            </div>
           }
         >
           <p>
@@ -106,7 +110,11 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
               onChange={(e) => setSetupPw1(e.target.value)}
               autoFocus
               autoComplete="new-password"
+              minLength={MIN_NOTES_PASSPHRASE_LENGTH}
             />
+            <span className="muted small">
+              At least {MIN_NOTES_PASSPHRASE_LENGTH} characters — separate from your account login password.
+            </span>
           </label>
           <label className="field">
             <span>Confirm passphrase</span>
@@ -155,7 +163,6 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
               Without recovery: if you forget this passphrase, locked notes <strong>cannot be recovered</strong>.
             </p>
           )}
-          {setupErr ? <p className="text-error">{setupErr}</p> : null}
         </NotesDialog>
       ) : null}
 

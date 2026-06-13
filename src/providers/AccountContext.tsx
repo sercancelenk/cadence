@@ -11,6 +11,20 @@ import { flushPendingSaveGlobal } from '../lib/pendingSaveFlush';
 import { STORAGE_PREFIX } from '../lib/appBranding';
 import { primeRichTextAttachmentUserId, clearRichTextAttachmentUserIdCache } from '../lib/richTextAttachmentUser';
 import { pbkdf2HashPassword, pbkdf2VerifyPassword } from '../lib/passwordPbkdf2';
+import {
+  RECOVERY_CODE_COUNT,
+  generateRecoveryCodes,
+  isRecoveryEnvelope,
+  randomRecoveryProofSecret,
+  unwrapRecoverySecret,
+  wrapRecoverySecret,
+  type RecoveryEnvelope,
+} from '../lib/accountRecovery';
+import {
+  clearPendingRecoveryEnvelope,
+  readPendingRecoveryEnvelope,
+  stashPendingRecoveryEnvelope,
+} from '../lib/pendingRecoveryEnvelope';
 
 export type AccountUser = { id: string; email: string; displayName?: string };
 
@@ -34,14 +48,23 @@ type Ctx = {
     password: string;
     displayName: string;
     migrateLegacy?: boolean;
-  }) => Promise<{ ok: boolean; error?: string; warn?: string }>;
+  }) => Promise<{ ok: boolean; error?: string; warn?: string; recoveryCodes?: string[] }>;
   logout: () => Promise<void>;
   changePassword: (opts: {
     oldPassword: string;
     newPassword: string;
-  }) => Promise<{ ok: boolean; error?: string }>;
+  }) => Promise<{ ok: boolean; error?: string; recoveryInvalidated?: boolean }>;
   /** Verify the *current* account password without performing any state change. */
   verifyPassword: (password: string) => Promise<{ ok: boolean; error?: string }>;
+  recoverWithCodes: (opts: {
+    email: string;
+    codes: string[];
+    newPassword: string;
+  }) => Promise<{ ok: boolean; error?: string; needsRecoverySetup?: boolean }>;
+  setupRecovery: (password: string) => Promise<{ ok: boolean; error?: string; recoveryCodes?: string[] }>;
+  /** Persist recovery envelope after the user confirms they saved the codes. */
+  confirmRecoverySetup: () => Promise<{ ok: boolean; error?: string }>;
+  getRecoveryStatus: () => Promise<{ configured: boolean; configuredAt?: string }>;
   hasElectronAccounts: boolean;
   hasLegacyData: boolean;
   refreshLegacyHint: () => Promise<void>;
@@ -52,7 +75,13 @@ const AccountCtx = createContext<Ctx | null>(null);
 const DEV_ACCOUNTS_KEY = `${STORAGE_PREFIX}-browser-accounts`;
 const DEV_SESSION_KEY = `${STORAGE_PREFIX}-browser-session`;
 
-type StoredUser = AccountUser & { saltB64: string; hashB64: string; createdAt: string };
+type StoredUser = AccountUser & {
+  saltB64: string;
+  hashB64: string;
+  createdAt: string;
+  recoveryEnvelope?: RecoveryEnvelope;
+  recoveryConfiguredAt?: string;
+};
 
 function useElectronAccount(): boolean {
   return typeof window !== 'undefined' && !!window.cadence?.accountSession;
@@ -206,7 +235,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         if (r?.ok && r.user) {
           setUser(r.user);
           primeRichTextAttachmentUserId(r.user.id);
-          return { ok: true as const, warn: r.warn };
+          return { ok: true as const, warn: r.warn, recoveryCodes: r.recoveryCodes };
         }
         return { ok: false as const, error: r?.error ?? 'Sign-up failed.' };
       }
@@ -215,6 +244,18 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       if (users.some((u) => u.email === em)) return { ok: false as const, error: 'An account already exists for this email.' };
       const { saltB64, hashB64 } = await pbkdf2HashPassword(opts.password);
       const id = crypto.randomUUID();
+      let recoveryCodes: string[] | undefined;
+      let recoveryEnvelope: RecoveryEnvelope | undefined;
+      let recoveryConfiguredAt: string | undefined;
+      try {
+        const codes = generateRecoveryCodes();
+        const proof = randomRecoveryProofSecret();
+        recoveryEnvelope = await wrapRecoverySecret(proof, codes);
+        recoveryCodes = codes;
+        recoveryConfiguredAt = new Date().toISOString();
+      } catch {
+        /* recovery is best-effort; account creation must still succeed */
+      }
       const row: StoredUser = {
         id,
         email: em,
@@ -222,6 +263,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         saltB64,
         hashB64,
         createdAt: new Date().toISOString(),
+        recoveryEnvelope,
+        recoveryConfiguredAt,
       };
       try {
         writeDevAccounts([...users, row]);
@@ -246,7 +289,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       }
       setUser({ id, email: em, displayName: displayName || undefined });
       primeRichTextAttachmentUserId(id);
-      return { ok: true as const };
+      return { ok: true as const, recoveryCodes };
     },
     [],
   );
@@ -260,6 +303,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     }
     setUser(null);
     clearRichTextAttachmentUserIdCache();
+    clearPendingRecoveryEnvelope();
   }, []);
 
   const changePassword = useCallback(
@@ -272,7 +316,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       }
       if (window.cadence?.accountChangePassword) {
         const r = await window.cadence.accountChangePassword({ oldPassword, newPassword });
-        return r?.ok ? { ok: true as const } : { ok: false as const, error: r?.error ?? 'Could not change password.' };
+        return r?.ok
+          ? { ok: true as const, recoveryInvalidated: true }
+          : { ok: false as const, error: r?.error ?? 'Could not change password.' };
       }
       // Browser dev fallback: verify against stored PBKDF2 hash, then rotate.
       if (!user) return { ok: false as const, error: 'Not signed in.' };
@@ -282,12 +328,135 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       const ok = await pbkdf2VerifyPassword(oldPassword, u.saltB64, u.hashB64);
       if (!ok) return { ok: false as const, error: 'Current password is incorrect.' };
       const { saltB64, hashB64 } = await pbkdf2HashPassword(newPassword);
+      const hadRecovery = isRecoveryEnvelope(u.recoveryEnvelope);
       const next: StoredUser = { ...u, saltB64, hashB64 };
+      delete next.recoveryEnvelope;
+      delete next.recoveryConfiguredAt;
       writeDevAccounts(users.map((x) => (x.id === u.id ? next : x)));
-      return { ok: true as const };
+      return { ok: true as const, recoveryInvalidated: hadRecovery };
     },
     [user],
   );
+
+  const recoverWithCodes = useCallback(
+    async ({ email, codes, newPassword }: { email: string; codes: string[]; newPassword: string }) => {
+      const em = email.trim().toLowerCase();
+      if (!em.includes('@')) return { ok: false as const, error: 'Please enter a valid email.' };
+      if (!Array.isArray(codes) || codes.length !== RECOVERY_CODE_COUNT) {
+        return { ok: false as const, error: `Enter all ${RECOVERY_CODE_COUNT} recovery codes.` };
+      }
+      const normalized = codes.map((c) => c.trim()).filter(Boolean);
+      if (normalized.length !== RECOVERY_CODE_COUNT) {
+        return { ok: false as const, error: 'Each recovery code field must be filled in.' };
+      }
+      if (typeof newPassword !== 'string' || newPassword.length < 8) {
+        return { ok: false as const, error: 'New password must be at least 8 characters.' };
+      }
+
+      if (window.cadence?.accountRecoverWithCodes) {
+        const r = await window.cadence.accountRecoverWithCodes({ email: em, codes, newPassword });
+        if (r?.ok && r.user) {
+          setUser(r.user);
+          primeRichTextAttachmentUserId(r.user.id);
+          return { ok: true as const, needsRecoverySetup: r.needsRecoverySetup };
+        }
+        return { ok: false as const, error: r?.error ?? 'Recovery failed.' };
+      }
+
+      const { users } = await readDevAccounts();
+      const u = users.find((x) => x.email === em);
+      if (!u || !isRecoveryEnvelope(u.recoveryEnvelope)) {
+        return { ok: false as const, error: 'Recovery is not available for this account on this device.' };
+      }
+      const proof = await unwrapRecoverySecret(u.recoveryEnvelope, codes);
+      if (!proof) return { ok: false as const, error: 'Recovery codes are incorrect.' };
+
+      const { saltB64, hashB64 } = await pbkdf2HashPassword(newPassword);
+      const next: StoredUser = { ...u, saltB64, hashB64 };
+      delete next.recoveryEnvelope;
+      delete next.recoveryConfiguredAt;
+      writeDevAccounts(users.map((x) => (x.id === u.id ? next : x)));
+      writeDevSession(u.id);
+      setUser({ id: u.id, email: u.email, displayName: u.displayName });
+      primeRichTextAttachmentUserId(u.id);
+      return { ok: true as const, needsRecoverySetup: true };
+    },
+    [],
+  );
+
+  const setupRecovery = useCallback(
+    async (password: string) => {
+      if (typeof password !== 'string' || !password) {
+        return { ok: false as const, error: 'Account password is required.' };
+      }
+      if (window.cadence?.accountSetupRecovery) {
+        const r = await window.cadence.accountSetupRecovery({ password });
+        return r?.ok && r.recoveryCodes
+          ? { ok: true as const, recoveryCodes: r.recoveryCodes }
+          : { ok: false as const, error: r?.error ?? 'Could not create recovery codes.' };
+      }
+      if (!user) return { ok: false as const, error: 'Not signed in.' };
+      const { users } = await readDevAccounts();
+      const u = users.find((x) => x.id === user.id);
+      if (!u) return { ok: false as const, error: 'Account not found.' };
+      const ok = await pbkdf2VerifyPassword(password, u.saltB64, u.hashB64);
+      if (!ok) return { ok: false as const, error: 'Incorrect account password.' };
+      try {
+        const codes = generateRecoveryCodes();
+        const proof = randomRecoveryProofSecret();
+        const envelope = await wrapRecoverySecret(proof, codes);
+        stashPendingRecoveryEnvelope(envelope);
+        return { ok: true as const, recoveryCodes: codes };
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : 'Could not create recovery codes.',
+        };
+      }
+    },
+    [user],
+  );
+
+  const confirmRecoverySetup = useCallback(async () => {
+    if (window.cadence?.accountConfirmRecoverySetup) {
+      const r = await window.cadence.accountConfirmRecoverySetup();
+      return r?.ok ? { ok: true as const } : { ok: false as const, error: r?.error ?? 'Could not save recovery codes.' };
+    }
+    if (!user) return { ok: false as const, error: 'Not signed in.' };
+    const envelope = readPendingRecoveryEnvelope();
+    if (!envelope) {
+      return { ok: false as const, error: 'No pending recovery setup. Generate codes again.' };
+    }
+    const { users } = await readDevAccounts();
+    const u = users.find((x) => x.id === user.id);
+    if (!u) return { ok: false as const, error: 'Account not found.' };
+    const next: StoredUser = {
+      ...u,
+      recoveryEnvelope: envelope,
+      recoveryConfiguredAt: new Date().toISOString(),
+    };
+    writeDevAccounts(users.map((x) => (x.id === u.id ? next : x)));
+    clearPendingRecoveryEnvelope();
+    return { ok: true as const };
+  }, [user]);
+
+  const getRecoveryStatus = useCallback(async () => {
+    if (window.cadence?.accountGetRecoveryStatus) {
+      const r = await window.cadence.accountGetRecoveryStatus();
+      return {
+        configured: !!r?.configured,
+        configuredAt: typeof r?.configuredAt === 'string' ? r.configuredAt : undefined,
+      };
+    }
+    if (!user) return { configured: false };
+    const { users } = await readDevAccounts();
+    const u = users.find((x) => x.id === user.id);
+    if (!u) return { configured: false };
+    return {
+      configured: isRecoveryEnvelope(u.recoveryEnvelope),
+      configuredAt: u.recoveryConfiguredAt,
+    };
+  }, [user]);
 
   const verifyPassword = useCallback(
     async (password: string) => {
@@ -332,11 +501,15 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       logout,
       changePassword,
       verifyPassword,
+      recoverWithCodes,
+      setupRecovery,
+      confirmRecoverySetup,
+      getRecoveryStatus,
       hasElectronAccounts: electron,
       hasLegacyData,
       refreshLegacyHint,
     }),
-    [user, loading, pendingReauth, clearPendingReauth, refresh, login, register, logout, changePassword, verifyPassword, electron, hasLegacyData, refreshLegacyHint],
+    [user, loading, pendingReauth, clearPendingReauth, refresh, login, register, logout, changePassword, verifyPassword, recoverWithCodes, setupRecovery, confirmRecoverySetup, getRecoveryStatus, electron, hasLegacyData, refreshLegacyHint],
   );
 
   return <AccountCtx.Provider value={v}>{children}</AccountCtx.Provider>;

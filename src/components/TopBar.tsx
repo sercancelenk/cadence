@@ -29,6 +29,8 @@ function breadcrumbFromPath(data: AppData, pathname: string): string {
   if (pathname === '/todos') return 'To-dos';
   if (pathname === '/agenda') return 'Agenda';
   if (pathname === '/planning') return 'Planning';
+  if (pathname === '/notes') return 'Notes';
+  if (pathname === '/guide') return 'User guide';
   if (pathname === '/analytics') return 'Analytics';
   if (pathname === '/analytics/activity') return 'Analytics · Activity';
   if (pathname === '/profile') return 'Profile';
@@ -81,6 +83,11 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
   const profile = topBarData.profile;
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDetailsElement>(null);
+
+  const closeProfileMenu = () => {
+    profileMenuRef.current?.removeAttribute('open');
+  };
 
   const teamsSorted = useMemo(
     () => sortedTeams({ teams: topBarData.teams, profile: topBarData.profile } as AppData),
@@ -97,6 +104,10 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [teamMenuOpen]);
+
+  useEffect(() => {
+    profileMenuRef.current?.removeAttribute('open');
+  }, [location.pathname]);
 
   const initials = profile.displayName.trim().slice(0, 2).toUpperCase() || 'ME';
   const crumb = breadcrumb;
@@ -120,6 +131,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
           className="icon-btn topbar__menu-btn"
           aria-expanded={!navCollapsed}
           aria-label="Toggle sidebar"
+          title="Toggle sidebar"
           onClick={onToggleNav}
         >
           <IcMenu size={20} />
@@ -147,6 +159,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
             }
           }}
           aria-label="Search across notes, teams, people, items and to-dos"
+          title="Search across notes, teams, people, items and to-dos"
         >
           <IcSearch size={16} />
           <span className="topbar__search-text">Search teams, notes, tasks…</span>
@@ -157,6 +170,8 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
             type="button"
             className="team-switcher__trigger"
             aria-expanded={teamMenuOpen}
+            aria-label={currentTeam ? `Current team: ${currentTeam.name}` : 'Select a team'}
+            title={currentTeam ? `Current team: ${currentTeam.name}` : 'Select a team'}
             onClick={() => setTeamMenuOpen((o) => !o)}
           >
             {currentTeam ? (
@@ -176,6 +191,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
                   <button
                     type="button"
                     className="team-switcher__row-main"
+                    title={`Open ${t.name}`}
                     onClick={() => {
                       rememberTeam(t.id);
                       navigate(teamBase(t.id));
@@ -199,7 +215,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
                   </button>
                 </div>
               ))}
-              <Link to={PATH_TEAMS} className="team-switcher__foot" onClick={() => setTeamMenuOpen(false)}>
+              <Link to={PATH_TEAMS} className="team-switcher__foot" title="Manage teams" onClick={() => setTeamMenuOpen(false)}>
                 <IcArrowRight size={14} />
                 Manage teams
               </Link>
@@ -212,6 +228,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
             value={currentTeam.status ?? 'active'}
             onChange={(e) => updateTeam(currentTeam.id, { status: e.target.value as TeamStatus })}
             aria-label="Team status"
+            title="Team status"
           >
             {TEAM_STATUS_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -226,8 +243,8 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
         <button type="button" className="icon-btn" title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={toggle}>
           {theme === 'dark' ? <IcSun size={20} /> : <IcMoon size={20} />}
         </button>
-        <details className="profile-menu">
-          <summary className="profile-menu__trigger">
+        <details className="profile-menu" ref={profileMenuRef}>
+          <summary className="profile-menu__trigger" title="Account menu">
             {profile.avatarDataUrl ? (
               <img
                 src={profile.avatarDataUrl}
@@ -244,11 +261,11 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
           <div className="profile-menu__panel">
             <div className="profile-menu__head">{profile.displayName}</div>
             {user?.email ? <div className="muted small profile-menu__email">{user.email}</div> : null}
-            <NavLink to="/profile" className="profile-menu__link">
+            <NavLink to="/profile" className="profile-menu__link" onClick={closeProfileMenu}>
               <IcUser size={16} />
               Profile
             </NavLink>
-            <NavLink to="/settings" className="profile-menu__link">
+            <NavLink to="/settings" className="profile-menu__link" onClick={closeProfileMenu}>
               <IcSettings size={16} />
               All settings
             </NavLink>
@@ -256,6 +273,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
               type="button"
               className="profile-menu__link profile-menu__link--danger"
               onClick={async () => {
+                closeProfileMenu();
                 // CRITICAL data-loss guard: there may be a debounced save
                 // pending for the CURRENT user. If we logout first, the
                 // session is cleared, and the in-flight save either
@@ -277,7 +295,14 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
               Sign out
             </button>
             {pinEnabled ? (
-              <button type="button" className="profile-menu__link profile-menu__link--muted" onClick={() => lockSession()}>
+              <button
+                type="button"
+                className="profile-menu__link profile-menu__link--muted"
+                onClick={() => {
+                  closeProfileMenu();
+                  lockSession();
+                }}
+              >
                 <IcLock size={16} />
                 Lock session (PIN)
               </button>

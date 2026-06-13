@@ -10,4 +10,7 @@
  */
 export type PendingIntent = 'lock' | 'unlock-selected' | 'disable-locking' | 'view';
 
+/** Minimum Notes passphrase length (workspace-wide lock, separate from account password). */
+export const MIN_NOTES_PASSPHRASE_LENGTH = 6;
+
 export const FORCE_RESET_PHRASE = 'DELETE LOCKED NOTES';

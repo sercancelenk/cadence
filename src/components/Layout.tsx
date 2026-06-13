@@ -77,6 +77,7 @@ export function Layout() {
           <button
             type="button"
             aria-label="Close navigation"
+            title="Close navigation"
             className="app-shell__backdrop"
             onClick={() => setNavCollapsed(true)}
           />
@@ -137,7 +138,7 @@ function DataIntegrityBanner() {
         <button
           type="button"
           className="data-integrity-banner__btn data-integrity-banner__btn--primary"
-          onClick={() => navigate(`${PATH_SETTINGS}${electron ? '#backups' : '#backup'}`)}
+          onClick={() => navigate(`${PATH_SETTINGS}#backups`)}
         >
           {electron ? 'Open Backups' : 'Export backup'}
         </button>
@@ -183,7 +184,7 @@ function SaveErrorBanner() {
         <button
           type="button"
           className="save-error-banner__btn save-error-banner__btn--primary"
-          onClick={() => navigate(`${PATH_SETTINGS}${electron ? '#backups' : '#backup'}`)}
+          onClick={() => navigate(`${PATH_SETTINGS}#backups`)}
         >
           {electron ? 'Open Backups' : 'Export backup'}
         </button>

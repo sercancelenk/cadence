@@ -10,6 +10,7 @@ import {
   PATH_NOTES,
   PATH_PLANNING,
   PATH_PROFILE,
+  PATH_GUIDE,
   PATH_SETTINGS,
   PATH_TEAMS,
   PATH_TODOS,
@@ -27,6 +28,7 @@ import {
   IcChartBar,
   IcFileText,
   IcFolder,
+  IcHelpCircle,
   IcHome,
   IcListTodo,
   IcLock,
@@ -39,7 +41,7 @@ import {
 
 type Command = {
   id: string;
-  group: 'Navigate' | 'Teams' | 'People' | 'Items' | 'To-dos' | 'Notes';
+  group: 'Navigate' | 'Teams' | 'People' | 'Items' | 'To-dos' | 'Notes' | 'Help';
   label: string;
   hint?: string;
   /**
@@ -336,6 +338,14 @@ function buildCommands(
       label: 'Go to Settings',
       icon: <IcSettings size={16} />,
       run: () => navigate(PATH_SETTINGS),
+    },
+    {
+      id: 'nav-guide',
+      group: 'Help',
+      label: 'Open user guide',
+      hint: 'Backups, recovery codes, daily workflow',
+      icon: <IcHelpCircle size={16} />,
+      run: () => navigate(PATH_GUIDE),
     },
   ];
 

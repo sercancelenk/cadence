@@ -109,6 +109,7 @@ export function HomeTeams() {
                       value={team.status ?? 'active'}
                       onChange={(e) => updateTeam(team.id, { status: e.target.value as TeamStatus })}
                       aria-label={`${team.name} status`}
+                      title={`${team.name} status`}
                     >
                       {TEAM_STATUS_OPTIONS.map((o) => (
                         <option key={o.value} value={o.value}>

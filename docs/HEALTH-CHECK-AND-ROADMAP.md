@@ -1,7 +1,7 @@
 # Cadence — Health Check & Product Roadmap
 
-**Document version:** 1.9  
-**Date:** 2026-06-04  
+**Document version:** 2.1  
+**Date:** 2026-06-13  
 **App version reviewed:** `0.2.0`  
 **Scope:** Static architecture review, data/security audit, test & CI assessment, mobile/PWA UX gap analysis, production-hardening verification  
 **Status:** Living document — update after each major release or quarterly review
@@ -23,8 +23,8 @@ The main gaps are not in the core desktop data path — they are in **sustainabi
 | Data reliability | **9.5 / 10** | Atomic writes, fsync refusal, quit flush, generation envelope, rolling snapshots — production-grade |
 | Security (desktop) | **8.5 / 10** | contextIsolation + CSP + IPC whitelist + **sandbox enabled**; policy guard on sensitive IPC |
 | Architecture clarity | **8.0 / 10** | Layered core + providers; todos + notes feature modules; selector migration started |
-| Test & CI | **7.5 / 10** | 866 unit tests; Playwright smoke; electron persistence tests added |
-| Documentation | **9.5 / 10** | README + operator docs + LAN companion guide |
+| Test & CI | **8.0 / 10** | 1089+ unit tests; account recovery + backup bundle tests added |
+| Documentation | **9.5 / 10** | README + operator docs + in-app user guide (`/guide`) |
 | Mobile / PWA UX | **6.0 / 10** | Works; not yet a curated lite experience |
 | Maintainability | **8.0 / 10** | Todos + Notes slimmed; Settings + main.cjs still oversized |
 | **Composite** | **8.5 / 10** | **Ship-ready for personal desktop + phone companion via LAN** |
@@ -177,6 +177,11 @@ Reference implementations in:
 | **Utilities** | Sidebar **Utilities** section; **Document** scratch pad; **JSON / YAML** editor with Edit/Diff, folding, format/validate, JSON compact/stringify |
 | **Production hardening (Phase F)** | fsync refusal; before-quit renderer flush; sandbox; CDNC1 envelope; IPC policy guard; crash reporting init; `usePersistStatus` / selector migration (Notes, Todos, shell); `STORAGE_PREFIX` fix; manual smoke: restart persist + backup restore **verified 2026-06-04** |
 | **LAN sync docs** | [docs/LAN-SYNC.md](./LAN-SYNC.md) — single-user companion workflow |
+| **Account recovery codes** | Optional `recoveryEnvelope`; MetaMask-style 8 codes; `/recover` password reset; confirm-before-persist on regenerate |
+| **Portable ZIP backup** | Cross-platform `data.json` + `attachments/*.bin`; desktop folder backup unchanged; legacy JSON import preserved |
+| **Note version history** | Desktop `note-history/` in full backup; revision panel in Notes |
+| **Notes sidebar collapse** | Desktop list panel hide/show; mobile drill-down unchanged |
+| **In-app user guide** | `/guide` renders `docs/USER-GUIDE.md`; Settings, ⌘K, Welcome tour, Electron Help menu |
 
 *Not done yet — still on the roadmap below.*
 
@@ -397,6 +402,9 @@ Prioritized by **risk reduction × user impact × effort**. Each item has an ID 
 | **C6** | Manual note ↔ todo linking | README post-MVP 4.7 | M |
 | **C7** | Cross-link integrity on delete | README 4.9 | S |
 | **C8** | **Utilities: JSON / YAML editor** — **Done** (Edit/Diff, folding, format/validate, JSON compact/stringify) | Product | M |
+| **C9** | **Account recovery codes** (local-first password reset) | Product | M | **Done 2.0** |
+| **C10** | **Portable ZIP backup** (cross-platform images) | Product | M | **Done 2.0** |
+| **C11** | **Note version history** (desktop) | Product | L | **Done 2.0** |
 
 These are **product** bets, not health fixes. Schedule after Phase A unless user demand says otherwise.
 
@@ -550,7 +558,8 @@ Use this doc as the agenda. Recommended order:
 | Utilities | `src/views/UtilitiesDocumentPage.tsx`, `src/views/UtilitiesStructuredPage.tsx`, `PATH_UTILITIES_*` in `src/lib/routes.ts`, `src/lib/structuredText.ts` |
 | Settings surface | `src/views/Settings.tsx` |
 | CI | `.github/workflows/ci.yml`, `.github/workflows/release.yml` |
-| Operator docs | `README.md`, `docs/DEPLOYMENT-AND-POLICY.md`, `docs/ENTERPRISE.md`, `docs/LAN-SYNC.md` |
+| Operator docs | `README.md`, `docs/USER-GUIDE.md`, `docs/DEPLOYMENT-AND-POLICY.md`, `docs/ENTERPRISE.md`, `docs/LAN-SYNC.md` |
+| In-app guide | `src/views/UserGuidePage.tsx`, route `/guide` |
 | Import safety guide | `README.md` § "Importing a big batch of notes (or todos) safely" |
 
 ---
@@ -559,6 +568,7 @@ Use this doc as the agenda. Recommended order:
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
+| 2.1 | 2026-06-13 | Recovery + backup release | Account recovery codes; portable ZIP backup; note version history; notes sidebar collapse; in-app user guide; confirm-before-persist recovery; backward-compat guarantees documented |
 | 2.0 | 2026-06-10 | v0.3.0 release prep | Phase **M** mobile companion polish (post-0.3.0); PWA product definition locked; mobile UX table updated; A1 includes Planning; release cadence → 0.3.x |
 | 1.9 | 2026-06-04 | Production release prep | Phase F production hardening (verified smoke QA); Phase G LAN polish backlog; [LAN-SYNC.md](./LAN-SYNC.md); scores 8.5 composite; sandbox done; 866 tests |
 | 1.8 | 2026-05-31 | Production hardening | E1 auto-sync guard; Phase A1–A6 (mobile UX, E2E, actions tests, coverage CI); person-delete reminder cancel |

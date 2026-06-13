@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { IcLogIn } from '../components/icons';
+import { AuthLocalFirstNotice } from '../components/AuthLocalFirstNotice';
 import { Button } from '../components/ui/Button';
 import { useAccount } from '../AccountContext';
 
@@ -39,7 +40,7 @@ export function LoginPage() {
     <div className="auth-screen">
       <div className="auth-card auth-card--wide">
         <h1 className="auth-card__title">Sign in</h1>
-        <p className="muted">Your data is stored locally on this device, in a file tied to your account.</p>
+        <AuthLocalFirstNotice variant="login" />
         {pendingReauth ? (
           <div className="auth-banner" role="status" aria-live="polite">
             Welcome back{pendingReauth.displayName ? `, ${pendingReauth.displayName}` : ''}. Your
@@ -103,6 +104,8 @@ export function LoginPage() {
         </form>
         <p className="muted small" style={{ marginTop: 16 }}>
           Don&apos;t have an account? <Link to="/register">Create one</Link>
+          {' · '}
+          <Link to="/recover">Recover with codes</Link>
         </p>
       </div>
     </div>

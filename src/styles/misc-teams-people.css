@@ -1,0 +1,1046 @@
+/* ============================================================
+   Markdown editor + prose
+   ============================================================ */
+.md-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.md-editor__tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.md-editor__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.md-editor__tab:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--text);
+}
+
+.md-editor__tab--active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--text);
+}
+
+.md-editor__hint {
+  margin-left: auto;
+  font-style: italic;
+}
+
+/* Markdown formatting toolbar (Bold/Italic/Heading/etc.). Sits between
+   the tab strip and the textarea, only visible in edit mode.
+   Designed to wrap on small screens — each button is a self-contained
+   32×30 pill so reflow doesn't make adjacent groups visually merge. */
+.md-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.md-toolbar__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 7px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.md-toolbar__btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.md-toolbar__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.md-toolbar__btn[aria-expanded='true'] {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text);
+}
+
+.md-toolbar__divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+.md-toolbar__lbl {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.md-toolbar__lbl--bold {
+  font-weight: 800;
+}
+
+.md-toolbar__lbl--italic {
+  font-style: italic;
+}
+
+.md-toolbar__lbl--strike {
+  text-decoration: line-through;
+}
+
+.md-toolbar__lbl--h1 { font-size: 14px; font-weight: 800; }
+.md-toolbar__lbl--h2 { font-size: 13px; font-weight: 800; }
+.md-toolbar__lbl--h3 { font-size: 12px; font-weight: 800; }
+
+.md-toolbar__icon-ul { font-size: 18px; line-height: 1; }
+.md-toolbar__icon-code,
+.md-toolbar__icon-codeblock { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+
+/* Heading dropdown — anchored to the parent toolbar button.
+   We rely on the parent .md-toolbar__menu's position:relative so this
+   menu stays glued to its trigger when the toolbar wraps. */
+.md-toolbar__menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.md-toolbar__menu-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 5;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.md-toolbar__menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.md-toolbar__menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.md-editor__textarea {
+  font-family: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.md-editor__preview {
+  min-height: 120px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.md-editor__empty {
+  padding: 14px 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  margin: 0;
+}
+
+.md-prose {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: inherit;
+}
+
+.md-prose > :first-child { margin-top: 0; }
+.md-prose > :last-child  { margin-bottom: 0; }
+
+.md-prose h1,
+.md-prose h2,
+.md-prose h3,
+.md-prose h4 {
+  margin: 1.3em 0 0.5em;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.md-prose h1 { font-size: 1.4em; }
+.md-prose h2 { font-size: 1.2em; }
+.md-prose h3 { font-size: 1.05em; }
+.md-prose h4 { font-size: 1em; color: var(--muted); }
+
+.md-prose p {
+  margin: 0.6em 0;
+}
+
+.md-prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-prose ul,
+.md-prose ol {
+  padding-left: 1.4em;
+  margin: 0.5em 0;
+}
+
+.md-prose li {
+  margin: 0.25em 0;
+}
+
+.md-prose li > input[type='checkbox'] {
+  margin-right: 6px;
+  transform: translateY(1px);
+}
+
+.md-prose blockquote {
+  margin: 0.6em 0;
+  padding: 0.3em 0.9em;
+  border-left: 3px solid var(--accent-soft);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+}
+
+.md-prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--surface-hover);
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+
+.md-prose pre {
+  margin: 0.7em 0;
+  padding: 12px 14px;
+  background: var(--surface-hover);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.md-prose pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.md-prose table {
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  width: 100%;
+  font-size: 0.95em;
+}
+
+.md-prose th,
+.md-prose td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.md-prose th {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+}
+
+.md-prose hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1em 0;
+}
+
+[data-theme='light'] .md-prose code {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme='light'] .md-prose pre {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text);
+}
+
+.list__body-preview {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+[data-theme='light'] .list__body-preview {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/* ============================================================
+   Tabs (person workspace)
+   ============================================================ */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 14px;
+  padding-bottom: 1px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs__tab {
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 8px 14px;
+  cursor: pointer;
+  position: relative;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.tabs__tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tabs__tab--active {
+  color: var(--text);
+}
+
+.tabs__tab--active::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+/* ============================================================
+   Person timeline
+   ============================================================ */
+.timeline {
+  position: relative;
+  margin-top: 12px;
+  padding-left: 22px;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.timeline__group {
+  margin-bottom: 28px;
+}
+
+.timeline__date {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 10px -22px;
+  padding-left: 22px;
+}
+
+.timeline__entry {
+  position: relative;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.timeline__entry::before {
+  content: '';
+  position: absolute;
+  left: -19px;
+  top: 16px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 2px solid var(--accent);
+}
+
+.timeline__entry[data-kind='feedback']::before { border-color: #fbbf24; }
+.timeline__entry[data-kind='goal']::before     { border-color: var(--ok); }
+.timeline__entry[data-kind='task']::before     { border-color: var(--accent); }
+.timeline__entry[data-kind='note']::before     { border-color: var(--muted); }
+.timeline__entry[data-kind='document']::before { border-color: #a78bfa; }
+.timeline__entry[data-kind='meeting']::before  { border-color: #f472b6; }
+
+.timeline__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.timeline__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.timeline__meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.timeline__body {
+  margin-top: 8px;
+}
+
+.timeline__filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.timeline__filter {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.timeline__filter--active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--text);
+}
+
+.timeline__empty {
+  padding: 28px 18px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+/* ============================================================
+   Command palette (⌘K)
+   ============================================================ */
+.cmdp {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 200;
+}
+
+.cmdp__panel {
+  width: min(620px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.cmdp__input-wrap {
+  position: relative;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmdp__input {
+  width: 100%;
+  font: inherit;
+  font-size: 15px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  outline: none;
+}
+
+.cmdp__kbd {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.cmdp__results {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  padding: 6px 0;
+}
+
+.cmdp__group {
+  padding: 6px 0;
+}
+
+.cmdp__group-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 4px 16px;
+}
+
+.cmdp__row {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 16px;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.cmdp__row:hover,
+.cmdp__row--active {
+  background: var(--accent-soft);
+}
+
+.cmdp__icon {
+  display: inline-flex;
+  color: var(--muted);
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+/* Main content column inside a row: stacks the label/hint line and an
+   optional snippet underneath. `min-width: 0` is critical for the inner
+   ellipsis to actually kick in (flex children default to min-content). */
+.cmdp__main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cmdp__line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cmdp__label {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.cmdp__hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* One-line excerpt of where the match was found in a note/item body.
+   We render it as muted, italicised text so it visually subordinates
+   to the label but still earns its place when title alone wasn't the
+   reason the row matched. */
+.cmdp__snippet {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+/* Highlight pill for matched terms. <mark> defaults to a yellow page
+   background which clashes with the dark palette; recolour to a calm
+   accent-tinted chip that works in both themes. */
+.cmdp__mark {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.cmdp__empty {
+  padding: 20px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.cmdp__footer {
+  border-top: 1px solid var(--border);
+  padding: 8px 16px;
+  display: flex;
+  gap: 18px;
+  font-size: 11.5px;
+}
+
+/* ============================================================
+   To-do lists — toolbar, pin, archive, counts
+   ============================================================ */
+.todos-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px;
+}
+
+.todos-toolbar__view-seg {
+  align-self: flex-start;
+}
+
+.todos-toolbar__view-badge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.todos-row--archived-item {
+  opacity: 0.88;
+}
+
+.todos-row--archived-item .todos-row__title {
+  color: color-mix(in srgb, var(--text) 78%, var(--muted));
+}
+
+/* Top row of the toolbar: a focused search field on the left, the
+ * Filters disclosure (and the AI Extract button when enabled) anchored
+ * to the right. Wraps gracefully on narrow widths. */
+.todos-toolbar__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.todos-toolbar__search-wrap {
+  position: relative;
+  flex: 1 1 240px;
+  min-width: 200px;
+  display: flex;
+  align-items: center;
+}
+
+.todos-toolbar__search-ic {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--tp-muted);
+  pointer-events: none;
+  display: inline-flex;
+}
+
+.todos-toolbar__search {
+  width: 100%;
+  padding: 8px 36px 8px 32px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--tp-divider);
+  background: var(--tp-input-bg);
+  color: var(--tp-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.todos-toolbar__search::-webkit-search-cancel-button {
+  /* Native cancel decoration conflicts with our own clear button. */
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.todos-toolbar__search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--tp-muted);
+  cursor: pointer;
+}
+
+.todos-toolbar__search-clear:hover {
+  background: color-mix(in srgb, var(--tp-muted) 18%, transparent);
+  color: var(--tp-text);
+}
+
+.todos-toolbar__row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.todos-toolbar__filters-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--tp-divider);
+  background: var(--tp-input-bg);
+  color: var(--tp-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.todos-toolbar__filters-btn:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--tp-divider));
+  background: var(--accent-soft);
+}
+
+.todos-toolbar__filters-btn--open {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--tp-divider));
+  color: var(--accent-2);
+}
+
+.todos-toolbar__filters-btn--active:not(.todos-toolbar__filters-btn--open) {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--tp-divider));
+  color: var(--accent-2);
+}
+
+.todos-toolbar__filters-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Filter panel revealed by the disclosure. Lives BELOW the search row
+ * so the controls never compete with the primary input for attention.
+ * Each control keeps the look of the original toolbar — labels above
+ * compact selects — but they're now grouped behind a single affordance. */
+.todos-toolbar__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--tp-divider);
+}
+
+.todos-toolbar__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.todos-toolbar__filter select.input {
+  height: 32px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+.todos-toolbar__filters-reset {
+  margin-left: auto;
+  padding: 6px 10px;
+  border: 1px dashed var(--tp-divider);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--tp-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.todos-toolbar__filters-reset:hover {
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 50%, transparent);
+  background: var(--accent-soft);
+}
+
+.todos-toolbar__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.todos-section--pinned {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.todos-section--pinned .todos-section__pin {
+  color: var(--accent);
+}
+
+.todos-section--archived {
+  /* Avoid `opacity` here — it creates a new stacking context, which
+   * trapped the section's <details> menu (z-index: 20) inside the card
+   * and let the next archived list paint on top of the menu panel.
+   * Dim by colour/border tone instead so the popover stays on top. */
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--muted);
+}
+
+.todos-section--archived .todos-section__title,
+.todos-section--archived .todos-row,
+.todos-section--archived .todos-section__counts {
+  color: var(--muted);
+}
+
+/* Elevate the whole section while its <details> menu is open so the
+ * absolutely-positioned panel (z-index: 20 within this section) always
+ * paints above the next list, regardless of whether the neighbouring
+ * sections create their own stacking contexts. */
+.todos-section:has(.todos-section__menu[open]) {
+  position: relative;
+  z-index: 30;
+}
+
+.todos-section__pin {
+  background: transparent;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.todos-section__pin:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.todos-section__pin--on {
+  color: var(--accent) !important;
+}
+
+.todos-section__pin--on svg {
+  fill: currentColor;
+}
+
+.todos-section__counts {
+  margin-left: auto;
+  margin-right: 8px;
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.todos-section__menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.todos-section__menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* ============================================================
+   Mobile (PWA) — phone-friendly tweaks
+   Most of the desktop layout already collapses gracefully, but the
+   TodosPage is the primary mobile surface so we tighten it further.
+   ============================================================ */
+@media (max-width: 640px) {
+  body {
+    /* honour iOS safe-area when installed as PWA */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  .page {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .page-head h1 {
+    font-size: 22px;
+  }
+
+  /* Buttons / inputs: ensure 44px tap targets on touch screens */
+  .btn,
+  .input,
+  .select,
+  .todos-row__check,
+  .todos-section__toggle,
+  .todos-section__pin,
+  .todos-section__add,
+  .todos-section__menu-btn {
+    min-height: 40px;
+  }
+
+  /* Toolbar: search above filter on small screens */
+  .todos-toolbar {
+    gap: 8px;
+  }
+  .todos-toolbar__search {
+    width: 100%;
+  }
+
+  /* List section head wraps neatly */
+  .todos-section__head {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+  }
+  .todos-section__title {
+    flex: 1 1 60%;
+    min-width: 0;
+    font-size: 15px;
+  }
+  .todos-section__counts {
+    margin-left: 4px;
+    font-size: 11.5px;
+  }
+
+  /* Row layout becomes single-column with toolbar wrapping under meta */
+  .todos-row__topline {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+  .todos-row__title,
+  .todos-row__title-input {
+    font-size: 15px;
+  }
+  .todos-row__tag {
+    font-size: 11px;
+  }
+  .todos-row__sub {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+  .todos-row__toolbar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .todos-row__date {
+    flex: 1 1 130px;
+    min-width: 120px;
+  }
+  .todos-row__move {
+    flex: 1 1 120px;
+  }
+
+  /* Command palette: full screen on phones */
+  .cmdp {
+    padding-top: 0;
+    align-items: stretch;
+  }
+  .cmdp__panel {
+    width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  /* Sidebar collapses to overlay (existing layout already supports it),
+     but ensure topbar fits and breadcrumbs scroll */
+  .topbar {
+    overflow-x: auto;
+  }
+
+  /* Hide the markdown "Supports markdown — checklists…" hint on tight screens */
+  .md-editor__hint {
+    display: none;
+  }
+}

@@ -688,12 +688,14 @@ describe('todo items', () => {
 });
 
 describe('notes and utilities', () => {
-  it('addNote prepends blank note with caller id', () => {
+  it('addNote prepends blank note with caller id and no default list', () => {
     const base = emptyData();
     const next = addNote(base, 'n-1');
     const note = next.notes.find((n) => n.id === 'n-1');
     expect(note?.title).toBe('');
     expect(note?.locked).toBe(false);
+    expect(note?.groupId).toBeUndefined();
+    expect(next.noteGroups).toHaveLength(0);
     expect(next.notes[0]?.id).toBe('n-1');
   });
 

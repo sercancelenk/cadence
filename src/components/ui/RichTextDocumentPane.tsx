@@ -82,6 +82,7 @@ export function RichTextDocumentPane({
               className={`rich-doc-pane__mode-tab${!editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
               role="tab"
               aria-selected={!editing}
+              title="Preview"
               onClick={() => onEditingChange(false)}
             >
               <IcCheck size={14} />
@@ -92,6 +93,7 @@ export function RichTextDocumentPane({
               className={`rich-doc-pane__mode-tab${editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
               role="tab"
               aria-selected={editing}
+              title="Edit"
               disabled={!editable}
               onClick={() => {
                 if (editable) onEditingChange(true);

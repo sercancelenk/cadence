@@ -1,0 +1,306 @@
+/* Spotify-inspired polish layer — shell, surfaces, interactive rhythm.
+   Loaded after component modules so token-based overrides win. */
+
+/* ── Cards & surfaces ── */
+.card {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+:root:not([data-theme='light']) .card {
+  background: var(--panel);
+}
+
+.list__row,
+.list__block {
+  border-color: var(--border);
+  background: var(--panel);
+  transition: background 0.12s ease;
+}
+
+.list__row:hover {
+  background: var(--panel-hover);
+}
+
+.tile {
+  border-color: var(--border);
+  background: var(--panel);
+  border-radius: var(--radius-md);
+}
+
+.tile:hover {
+  background: var(--panel-hover);
+}
+
+/* ── Inputs ── */
+.input:hover:not(:focus):not(:disabled),
+.select:hover:not(:focus):not(:disabled),
+.textarea:hover:not(:focus):not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--input-border));
+}
+
+/* ── Pills & chips ── */
+.pill--info {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ── App shell ── */
+.app-shell {
+  background: var(--main-canvas);
+}
+
+.main--canvas {
+  background: var(--main-canvas);
+}
+
+.topbar {
+  border-bottom: none;
+  background: var(--bg-elevated);
+  box-shadow: none;
+  padding: 0 16px 0 12px;
+}
+
+.topbar__search {
+  background: var(--panel-hover);
+  border-color: transparent;
+  max-width: 420px;
+  height: 36px;
+  font-size: 13px;
+}
+
+.topbar__search:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--panel-hover) 70%, white 30%);
+  color: var(--text);
+}
+
+:root[data-theme='light'] .topbar__search:hover {
+  background: #ebebeb;
+}
+
+.app-sidebar {
+  border-right: none;
+  background: var(--bg-elevated);
+  box-shadow: none;
+  padding: 12px 8px 16px;
+}
+
+.app-sidebar__brand {
+  border-bottom: none;
+  padding: 8px 12px 20px;
+}
+
+.app-sidebar__logo {
+  border-radius: var(--radius);
+  box-shadow: none;
+}
+
+.app-sidebar__section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--muted);
+  padding: 0 12px 8px;
+}
+
+.app-sidebar__link {
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  font-weight: 500;
+  padding: 8px 12px;
+}
+
+.app-sidebar__link:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.app-sidebar__link--active {
+  background: var(--surface-pressed);
+  color: var(--text);
+  font-weight: 600;
+}
+
+:root[data-theme='light'] .app-sidebar__link--active {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+
+.app-sidebar__badge {
+  background: var(--surface-pressed);
+  color: var(--text);
+  border-radius: var(--radius-pill);
+}
+
+.app-sidebar__foot {
+  border-top: none;
+  padding-top: 8px;
+}
+
+.app-sidebar__foot-profile:hover,
+.app-sidebar__foot-icon:hover {
+  background: var(--surface-hover);
+}
+
+/* ── Page headers (Spotify hero-lite) ── */
+.page-head h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+/* ── Primary CTA (Spotify play-button energy, Cadence accent) ── */
+.btn--primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-contrast);
+  font-weight: 700;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, white);
+  border-color: transparent;
+  transform: scale(1.02);
+}
+
+.btn {
+  border-color: var(--border-strong);
+}
+
+.btn--ghost {
+  border-color: transparent;
+}
+
+/* ── Icon buttons ── */
+.icon-btn {
+  border-radius: 50%;
+  border-color: transparent;
+  background: transparent;
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+
+.icon-btn:hover {
+  background: var(--surface-hover);
+}
+
+/* ── Auth screens ── */
+.auth-card {
+  border-radius: var(--radius-md);
+  border-color: var(--border);
+  box-shadow: var(--shadow-md);
+}
+
+.auth-screen {
+  background: var(--main-canvas);
+}
+
+/* ── Settings toggle switches (checkbox → pill) ── */
+.settings-page input[type='checkbox'],
+.card input[type='checkbox'] {
+  appearance: none;
+  width: 44px;
+  height: 24px;
+  border-radius: var(--radius-pill);
+  background: var(--panel-hover);
+  border: none;
+  cursor: pointer;
+  position: relative;
+  vertical-align: middle;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+
+.settings-page input[type='checkbox']::after,
+.card input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease;
+}
+
+.settings-page input[type='checkbox']:checked,
+.card input[type='checkbox']:checked {
+  background: var(--accent);
+}
+
+.settings-page input[type='checkbox']:checked::after,
+.card input[type='checkbox']:checked::after {
+  transform: translateX(20px);
+}
+
+/* ── Scrollable main content rounded top (desktop) ── */
+@media (min-width: 701px) {
+  .main--scroll {
+    border-top-left-radius: var(--radius-md);
+    background: var(--main-canvas);
+  }
+}
+
+/* ── Boot loading ── */
+.boot__card {
+  border-radius: var(--radius-md);
+  border-color: var(--border);
+  box-shadow: var(--shadow-md);
+}
+
+/* ── Toast ── */
+.toast {
+  border-radius: var(--radius-md);
+  border-color: var(--border);
+  box-shadow: var(--shadow-md);
+}
+
+/* ── Todos row hover (Spotify tracklist feel) ── */
+.todos-row:hover {
+  background: var(--surface-hover);
+}
+
+.todos-row--selected,
+.todos-row:focus-within {
+  background: var(--surface-pressed);
+}
+
+/* ── Notes list items (Spotify library row feel) ── */
+.notes-page__list-item:hover {
+  background: var(--surface-hover);
+}
+
+.notes-page__list-item--active,
+.notes-page__list-item--active:hover {
+  background: var(--surface-pressed);
+}
+
+/* ── Command palette ── */
+.cmdp__panel {
+  border-radius: var(--radius-md);
+  border-color: var(--border);
+  box-shadow: var(--shadow-md);
+}
+
+/* ── Collapsible settings cards ── */
+.card--collapsible {
+  border-color: var(--border);
+  overflow: hidden;
+}
+
+.card__toggle {
+  border-radius: var(--radius-md);
+}
+
+/* ── Pre/code blocks ── */
+.pre {
+  background: var(--panel-hover);
+  border-color: var(--border);
+}
+
+:root[data-theme='light'] .pre {
+  background: #f0f0f0;
+}

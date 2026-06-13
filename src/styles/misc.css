@@ -1,0 +1,777 @@
+/* ------------------------------------------------------------------ */
+/* Welcome tour                                                        */
+/* ------------------------------------------------------------------ */
+/* First-run modal. Lives outside the normal layout so it overlays
+   everything (including the topbar) without inheriting any container
+   constraints. */
+
+.welcome-tour__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: welcome-tour-fade 200ms ease-out;
+}
+
+.welcome-tour__card {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px;
+  max-width: 520px;
+  width: 100%;
+  box-shadow: var(--shadow-md);
+  animation: welcome-tour-pop 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.welcome-tour__progress {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.welcome-tour__dot {
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 200ms;
+}
+
+.welcome-tour__dot--active {
+  background: var(--accent);
+}
+
+.welcome-tour__title {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.welcome-tour__body {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted);
+  margin-bottom: 24px;
+}
+
+.welcome-tour__body p {
+  margin: 0 0 12px;
+}
+
+.welcome-tour__body strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.welcome-tour__body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.welcome-tour__bullets {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.welcome-tour__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@keyframes welcome-tour-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes welcome-tour-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.welcome-tour__presets {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.welcome-tour__preset {
+  appearance: none;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.welcome-tour__preset:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.welcome-tour__preset--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.welcome-tour__preset-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.welcome-tour__preset-desc {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.welcome-tour__card--recovery {
+  max-width: 520px;
+}
+
+/* ─── Settings: platform-aware backup actions ─────────────────────────────── */
+
+.backup-platform {
+  margin-bottom: 16px;
+}
+
+.backup-platform__badge {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--border) 35%, transparent);
+  border: 1px solid var(--border);
+}
+
+.backup-platform__lead {
+  margin: 0 0 12px;
+  line-height: 1.45;
+}
+
+.backup-platform__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.backup-platform__footnote {
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+
+.backup-platform__advanced {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--border) 12%, transparent);
+}
+
+.backup-platform__advanced > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+  list-style: none;
+}
+
+.backup-platform__advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.backup-platform__advanced[open] > summary {
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.backup-platform__advanced p {
+  margin: 0 0 10px;
+}
+
+.welcome-tour__body .recovery-codes--embedded .recovery-codes__list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+@media (max-width: 480px) {
+  .welcome-tour__card {
+    padding: 20px;
+  }
+  .welcome-tour__title {
+    font-size: 18px;
+  }
+}
+
+/* ─── App profile / feature preset picker ─────────────────────────────────
+ * Used by Settings → "App profile" card. Renders either a 3-card preset
+ * picker (when the user is in charge) or a managed-by-org read-only grid.
+ */
+
+.app-profile__managed {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-profile__meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 12px;
+  row-gap: 4px;
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.app-profile__meta dt {
+  color: var(--muted);
+  font-weight: 500;
+}
+.app-profile__meta dd {
+  margin: 0;
+  color: var(--text);
+}
+.app-profile__meta code {
+  word-break: break-all;
+}
+
+.app-profile__picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.app-profile__presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.app-profile__card {
+  appearance: none;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 14px 12px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+}
+.app-profile__card:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.app-profile__card--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.app-profile__card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.app-profile__card-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+}
+.app-profile__card-badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.app-profile__card-desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.app-profile__chips {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.app-profile__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted, color-mix(in srgb, var(--text) 5%, transparent));
+  color: var(--muted);
+}
+.app-profile__chip--on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.app-profile__chip--off {
+  opacity: 0.65;
+  text-decoration: line-through;
+}
+
+.app-profile__grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.app-profile__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+.app-profile__row--on {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.app-profile__row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.app-profile__row-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--muted);
+}
+.app-profile__row--on .app-profile__row-icon {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ============================================================
+   Back-to-Top FAB
+   ------------------------------------------------------------
+   Tiny floating chevron that appears once the main scroll surface
+   has scrolled past ~320px. Stacked above the Quick-Add FAB on the
+   right edge so the two affordances never overlap. The component
+   mounts unconditionally but the element only renders while the
+   scroll threshold is exceeded — when invisible it adds zero DOM.
+   ============================================================ */
+
+.back-to-top-fab {
+  position: fixed;
+  right: 24px;
+  /* Sits one button-height above the Quick-Add FAB so they read as a
+   * vertical stack. The base FAB is 56px high; with 24px gap that's
+   * 24 + 56 + 14 ≈ 94px. Rounded to 92 for visual rhythm. */
+  bottom: 92px;
+  z-index: 79;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow:
+    0 10px 20px -10px rgba(0, 0, 0, 0.4),
+    0 3px 6px -2px rgba(0, 0, 0, 0.25);
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+  animation: backToTopFadeIn 180ms ease-out;
+}
+
+.back-to-top-fab:hover {
+  transform: translateY(-2px);
+  background: var(--bg-elevated);
+  box-shadow:
+    0 16px 28px -10px rgba(0, 0, 0, 0.45),
+    0 4px 10px -2px rgba(0, 0, 0, 0.3);
+}
+
+.back-to-top-fab:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 3px;
+}
+
+@keyframes backToTopFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================================
+   Quick-Add FAB
+   ------------------------------------------------------------
+   Floating "+" anchored bottom-right with an upward menu and a
+   modal dialog for creating tasks/notes from anywhere.
+   ============================================================ */
+
+.quick-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.quick-fab > * {
+  pointer-events: auto;
+}
+
+.quick-fab__btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow:
+    0 14px 30px -10px rgba(0, 0, 0, 0.45),
+    0 4px 10px -2px rgba(0, 0, 0, 0.3);
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.quick-fab__btn:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 20px 36px -10px rgba(0, 0, 0, 0.5),
+    0 6px 14px -2px rgba(0, 0, 0, 0.35);
+}
+
+.quick-fab__btn:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 3px;
+}
+
+.quick-fab__btn--open {
+  transform: rotate(45deg);
+}
+
+.quick-fab__btn--open:hover {
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.quick-fab__menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 12px;
+  /* `--panel` flips white/dark with the theme; the older fallback chain
+   * resolved to `--tp-input-bg` which is only defined inside `.todos-route`,
+   * so in light mode the FAB ended up with a dark panel and dark text. */
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  box-shadow: var(--shadow-md);
+  min-width: 180px;
+  animation: quickFabPop 140ms ease-out;
+}
+
+@keyframes quickFabPop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.quick-fab__menu-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.quick-fab__menu-item:hover,
+.quick-fab__menu-item:focus-visible {
+  background: var(--accent-soft);
+  color: var(--text);
+  outline: none;
+}
+
+.quick-fab__menu-ic {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+/* ---- Quick-Add dialog ---- */
+
+.quick-add-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(8, 11, 18, 0.55);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  animation: quickAddFade 140ms ease-out;
+}
+
+@keyframes quickAddFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.quick-add-dialog {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow:
+    0 28px 60px -12px rgba(0, 0, 0, 0.6),
+    0 8px 20px -4px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  animation: quickAddPop 160ms ease-out;
+}
+
+@keyframes quickAddPop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.quick-add-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quick-add-dialog__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.quick-add-dialog__title {
+  flex: 1;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.quick-add-dialog__close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  display: inline-grid;
+  place-items: center;
+}
+
+.quick-add-dialog__close:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.quick-add-dialog__body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.quick-add-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quick-add-dialog__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.quick-add-dialog__textarea {
+  width: 100%;
+  resize: none;
+  line-height: 1.45;
+  font-size: 14.5px;
+}
+
+.quick-add-dialog__new-list {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.quick-add-dialog__new-list .input {
+  flex: 1;
+}
+
+.quick-add-dialog__loading {
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.quick-add-dialog__hint {
+  margin: 0;
+}
+
+.quick-add-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+
+.quick-add-dialog__details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 35%, transparent);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.quick-add-dialog__details-toggle:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.quick-add-dialog__details-toggle[aria-expanded='true'] {
+  border-style: solid;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.quick-add-dialog__actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .quick-fab {
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  .quick-fab__btn {
+    width: 52px;
+    height: 52px;
+  }
+  .quick-add-backdrop {
+    padding: 0;
+    align-items: stretch;
+  }
+  .quick-add-dialog {
+    width: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+}

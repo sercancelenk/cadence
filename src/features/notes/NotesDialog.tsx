@@ -22,7 +22,7 @@ export function NotesDialog({ title, icon, onClose, footer, children }: NotesDia
           <div className="ai-dialog__titlewrap">
             <h2 className="ai-dialog__title">{title}</h2>
           </div>
-          <button type="button" className="ai-dialog__close" onClick={onClose} aria-label="Close">
+          <button type="button" className="ai-dialog__close" onClick={onClose} aria-label="Close" title="Close">
             ✕
           </button>
         </header>

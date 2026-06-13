@@ -68,6 +68,7 @@ export function TodosToolbar({
             key={opt.value}
             type="button"
             className={`seg__btn${itemViewMode === opt.value ? ' seg__btn--on' : ''}`}
+            title={opt.label}
             onClick={() => onItemViewModeChange(opt.value)}
           >
             {opt.label}
@@ -144,6 +145,7 @@ export function TodosToolbar({
               value={sortMode}
               onChange={(e) => onSortModeChange(e.target.value as SortMode)}
               aria-label="Sort items by"
+              title="Sort items by"
             >
               {SORT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -159,6 +161,7 @@ export function TodosToolbar({
               value={statusFilter}
               onChange={(e) => onStatusFilterChange(e.target.value as StatusFilter)}
               aria-label="Filter by status"
+              title="Filter by status"
             >
               {STATUS_FILTER_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>

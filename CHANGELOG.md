@@ -14,6 +14,12 @@ rather than per build number.
 
 ### Added
 
+- **Account recovery codes.** Optional MetaMask-style codes for resetting your account password on this device without losing encrypted data. Generate at sign-up (welcome tour) or in Settings; envelope is saved only after you confirm you stored the codes. `/recover` for forgotten passwords. Existing accounts without codes are unchanged.
+- **Portable ZIP backup.** Cross-platform export/import with workspace JSON and image sidecars. Primary backup on web/mobile; desktop also offers full backup folders (with note version history). Legacy JSON and folder imports still work.
+- **In-app user guide.** New `/guide` route (Settings → About, ⌘K, Welcome tour, Electron Help menu) renders `docs/USER-GUIDE.md`.
+- **Notes sidebar collapse.** Hide the note list on desktop for a full-width editor; preference saved per account.
+- **Note version history** (desktop). Browse and restore prior revisions; stored in full backup folders.
+
 - **Stay signed in.** New per-user setting wraps the data-encryption key with
   Electron's `safeStorage` (macOS Keychain / Windows DPAPI / Linux libsecret)
   so the app no longer asks for the account password on every launch. PIN

@@ -420,8 +420,8 @@ export function ProfilePage() {
           <form className="profile-form" onSubmit={onSubmitPassword}>
             <p className="muted small" style={{ marginTop: 0 }}>
               {hasElectronAccounts
-                ? 'Re-encrypts your data file with the new password.'
-                : 'Updates the locally stored password hash. Browser preview keeps data unencrypted.'}
+                ? 'Re-encrypts your data file with the new password. This invalidates existing recovery codes — regenerate them in Settings afterward.'
+                : 'Updates the locally stored password hash. Regenerate recovery codes in Settings afterward.'}
             </p>
             <label className="field">
               <span>Current password</span>
@@ -459,7 +459,14 @@ export function ProfilePage() {
               />
             </label>
             {pwError ? <p className="form-msg form-msg--err small">{pwError}</p> : null}
-            {pwSuccess ? <p className="form-msg form-msg--ok small">Password updated.</p> : null}
+            {pwSuccess ? (
+              <p className="form-msg form-msg--ok small">
+                Password updated.
+                {hasElectronAccounts
+                  ? ' Generate new recovery codes in Settings — your previous codes no longer work after a password change.'
+                  : ' Generate new recovery codes in Settings if you use them.'}
+              </p>
+            ) : null}
             <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
               <Button type="button" variant="ghost" onClick={() => setTab('view')}>
                 Back

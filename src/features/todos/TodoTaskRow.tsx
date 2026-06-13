@@ -173,6 +173,11 @@ export function TodoTaskRow({
   // outside-click detection ignores re-clicks on the trigger itself
   // (otherwise close+immediate-reopen ping-pongs around setState batching).
   const scheduleTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const rowRef = useRef<HTMLLIElement | null>(null);
+
+  const toggleTitleExpanded = () => {
+    setTitleExpanded((v) => !v);
+  };
 
   const dueLabel = item.dueAt ? formatTimeOnly(item.dueAt) : '';
   const dueDateShort = formatDateShort(item.dueAt);
@@ -246,6 +251,7 @@ export function TodoTaskRow({
 
   return (
     <li
+      ref={rowRef}
       data-todo-id={item.id}
       className={`todos-row${compact ? ' todos-row--compact' : ''}${isTerminal ? ' todos-row--done' : ''}${
         item.status === 'cancelled' ? ' todos-row--cancelled' : ''
@@ -253,16 +259,8 @@ export function TodoTaskRow({
         isArchived ? ' todos-row--archived-item' : ''
       }${item.priority ? ` todos-row--prio-${item.priority}` : ''}${isDragSrc ? ' todos-row--dragging' : ''}${isDropTgt ? ' todos-row--drop-target' : ''}${
         isFocused ? ' todos-row--focused' : ''
-      }`}
+      }${allowDrag ? ' todos-row--manual' : ''}`}
       style={ringStyle(item.groupId)}
-      draggable={allowDrag}
-      onDragStart={(e) => {
-        if (!allowDrag) return;
-        onDragStart(item.id);
-        e.dataTransfer.effectAllowed = 'move';
-        // Some platforms (Safari) refuse to start a drag without setData.
-        try { e.dataTransfer.setData('text/plain', item.id); } catch { /* ignore */ }
-      }}
       onDragOver={(e) => {
         if (!allowDrag) return;
         e.preventDefault();
@@ -274,13 +272,33 @@ export function TodoTaskRow({
         e.preventDefault();
         onDrop(item.id);
       }}
-      onDragEnd={() => {
-        if (!allowDrag) return;
-        onDragEnd();
-      }}
     >
       {allowDrag ? (
-        <span className="todos-row__handle" aria-hidden title="Drag to reorder">
+        <span
+          className="todos-row__handle"
+          draggable
+          aria-hidden
+          title="Drag to reorder"
+          onDragStart={(e) => {
+            onDragStart(item.id);
+            e.dataTransfer.effectAllowed = 'move';
+            // Some platforms (Safari) refuse to start a drag without setData.
+            try {
+              e.dataTransfer.setData('text/plain', item.id);
+            } catch {
+              /* ignore */
+            }
+            const row = rowRef.current;
+            if (row) {
+              try {
+                e.dataTransfer.setDragImage(row, 24, 16);
+              } catch {
+                /* ignore — setDragImage is best-effort */
+              }
+            }
+          }}
+          onDragEnd={() => onDragEnd()}
+        >
           <IcGrip size={14} />
         </span>
       ) : null}
@@ -336,8 +354,7 @@ export function TodoTaskRow({
           </div>
         ) : (
           <div className="todos-row__topline">
-            <button
-              type="button"
+            <div
               className={`todos-row__title${titleExpanded ? ' todos-row__title--expanded' : ''}`}
               // Native tooltip surfaces the FULL title on hover even
               // when the visible row is line-clamped. Cheap a11y win
@@ -345,6 +362,8 @@ export function TodoTaskRow({
               // SSH prompts or stack traces) into the title field.
               title={item.title}
               aria-expanded={titleExpanded}
+              role="button"
+              tabIndex={0}
               onClick={(e) => {
                 // Skip the toggle when this is the first click of a
                 // dblclick (detail >= 2 fires for the second click; the
@@ -352,12 +371,20 @@ export function TodoTaskRow({
                 // that flicker isn't visible because edit mode replaces
                 // the title display immediately afterwards).
                 if (e.detail >= 2) return;
-                setTitleExpanded((v) => !v);
+                const sel = window.getSelection();
+                if (sel && sel.toString().length > 0) return;
+                toggleTitleExpanded();
               }}
               onDoubleClick={beginEdit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleTitleExpanded();
+                }
+              }}
             >
               {item.title}
-            </button>
+            </div>
           </div>
         )}
 

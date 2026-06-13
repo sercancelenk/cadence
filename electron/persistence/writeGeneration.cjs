@@ -61,12 +61,11 @@ function isValidSnapshotPayload(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
   if (typeof obj.version !== 'number') return false;
   if (obj.version > MAX_DATA_VERSION) return false;
-  if (!Array.isArray(obj.teams)) return false;
-  if (!Array.isArray(obj.people)) return false;
-  if (!Array.isArray(obj.items)) return false;
-  if (!Array.isArray(obj.todoGroups)) return false;
-  if (!Array.isArray(obj.todoItems)) return false;
-  return true;
+  const collections = ['teams', 'people', 'items', 'todoGroups', 'todoItems', 'notes'];
+  for (const key of collections) {
+    if (Array.isArray(obj[key])) return true;
+  }
+  return false;
 }
 
 module.exports = {

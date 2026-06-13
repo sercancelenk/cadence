@@ -38,6 +38,7 @@ function emptyData(overrides: Partial<AppData> = {}): AppData {
     todoGroups: [{ id: 'g1', name: 'General', sortOrder: 0, createdAt: TS }],
     todoItems: [],
     notes: [],
+    noteGroups: [{ id: 'ng1', name: 'General', sortOrder: 0, createdAt: TS }],
     ...overrides,
   };
 }
@@ -46,6 +47,13 @@ describe('getActivityPeriod', () => {
   it('builds today with midnight boundaries', () => {
     const p = getActivityPeriod('today', REF);
     expect(p.start.getHours()).toBe(0);
+    expect(p.end.getTime() - p.start.getTime()).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it('builds yesterday as the prior calendar day', () => {
+    const p = getActivityPeriod('yesterday', REF);
+    expect(p.start.getDate()).toBe(3);
+    expect(p.end.getDate()).toBe(4);
     expect(p.end.getTime() - p.start.getTime()).toBe(24 * 60 * 60 * 1000);
   });
 

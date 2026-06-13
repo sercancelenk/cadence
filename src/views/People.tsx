@@ -1,4 +1,4 @@
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { IcArrowRight, IcCheck, IcPencil, IcPlus, IcSave, IcSparkles, IcTrash, IcUndo, IcX } from '../components/icons';
 // Lazy-loaded: only fetched the first time the user clicks "Ask AI" on a note.
@@ -18,6 +18,7 @@ import { fromLocalDatetimeValue, formatShort, isPast, toLocalDatetimeValue } fro
 import { kindLabel } from '../lib/labels';
 import { teamLeader, teamMe, teamPeople as teamPeoplePath } from '../lib/teamPaths';
 import { PATH_TEAMS } from '../lib/routes';
+import { SYNC_BEFORE_APPLY } from '../lib/syncApplyGuard';
 import type { FeedbackKind, GoalStatus, Item, ItemKind, Person, ReminderRepeat } from '../model';
 import {
   FEEDBACK_KIND_OPTIONS,
@@ -49,13 +50,40 @@ function feedbackTone(fk?: FeedbackKind): string {
  */
 function ItemBodyField({ initial, onCommit }: { initial: string; onCommit: (next: string) => void }) {
   const [value, setValue] = useState(initial);
+  const lastCommitted = useRef(initial);
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const onCommitRef = useRef(onCommit);
+  onCommitRef.current = onCommit;
+
+  const commitPending = useCallback(() => {
+    if (valueRef.current !== lastCommitted.current) {
+      onCommitRef.current(valueRef.current);
+      lastCommitted.current = valueRef.current;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (initial !== lastCommitted.current && value === lastCommitted.current) {
+      setValue(initial);
+      lastCommitted.current = initial;
+    }
+  }, [initial, value]);
+
+  useEffect(() => {
+    const onBeforeSync = () => commitPending();
+    window.addEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
+    return () => {
+      window.removeEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
+      commitPending();
+    };
+  }, [commitPending]);
+
   return (
     <MarkdownEditor
       value={value}
       onChange={setValue}
-      onBlur={() => {
-        if (value !== initial) onCommit(value);
-      }}
+      onBlur={commitPending}
       placeholder="Write the body in markdown…"
       rows={6}
     />
@@ -83,18 +111,12 @@ export function TeamLeaderPage() {
 export function People() {
   const { teamId } = useParams();
   const { addPerson, removePerson } = useAppDataActions();
-  const teamBundle = useAppDataSelector(
-    (d) => {
-      if (!teamId) return null;
-      const team = d.teams.find((t) => t.id === teamId);
-      if (!team) return null;
-      return { team, members: teamPeople(d, teamId), self: getSelfPerson(d, teamId) };
-    },
-    (a, b) =>
-      a?.team.id === b?.team.id &&
-      a?.members.length === b?.members.length &&
-      a?.self?.id === b?.self?.id,
-  );
+  const teamBundle = useAppDataSelector((d) => {
+    if (!teamId) return null;
+    const team = d.teams.find((t) => t.id === teamId);
+    if (!team) return null;
+    return { team, members: teamPeople(d, teamId), self: getSelfPerson(d, teamId) };
+  });
   const [name, setName] = useState('');
   const [title, setTitle] = useState('');
 
@@ -230,6 +252,8 @@ export function PersonWorkspace({ personId }: { personId: string }) {
     return [...new Set([...SUGGESTED_CATEGORIES, ...distinctCategoriesForTeam(data, teamId)])];
   }, [data, teamId]);
 
+  const scratchpadDirty = person ? scratchpad !== (person.scratchpad ?? '') : false;
+
   useEffect(() => {
     if (!person) {
       setName('');
@@ -239,8 +263,37 @@ export function PersonWorkspace({ personId }: { personId: string }) {
     }
     setName(person.name);
     setTitle(person.title ?? '');
-    setScratchpad(person.scratchpad ?? '');
-  }, [person?.id, person?.name, person?.title, person?.scratchpad]);
+    if (!scratchpadDirty) {
+      setScratchpad(person.scratchpad ?? '');
+    }
+  }, [person?.id, person?.name, person?.title, person?.scratchpad, scratchpadDirty]);
+
+  useEffect(() => {
+    if (!person || !scratchpadDirty) return;
+    const personId = person.id;
+    const timer = window.setTimeout(() => {
+      updatePerson(personId, { scratchpad });
+    }, 800);
+    return () => {
+      clearTimeout(timer);
+      if (scratchpad !== (person.scratchpad ?? '')) {
+        updatePerson(personId, { scratchpad });
+      }
+    };
+  }, [person?.id, person?.scratchpad, scratchpad, scratchpadDirty, updatePerson]);
+
+  useEffect(() => {
+    const onBeforeSync = () => {
+      if (person && scratchpadDirty) {
+        updatePerson(person.id, { scratchpad });
+      }
+    };
+    window.addEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
+    return () => {
+      window.removeEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
+      onBeforeSync();
+    };
+  }, [person?.id, scratchpad, scratchpadDirty, updatePerson]);
 
   if (!teamId) {
     return (
@@ -287,6 +340,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
             className={`tabs__tab${tab === 'workspace' ? ' tabs__tab--active' : ''}`}
             role="tab"
             aria-selected={tab === 'workspace'}
+            title="Workspace"
             onClick={() => setTab('workspace')}
           >
             Workspace
@@ -296,6 +350,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
             className={`tabs__tab${tab === 'timeline' ? ' tabs__tab--active' : ''}`}
             role="tab"
             aria-selected={tab === 'timeline'}
+            title="Timeline"
             onClick={() => setTab('timeline')}
           >
             Timeline
@@ -305,6 +360,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
             className={`tabs__tab${tab === 'meeting' ? ' tabs__tab--active' : ''}`}
             role="tab"
             aria-selected={tab === 'meeting'}
+            title="1:1 Mode"
             onClick={() => setTab('meeting')}
           >
             1:1 Mode
@@ -434,6 +490,7 @@ function PersonWorkspaceTabContent(props: {
         <MarkdownEditor
           value={scratchpad}
           onChange={setScratchpad}
+          onBlur={() => person && scratchpad !== (person.scratchpad ?? '') && updatePerson(person.id, { scratchpad })}
           placeholder="Write here…"
           rows={10}
         />
@@ -942,6 +999,7 @@ function KindSection({
                   ) : null}
                   {it.kind === 'task' || it.kind === 'goal' ? (
                     it.remindAt || reminderEditorOpen.has(it.id) ? (
+                      <>
                       <label className="field">
                         <span className="row row--between" style={{ alignItems: 'center' }}>
                           <span>Reminder (desktop notification)</span>
@@ -981,6 +1039,25 @@ function KindSection({
                         />
                         <span className="muted small">Fires a desktop notification at this time.</span>
                       </label>
+                      <label className="field">
+                        <span>Repeat</span>
+                        <select
+                          className="select"
+                          defaultValue={it.remindRepeat ?? ''}
+                          key={`rr-${it.id}-${it.updatedAt}-${it.remindRepeat ?? ''}`}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            onUpdate(it.id, { remindRepeat: (v ? (v as ReminderRepeat) : undefined) });
+                          }}
+                        >
+                          {REMIND_REPEAT_OPTIONS.map((o) => (
+                            <option key={o.value || 'none'} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      </>
                     ) : (
                       <div className="field">
                         <Button
@@ -1000,24 +1077,6 @@ function KindSection({
                       </div>
                     )
                   ) : null}
-                  <label className="field">
-                    <span>Repeat</span>
-                    <select
-                      className="select"
-                      defaultValue={it.remindRepeat ?? ''}
-                      key={`rr-${it.id}-${it.updatedAt}-${it.remindRepeat ?? ''}`}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        onUpdate(it.id, { remindRepeat: (v ? (v as ReminderRepeat) : undefined) });
-                      }}
-                    >
-                      {REMIND_REPEAT_OPTIONS.map((o) => (
-                        <option key={o.value || 'none'} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
                 </div>
               ) : it.body ? (
                 <div className="list__body-preview">
@@ -1085,6 +1144,7 @@ function PersonTimeline({ items }: { items: Item[] }) {
             key={f.value}
             type="button"
             className={`timeline__filter${filter === f.value ? ' timeline__filter--active' : ''}`}
+            title={f.label}
             onClick={() => setFilter(f.value)}
           >
             {f.label}
@@ -1187,10 +1247,40 @@ function PersonMeetingMode({
   updatePerson: ReturnType<typeof useAppData>['updatePerson'];
 }) {
   const [agenda, setAgenda] = useState<string>(person.agenda ?? defaultAgenda());
+  const agendaDirty = agenda !== (person.agenda ?? defaultAgenda());
 
   useEffect(() => {
-    setAgenda(person.agenda ?? defaultAgenda());
-  }, [person.id, person.agenda]);
+    if (!agendaDirty) {
+      setAgenda(person.agenda ?? defaultAgenda());
+    }
+  }, [person.id, person.agenda, agendaDirty]);
+
+  useEffect(() => {
+    if (!agendaDirty) return;
+    const personId = person.id;
+    const timer = window.setTimeout(() => {
+      updatePerson(personId, { agenda });
+    }, 800);
+    return () => {
+      clearTimeout(timer);
+      if (agenda !== (person.agenda ?? defaultAgenda())) {
+        updatePerson(personId, { agenda });
+      }
+    };
+  }, [person.id, person.agenda, agenda, agendaDirty, updatePerson]);
+
+  useEffect(() => {
+    const onBeforeSync = () => {
+      if (agendaDirty) {
+        updatePerson(person.id, { agenda });
+      }
+    };
+    window.addEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
+    return () => {
+      window.removeEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
+      onBeforeSync();
+    };
+  }, [person.id, agenda, agendaDirty, updatePerson]);
 
   const meetings = useMemo(
     () =>
@@ -1223,7 +1313,13 @@ function PersonMeetingMode({
           A persistent agenda for your next 1:1. Use `- [ ]` for action items — unchecked ones carry over when you
           archive the meeting.
         </p>
-        <MarkdownEditor value={agenda} onChange={setAgenda} placeholder="Plan your next 1:1…" rows={14} />
+        <MarkdownEditor
+          value={agenda}
+          onChange={setAgenda}
+          onBlur={() => agendaDirty && updatePerson(person.id, { agenda })}
+          placeholder="Plan your next 1:1…"
+          rows={14}
+        />
         <div className="row" style={{ marginTop: 10 }}>
           <Button type="button" variant="secondary" icon={<IcSave size={17} />} onClick={save}>
             Save agenda

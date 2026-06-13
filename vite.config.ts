@@ -67,6 +67,16 @@ export default defineConfig({
     'import.meta.env.CADENCE_DISTRIBUTION': JSON.stringify(isEnterprise ? 'enterprise' : ''),
   },
   server: { port: 5173, strictPort: true },
+  // esbuild 0.28+ errors when pre-bundling deps for legacy Safari targets because
+  // it cannot downlevel destructuring (https://github.com/evanw/esbuild/issues/4436).
+  // Our runtime targets (Electron + modern browsers) support destructuring natively.
+  optimizeDeps: {
+    esbuildOptions: {
+      supported: {
+        destructuring: true,
+      },
+    },
+  },
   build: {
     outDir,
     emptyOutDir: true,
@@ -94,6 +104,9 @@ export default defineConfig({
     },
   },
   esbuild: {
+    supported: {
+      destructuring: true,
+    },
     // In production we strip all `debugger` statements plus the chatty
     // `console.log`/`console.info`/`console.debug` calls. We keep
     // `console.warn` and `console.error` so real problems are still visible

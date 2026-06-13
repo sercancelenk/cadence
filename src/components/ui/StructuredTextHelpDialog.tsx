@@ -26,7 +26,7 @@ export function StructuredTextHelpDialog({ onClose }: StructuredTextHelpDialogPr
               JSON / YAML editor guide
             </h2>
           </div>
-          <button type="button" className="ai-dialog__close" onClick={onClose} aria-label="Close">
+          <button type="button" className="ai-dialog__close" onClick={onClose} aria-label="Close" title="Close">
             ✕
           </button>
         </header>

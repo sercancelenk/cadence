@@ -23,6 +23,9 @@ const HomePage = lazy(() => import('./views/HomePage').then((m) => ({ default: m
 const HomeTeams = lazy(() => import('./views/HomeTeams').then((m) => ({ default: m.HomeTeams })));
 const LoginPage = lazy(() => import('./views/LoginPage').then((m) => ({ default: m.LoginPage })));
 const RegisterPage = lazy(() => import('./views/RegisterPage').then((m) => ({ default: m.RegisterPage })));
+const RecoverAccountPage = lazy(() =>
+  import('./views/RecoverAccountPage').then((m) => ({ default: m.RecoverAccountPage })),
+);
 const TodosPage = lazy(() => import('./views/TodosPage').then((m) => ({ default: m.TodosPage })));
 const AgendaPage = lazy(() => import('./views/AgendaPage').then((m) => ({ default: m.AgendaPage })));
 const AnalyticsPage = lazy(() => import('./views/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
@@ -34,6 +37,7 @@ const ActivityReportPage = lazy(() =>
 );
 const ProfilePage = lazy(() => import('./views/ProfilePage').then((m) => ({ default: m.ProfilePage })));
 const Settings = lazy(() => import('./views/Settings').then((m) => ({ default: m.Settings })));
+const UserGuidePage = lazy(() => import('./views/UserGuidePage').then((m) => ({ default: m.UserGuidePage })));
 const NotesPage = lazy(() => import('./views/NotesPage').then((m) => ({ default: m.NotesPage })));
 const UtilitiesDocumentPage = lazy(() =>
   import('./views/UtilitiesDocumentPage').then((m) => ({ default: m.UtilitiesDocumentPage })),
@@ -146,6 +150,7 @@ export default function App() {
                 <Routes>
                   <Route path="/login" element={<LoginPage />} />
                   <Route path="/register" element={<RegisterPage />} />
+                  <Route path="/recover" element={<RecoverAccountPage />} />
                   <Route path="*" element={<ProtectedShell />} />
                 </Routes>
               </Suspense>
@@ -208,6 +213,7 @@ function AppRoutes() {
               <Route path="activity" element={<ActivityReportPage />} />
             </Route>
             <Route path="profile" element={<ProfilePage />} />
+            <Route path="guide" element={<UserGuidePage />} />
             <Route path="settings" element={<Settings />} />
             <Route path="teams/:teamId" element={<TeamLayout />}>
               <Route index element={<TeamDashboard />} />

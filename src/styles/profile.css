@@ -1,0 +1,109 @@
+/* —— Profile page card (avatar + view/edit modes) —— */
+.profile-page__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.profile-card__top {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.profile-card__avatar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.profile-card__avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 2px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.profile-card__avatar--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 28px;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 25%, transparent), color-mix(in srgb, var(--accent) 5%, transparent));
+}
+
+.profile-card__avatar-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.profile-card__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.profile-card__name {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.profile-card__sub {
+  word-break: break-word;
+}
+
+.profile-card__grid {
+  margin: 18px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px 24px;
+}
+
+.profile-card__field dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.profile-card__field dd {
+  margin: 0;
+  font-size: 14px;
+  word-break: break-word;
+}
+
+.profile-card__field--wide {
+  grid-column: 1 / -1;
+}
+
+.profile-card__email {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.form-msg {
+  margin: 8px 0 0;
+}
+
+.form-msg--ok {
+  color: var(--ok);
+}
+
+.form-msg--err {
+  color: var(--danger);
+}

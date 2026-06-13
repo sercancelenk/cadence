@@ -1,24 +1,26 @@
+import { FormEvent, useMemo, useState } from 'react';
 import {
-  IcGrip,
+  IcChevronDown,
+  IcChevronLeft,
+  IcFolder,
   IcKey,
-  IcLock,
   IcLockOff,
   IcPlus,
-  IcUnlock,
+  IcTrash,
 } from '../../components/icons';
-import type { Note } from '../../model';
+import type { Note, NoteGroup } from '../../model';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
-import { notePlainText } from './notePlainText';
 import { NotesIconButton } from './NotesIconButton';
+import { NotesListRow } from './NotesListRow';
 import {
   NOTE_VIEW_OPTIONS,
-  PLACEHOLDER_TITLE,
   SORT_OPTIONS,
   type NoteSortMode,
   type NoteViewMode,
 } from './notePreferences';
 
 export type NotesSidebarProps = {
+  groups: NoteGroup[];
   notes: Note[];
   viewMode: NoteViewMode;
   onViewModeChange: (mode: NoteViewMode) => void;
@@ -27,7 +29,12 @@ export type NotesSidebarProps = {
   onSortModeChange: (mode: NoteSortMode) => void;
   selectedId: string | null;
   onSelectNote: (id: string) => void;
-  onCreateNote: () => void;
+  onCreateNote: (groupId?: string) => void;
+  onCreateGroup: (name: string) => void;
+  onRenameGroup: (id: string, name: string) => void;
+  onRemoveGroup: (id: string) => void;
+  isGroupExpanded: (groupId: string) => boolean;
+  onToggleGroup: (groupId: string) => void;
   hasLock: boolean;
   hasRecovery: boolean;
   onOpenAddRecovery: () => void;
@@ -35,13 +42,18 @@ export type NotesSidebarProps = {
   decrypted: ({ noteId: string } & RichTextBodyFields) | null;
   draggingId: string | null;
   dropTargetId: string | null;
-  onRowDragStart: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
-  onRowDragOver: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
-  onRowDrop: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
-  onRowDragEnd: () => void;
+  dropTargetGroupId: string | null;
+  onNoteDragStart: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
+  onNoteDragOver: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
+  onNoteDrop: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
+  onGroupDragOver: (e: React.DragEvent<HTMLLIElement>, groupId: string) => void;
+  onGroupDrop: (e: React.DragEvent<HTMLLIElement>, groupId: string) => void;
+  onDragEnd: () => void;
+  onCollapseSidebar?: () => void;
 };
 
 export function NotesSidebar({
+  groups,
   notes,
   viewMode,
   onViewModeChange,
@@ -51,6 +63,11 @@ export function NotesSidebar({
   selectedId,
   onSelectNote,
   onCreateNote,
+  onCreateGroup,
+  onRenameGroup,
+  onRemoveGroup,
+  isGroupExpanded,
+  onToggleGroup,
   hasLock,
   hasRecovery,
   onOpenAddRecovery,
@@ -58,17 +75,90 @@ export function NotesSidebar({
   decrypted,
   draggingId,
   dropTargetId,
-  onRowDragStart,
-  onRowDragOver,
-  onRowDrop,
-  onRowDragEnd,
+  dropTargetGroupId,
+  onNoteDragStart,
+  onNoteDragOver,
+  onNoteDrop,
+  onGroupDragOver,
+  onGroupDrop,
+  onDragEnd,
+  onCollapseSidebar,
 }: NotesSidebarProps) {
   const archivedView = viewMode === 'archived';
+  const isManual = sortMode === 'manual' && !archivedView;
+
+  const [newListOpen, setNewListOpen] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  const sortedGroups = useMemo(
+    () => [...groups].sort((a, b) => a.sortOrder - b.sortOrder),
+    [groups],
+  );
+
+  const { notesByGroup, ungroupedNotes } = useMemo(() => {
+    const byGroup = new Map<string, Note[]>();
+    for (const g of sortedGroups) byGroup.set(g.id, []);
+    const ungrouped: Note[] = [];
+    for (const n of notes) {
+      if (n.groupId && byGroup.has(n.groupId)) {
+        byGroup.get(n.groupId)!.push(n);
+      } else {
+        ungrouped.push(n);
+      }
+    }
+    return { notesByGroup: byGroup, ungroupedNotes: ungrouped };
+  }, [notes, sortedGroups]);
+
+  const submitNewList = (e: FormEvent) => {
+    e.preventDefault();
+    const name = newListName.trim();
+    if (!name) return;
+    onCreateGroup(name);
+    setNewListName('');
+    setNewListOpen(false);
+  };
+
+  const submitRename = (e: FormEvent) => {
+    e.preventDefault();
+    if (!renamingId) return;
+    const name = renameValue.trim();
+    if (!name) return;
+    onRenameGroup(renamingId, name);
+    setRenamingId(null);
+    setRenameValue('');
+  };
+
+  const hasContent = sortedGroups.length > 0 || notes.length > 0;
+
+  const rowProps = {
+    selectedId,
+    onSelectNote,
+    decrypted,
+    isManual,
+    onDragStart: onNoteDragStart,
+    onDragOver: onNoteDragOver,
+    onDrop: onNoteDrop,
+    onDragEnd,
+  };
 
   return (
     <aside className="notes-page__sidebar">
       <header className="notes-page__sidebar-header">
-        <h2>Notes</h2>
+        <div className="notes-page__sidebar-header-start">
+          {onCollapseSidebar ? (
+            <NotesIconButton
+              onClick={onCollapseSidebar}
+              label="Hide notes list"
+              tooltip="Hide notes list"
+              ariaExpanded={true}
+            >
+              <IcChevronLeft size={18} />
+            </NotesIconButton>
+          ) : null}
+          <h2>Notes</h2>
+        </div>
         <div className="notes-page__sidebar-actions">
           <select
             className="select select--compact notes-page__sort"
@@ -103,12 +193,54 @@ export function NotesSidebar({
             </NotesIconButton>
           ) : null}
           {!archivedView ? (
-            <NotesIconButton onClick={onCreateNote} label="New note" tooltip="New note" variant="primary">
-              <IcPlus size={16} />
-            </NotesIconButton>
+            <>
+              <NotesIconButton
+                onClick={() => setNewListOpen((v) => !v)}
+                label="New list"
+                tooltip="Create a note list"
+                variant={newListOpen ? 'primary' : undefined}
+              >
+                <IcFolder size={16} />
+              </NotesIconButton>
+              <NotesIconButton onClick={() => onCreateNote()} label="New note" tooltip="New note" variant="primary">
+                <IcPlus size={16} />
+              </NotesIconButton>
+            </>
           ) : null}
         </div>
       </header>
+
+      {newListOpen && !archivedView ? (
+        <form className="notes-page__group-form notes-page__group-form--header" onSubmit={submitNewList}>
+          <input
+            className="input notes-page__group-input"
+            placeholder="New list name"
+            value={newListName}
+            autoFocus
+            onChange={(e) => setNewListName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setNewListOpen(false);
+                setNewListName('');
+              }
+            }}
+            aria-label="New list name"
+          />
+          <button type="submit" className="btn btn--primary btn--small" disabled={!newListName.trim()}>
+            Create
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            onClick={() => {
+              setNewListOpen(false);
+              setNewListName('');
+            }}
+          >
+            Cancel
+          </button>
+        </form>
+      ) : null}
 
       <div className="seg notes-page__view-seg" role="group" aria-label="Notes view">
         {NOTE_VIEW_OPTIONS.map((opt) => (
@@ -116,6 +248,7 @@ export function NotesSidebar({
             key={opt.value}
             type="button"
             className={`seg__btn${viewMode === opt.value ? ' seg__btn--on' : ''}`}
+            title={opt.label}
             onClick={() => onViewModeChange(opt.value)}
           >
             {opt.label}
@@ -126,7 +259,7 @@ export function NotesSidebar({
         ))}
       </div>
 
-      {notes.length === 0 ? (
+      {!hasContent ? (
         <div className="notes-page__empty">
           {archivedView ? (
             <>
@@ -136,7 +269,7 @@ export function NotesSidebar({
           ) : (
             <>
               <p>No notes yet.</p>
-              <button type="button" className="btn btn--primary" onClick={onCreateNote}>
+              <button type="button" className="btn btn--primary" onClick={() => onCreateNote()}>
                 Create your first note
               </button>
             </>
@@ -144,69 +277,119 @@ export function NotesSidebar({
         </div>
       ) : (
         <ul className="notes-page__list">
-          {notes.map((n) => {
-            const isViewingLocked = n.locked && decrypted?.noteId === n.id;
-            const previewText = n.locked
-              ? isViewingLocked
-                ? notePlainText(n, decrypted)
-                : 'Locked note'
-              : notePlainText(n);
-            const preview = previewText.replace(/\s+/g, ' ').slice(0, 80);
-            const title = (n.title || PLACEHOLDER_TITLE).trim() || PLACEHOLDER_TITLE;
-            const isManual = sortMode === 'manual' && !archivedView;
-            const isDragging = draggingId === n.id;
-            const isDropTarget = dropTargetId === n.id;
-            const liClass = [
-              'notes-page__list-row',
-              isDragging ? 'notes-page__list-row--dragging' : '',
-              isDropTarget ? 'notes-page__list-row--drop-target' : '',
-              n.archived ? ' notes-page__list-row--archived' : '',
-            ]
-              .filter(Boolean)
-              .join(' ');
+          {sortedGroups.map((g) => {
+            const groupNotes = notesByGroup.get(g.id) ?? [];
+            const expanded = isGroupExpanded(g.id);
+            const isDropTarget = dropTargetGroupId === g.id;
+            const isRenaming = renamingId === g.id;
             return (
               <li
-                key={n.id}
-                className={liClass}
-                draggable={isManual}
-                onDragStart={(e) => onRowDragStart(e, n.id)}
-                onDragOver={(e) => onRowDragOver(e, n.id)}
-                onDrop={(e) => onRowDrop(e, n.id)}
-                onDragEnd={onRowDragEnd}
+                key={g.id}
+                className={[
+                  'notes-page__group-holder',
+                  expanded ? 'notes-page__group-holder--open' : '',
+                  isDropTarget ? 'notes-page__group-holder--drop-target' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                onDragOver={(e) => onGroupDragOver(e, g.id)}
+                onDrop={(e) => onGroupDrop(e, g.id)}
               >
-                <button
-                  type="button"
-                  className={`notes-page__list-item${selectedId === n.id ? ' notes-page__list-item--active' : ''}`}
-                  onClick={() => onSelectNote(n.id)}
-                >
-                  {isManual ? (
-                    <span className="notes-page__drag-handle" aria-hidden title="Drag to reorder">
-                      <IcGrip size={12} />
-                    </span>
-                  ) : null}
-                  <div className="notes-page__list-title">
-                    {n.pinned ? <span className="notes-page__pin" aria-hidden>★</span> : null}
-                    <span>{title}</span>
-                    {n.locked ? (
-                      isViewingLocked ? (
-                        <IcUnlock
-                          size={12}
-                          className="notes-page__list-lock notes-page__list-lock--open"
-                          aria-label="Unlocked for viewing"
-                        />
-                      ) : (
-                        <IcLock size={12} className="notes-page__list-lock" aria-label="Locked" />
-                      )
+                {isRenaming ? (
+                  <form className="notes-page__group-rename" onSubmit={submitRename}>
+                    <input
+                      className="input notes-page__group-input"
+                      value={renameValue}
+                      autoFocus
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          setRenamingId(null);
+                          setRenameValue('');
+                        }
+                      }}
+                      aria-label="Rename list"
+                    />
+                    <button type="submit" className="btn btn--primary btn--small" disabled={!renameValue.trim()}>
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--danger btn--small btn--icon"
+                      title="Delete list"
+                      aria-label="Delete list"
+                      onClick={() => {
+                        onRemoveGroup(g.id);
+                        setRenamingId(null);
+                      }}
+                    >
+                      <IcTrash size={14} />
+                    </button>
+                  </form>
+                ) : (
+                  <div className="notes-page__group-head">
+                    <button
+                      type="button"
+                      className="notes-page__group-toggle"
+                      onClick={() => onToggleGroup(g.id)}
+                      onDoubleClick={() => {
+                        setRenamingId(g.id);
+                        setRenameValue(g.name);
+                      }}
+                      aria-expanded={expanded}
+                      title="Double-click to rename"
+                    >
+                      <span className={`notes-page__group-chev${expanded ? ' notes-page__group-chev--open' : ''}`}>
+                        <IcChevronDown size={14} />
+                      </span>
+                      <IcFolder size={16} className="notes-page__group-folder" aria-hidden />
+                      <span className="notes-page__group-name">{g.name}</span>
+                      <span className="notes-page__group-count">{groupNotes.length}</span>
+                    </button>
+                    {!archivedView ? (
+                      <button
+                        type="button"
+                        className="notes-page__group-add-note icon-btn"
+                        title={`Add note to ${g.name}`}
+                        aria-label={`Add note to ${g.name}`}
+                        onClick={() => onCreateNote(g.id)}
+                      >
+                        <IcPlus size={14} />
+                      </button>
                     ) : null}
                   </div>
-                  <div className="notes-page__list-preview">{preview || '—'}</div>
-                  <time className="notes-page__list-time" dateTime={n.updatedAt}>
-                    {new Date(n.updatedAt).toLocaleString()}
-                  </time>
-                </button>
+                )}
+                {expanded ? (
+                  <ul className="notes-page__group-children">
+                    {groupNotes.length === 0 ? (
+                      <li className="notes-page__group-empty muted small">Drop notes here or use + to add</li>
+                    ) : (
+                      groupNotes.map((n) => (
+                        <NotesListRow
+                          key={n.id}
+                          note={n}
+                          nested
+                          isDragging={draggingId === n.id}
+                          isDropTarget={dropTargetId === n.id}
+                          {...rowProps}
+                        />
+                      ))
+                    )}
+                  </ul>
+                ) : null}
               </li>
             );
           })}
+
+          {ungroupedNotes.map((n) => (
+            <NotesListRow
+              key={n.id}
+              note={n}
+              isDragging={draggingId === n.id}
+              isDropTarget={dropTargetId === n.id}
+              {...rowProps}
+            />
+          ))}
         </ul>
       )}
     </aside>

@@ -1,0 +1,1206 @@
+/* —— Updater dialog —— */
+.updater-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(8, 10, 18, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.updater-dialog {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px 22px 18px;
+  width: min(440px, 92vw);
+  box-shadow: var(--shadow-md);
+  animation: updater-pop 0.16s ease-out;
+}
+
+@keyframes updater-pop {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.updater-dialog__title {
+  margin: 0 0 12px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.updater-dialog p {
+  margin: 8px 0;
+  line-height: 1.45;
+}
+
+.updater-dialog .progress {
+  height: 10px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.updater-dialog__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+/* —— AI Assistant dialog ——
+   Larger than the updater dialog because it shows a scrollable conversation
+   plus a follow-up textarea. Reuses the same backdrop styling pattern. */
+.ai-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  background: rgba(8, 10, 18, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.ai-dialog {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: min(640px, 96vw);
+  /* Both bounds matter for the flex layout inside:
+   *   - `min-height` guarantees the dialog never collapses around a
+   *     tiny intro state, which was happening after we added
+   *     `min-height: 0` to the scroll child (parent had no floor to
+   *     stand on, so the flex child shrank to ~0 and dragged the
+   *     dialog down with it).
+   *   - `max-height` caps the dialog at the viewport so long
+   *     conversations scroll internally rather than off-screen. */
+  min-height: min(480px, 90vh);
+  max-height: min(720px, 92vh);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-md);
+  animation: updater-pop 0.18s ease-out;
+  overflow: hidden;
+}
+
+.ai-dialog--wide {
+  width: min(880px, 96vw);
+  min-height: min(560px, 92vh);
+  max-height: min(820px, 94vh);
+}
+
+.ai-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--tp-divider);
+}
+
+.ai-dialog__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 25%, transparent), rgba(255, 255, 255, 0.05));
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.ai-dialog__titlewrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-dialog__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.ai-dialog__sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--tp-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-dialog__close {
+  background: none;
+  border: 0;
+  color: var(--tp-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+}
+.ai-dialog__close:hover { color: var(--text); background: var(--tp-input-bg); }
+
+.ai-dialog__scroll {
+  padding: 14px 16px;
+  overflow-y: auto;
+  /* Reserve a stable gutter for the scrollbar so the dialog content
+   * doesn't jitter horizontally when scrollbars appear/disappear. */
+  scrollbar-gutter: stable;
+  flex: 1 1 0;
+  /* Critical for the assistant turn — without an explicit `min-height: 0`
+   * a flex child with `overflow: auto` refuses to shrink past its
+   * content size in Chromium, which is what was hiding the bottom of
+   * long AI responses behind the follow-up form. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scroll-behavior: smooth;
+}
+
+/* Make the scroll affordance visible by default. macOS hides overlay
+ * scrollbars unless the user is actively scrolling, which left users
+ * thinking long AI replies were truncated even when there was more
+ * content below the fold. A thin always-visible track makes the
+ * scroll affordance discoverable without dominating the layout. */
+.ai-dialog__scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--tp-muted) 40%, transparent) transparent;
+}
+
+.ai-dialog__scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.ai-dialog__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ai-dialog__scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--tp-muted) 35%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.ai-dialog__scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--tp-muted) 60%, transparent);
+  background-clip: padding-box;
+}
+
+.ai-dialog__intro p {
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+
+.ai-dialog__empty {
+  padding: 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-dialog__error {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 99, 99, 0.12);
+  color: #ff8d8d;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+/* ─── AI task extractor ─────────────────────────────────────────────── */
+
+.ai-extract-guidance {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-hover);
+  padding: 8px 12px;
+}
+
+.ai-extract-guidance > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.ai-extract-guidance > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-extract-guidance[open] > summary {
+  margin-bottom: 6px;
+}
+
+.ai-extract-guidance__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-extract-guidance__chev {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+  transition: transform 120ms ease;
+  width: 10px;
+}
+
+.ai-extract-guidance[open] .ai-extract-guidance__chev {
+  transform: rotate(90deg);
+}
+
+.ai-extract-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-extract-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.ai-extract-row--added {
+  opacity: 0.6;
+  background: var(--surface-hover);
+}
+
+.ai-extract-row__main {
+  min-width: 0;
+}
+
+.ai-extract-row__main .textarea {
+  width: 100%;
+  font-weight: 500;
+}
+
+.ai-extract-row__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-extract-row__meta .input {
+  min-width: 110px;
+  height: 32px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.ai-extract-row__added {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: rgba(74, 222, 128, 0.12);
+  color: #4ade80;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ai-extract-row__discard {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.ai-extract-row__discard:hover {
+  background: rgba(255, 99, 99, 0.12);
+  color: #ff8d8d;
+}
+
+@media (max-width: 640px) {
+  .ai-extract-row {
+    grid-template-columns: 1fr;
+  }
+  .ai-extract-row__meta {
+    justify-content: flex-end;
+  }
+}
+
+/* ─── Settings → Storage & cache ─────────────────────────────────────── */
+
+.cache-stats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cache-row {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.cache-row--emphasis {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  font-weight: 500;
+}
+
+.cache-row__main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cache-row__label {
+  font-size: 14px;
+}
+
+.cache-row__bytes {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cache-row__hint {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.cache-row__details {
+  margin-top: 6px;
+}
+
+.cache-row__details > summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.cache-row__details ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cache-row__details ul li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.cache-msg {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.cache-msg[data-kind='ok'] {
+  background: rgba(74, 222, 128, 0.12);
+  color: #4ade80;
+}
+
+.cache-msg[data-kind='error'] {
+  background: rgba(255, 99, 99, 0.12);
+  color: #ff8d8d;
+}
+
+/* "Extract from notes" toolbar button in the Todos view. Sits inside
+ * the row-actions group, so it inherits its alignment from that flex
+ * container and only needs to manage its own internal spacing. */
+.todos-toolbar__ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.ai-thread {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-turn {
+  border: 1px solid var(--tp-divider);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--tp-input-bg);
+}
+
+.ai-turn--user {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.ai-turn__role {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--tp-muted);
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.ai-turn__text {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.ai-turn--assistant .md-prose {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ai-turn--assistant .md-prose p { margin: 6px 0; }
+.ai-turn--assistant .md-prose ul,
+.ai-turn--assistant .md-prose ol { margin: 6px 0 6px 22px; }
+.ai-turn--assistant .md-prose li { margin: 2px 0; }
+
+.ai-turn__truncated {
+  /* Inline note shown beneath an assistant turn when the provider
+   * reported it ran out of tokens. We use an amber accent (not red)
+   * because the answer is incomplete but not erroneous — the user
+   * just needs to click Continue to get the rest. */
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #f5a524;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ai-turn__truncated svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.ai-turn__truncated strong {
+  color: inherit;
+}
+
+.ai-turn--busy .ai-turn__text {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ai-spin {
+  animation: ai-spin 1s linear infinite;
+}
+
+@keyframes ai-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ai-dialog__followup {
+  border-top: 1px solid var(--tp-divider);
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-dialog__followup-input {
+  resize: none;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  width: 100%;
+}
+
+.ai-dialog__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.todos-row__ai-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--tp-divider);
+  background: var(--tp-input-bg);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.08s ease;
+}
+.todos-row__ai-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.todos-row__ai-btn:active { transform: scale(0.97); }
+
+/* Source-note backlink chip on a todo row.
+ *
+ * The chip is intentionally tiny and tonal — it sits inline with the
+ * schedule/priority pills and shouldn't compete with them visually.
+ * On hover we lift it just enough to read as interactive; the orphan
+ * variant (note deleted) gets a muted, non-interactive treatment so
+ * the user sees the link existed without being able to click into a
+ * dead reference.
+ */
+.todos-row__note-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--tp-divider);
+  background: var(--tp-input-bg);
+  color: color-mix(in srgb, var(--accent) 90%, var(--text));
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.08s ease, color 0.12s ease;
+}
+.todos-row__note-chip:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.todos-row__note-chip:active { transform: scale(0.94); }
+.todos-row__note-chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+}
+.todos-row__note-chip--orphan {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.todos-row__note-chip--orphan:hover { background: var(--tp-input-bg); }
+
+/* Brief flash applied to a row when the user navigates here from a
+ * note's backlinks panel (e.g. "open this task" from /notes). The
+ * keyframe just blooms a tinted glow and fades it out. Class is
+ * removed after ~1.6s by the page-level effect. */
+.todos-row--focused {
+  animation: todos-row-focus-flash 1.6s ease-out;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+@keyframes todos-row-focus-flash {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
+  20%  { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .todos-row--focused { animation: none; }
+}
+
+/* "Tasks from this note" backlinks panel rendered beneath a note's
+ * markdown editor. Quiet container, dense rows; each row is a button
+ * so it gets native focus / keyboard activation.
+ */
+.note-backlinks {
+  margin-top: 18px;
+  padding: 14px 16px 14px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--tp-divider);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+}
+.note-backlinks__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.note-backlinks__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.note-backlinks__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.note-backlinks__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.note-backlinks__row:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.note-backlinks__row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+}
+.note-backlinks__row--closed .note-backlinks__title-text {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.note-backlinks__row--cancelled .note-backlinks__title-text {
+  color: var(--muted);
+  opacity: 0.7;
+}
+.note-backlinks__status {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--tp-divider);
+  background: var(--panel);
+}
+.note-backlinks__status--in_progress { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.note-backlinks__status--done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.note-backlinks__status--cancelled {
+  border-style: dashed;
+  border-color: var(--muted);
+}
+.note-backlinks__title-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+.note-backlinks__group {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.todos-row__icon-btn--confirm {
+  background: linear-gradient(180deg, rgba(255, 99, 99, 0.2), rgba(255, 99, 99, 0.3));
+  border-color: rgba(255, 99, 99, 0.55);
+  color: #ff8d8d;
+  min-width: 56px;
+  padding: 0 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.todos-row__icon-btn-label {
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+/* —— Drag handle + priorities —— */
+.todos-row__handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 26px;
+  color: var(--tp-muted);
+  cursor: grab;
+  flex: 0 0 auto;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, color 0.12s ease;
+  user-select: none;
+  -webkit-user-drag: element;
+  touch-action: none;
+}
+.todos-row:hover .todos-row__handle { opacity: 1; color: var(--text); }
+.todos-row__handle:active { cursor: grabbing; }
+
+.todos-row--manual .todos-row__mid {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.todos-row--dragging {
+  opacity: 0.6;
+  outline: 1px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+.todos-row--drop-target {
+  box-shadow: 0 -3px 0 0 var(--accent) inset;
+}
+
+.todos-row__prio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  border-radius: 5px;
+  border: 1px solid currentColor;
+  background: rgba(255, 255, 255, 0.04);
+  text-transform: uppercase;
+}
+
+.todos-row__prio--urgent { color: #ff7373; }
+.todos-row__prio--high   { color: #ffb24a; }
+.todos-row__prio--normal { color: #7eb0ff; }
+.todos-row__prio--low    { color: #93a4b8; }
+
+/* "No priority" chip — used as a click target so the user has somewhere
+ * to set a priority from. Visually subdued so it doesn't compete with
+ * real chips. Shrinks margin since it doesn't follow a status pill. */
+.todos-row__prio--none {
+  color: var(--tp-muted);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--tp-muted) 35%, transparent);
+  border-style: dashed;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  padding: 0 8px;
+  margin-left: 0;
+}
+
+.todos-row__prio--none:hover {
+  background: var(--tp-hover);
+  color: var(--text);
+}
+
+.todos-row--prio-urgent { border-left: 3px solid rgba(255, 115, 115, 0.6); }
+.todos-row--prio-high   { border-left: 3px solid rgba(255, 178, 74, 0.55); }
+
+/* ---- Todo status badges & row modifiers -------------------------------
+ *
+ * Each non-default status (`in_progress`, `done`, `cancelled`) gets a small
+ * pill in the row's top line. `todo` is the default — no badge — to keep
+ * the list quiet for tasks that haven't been touched yet.
+ *
+ * The status dropdown in the row toolbar mirrors the same tone so the
+ * picker visually reflects the current state without needing to read the
+ * label. The colours intentionally reuse the existing semantic palette
+ * (info / warn / ok / muted) so they sit next to priority pills without
+ * fighting them.
+ */
+.todos-row__status {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.todos-row__status--in_progress {
+  color: #ffb24a;
+  background: rgba(255, 178, 74, 0.13);
+  border-color: rgba(255, 178, 74, 0.32);
+}
+.todos-row__status--done {
+  color: var(--ok);
+  background: rgba(74, 222, 128, 0.13);
+  border-color: rgba(74, 222, 128, 0.32);
+}
+.todos-row__status--cancelled {
+  color: var(--tp-muted);
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.28);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* Inline status select picks up an accent tone from its current value
+ * (set via the dynamic className on the <select>). This makes the
+ * dropdown read as a status indicator even when collapsed. */
+.todos-row__status-select--in_progress { color: #ffb24a; }
+.todos-row__status-select--done        { color: var(--ok); }
+.todos-row__status-select--cancelled   { color: var(--tp-muted); }
+.todos-row__status-select               { font-weight: 600; }
+
+/* WIP rows get a subtle amber left stripe so a glance down the list shows
+ * "what am I in the middle of?" without scanning every status pill.
+ * Priority stripes (urgent / high) take precedence — they're more
+ * actionable so they shouldn't be hidden by an in-progress mark. */
+.todos-row--wip:not(.todos-row--prio-urgent):not(.todos-row--prio-high) {
+  border-left: 3px solid rgba(255, 178, 74, 0.45);
+}
+
+/* Cancelled rows get a heavier dim than completed rows so they read as
+ * "explicitly dropped" rather than "this is just done". The existing
+ * `--done` modifier already handles the strikethrough on the title; we
+ * extend it here with a stronger opacity and a muted left stripe so the
+ * row recedes visually. */
+.todos-row--cancelled {
+  opacity: 0.55;
+}
+.todos-row--cancelled .todos-row__title {
+  color: var(--tp-muted);
+}
+.todos-row--cancelled:not(.todos-row--prio-urgent):not(.todos-row--prio-high) {
+  border-left: 3px solid rgba(148, 163, 184, 0.4);
+}
+
+.todos-section__prio {
+  text-transform: capitalize;
+  font-weight: 700;
+}
+.todos-section__prio--urgent { background: rgba(255, 115, 115, 0.16); color: #ff8d8d; }
+.todos-section__prio--high   { background: rgba(255, 178, 74, 0.16); color: #ffc070; }
+.todos-section__prio--normal { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.todos-section__prio--low    { background: rgba(147, 164, 184, 0.16); color: #c0cad8; }
+
+.todos-section__menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+}
+.todos-section__menu-row select.input {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.ai-inline-link {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ai-inline-link:hover { text-decoration: underline; }
+
+/* —— Mobile drawer sidebar (≤700px) ——
+   On phones the sidebar is a slide-in overlay and the main content always
+   uses the full viewport. On desktop we keep the inline layout. */
+@media (max-width: 700px) {
+  .app-shell--mobile .app-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    width: min(280px, 84vw);
+    transform: translateX(-110%);
+    transition: transform 0.22s ease;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.35);
+    padding-top: max(env(safe-area-inset-top), 12px);
+    padding-bottom: max(env(safe-area-inset-bottom), 12px);
+  }
+
+  .app-shell--mobile.app-shell--drawer-open .app-sidebar {
+    transform: translateX(0);
+  }
+
+  .app-shell--mobile .app-sidebar__brand {
+    padding-top: 8px;
+  }
+
+  .app-shell--mobile .app-sidebar__link {
+    min-height: 44px;
+    font-size: 15px;
+  }
+
+  .app-shell__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(0, 0, 0, 0.45);
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    animation: app-backdrop-in 0.18s ease;
+  }
+
+  @keyframes app-backdrop-in {
+    from { background: rgba(0, 0, 0, 0); }
+    to   { background: rgba(0, 0, 0, 0.45); }
+  }
+
+  .app-shell--mobile .main--scroll {
+    /* iOS smooth scrolling and safe-area awareness */
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Avoid iOS auto-zoom on focus by ensuring inputs render at ≥16px. */
+  .input,
+  .select,
+  .textarea,
+  .todos-row__title-input,
+  .todos-section__title,
+  .todos-row__date {
+    font-size: 16px !important;
+  }
+
+  /* Topbar layout cleanup for narrow phones. */
+  .topbar {
+    height: auto;
+    padding: 8px 12px;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .topbar__crumb {
+    font-size: 14px;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar__center {
+    order: 3;
+    width: 100%;
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    gap: 6px;
+  }
+
+  .team-switcher {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .team-switcher__name {
+    font-size: 13px;
+  }
+
+  .topbar__status {
+    flex-shrink: 0;
+  }
+
+  /* Profile redesign card: stack avatar above text on phones */
+  .profile-card__top {
+    align-items: center;
+    text-align: center;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .profile-card__head {
+    align-items: center;
+  }
+
+  .profile-card__grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Analytics segmented control becomes scrollable */
+  .analytics-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .analytics-table {
+    font-size: 12px;
+  }
+
+  .analytics-table td,
+  .analytics-table th {
+    padding: 6px 8px;
+  }
+
+  .progress {
+    width: 80px;
+  }
+}
+
+/* —— Sync (LAN host + pair-with-host UI) —— */
+.sync-host,
+.sync-client {
+  margin-top: 12px;
+}
+
+.sync-host__details {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.sync-host__details .field input.input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+/* QR card inside the host section. We give it a faint surface so the
+ * white QR background doesn't clash with the dark theme, and centre the
+ * code so it photographs well from any phone angle. */
+.sync-host__qr {
+  align-items: flex-start;
+}
+
+.sync-host__qr-canvas {
+  display: inline-flex;
+  background: #ffffff;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  /* Tightly bounded — phones lock focus easier on a smaller code at
+   * close range than on something that fills the screen. */
+  width: max-content;
+  max-width: 100%;
+}
+
+.sync-host__qr-canvas svg {
+  display: block;
+  width: 220px;
+  height: 220px;
+}
+
+/* Friendly explainer next to the QR — without this users see the
+ * "Your connection is not private" warning on the phone, panic, and
+ * abandon the pairing. The text reads as a heads-up, not an error. */
+.sync-host__cert-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 420px;
+}
+
+.sync-host__cert-note p {
+  margin: 6px 0 0;
+}
+
+.sync-host__cert-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--surface);
+  padding: 1px 6px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+/* Connected badge in the pair-with-another-device card. The green dot
+ * mirrors common "online" affordances; we deliberately don't blink it
+ * to avoid the "look at me!" feeling — it should fade into the UI when
+ * everything's fine. */
+.sync-client__status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  flex-wrap: wrap;
+}
+
+.sync-client__status-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.sync-client__status-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--surface);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.sync-client__dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+  /* Subtle inner glow makes it read as a "status light" instead of a
+   * decorative dot. */
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.sync-client__dot--ok {
+  background: var(--ok);
+  color: var(--ok);
+}
+
+.sync-warning {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--danger);
+  background: rgba(220, 38, 38, 0.08);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sync-warning code {
+  background: var(--surface-hover);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12.5px;
+}
+
+details summary {
+  cursor: pointer;
+}

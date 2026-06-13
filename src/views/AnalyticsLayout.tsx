@@ -8,10 +8,10 @@ export function AnalyticsLayout() {
   return (
     <div className="analytics-shell">
       <nav className="analytics-tabs" aria-label="Analytics views">
-        <NavLink to={PATH_ANALYTICS} end className={tabCls}>
+        <NavLink to={PATH_ANALYTICS} end className={tabCls} title="Overview">
           Overview
         </NavLink>
-        <NavLink to={PATH_ANALYTICS_ACTIVITY} className={tabCls}>
+        <NavLink to={PATH_ANALYTICS_ACTIVITY} className={tabCls} title="Activity">
           Activity
         </NavLink>
       </nav>

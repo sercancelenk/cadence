@@ -286,7 +286,7 @@ export function TodoListSection(props: TodoListSectionProps) {
           {g.archived ? <span className="pill" style={{ marginLeft: 8 }}>archived</span> : null}
         </span>
         <details className="todos-section__menu">
-          <summary className="todos-section__menu-btn" aria-label="List options">
+          <summary className="todos-section__menu-btn" aria-label="List options" title="List options">
             <span aria-hidden>⋯</span>
           </summary>
           <div className="todos-section__menu-panel">
@@ -312,6 +312,7 @@ export function TodoListSection(props: TodoListSectionProps) {
                   actions.updateTodoGroupPriority(g.id, (e.target.value || undefined) as Priority | undefined)
                 }
                 aria-label="List priority"
+                title="List priority"
               >
                 <option value="">None</option>
                 {PRIORITY_OPTIONS.map((p) => (

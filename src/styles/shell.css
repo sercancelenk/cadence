@@ -1,0 +1,1122 @@
+/* —— App shell (TopBar + AppSidebar) —— */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100%;
+  background: var(--main-canvas);
+}
+
+.app-shell__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Global "your last autosave failed" banner mounted in Layout.tsx. Sits
+   between the TopBar and the routed page so it's visible no matter where the
+   user is — silent save failures would defeat the local-first guarantees. */
+.save-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--danger, #ef4444) 35%, transparent);
+  color: var(--text, inherit);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.save-error-banner__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--danger, #ef4444);
+  flex: 0 0 auto;
+}
+
+.save-error-banner__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.save-error-banner__detail {
+  opacity: 0.85;
+  word-break: break-word;
+}
+
+.save-error-banner__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.save-error-banner__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 50%, transparent);
+  background: transparent;
+  color: var(--text, inherit);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.save-error-banner__btn:hover {
+  background: color-mix(in srgb, var(--danger, #ef4444) 16%, transparent);
+}
+
+.save-error-banner__btn--primary {
+  background: var(--danger, #ef4444);
+  color: #fff;
+  border-color: transparent;
+}
+
+.save-error-banner__btn--primary:hover {
+  background: color-mix(in srgb, var(--danger, #ef4444) 90%, black);
+}
+
+/* Boot-time data-loss suspicion banner. Amber tone (vs the SaveErrorBanner's
+   red) because this isn't a current failure — it's a "looks like something
+   happened between sessions" alarm. Same horizontal layout for muscle memory. */
+.data-integrity-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #f59e0b 40%, transparent);
+  color: var(--text, inherit);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.data-integrity-banner__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #b45309;
+  flex: 0 0 auto;
+}
+
+.data-integrity-banner__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.data-integrity-banner__detail {
+  opacity: 0.9;
+  word-break: break-word;
+}
+
+.data-integrity-banner__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.data-integrity-banner__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, #f59e0b 55%, transparent);
+  background: transparent;
+  color: var(--text, inherit);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.data-integrity-banner__btn:hover {
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+}
+
+.data-integrity-banner__btn--primary {
+  background: #f59e0b;
+  color: #1f1505;
+  border-color: transparent;
+}
+
+.data-integrity-banner__btn--primary:hover {
+  background: color-mix(in srgb, #f59e0b 90%, black);
+}
+
+.main--scroll {
+  flex: 1;
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  padding-top: 12px;
+}
+
+.main--canvas {
+  background: var(--main-canvas);
+}
+
+/* CoreUI-style summary cards */
+.dash-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 960px) {
+  .dash-stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .dash-stat-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dash-stat {
+  position: relative;
+  border-radius: var(--radius-sm);
+  padding: 18px 18px 50px;
+  color: #fff;
+  overflow: hidden;
+  min-height: 106px;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.38);
+}
+
+.dash-stat__value {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.dash-stat__label {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.92;
+}
+
+.dash-stat__spark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 46px;
+  width: 100%;
+  color: inherit;
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+.dash-stat--violet {
+  background: linear-gradient(150deg, #6f42c1 0%, #4e2d93 100%);
+}
+
+.dash-stat--blue {
+  background: linear-gradient(150deg, #2f80ed 0%, #1a5fbf 100%);
+}
+
+.dash-stat--amber {
+  background: linear-gradient(150deg, #f5b041 0%, #d68910 100%);
+  color: #1c1306;
+}
+
+.dash-stat--amber .dash-stat__label {
+  opacity: 0.88;
+}
+
+.dash-stat--rose {
+  background: linear-gradient(150deg, #e55353 0%, #a83232 100%);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: var(--topbar-h);
+  padding: 0 14px 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+}
+
+.topbar__left,
+.topbar__center,
+.topbar__right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.topbar__center {
+  flex: 1;
+  justify-content: center;
+  max-width: min(720px, 60vw);
+  gap: 12px;
+}
+
+.topbar__right {
+  flex-shrink: 0;
+}
+
+/* Bootstrap-style global search trigger sitting next to the team-switcher
+   in the centre of the top bar. Looks like an input (rounded, muted text,
+   leading search icon) but is actually a button — clicking it opens the
+   existing ⌘K command palette. This keeps the global search behaviour
+   consistent across mouse / keyboard / touch and avoids running two
+   parallel search implementations. */
+.topbar__search {
+  flex: 1;
+  min-width: 0;
+  max-width: 340px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  height: 32px;
+  border: 1px solid var(--input-border);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--input-placeholder);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: text;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  text-align: left;
+}
+
+.topbar__search:hover {
+  border-color: transparent;
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.topbar__search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-color: var(--input-focus-border);
+  color: var(--text);
+}
+
+.topbar__search-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar__search-kbd {
+  display: inline-flex;
+  align-items: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--btn-bg-from);
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.topbar__menu-btn {
+  flex-shrink: 0;
+}
+
+.topbar__crumb {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: inherit;
+  min-width: 0;
+}
+
+.topbar__logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(145deg, var(--accent), var(--accent-2));
+  box-shadow: 0 2px 8px rgba(78, 140, 255, 0.35);
+}
+
+.topbar__brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  min-width: 0;
+}
+
+.topbar__title {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+
+.topbar__subtitle {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.topbar__status {
+  flex-shrink: 0;
+}
+
+.team-switcher {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  max-width: 280px;
+}
+
+.team-switcher__trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.team-switcher__trigger:hover {
+  border-color: rgba(110, 168, 254, 0.45);
+}
+
+.team-switcher__trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.team-switcher__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-switcher__placeholder {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.team-switcher__caret {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid var(--muted);
+  flex-shrink: 0;
+}
+
+.team-switcher__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: min(320px, calc(100vw - 32px));
+  max-width: 360px;
+  padding: 6px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow-md);
+  z-index: 50;
+}
+
+.team-switcher__row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.team-switcher__row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme='light'] .team-switcher__row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.team-switcher__row-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+
+.team-switcher__row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.team-switcher__row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.team-switcher__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+
+.team-switcher__foot .ui-ic {
+  opacity: 0.85;
+}
+
+.team-switcher__foot:hover {
+  background: var(--accent-soft);
+}
+
+.team-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.team-dot--active {
+  background: var(--ok);
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.25);
+}
+
+.team-dot--paused {
+  background: #fbbf24;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.25);
+}
+
+.team-dot--archived {
+  background: var(--muted);
+}
+
+.fav-star {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.12s ease;
+}
+
+.fav-star:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--border);
+  transform: scale(1.05);
+}
+
+.fav-star--on {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.25);
+}
+
+.icon-btn {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50rem;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.12s ease;
+  box-shadow: none;
+}
+
+.icon-btn:hover {
+  background: var(--surface-hover);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.icon-btn:active {
+  transform: scale(0.96);
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.icon-btn .ui-ic {
+  opacity: 0.95;
+}
+
+:root[data-theme='light'] .icon-btn:hover {
+  border-color: rgba(84, 114, 146, 0.3);
+}
+
+.profile-menu {
+  position: relative;
+}
+
+.profile-menu__trigger {
+  list-style: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 10px;
+  transition: background 0.15s;
+}
+
+.profile-menu__trigger::-webkit-details-marker {
+  display: none;
+}
+
+.profile-menu__trigger:hover {
+  background: var(--surface-hover);
+}
+
+.profile-avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: linear-gradient(160deg, var(--accent-soft), rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--border);
+  color: var(--accent);
+}
+
+.profile-avatar--image {
+  object-fit: cover;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.profile-menu__panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(280px, calc(100vw - 24px));
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow-md);
+  z-index: 60;
+}
+
+.profile-menu__head {
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 10px;
+  letter-spacing: -0.02em;
+}
+
+.field--compact {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.field--compact span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.profile-menu__link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.profile-menu__link .ui-ic {
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.profile-menu__link:hover {
+  background: var(--accent-soft);
+}
+
+.profile-menu__link--danger {
+  color: var(--danger);
+}
+
+.profile-menu__link--danger:hover {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.app-sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 12px 20px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.2);
+  transition: width 0.2s ease, padding 0.2s ease;
+}
+
+.app-shell--nav-collapsed .app-sidebar {
+  width: var(--sidebar-w-collapsed);
+  padding: 16px 8px 20px;
+}
+
+.app-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px 16px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-shell--nav-collapsed .app-sidebar__brand {
+  justify-content: center;
+  padding: 4px 0 16px;
+}
+
+.app-sidebar__logo {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: block;
+  border-radius: 9px;
+  object-fit: cover;
+  background: transparent;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 6px 14px rgba(0, 0, 0, 0.28);
+}
+
+.app-sidebar__brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-sidebar__title {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.app-sidebar__subtitle {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.app-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.app-sidebar__section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-sidebar__section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 0 10px 8px;
+  line-height: 1.2;
+}
+
+.app-sidebar__team-name {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-sidebar__link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.app-sidebar__link:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.app-sidebar__link--active {
+  background: var(--surface-pressed);
+  color: var(--text);
+}
+
+.app-sidebar__ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  opacity: 0.92;
+}
+
+/* Small count chip on the right side of a sidebar link. Used to surface
+   "open todos" / "notes total" so an "empty looking" page is always
+   accompanied by a clear sign that data still exists. The --warn variant
+   means the count is hidden by filters (e.g. all groups archived) and
+   the user should investigate. */
+.app-sidebar__badge {
+  margin-left: auto;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  letter-spacing: 0;
+}
+
+.app-sidebar__badge--warn {
+  background: #f59e0b;
+  color: #1f1505;
+}
+
+:root[data-theme='light'] .app-sidebar__badge {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--text);
+}
+
+:root[data-theme='light'] .app-sidebar__badge--warn {
+  background: #f59e0b;
+  color: #1f1505;
+}
+
+.app-shell--nav-collapsed .app-sidebar__badge {
+  display: none;
+}
+
+.app-sidebar__ic .ui-ic {
+  width: 18px;
+  height: 18px;
+}
+
+.app-shell--nav-collapsed .app-sidebar__link {
+  justify-content: center;
+  padding: 10px;
+}
+
+.app-shell--nav-collapsed .app-sidebar__section-label {
+  display: none;
+}
+
+.app-sidebar__foot {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 10px 0;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.app-sidebar__foot-profile {
+  display: block;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  text-decoration: none;
+  line-height: 1.35;
+  transition: background 0.12s ease;
+}
+
+.app-sidebar__foot-profile:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.app-sidebar__foot-profile--managed {
+  color: #f59e0b;
+}
+
+:root[data-theme='light'] .app-sidebar__foot-profile--managed {
+  color: #b45309;
+}
+
+.app-sidebar__foot-version {
+  padding: 0 8px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  text-decoration: none;
+  letter-spacing: 0.02em;
+}
+
+.app-sidebar__foot-version:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.app-sidebar__foot-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 36px;
+  margin: 0 auto;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  text-decoration: none;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.app-sidebar__foot-icon:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+:root[data-theme='light'] .app-sidebar__foot-profile:hover,
+:root[data-theme='light'] .app-sidebar__foot-icon:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+:root[data-theme='light'] .app-sidebar__link {
+  color: var(--text);
+}
+
+:root[data-theme='light'] .app-sidebar__link:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+:root[data-theme='light'] .app-sidebar__link--active {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+}
+
+
+@media (max-width: 720px) {
+  .topbar__subtitle {
+    display: none;
+  }
+
+  .topbar__center {
+    max-width: none;
+  }
+
+  /* On phones the search button collapses to icon-only — there isn't
+     enough room for the placeholder text and the shortcut badge as well
+     as the team switcher and status select. The button is still fully
+     functional; only the visual chrome shrinks. */
+  .topbar__search {
+    max-width: 38px;
+    padding: 6px;
+    justify-content: center;
+  }
+  .topbar__search-text,
+  .topbar__search-kbd {
+    display: none;
+  }
+}
+
+.topbar__left {
+  gap: 14px;
+}
+
+.topbar__nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.topbar__nav-link .ui-ic {
+  opacity: 0.85;
+}
+
+.topbar__nav-link:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.topbar__nav-link--active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.auth-card--wide {
+  max-width: 440px;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.auth-unlock-submit {
+  margin-top: 14px;
+}
+
+.profile-menu__email {
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+.profile-menu__link--muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.profile-menu__link--muted:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.textarea--goal-title {
+  width: 100%;
+  min-height: 120px;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.list__title--multiline {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.todo-group-card__title {
+  flex: 1;
+  font-weight: 700;
+  font-size: 16px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 4px 0;
+}
+
+.profile-form .field {
+  margin-top: 12px;
+}
+
+.profile-form .field:first-of-type {
+  margin-top: 0;
+}

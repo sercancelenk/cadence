@@ -7,6 +7,7 @@ import { teamPerson } from './teamPaths';
 
 export type ActivityPeriodPreset =
   | 'today'
+  | 'yesterday'
   | 'this_week'
   | 'this_month'
   | 'this_year'
@@ -67,6 +68,7 @@ export type ActivityReport = {
 
 export const ACTIVITY_PERIOD_OPTIONS: { value: ActivityPeriodPreset; label: string }[] = [
   { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
   { value: 'this_week', label: 'This week' },
   { value: 'this_month', label: 'This month' },
   { value: 'this_year', label: 'This year' },
@@ -140,6 +142,17 @@ export function getActivityPeriod(preset: ActivityPeriodPreset, ref = new Date()
       label: start.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }),
     };
   }
+  if (preset === 'yesterday') {
+    const end = startOfDay(now);
+    const start = new Date(end);
+    start.setDate(start.getDate() - 1);
+    return {
+      preset,
+      start,
+      end,
+      label: start.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }),
+    };
+  }
   if (preset === 'this_week') {
     const start = startOfWeek(now);
     const end = new Date(start);
@@ -189,7 +202,7 @@ export function getActivityPeriod(preset: ActivityPeriodPreset, ref = new Date()
 
 /** Reference instant for “still open” — end of period for historical presets, now otherwise. */
 export function activityOpenReferenceAt(period: ActivityPeriod, ref = new Date()): Date {
-  if (period.preset === 'last_year') return period.end;
+  if (period.preset === 'last_year' || period.preset === 'yesterday') return period.end;
   return ref;
 }
 

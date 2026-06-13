@@ -64,6 +64,7 @@ export function DateRangePicker({ start, end, onChange, className }: Props) {
             type="button"
             className="date-range-picker__nav-btn"
             aria-label="Previous month"
+            title="Previous month"
             onClick={() => shiftMonth(-1)}
           >
             <IcChevronLeft size={16} />
@@ -73,6 +74,7 @@ export function DateRangePicker({ start, end, onChange, className }: Props) {
             type="button"
             className="date-range-picker__nav-btn"
             aria-label="Next month"
+            title="Next month"
             onClick={() => shiftMonth(1)}
           >
             <IcChevronRight size={16} />

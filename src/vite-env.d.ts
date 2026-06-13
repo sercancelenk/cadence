@@ -1,5 +1,10 @@
 /// <reference types="vite/client" />
 
+declare module '*.md?raw' {
+  const content: string;
+  export default content;
+}
+
 export {};
 
 type AccountUser = { id: string; email: string; displayName?: string };
@@ -158,6 +163,7 @@ interface CadenceApi {
       cacheStats?: () => Promise<CacheStats>;
       clearChromiumCache?: () => Promise<CacheClearResult>;
       onSaveError?: (cb: (event: SaveError) => void) => () => void;
+      onRemoteUpdated?: (cb: (event: { writeGeneration?: number }) => void) => () => void;
       showNotification: (opts: { title?: string; body?: string }) => Promise<boolean>;
   reminderSyncStatus?: () => Promise<import('./lib/reminderDelivery/types').ReminderSyncStatus>;
   requestReminderPermission?: () => Promise<{ ok: boolean; granted: boolean; error?: string | null }>;
@@ -178,6 +184,11 @@ interface CadenceApi {
       attachmentRead?: (payload: {
         attachmentId: string;
       }) => Promise<{ ok: boolean; dataBase64?: string; mimeType?: string; error?: string }>;
+      attachmentImportPortable?: (payload: {
+        attachmentId: string;
+        dataBase64: string;
+        encrypted?: boolean;
+      }) => Promise<{ ok: boolean; error?: string }>;
       attachmentGc?: () => Promise<{ ok: boolean; pruned?: number; error?: string }>;
       noteHistoryList?: (payload: {
         noteId: string;
@@ -195,10 +206,23 @@ interface CadenceApi {
       exportDataBundle?: (
         data: unknown,
       ) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
-      importDataBundle?: () => Promise<{ ok: boolean; importedFrom?: string; canceled?: boolean; error?: string }>;
+      importDataBundle?: () => Promise<{
+        ok: boolean;
+        importedFrom?: string;
+        canceled?: boolean;
+        error?: string;
+        attachmentsRestored?: number;
+        attachmentsSkipped?: number;
+      }>;
       importWorkspace?: (
         payload: unknown,
-      ) => Promise<{ ok: boolean; writeGeneration?: number; error?: string; reason?: string }>;
+      ) => Promise<{
+        ok: boolean;
+        writeGeneration?: number;
+        error?: string;
+        reason?: string;
+        attachmentsRestored?: number;
+      }>;
       getAppVersion: () => Promise<string>;
       checkForUpdates: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
       installUpdate: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
@@ -226,7 +250,7 @@ interface CadenceApi {
         password: string;
         displayName?: string;
         migrateLegacy?: boolean;
-      }) => Promise<{ ok: boolean; user?: AccountUser; error?: string; warn?: string }>;
+      }) => Promise<{ ok: boolean; user?: AccountUser; error?: string; warn?: string; recoveryCodes?: string[] }>;
       accountLogin: (payload: { email: string; password: string }) => Promise<{ ok: boolean; user?: AccountUser; error?: string }>;
       accountLogout: () => Promise<{ ok: boolean }>;
       accountHasLegacyData: () => Promise<{ has: boolean }>;
@@ -235,6 +259,20 @@ interface CadenceApi {
         newPassword: string;
       }) => Promise<{ ok: boolean; error?: string }>;
       accountVerifyPassword: (payload: { password: string }) => Promise<{ ok: boolean; error?: string }>;
+      accountRecoverWithCodes: (payload: {
+        email: string;
+        codes: string[];
+        newPassword: string;
+      }) => Promise<{ ok: boolean; user?: AccountUser; error?: string; needsRecoverySetup?: boolean }>;
+      accountSetupRecovery: (payload: {
+        password: string;
+      }) => Promise<{ ok: boolean; recoveryCodes?: string[]; error?: string }>;
+      accountConfirmRecoverySetup: () => Promise<{ ok: boolean; error?: string }>;
+      accountGetRecoveryStatus: () => Promise<{
+        signedIn?: boolean;
+        configured: boolean;
+        configuredAt?: string;
+      }>;
       /**
        * Inspect the per-user "stay signed in" preference and whether the
        * OS keychain on this machine can actually back it. The renderer

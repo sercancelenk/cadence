@@ -81,8 +81,8 @@ export function useNotesSelection(
   }, [selectedId, sortMode]);
 
   const selected = useMemo(
-    () => (selectedId ? notes.find((n) => n.id === selectedId) ?? null : null),
-    [notes, selectedId],
+    () => (selectedId ? allNotes.find((n) => n.id === selectedId) ?? null : null),
+    [allNotes, selectedId],
   );
 
   return { selectedId, setSelectedId, selected, isNarrowViewport };

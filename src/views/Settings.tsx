@@ -1,9 +1,10 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { IcDownload, IcLock, IcRefresh, IcSparkles, IcTrash, IcUpload, IcWifi } from '../components/icons';
 import { Button } from '../components/ui/Button';
+import { IcHelpCircle } from '../components/icons';
 import { useAccount } from '../AccountContext';
-import { useAppData } from '../AppDataContext';
 import { useSession } from '../AuthContext';
 import { useToast } from '../components/ui/Toast';
 import { askAI, AIError, defaultModel } from '../lib/ai';
@@ -14,9 +15,10 @@ import {
 } from '../lib/appBranding';
 import { resolveAppProfileLabel } from '../lib/appProfileLabel';
 import type { AIProvider } from '../model';
-import { AI_PROVIDER_OPTIONS } from '../model';
+import { AI_PROVIDER_OPTIONS, appDataToPersistJson, compactAppDataForPersist } from '../model';
 import type { CacheBreakdownEntry, CacheStats, DataFileInfo, DataSources, SaveError } from '../vite-env';
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
+import { RecoveryCodesPanel } from '../components/RecoveryCodesPanel';
 import { syncLanAttachments } from '../lib/lanAttachmentSync';
 import {
   buildPairUrl,
@@ -32,8 +34,11 @@ import {
   type LanSyncPair,
 } from '../lib/lanSyncClient';
 import { parseRemoteSnapshot } from '../lib/syncSnapshotGuard';
+import { prepareForRemoteApply } from '../lib/syncApplyGuard';
 import { estimateWorkspaceStorage } from '../lib/workspaceStorageStats';
-import { isElectronApp } from '../lib/runtime';
+import { isElectronApp, backupPlatform, backupPlatformLabel } from '../lib/runtime';
+import { exportPortableBackupZip, importPortableBackupFile } from '../lib/backupBundle';
+import { useAppData } from '../AppDataContext';
 import {
   getLastSyncEvent,
   subscribeSyncEvents,
@@ -201,7 +206,9 @@ function RemindersSettingsSection() {
 }
 
 export function Settings() {
-  const { data, importWorkspace, syncFromDisk } = useAppData();
+  const navigate = useNavigate();
+  const { data, importWorkspace, syncFromDisk, flushPendingSave } = useAppData();
+  const { user } = useAccount();
   const { pinEnabled, refresh: refreshSession, lockSession } = useSession();
   const toast = useToast();
   const { features, managed, source, setPreset } = useFeatures();
@@ -211,6 +218,7 @@ export function Settings() {
   const [clearPin, setClearPin] = useState('');
   const [updaterOpen, setUpdaterOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [importBusy, setImportBusy] = useState(false);
   const isElectron = isElectronApp();
 
   useEffect(() => {
@@ -221,8 +229,14 @@ export function Settings() {
     })();
   }, [refreshSession]);
 
-  const exportJson = () => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const exportJson = async () => {
+    try {
+      await flushPendingSave();
+      await prepareForRemoteApply();
+    } catch {
+      /* best effort */
+    }
+    const blob = new Blob([appDataToPersistJson(data)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -232,6 +246,12 @@ export function Settings() {
   };
 
   const exportFullBundle = async () => {
+    try {
+      await flushPendingSave();
+      await prepareForRemoteApply();
+    } catch {
+      /* best effort */
+    }
     if (!window.cadence?.exportDataBundle) {
       exportJson();
       toast.showInfo(
@@ -240,7 +260,7 @@ export function Settings() {
       );
       return;
     }
-    const r = await window.cadence.exportDataBundle(data);
+    const r = await window.cadence.exportDataBundle(compactAppDataForPersist(data));
     if (r?.canceled) return;
     if (r?.ok && r.path) {
       toast.showSuccess('Full backup saved', `Folder: ${r.path}`);
@@ -249,7 +269,76 @@ export function Settings() {
     toast.showError('Export failed', r?.error ?? 'Could not write backup folder.');
   };
 
+  const exportPortableZip = async () => {
+    if (!user) {
+      toast.showError('Not signed in', 'Sign in before exporting a backup.');
+      return;
+    }
+    try {
+      await flushPendingSave();
+      await prepareForRemoteApply();
+      const r = await exportPortableBackupZip(user.id, data);
+      let detail = `${r.attachmentCount} image${r.attachmentCount === 1 ? '' : 's'} included.`;
+      if (r.attachmentMissing > 0) {
+        detail += ` ${r.attachmentMissing} referenced image${r.attachmentMissing === 1 ? '' : 's'} were missing on this device.`;
+      }
+      toast.showSuccess('Portable backup saved', detail);
+    } catch (err) {
+      toast.showError('Export failed', err instanceof Error ? err.message : 'Could not build ZIP backup.');
+    }
+  };
+
+  const importBackupFile = async (file: File) => {
+    if (importBusy) return;
+    if (!user) {
+      toast.showError('Not signed in', 'Sign in before importing a backup.');
+      return;
+    }
+    const isZip = file.name.toLowerCase().endsWith('.zip');
+    const prompt = isZip
+      ? 'Import this portable backup? Your current workspace and images on this device will be replaced. Export first if you are unsure.'
+      : 'Import this JSON file? Your workspace will be replaced. JSON does not include images — use a .zip portable backup for pictures.';
+    if (!window.confirm(prompt)) return;
+
+    setImportBusy(true);
+    try {
+      const r = await importPortableBackupFile(file, {
+        userId: user.id,
+        importWorkspace: async (next) => {
+          const imported = await importWorkspace(next);
+          if (!imported.ok) return imported;
+          return { ok: true as const };
+        },
+      });
+      if (!r.ok) {
+        toast.showError('Import failed', r.error);
+        return;
+      }
+      await syncFromDisk();
+      if (isZip) {
+        let detail = `${r.attachmentsImported} image${r.attachmentsImported === 1 ? '' : 's'} restored.`;
+        if (r.attachmentsSkipped > 0) {
+          detail += ` ${r.attachmentsSkipped} could not be imported.`;
+        }
+        if (r.attachmentsEncryptedSkipped && r.attachmentsEncryptedSkipped > 0) {
+          detail += ` ${r.attachmentsEncryptedSkipped} encrypted image${r.attachmentsEncryptedSkipped === 1 ? '' : 's'} need the desktop app to import.`;
+        }
+        toast.showSuccess('Portable backup imported', detail);
+      } else {
+        toast.showSuccess(
+          'Workspace imported',
+          'JSON loaded. If images are missing, import a .zip portable backup exported from desktop or web.',
+        );
+      }
+    } catch (err) {
+      toast.showError('Import failed', err instanceof Error ? err.message : 'Could not read backup file.');
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
   const importFullBundle = async () => {
+    if (importBusy) return;
     if (!window.cadence?.importDataBundle) {
       toast.showInfo(
         'Desktop app required',
@@ -264,14 +353,28 @@ export function Settings() {
     ) {
       return;
     }
-    const r = await window.cadence.importDataBundle();
-    if (r?.canceled) return;
-    if (r?.ok) {
-      await syncFromDisk();
-      toast.showSuccess('Backup imported', r.importedFrom ? `Restored from ${r.importedFrom}.` : 'Workspace restored.');
-      return;
+    setImportBusy(true);
+    try {
+      const r = await window.cadence.importDataBundle();
+      if (r?.canceled) return;
+      if (r?.ok) {
+        await syncFromDisk();
+        const att = typeof r.attachmentsRestored === 'number' ? r.attachmentsRestored : null;
+        const skipped = typeof r.attachmentsSkipped === 'number' && r.attachmentsSkipped > 0 ? r.attachmentsSkipped : 0;
+        let detail = r.importedFrom ? `Restored from ${r.importedFrom}.` : 'Workspace restored.';
+        if (att != null) detail += ` ${att} image${att === 1 ? '' : 's'} imported.`;
+        if (skipped > 0) {
+          detail += ` ${skipped} encrypted image${skipped === 1 ? '' : 's'} could not be read — re-export a full backup from the source account.`;
+        }
+        toast.showSuccess('Backup imported', detail);
+        return;
+      }
+      toast.showError('Import failed', r?.error ?? 'Could not read backup folder.');
+    } catch (err) {
+      toast.showError('Import failed', err instanceof Error ? err.message : 'Could not read backup folder.');
+    } finally {
+      setImportBusy(false);
     }
-    toast.showError('Import failed', r?.error ?? 'Could not read backup folder.');
   };
 
   return (
@@ -288,6 +391,7 @@ export function Settings() {
         description="Who can open Cadence on this device, and how your data file is protected."
       >
         <StaySignedInSection />
+        <AccountRecoverySection />
         {isElectron ? (
         <CollapsibleCard id="pin" title="PIN protection" badge={pinEnabled ? 'Enabled' : 'Disabled'}>
         <p className="muted">
@@ -385,50 +489,24 @@ export function Settings() {
       >
         <BackupsRecoverySection
           canExport={features.dataExport}
-          onExportJson={exportJson}
+          importBusy={importBusy}
+          onSetImportBusy={setImportBusy}
+          onExportJson={() => void exportJson()}
+          onExportPortableZip={() => void exportPortableZip()}
           onExportFullBundle={() => void exportFullBundle()}
-          onImportJson={() => fileRef.current?.click()}
+          onImportBackup={() => fileRef.current?.click()}
           onImportFolder={() => void importFullBundle()}
           fileInput={
             <input
               ref={fileRef}
               type="file"
-              accept="application/json,.json"
+              accept="application/json,.json,application/zip,.zip"
               hidden
               onChange={async (e) => {
                 const f = e.target.files?.[0];
                 e.target.value = '';
                 if (!f) return;
-                try {
-                  if (
-                    !window.confirm(
-                      'Importing replaces your entire workspace with the contents of this file. Export a backup first if you are unsure. Continue?',
-                    )
-                  ) {
-                    return;
-                  }
-                  const text = await f.text();
-                  const raw = JSON.parse(text) as unknown;
-                  const parsed = parseRemoteSnapshot(raw);
-                  if (parsed.kind !== 'ok') {
-                    toast.showError(
-                      'Could not import that file',
-                      'The JSON does not look like a Cadence workspace snapshot. Your existing data was not changed.',
-                    );
-                    return;
-                  }
-                  const imported = await importWorkspace(parsed.data);
-                  if (!imported.ok) {
-                    toast.showError('Could not import that file', imported.error);
-                    return;
-                  }
-                  toast.showSuccess('Backup imported', 'Your workspace was replaced with the contents of the file.');
-                } catch {
-                  toast.showError(
-                    'Could not import that file',
-                    'It is unreadable or the JSON is malformed. Your existing workspace was not touched.',
-                  );
-                }
+                await importBackupFile(f);
               }}
             />
           }
@@ -459,7 +537,7 @@ export function Settings() {
 
       <SettingsGroup
         eyebrow="About"
-        description="Version info, update channel, and the workspace profile (personal / work)."
+        description="Version info, update channel, workspace profile, and the in-app user guide."
       >
         <AppProfileSection
           features={features}
@@ -471,6 +549,22 @@ export function Settings() {
           <p>
             Installed version: <strong>{appVersion || '—'}</strong> · Data schema: v{data.version}
           </p>
+        </CollapsibleCard>
+        <CollapsibleCard id="user-guide" title="User guide" defaultOpen={false}>
+          <p className="muted">
+            Step-by-step help for daily use, backups, recovery codes, and sync. Nothing leaves your device unless you
+            choose.
+          </p>
+          <div className="row" style={{ marginTop: 12 }}>
+            <Button
+              type="button"
+              variant="secondary"
+              icon={<IcHelpCircle size={17} />}
+              onClick={() => navigate('/guide')}
+            >
+              Open user guide
+            </Button>
+          </div>
         </CollapsibleCard>
         {features.updateCheck ? (
           <>
@@ -545,7 +639,7 @@ type SyncStatus = {
 };
 
 function SyncSection() {
-  const { data, replaceAll } = useAppData();
+  const { data, replaceAll, flushPendingSave } = useAppData();
   const { user } = useAccount();
   const toast = useToast();
   const isElectronHost = typeof window !== 'undefined' && !!window.cadence?.syncStatus;
@@ -831,6 +925,8 @@ function SyncSection() {
           });
           return;
         }
+        await flushPendingSave();
+        await prepareForRemoteApply();
         replaceAll(parsed.data);
         if (user?.id) await syncLanAttachments(parsed.data, user.id);
         const next = savePair({ url: sanitizedHost, token, etag: outcome.etag });
@@ -870,6 +966,7 @@ function SyncSection() {
     }
     setPairBusy(true);
     try {
+      await flushPendingSave();
       // Send `If-Match` with the ETag we received on our last pull. The
       // host returns 412 if its data has changed since — that's the
       // "you'd be overwriting newer edits" guard that turns last-write-
@@ -900,6 +997,8 @@ function SyncSection() {
               });
               return;
             }
+            await flushPendingSave();
+            await prepareForRemoteApply();
             replaceAll(parsed.data);
             if (user?.id) await syncLanAttachments(parsed.data, user.id);
             const next = savePair({ url: sanitizedHost, token, etag: pullOutcome.etag });
@@ -1466,7 +1565,7 @@ function GDriveClientIdSetup({
 }
 
 function CloudSyncSection() {
-  const { data, replaceAll } = useAppData();
+  const { data, replaceAll, flushPendingSave } = useAppData();
 
   const [tokens, setTokens] = useState<OAuthTokens | null>(() => loadStoredTokens());
   const [activeId, setActiveId] = useState<SyncBackendId | null>(() => getActiveBackendId());
@@ -1610,6 +1709,7 @@ function CloudSyncSection() {
       }
       const record = backend.getRecord();
       if (mode === 'push' || mode === 'push-force') {
+        await flushPendingSave();
         // `push-force` skips the If-Match header so the upload always
         // wins — used by the conflict UI's "Override remote" button.
         const ifMatch = mode === 'push-force' ? undefined : record?.etag;
@@ -1651,6 +1751,8 @@ function CloudSyncSection() {
             });
             return;
           }
+          await flushPendingSave();
+          await prepareForRemoteApply();
           replaceAll(parsed.data);
           const fp = await computeLocalEtag(parsed.data);
           backend.setRecord({
@@ -2509,21 +2611,28 @@ function AISettingsSection() {
 
 function BackupsRecoverySection({
   canExport,
+  importBusy,
+  onSetImportBusy,
   onExportJson,
+  onExportPortableZip,
   onExportFullBundle,
-  onImportJson,
+  onImportBackup,
   onImportFolder,
   fileInput,
 }: {
   canExport: boolean;
+  importBusy?: boolean;
+  onSetImportBusy?: (busy: boolean) => void;
   onExportJson: () => void;
+  onExportPortableZip: () => void;
   onExportFullBundle: () => void;
-  onImportJson: () => void;
+  onImportBackup: () => void;
   onImportFolder: () => void;
   fileInput: ReactNode;
 }) {
-  const { reload } = useAppData();
-  const isElectron = typeof window !== 'undefined' && !!window.cadence?.dataListSources;
+  const { reload, flushPendingSave } = useAppData();
+  const platform = backupPlatform();
+  const isElectron = platform === 'desktop';
   const [sources, setSources] = useState<DataSources | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -2535,6 +2644,8 @@ function BackupsRecoverySection({
     try {
       const r = await window.cadence!.dataListSources!();
       setSources(r);
+    } catch (err) {
+      setMsg({ kind: 'error', text: err instanceof Error ? err.message : 'Could not load snapshots.' });
     } finally {
       setBusy(false);
     }
@@ -2552,10 +2663,12 @@ function BackupsRecoverySection({
   }
 
   const restore = async (filePath: string, label: string) => {
+    if (busy || importBusy) return;
     if (!window.confirm(`Restore data from "${label}"?\n\nYour current data will be snapshotted first so you can undo this.`)) {
       return;
     }
     setBusy(true);
+    onSetImportBusy?.(true);
     setMsg(null);
     // Capture the *target snapshot's* counts before we run the restore so
     // we can tell the user exactly what they'll see after reload. This
@@ -2575,6 +2688,12 @@ function BackupsRecoverySection({
         (c.todoGroupsArchived ? ` (${c.todoGroupsArchived} archived list${c.todoGroupsArchived === 1 ? '' : 's'})` : '')
       : '';
     try {
+      try {
+        await flushPendingSave();
+        await prepareForRemoteApply();
+      } catch {
+        /* best effort */
+      }
       const r = await window.cadence!.dataRestoreFromSource!({ filePath });
       if (r.ok) {
         // Successful restore means the file is now consistent with the
@@ -2599,6 +2718,7 @@ function BackupsRecoverySection({
     } catch (err) {
       setMsg({ kind: 'error', text: String(err) });
     } finally {
+      onSetImportBusy?.(false);
       setBusy(false);
     }
   };
@@ -2630,64 +2750,143 @@ function BackupsRecoverySection({
     >
       {canExport ? (
         <>
-          <p className="muted small" style={{ marginBottom: 10 }}>
-            Copy your workspace elsewhere, or replace it from a file. Import always overwrites — export first if
-            you&apos;re unsure.
-          </p>
-          <div className="row" style={{ marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
-            <Button
-              type="button"
-              variant="primary"
-              icon={<IcDownload size={17} />}
-              title="Download your workspace as a single JSON file (text and settings; no embedded images)"
-              onClick={onExportJson}
-            >
-              Export JSON
-            </Button>
-            {isElectron ? (
-              <Button
-                type="button"
-                variant="secondary"
-                icon={<IcDownload size={17} />}
-                title="Save a folder with data.json plus note and task image files"
-                onClick={onExportFullBundle}
-              >
-                Export full backup
-              </Button>
-            ) : null}
-            <Button
-              type="button"
-              variant="secondary"
-              icon={<IcUpload size={17} />}
-              title="Replace your entire workspace from a JSON file (export first if unsure)"
-              onClick={onImportJson}
-            >
-              Import JSON
-            </Button>
-            {isElectron ? (
-              <Button
-                type="button"
-                variant="secondary"
-                icon={<IcUpload size={17} />}
-                title="Replace workspace and attachments from a full backup folder"
-                onClick={onImportFolder}
-              >
-                Import folder
-              </Button>
-            ) : null}
-            {fileInput}
+          <div className="backup-platform">
+            <span className="backup-platform__badge">{backupPlatformLabel(platform)}</span>
+            {platform === 'desktop' ? (
+              <>
+                <p className="muted small backup-platform__lead">
+                  On desktop, use a <strong>full backup folder</strong> for note version history and local restores.
+                  Use a <strong>portable ZIP</strong> to move workspace and images to web, mobile, or another account.
+                  Import always replaces data on this device — export first if you are unsure.
+                </p>
+                <div className="backup-platform__actions">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    icon={<IcDownload size={17} />}
+                    title="Save data.json, images, and note version history into a folder"
+                    onClick={onExportFullBundle}
+                  >
+                    Export full backup
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    icon={<IcUpload size={17} />}
+                    title="Replace workspace and images from a backup folder"
+                    onClick={onImportFolder}
+                    disabled={importBusy}
+                  >
+                    Import backup folder
+                  </Button>
+                </div>
+                <div className="backup-platform__actions" style={{ marginTop: 8 }}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    icon={<IcDownload size={17} />}
+                    title="Cross-platform ZIP with workspace and images (no note history)"
+                    onClick={onExportPortableZip}
+                  >
+                    Export portable ZIP
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    icon={<IcUpload size={17} />}
+                    title="Import a .zip or .json portable backup"
+                    onClick={onImportBackup}
+                    disabled={importBusy}
+                  >
+                    Import portable backup
+                  </Button>
+                  {fileInput}
+                </div>
+                <details className="backup-platform__advanced">
+                  <summary className="small">Text-only JSON (advanced)</summary>
+                  <p className="muted small">
+                    Exports workspace text and settings only — <strong>not</strong> embedded images. Useful for a
+                    quick copy or debugging; prefer full backup or ZIP for real restores.
+                  </p>
+                  <div className="backup-platform__actions">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      icon={<IcDownload size={17} />}
+                      onClick={onExportJson}
+                    >
+                      Export JSON
+                    </Button>
+                  </div>
+                </details>
+              </>
+            ) : platform === 'mobile' ? (
+              <>
+                <p className="muted small backup-platform__lead">
+                  Download a <strong>portable ZIP</strong> to back up text and images on this phone, or import a backup
+                  from desktop or another device. JSON-only exports skip photos.
+                </p>
+                <div className="backup-platform__actions">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    icon={<IcDownload size={17} />}
+                    onClick={onExportPortableZip}
+                  >
+                    Download portable ZIP
+                  </Button>
+                  <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={onImportBackup} disabled={importBusy}>
+                    Import portable backup
+                  </Button>
+                  {fileInput}
+                </div>
+                <details className="backup-platform__advanced">
+                  <summary className="small">Text-only JSON (advanced)</summary>
+                  <p className="muted small backup-platform__footnote">
+                    JSON includes text and settings, not photos pasted into notes. Clearing browser data can erase local
+                    copies.
+                  </p>
+                  <div className="backup-platform__actions">
+                    <Button type="button" variant="secondary" icon={<IcDownload size={17} />} onClick={onExportJson}>
+                      Download JSON
+                    </Button>
+                  </div>
+                </details>
+              </>
+            ) : (
+              <>
+                <p className="muted small backup-platform__lead">
+                  Export a <strong>portable ZIP</strong> to keep notes and images in one file, or import a backup from
+                  desktop or another browser. JSON-only exports skip embedded images.
+                </p>
+                <div className="backup-platform__actions">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    icon={<IcDownload size={17} />}
+                    onClick={onExportPortableZip}
+                  >
+                    Export portable ZIP
+                  </Button>
+                  <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={onImportBackup} disabled={importBusy}>
+                    Import portable backup
+                  </Button>
+                  {fileInput}
+                </div>
+                <details className="backup-platform__advanced">
+                  <summary className="small">Text-only JSON (advanced)</summary>
+                  <p className="muted small backup-platform__footnote">
+                    JSON does not include embedded images — only pointers stored on the device that created them.
+                  </p>
+                  <div className="backup-platform__actions">
+                    <Button type="button" variant="secondary" icon={<IcDownload size={17} />} onClick={onExportJson}>
+                      Export JSON
+                    </Button>
+                  </div>
+                </details>
+              </>
+            )}
           </div>
-          {isElectron ? (
-            <p className="muted small" style={{ marginBottom: 16 }}>
-              <strong>Full backup</strong> includes note and task images plus per-note version history (Notes).
-              JSON-only exports keep text and attachment pointers; rolling snapshots also copy attachments and note
-              history beside each snapshot.
-            </p>
-          ) : (
-            <p className="muted small" style={{ marginBottom: 16 }}>
-              JSON export works in the browser. Full folder backup (with images) requires the desktop app.
-            </p>
-          )}
         </>
       ) : null}
 
@@ -2765,6 +2964,7 @@ function BackupsRecoverySection({
               sub="Pre-rename single-user file. Restoring imports it into your current account."
               info={sources.legacy}
               onRestore={(f) => restore(f, 'legacy data file')}
+              restoreBusy={busy}
             />
           ) : null}
 
@@ -2778,6 +2978,7 @@ function BackupsRecoverySection({
                   label={b.name}
                   sub={`${formatBytes(b.bytes)} · ${formatRelativeTime(b.mtime)}`}
                   onRestore={(f) => restore(f, b.name)}
+                  restoreBusy={busy}
                 />
               ))}
             </>
@@ -2800,6 +3001,7 @@ function BackupsRecoverySection({
                   label={o.name}
                   sub={`${formatBytes(o.bytes)} · ${formatRelativeTime(o.mtime)}`}
                   onRestore={(f) => restore(f, o.name)}
+                  restoreBusy={busy}
                 />
               ))}
             </>
@@ -3102,11 +3304,13 @@ function DataSourceRow({
   label,
   sub,
   onRestore,
+  restoreBusy,
 }: {
   info: DataFileInfo | null;
   label: string;
   sub?: string;
   onRestore: ((filePath: string) => void) | null;
+  restoreBusy?: boolean;
 }) {
   if (!info) {
     return (
@@ -3225,7 +3429,7 @@ function DataSourceRow({
             variant="secondary"
             icon={<IcUpload size={16} />}
             onClick={() => onRestore(info.path)}
-            disabled={info.encrypted && !info.decryptable}
+            disabled={restoreBusy || (info.encrypted && !info.decryptable)}
           >
             Restore
           </Button>
@@ -3261,6 +3465,136 @@ function formatRelativeTime(iso: string | undefined) {
   const days = Math.round(h / 24);
   if (days < 14) return `${days}d ago`;
   return d.toLocaleString();
+}
+
+// ─── Account recovery codes (local-first password reset) ─────────────────────
+
+function AccountRecoverySection() {
+  const { user, setupRecovery, confirmRecoverySetup, getRecoveryStatus } = useAccount();
+  const toast = useToast();
+  const location = useLocation();
+  const [loading, setLoading] = useState(true);
+  const [configured, setConfigured] = useState(false);
+  const [configuredAt, setConfiguredAt] = useState<string | undefined>();
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [newCodes, setNewCodes] = useState<string[] | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!user) {
+      setConfigured(false);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const r = await getRecoveryStatus();
+      setConfigured(r.configured);
+      setConfiguredAt(r.configuredAt);
+    } finally {
+      setLoading(false);
+    }
+  }, [user, getRecoveryStatus]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const state = location.state as { recoverySetupRequired?: boolean } | null;
+    if (!state?.recoverySetupRequired) return;
+    toast.showInfo(
+      'Generate new recovery codes',
+      'Password reset succeeded. Create and save a fresh set of recovery codes for this device.',
+    );
+    window.history.replaceState({}, document.title);
+  }, [location.state, toast]);
+
+  if (!user) return null;
+
+  if (newCodes) {
+    return (
+      <CollapsibleCard id="recovery-codes" title="Recovery codes" badge="New" defaultOpen>
+        <RecoveryCodesPanel
+          codes={newCodes}
+          title="Save your new recovery codes"
+          onConfirmed={() => {
+            void (async () => {
+              const r = await confirmRecoverySetup();
+              if (!r.ok) {
+                toast.showError('Could not save recovery codes', r.error);
+                return;
+              }
+              setNewCodes(null);
+              setPassword('');
+              void refresh();
+              toast.showSuccess('Recovery codes saved', 'Keep them somewhere safe — we cannot show them again.');
+            })();
+          }}
+        />
+      </CollapsibleCard>
+    );
+  }
+
+  const generate = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const r = await setupRecovery(password);
+      if (r.ok && r.recoveryCodes) {
+        setNewCodes(r.recoveryCodes);
+        setPassword('');
+      } else {
+        toast.showError('Could not create recovery codes', r.error);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const badge = loading ? '…' : configured ? 'Active' : 'Not set up';
+  const configuredLabel =
+    configured && configuredAt
+      ? `Active since ${new Date(configuredAt).toLocaleDateString()}`
+      : configured
+        ? 'Active on this device'
+        : 'Not configured';
+
+  return (
+    <CollapsibleCard id="recovery-codes" title="Recovery codes" badge={badge} defaultOpen={!configured}>
+      <p className="muted">
+        Like a crypto wallet seed phrase — these codes let you reset your account password on{' '}
+        <strong>this device only</strong>. No server is involved. Changing your password clears the
+        old codes; generate a fresh set afterward.
+      </p>
+      <p className="muted small">Status: {configuredLabel}</p>
+      <form
+        className="row"
+        style={{ marginTop: 10, flexDirection: 'column', alignItems: 'stretch', maxWidth: 360 }}
+        onSubmit={(e) => void generate(e)}
+      >
+        <label className="field">
+          <span>Account password (to {configured ? 'regenerate' : 'create'} codes)</span>
+          <input
+            className="input"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+        </label>
+        <Button type="submit" variant="secondary" icon={<IcLock size={17} />} disabled={busy || !password}>
+          {busy ? 'Working…' : configured ? 'Regenerate recovery codes' : 'Generate recovery codes'}
+        </Button>
+      </form>
+      {configured ? (
+        <p className="muted small" style={{ marginTop: 8 }}>
+          Regenerating prepares a new set — your previous codes stay active until you confirm you saved the new ones.
+        </p>
+      ) : null}
+    </CollapsibleCard>
+  );
 }
 
 // ─── Stay-signed-in (OS keychain session resume) ───────────────────────────────

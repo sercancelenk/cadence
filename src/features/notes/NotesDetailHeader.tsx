@@ -5,6 +5,7 @@ import {
   IcEyeOff,
   IcKey,
   IcLock,
+  IcMenu,
   IcSparkles,
   IcStar,
   IcTrash,
@@ -20,6 +21,8 @@ export type NotesDetailHeaderProps = {
   editorReady: boolean;
   busy: boolean;
   aiEnabled: boolean;
+  sidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
   onBack: () => void;
   onChangeTitle: (title: string) => void;
   onExtractTasks: () => void;
@@ -37,6 +40,8 @@ export function NotesDetailHeader({
   editorReady,
   busy,
   aiEnabled,
+  sidebarCollapsed = false,
+  onToggleSidebar,
   onBack,
   onChangeTitle,
   onExtractTasks,
@@ -50,6 +55,16 @@ export function NotesDetailHeader({
 }: NotesDetailHeaderProps) {
   return (
     <header className="notes-page__main-header">
+      {sidebarCollapsed && onToggleSidebar ? (
+        <NotesIconButton
+          onClick={onToggleSidebar}
+          label="Show notes list"
+          tooltip="Show notes list"
+          ariaExpanded={false}
+        >
+          <IcMenu size={18} />
+        </NotesIconButton>
+      ) : null}
       <button
         type="button"
         className="notes-page__back"

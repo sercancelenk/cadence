@@ -100,7 +100,8 @@
   },
   "overrides": {
     "qs": "6.15.2",
-    "shell-quote": ">=1.8.4"
+    "shell-quote": ">=1.8.4",
+    "esbuild": ">=0.28.1"
   },
   "build": {
     "appId": "com.cadence.app",

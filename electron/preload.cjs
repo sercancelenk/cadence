@@ -49,6 +49,13 @@ const api = {
     ipcRenderer.on('data:saveError', listener);
     return () => ipcRenderer.removeListener('data:saveError', listener);
   },
+  onRemoteUpdated: (cb) => {
+    const listener = (_evt, payload) => {
+      try { cb(payload); } catch (err) { console.error('[cadence] remote update handler threw', err); }
+    };
+    ipcRenderer.on('data:remoteUpdated', listener);
+    return () => ipcRenderer.removeListener('data:remoteUpdated', listener);
+  },
   showNotification: (opts) => ipcRenderer.invoke('app:showNotification', opts),
   reminderSyncStatus: () => ipcRenderer.invoke('reminder:status'),
   requestReminderPermission: () => ipcRenderer.invoke('reminder:requestPermission'),
@@ -80,6 +87,7 @@ const api = {
   userDataPath: () => ipcRenderer.invoke('app:userDataPath'),
   attachmentWrite: (payload) => ipcRenderer.invoke('attachment:write', payload),
   attachmentRead: (payload) => ipcRenderer.invoke('attachment:read', payload),
+  attachmentImportPortable: (payload) => ipcRenderer.invoke('attachment:importPortable', payload),
   attachmentGc: () => ipcRenderer.invoke('attachment:gc'),
   noteHistoryList: (payload) => ipcRenderer.invoke('noteHistory:list', payload),
   noteHistoryRead: (payload) => ipcRenderer.invoke('noteHistory:read', payload),
@@ -110,6 +118,10 @@ const api = {
   accountHasLegacyData: () => ipcRenderer.invoke('account:hasLegacyData'),
   accountChangePassword: (payload) => ipcRenderer.invoke('account:changePassword', payload),
   accountVerifyPassword: (payload) => ipcRenderer.invoke('account:verifyPassword', payload),
+  accountRecoverWithCodes: (payload) => ipcRenderer.invoke('account:recoverWithCodes', payload),
+  accountSetupRecovery: (payload) => ipcRenderer.invoke('account:setupRecovery', payload),
+  accountConfirmRecoverySetup: () => ipcRenderer.invoke('account:confirmRecoverySetup'),
+  accountGetRecoveryStatus: () => ipcRenderer.invoke('account:getRecoveryStatus'),
   accountGetRememberMe: () => ipcRenderer.invoke('account:getRememberMe'),
   accountSetRememberMe: (payload) => ipcRenderer.invoke('account:setRememberMe', payload),
   policyGet: () => ipcRenderer.invoke('policy:get'),

@@ -30,6 +30,7 @@ export function useNotesManualReorder(
       const dragged = notes.find((n) => n.id === draggingId);
       const target = notes.find((n) => n.id === noteId);
       if (!dragged || !target || !!dragged.pinned !== !!target.pinned) return;
+      if (dragged.groupId !== target.groupId) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
       if (dropTargetId !== noteId) setDropTargetId(noteId);
@@ -44,6 +45,11 @@ export function useNotesManualReorder(
       const dragged = notes.find((n) => n.id === draggingId);
       const target = notes.find((n) => n.id === noteId);
       if (!dragged || !target || !!dragged.pinned !== !!target.pinned) {
+        setDraggingId(null);
+        setDropTargetId(null);
+        return;
+      }
+      if (dragged.groupId !== target.groupId) {
         setDraggingId(null);
         setDropTargetId(null);
         return;

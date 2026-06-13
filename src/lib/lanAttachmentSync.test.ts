@@ -38,6 +38,7 @@ const emptyData = (): AppData =>
     todoGroups: [],
     todoItems: [],
     notes: [],
+    noteGroups: [],
   }) as AppData;
 
 describe('syncLanAttachments', () => {

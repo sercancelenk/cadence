@@ -1,0 +1,515 @@
+/* —— To-dos: drag-and-drop list reorder + quick-schedule popover —— */
+.todos-route__head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.todos-route__head-grip {
+  display: inline-flex;
+  vertical-align: middle;
+  padding: 0 2px;
+  color: var(--tp-muted);
+}
+
+.todos-section__grip {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--tp-muted);
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.todos-section__grip:hover {
+  background: var(--tp-hover);
+  color: var(--tp-text);
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.todos-section__grip:active {
+  cursor: grabbing;
+}
+
+.todos-section--dragging {
+  opacity: 0.5;
+}
+
+.todos-section--drop-target {
+  outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+}
+
+.todos-drop-tail {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+  color: var(--tp-muted);
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.todos-drop-tail--active {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.todos-row__sched {
+  position: relative;
+  display: inline-flex;
+}
+
+/* ---- Combined date + schedule trigger ----
+ * Replaces the separate "calendar icon button + date label" pair with a
+ * single clickable button. Resting state shows the due date (or "+
+ * Schedule" prompt when none); clicking opens the SchedulePopover
+ * anchored to the same element. */
+.todos-row__date-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Empty state (no due date) is icon-only — the calendar glyph alone
+   * is enough cue that this is the "set a schedule" affordance. We
+   * scale up to a roomier pill once a date is set so the date label
+   * has space to breathe. */
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px dashed color-mix(in srgb, var(--tp-muted) 35%, transparent);
+  background: transparent;
+  color: var(--tp-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.todos-row__date-trigger:hover {
+  background: var(--tp-hover);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.todos-row__date-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.todos-row__date-trigger--set {
+  padding: 4px 10px;
+  color: var(--tp-schedule, var(--accent));
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--tp-schedule, var(--accent)) 35%, transparent);
+  background: color-mix(in srgb, var(--tp-schedule, var(--accent)) 8%, transparent);
+}
+
+.todos-row__date-trigger--warn {
+  color: var(--tp-warn);
+  border-color: color-mix(in srgb, var(--tp-warn) 45%, transparent);
+  background: color-mix(in srgb, var(--tp-warn) 8%, transparent);
+}
+
+.todos-row__date-trigger__placeholder {
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+.todos-row__sched-btn {
+  /* Icon-only schedule trigger. Wider buttons with the word "Schedule"
+   * were eating horizontal space in a row that already balances title +
+   * status + delete + move; squaring the affordance down to a 32×32
+   * icon button lets the toolbar breathe and matches how other row
+   * actions present themselves. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.todos-row__sched-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong, var(--border));
+  color: var(--text);
+}
+
+.todos-row__sched-btn--set {
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.3);
+  color: var(--ok);
+}
+
+.todos-row__sched-btn--reminder {
+  position: relative;
+}
+
+.todos-row__sched-btn--reminder::after {
+  /* Small bell-dot in the top-right corner when a reminder is armed —
+   * tells the user this row will actually ping without needing them to
+   * open the popover. */
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* —— SchedulePopover (Todos & elsewhere) ————————————————————— */
+
+.sched-pop {
+  position: absolute;
+  right: 0;
+  z-index: 30;
+  width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  user-select: none;
+  /* Allow scroll on very short viewports (mobile landscape) */
+  max-height: min(560px, calc(100vh - 32px));
+  overflow-y: auto;
+}
+
+/* Default placement: below the trigger.
+   `data-placement` is set by SchedulePopover on mount based on viewport
+   collision detection. Flipping is a pure CSS swap of top/bottom anchor,
+   no transforms needed. */
+.sched-pop[data-placement='below'],
+.sched-pop:not([data-placement]) {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
+.sched-pop[data-placement='above'] {
+  bottom: calc(100% + 6px);
+  top: auto;
+}
+
+.sched-pop__header {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.sched-pop__month {
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  text-align: center;
+  color: var(--text);
+}
+
+.sched-pop__nav,
+.sched-pop__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.sched-pop__nav:hover,
+.sched-pop__close:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.sched-pop__weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.sched-pop__weekday {
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--muted);
+  padding: 4px 0;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sched-pop__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.sched-pop__day {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease, transform 100ms ease;
+}
+
+.sched-pop__day:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+.sched-pop__day--dim {
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.sched-pop__day--today {
+  font-weight: 700;
+  color: var(--accent);
+  /* Subtle ring around today to differentiate it from regular days even
+   * when it isn't the selected one. */
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.sched-pop__day--selected,
+.sched-pop__day--selected:hover {
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  border-color: var(--accent);
+}
+
+.sched-pop__day--selected.sched-pop__day--today {
+  color: var(--accent-contrast, #fff);
+}
+
+.sched-pop__time-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-hover);
+}
+
+.sched-pop__time-ic {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.sched-pop__time-input {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+}
+
+.sched-pop__time-chips {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sched-pop__chip {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.sched-pop__chip:hover {
+  color: var(--text);
+  border-color: var(--border-strong, var(--border));
+}
+
+.sched-pop__chip--active {
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  border-color: var(--accent);
+}
+
+.sched-pop__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sched-pop__preset {
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.sched-pop__preset:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.sched-pop__reminder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px dashed var(--border);
+}
+
+.sched-pop__remind-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.sched-pop__remind-toggle:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.sched-pop__remind-toggle--on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
+}
+
+.sched-pop__repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.sched-pop__footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.sched-pop__footer-meta {
+  flex: 1;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.sched-pop__footer-meta .muted {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sched-pop__clear {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.sched-pop__clear:hover {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.btn--compact {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+/* On phones we abandon row-anchored positioning entirely and dock the
+ * popover as a bottom sheet pinned to the viewport. This avoids the
+ * overflow case where the trigger sits near a viewport edge and the
+ * 320-pixel popover spills off-screen. Bonus: matches the native
+ * "tap → modal from bottom" interaction iOS users expect. */
+@media (max-width: 480px) {
+  .sched-pop {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 16px;
+    top: auto;
+    width: auto;
+    transform: none;
+    /* Slightly larger max-height so the day grid still has comfortable
+     * tap targets above the on-screen keyboard. */
+    max-height: min(540px, calc(100vh - 80px));
+  }
+  /* On mobile the above/below placement attribute set by the popover's
+   * useLayoutEffect is overridden — we're always at the bottom of the
+   * viewport. */
+  .sched-pop[data-placement='above'],
+  .sched-pop[data-placement='below'] {
+    top: auto;
+    bottom: 16px;
+  }
+  .sched-pop__time-chips {
+    margin-left: 0;
+  }
+}

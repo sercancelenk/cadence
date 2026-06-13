@@ -203,6 +203,7 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
         type="button"
         className="toast__close"
         aria-label="Dismiss notification"
+        title="Dismiss notification"
         onClick={onDismiss}
       >
         <IcX size={14} />

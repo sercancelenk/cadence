@@ -15,6 +15,10 @@
  * Hard constraints:
  *   - Must NOT block first-paint. It mounts after `AppData.ready` and
  *     decides "should I show" from localStorage synchronously.
+ *   - New sign-ups stash recovery codes in sessionStorage; the tour
+ *     injects a mandatory "save your codes" step before the rest can be
+ *     skipped. If the tour is suppressed (returning device) but codes
+ *     are still pending, only the recovery step is shown.
  *   - Must survive a fresh install on a paired phone. Pairing the
  *     phone already counts as "I'm a returning user" — we suppress
  *     the tour if the user has any LAN/Drive sync state on this
@@ -26,8 +30,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccount } from '../AccountContext';
+import { RecoveryCodesPanel } from './RecoveryCodesPanel';
 import { loadPair } from '../lib/lanSyncClient';
 import { loadStoredTokens, isClientConfigured } from '../lib/syncBackends/gdriveAuth';
+import {
+  clearPendingRecoveryCodes,
+  readPendingRecoveryCodes,
+} from '../lib/pendingRecoveryCodes';
 import { PRESET_LABELS, useFeatures, type PresetName } from '../lib/features';
 
 const COMPLETED_KEY = 'cadence.tour.completed.v1';
@@ -74,11 +83,13 @@ export function WelcomeTour() {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
   const [chosenPreset, setChosenPreset] = useState<PresetName | null>(null);
+  const [pendingRecovery, setPendingRecovery] = useState<string[] | null>(() => readPendingRecoveryCodes());
+  const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
 
   // Decide ONCE on mount whether this run should show the tour. We
   // recompute only when the account changes (e.g. user signs out
   // and signs back in).
-  const shouldShow = useMemo(() => {
+  const shouldShowTour = useMemo(() => {
     if (!user) return false;
     if (looksLikeReturningDevice()) return false;
     // If the user already picked an "App profile" preset on this device
@@ -89,15 +100,23 @@ export function WelcomeTour() {
     return !readCompletedAccountIds().includes(user.id);
   }, [user]);
 
+  const shouldOpen = shouldShowTour || !!pendingRecovery;
+
   useEffect(() => {
-    if (shouldShow) setOpen(true);
-  }, [shouldShow]);
+    if (shouldOpen) setOpen(true);
+  }, [shouldOpen]);
+
+  useEffect(() => {
+    setPendingRecovery(readPendingRecoveryCodes());
+    setRecoveryAcknowledged(false);
+    setStep(0);
+  }, [user?.id]);
 
   if (!open || !user) return null;
 
   const dismiss = () => {
     setOpen(false);
-    markCompleted(user.id);
+    if (shouldShowTour) markCompleted(user.id);
   };
 
   type Step = {
@@ -107,6 +126,8 @@ export function WelcomeTour() {
     nextLabel?: string;
     /** Whether the Next button is allowed to proceed (e.g. preset chosen). */
     nextEnabled?: boolean;
+    /** Recovery step — must be completed before Skip / dismiss. */
+    isRecovery?: boolean;
   };
 
   // Three-step tour, with an EXTRA first step injected when the user
@@ -114,7 +135,7 @@ export function WelcomeTour() {
   // is the single source of truth for "where will you use Cadence?".
   const steps: Step[] = [];
 
-  const needsProfileStep = !managed && !hasUserPreset;
+  const needsProfileStep = !managed && !hasUserPreset && shouldShowTour;
 
   if (needsProfileStep) {
     steps.push({
@@ -150,7 +171,7 @@ export function WelcomeTour() {
       ),
       nextEnabled: chosenPreset !== null,
     });
-  } else if (managed) {
+  } else if (managed && shouldShowTour) {
     steps.push({
       title: 'Welcome to Cadence',
       body: (
@@ -170,6 +191,29 @@ export function WelcomeTour() {
     });
   }
 
+  if (pendingRecovery) {
+    steps.push({
+      title: 'Save your recovery codes',
+      isRecovery: true,
+      body: (
+        <>
+          <p>
+            Your account is set up with <strong>recovery codes</strong> — like a crypto wallet seed phrase.
+            They are the only way to reset your password on this device without a backup export.
+          </p>
+          <RecoveryCodesPanel
+            embedded
+            codes={pendingRecovery}
+            onAcknowledgedChange={setRecoveryAcknowledged}
+          />
+        </>
+      ),
+      nextEnabled: recoveryAcknowledged,
+      nextLabel: 'I saved them — continue',
+    });
+  }
+
+  if (shouldShowTour) {
   steps.push({
     title: needsProfileStep ? "Here's what Cadence is" : 'Welcome to Cadence',
     body: (
@@ -253,18 +297,42 @@ export function WelcomeTour() {
             See <Link to="/settings">Settings → App profile</Link> to review which features are
             enabled on this device.
           </li>
+          <li>
+            Read the <Link to="/guide">user guide</Link> for backups, recovery codes, and sync.
+          </li>
         </ul>
       </>
     ),
   });
 
+  } // shouldShowTour
+
   const cur = steps[step];
   const isLast = step === steps.length - 1;
   const nextAllowed = cur.nextEnabled !== false;
+  const hasOutstandingRecovery = !!pendingRecovery;
+  const canSkip = !cur.isRecovery && !hasOutstandingRecovery;
+
+  const advance = () => {
+    if (cur.isRecovery) {
+      clearPendingRecoveryCodes();
+      setPendingRecovery(null);
+      setRecoveryAcknowledged(false);
+    }
+    setStep((s) => s + 1);
+  };
+
+  const finish = () => {
+    if (cur.isRecovery) {
+      clearPendingRecoveryCodes();
+      setPendingRecovery(null);
+    }
+    dismiss();
+  };
 
   return (
     <div className="welcome-tour__backdrop" role="dialog" aria-modal="true" aria-labelledby="welcome-tour-title">
-      <div className="welcome-tour__card surface">
+      <div className={`welcome-tour__card surface${cur.isRecovery ? ' welcome-tour__card--recovery' : ''}`}>
         <div className="welcome-tour__progress">
           {steps.map((_, i) => (
             <span
@@ -279,20 +347,24 @@ export function WelcomeTour() {
         </h2>
         <div className="welcome-tour__body">{cur.body}</div>
         <div className="welcome-tour__actions">
-          <button type="button" className="btn btn--ghost" onClick={dismiss}>
-            Skip
-          </button>
+          {canSkip ? (
+            <button type="button" className="btn btn--ghost" onClick={dismiss}>
+              Skip
+            </button>
+          ) : (
+            <span />
+          )}
           {!isLast ? (
             <button
               type="button"
               className="btn btn--primary"
               disabled={!nextAllowed}
-              onClick={() => setStep((s) => s + 1)}
+              onClick={advance}
             >
               {cur.nextLabel ?? 'Next'}
             </button>
           ) : (
-            <button type="button" className="btn btn--primary" onClick={dismiss}>
+            <button type="button" className="btn btn--primary" disabled={!nextAllowed} onClick={finish}>
               Get started
             </button>
           )}

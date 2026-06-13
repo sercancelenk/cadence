@@ -17,6 +17,7 @@ export function StructuredTextLanguageToggle({
           type="button"
           className={`structured-text-editor__lang-btn${language === lang ? ' structured-text-editor__lang-btn--active' : ''}`}
           aria-pressed={language === lang}
+          title={lang.toUpperCase()}
           disabled={!onLanguageChange}
           onClick={() => onLanguageChange?.(lang)}
         >

@@ -1,0 +1,53 @@
+/* User guide page — renders docs/USER-GUIDE.md in-app */
+.guide-page__body {
+  max-width: 720px;
+  line-height: 1.6;
+}
+
+.guide-page__body h2 {
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  font-size: 1.25rem;
+}
+
+.guide-page__body h3 {
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  font-size: 1.05rem;
+}
+
+.guide-page__body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 14px;
+}
+
+.guide-page__body th,
+.guide-page__body td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.guide-page__body th {
+  background: var(--bg-elevated);
+}
+
+.guide-page__body a {
+  color: var(--accent);
+}
+
+.guide-page__body code {
+  font-size: 0.9em;
+  background: var(--bg-elevated);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.guide-page__body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0;
+}

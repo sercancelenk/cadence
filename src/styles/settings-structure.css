@@ -1,0 +1,52 @@
+/* ─── Settings page: modernised group rhythm ──────────────────────────
+ *
+ * The Settings screen used to be ~14 collapsible cards stacked
+ * vertically with identical visual weight. To make that scannable we
+ * organise the cards into named groups ("Account & security", "Data
+ * & backup", "Sync", "Integrations", "About") with a small uppercase
+ * eyebrow heading and a tightened gap between members of the same
+ * group. The cards themselves keep their existing CollapsibleCard
+ * styling — this layer is purely the structural overlay.
+ */
+.settings-page__head {
+  margin-bottom: 28px;
+}
+.settings-group {
+  margin-top: 32px;
+}
+.settings-group:first-of-type {
+  margin-top: 12px;
+}
+.settings-group__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 4px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  margin: 0 0 14px;
+}
+.settings-group__eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.settings-group__desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text) 65%, transparent);
+}
+.settings-group__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* Inside a group, cards sit flush with `gap` instead of their default
+   16px top margin — keeps related items visually anchored together
+   while letting the inter-group rhythm breathe. */
+.settings-group__body > .card {
+  margin-top: 0;
+}

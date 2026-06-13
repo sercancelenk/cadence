@@ -1,0 +1,225 @@
+/* Cadence design tokens — Spotify-inspired layering, Cadence warm accent.
+   Components reference these vars only; never hard-code palette in pages. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surface stack (deepest → elevated) */
+  --main-canvas: #000000;
+  --bg: #121212;
+  --bg-elevated: #121212;
+  --panel: #181818;
+  --panel-hover: #282828;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --text: #ffffff;
+  --muted: #b3b3b3;
+
+  /* Warm cream / amber — matches Cadence icon dial; calm but visible */
+  --accent: #c4a574;
+  --accent-2: #a88b5c;
+  --accent-soft: rgba(196, 165, 116, 0.16);
+  --accent-contrast: #1a1408;
+
+  --danger: #f87171;
+  --ok: #4ade80;
+  --warn: #f59e0b;
+  --structured-diff-highlight: #e6b464;
+
+  /* Eisenhower matrix quadrant accents */
+  --plan-do: #f87171;
+  --plan-schedule: #4ade80;
+  --plan-delegate: #f59e0b;
+  --plan-eliminate: #8a8a8a;
+  --plan-unsorted: #727272;
+
+  --radius: 8px;
+  --radius-sm: 4px;
+  --radius-md: 12px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.55);
+
+  --font: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-feature: 'ss01', 'ss02';
+  --topbar-h: 56px;
+  --sidebar-w: 280px;
+  --sidebar-w-collapsed: 72px;
+
+  --input-bg: #282828;
+  --input-border: rgba(255, 255, 255, 0.1);
+  --input-text: var(--text);
+  --input-placeholder: #727272;
+  --input-focus-border: var(--accent);
+  --input-focus-ring: rgba(196, 165, 116, 0.28);
+
+  --btn-bg-from: rgba(255, 255, 255, 0.08);
+  --btn-bg-to: rgba(255, 255, 255, 0.04);
+  --btn-hover-from: rgba(255, 255, 255, 0.12);
+  --btn-hover-to: rgba(255, 255, 255, 0.06);
+  --btn-inset: rgba(255, 255, 255, 0.04);
+
+  --btn-primary-text: var(--accent-contrast);
+  --btn-danger-text: #fecaca;
+
+  --btn-danger-bg-from: rgba(248, 113, 113, 0.12);
+  --btn-danger-bg-to: rgba(248, 113, 113, 0.04);
+  --btn-danger-border: rgba(248, 113, 113, 0.45);
+
+  --surface-hover: rgba(255, 255, 255, 0.08);
+  --surface-pressed: rgba(255, 255, 255, 0.12);
+
+  /* CodeMirror / structured text syntax */
+  --cm-property: #7eb8e3;
+  --cm-string: #9dce9a;
+  --cm-number: #e6b464;
+  --cm-bool: #dfa071;
+  --cm-null: #c5a3e8;
+  --cm-keyword: #c5a3e8;
+  --cm-comment: #727272;
+  --cm-punctuation: #a0a0a0;
+  --cm-bracket: #b8c2d0;
+  --cm-meta: #7ec4ca;
+  --cm-type: #79c0ff;
+  --cm-invalid: var(--danger);
+  --cm-fold: #727272;
+  --cm-fold-hover: #b3b3b3;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --main-canvas: #f5f5f5;
+  --bg: #ffffff;
+  --bg-elevated: #ffffff;
+  --panel: #ffffff;
+  --panel-hover: #f0f0f0;
+
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.14);
+
+  --text: #121212;
+  --muted: #6a6a6a;
+
+  --accent: #9a7b4f;
+  --accent-2: #7d6340;
+  --accent-soft: rgba(154, 123, 79, 0.14);
+  --accent-contrast: #ffffff;
+
+  --danger: #dc2626;
+  --ok: #15803d;
+  --warn: #d97706;
+  --structured-diff-highlight: #c9922e;
+
+  /* Eisenhower matrix quadrant accents */
+  --plan-do: #dc2626;
+  --plan-schedule: #15803d;
+  --plan-delegate: #d97706;
+  --plan-eliminate: #9ca3af;
+  --plan-unsorted: #a3a3a3;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.1);
+
+  --input-bg: #ffffff;
+  --input-border: rgba(0, 0, 0, 0.12);
+  --input-text: #121212;
+  --input-placeholder: #8a8a8a;
+  --input-focus-border: var(--accent);
+  --input-focus-ring: rgba(154, 123, 79, 0.22);
+
+  --btn-bg-from: #ffffff;
+  --btn-bg-to: #f5f5f5;
+  --btn-hover-from: #ffffff;
+  --btn-hover-to: #ebebeb;
+  --btn-inset: rgba(255, 255, 255, 0.9);
+
+  --btn-primary-text: #ffffff;
+  --btn-danger-text: #b91c1c;
+  --btn-danger-bg-from: #ffffff;
+  --btn-danger-bg-to: #fff1f2;
+  --btn-danger-border: #fca5a5;
+
+  --surface-hover: rgba(0, 0, 0, 0.06);
+  --surface-pressed: rgba(0, 0, 0, 0.1);
+
+  --cm-property: #1e5a8a;
+  --cm-string: #1f6937;
+  --cm-number: #9a5c00;
+  --cm-bool: #b45309;
+  --cm-null: #6d28d9;
+  --cm-keyword: #6d28d9;
+  --cm-comment: #64748b;
+  --cm-punctuation: #475569;
+  --cm-bracket: #334155;
+  --cm-meta: #0e7490;
+  --cm-type: #1d4ed8;
+  --cm-invalid: var(--danger);
+  --cm-fold: #64748b;
+  --cm-fold-hover: #1e293b;
+}
+
+/* Light-theme component patches (migrated from monolithic app.css) */
+:root[data-theme='light'] body {
+  background: var(--main-canvas);
+  color: var(--text);
+}
+
+:root[data-theme='light'] .nav-link {
+  color: var(--text);
+}
+
+:root[data-theme='light'] .nav-link--active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+:root[data-theme='light'] .list__row,
+:root[data-theme='light'] .list__block,
+:root[data-theme='light'] .tile {
+  background: #fafafa;
+}
+
+:root[data-theme='light'] .pre {
+  background: #f0f0f0;
+}
+
+:root[data-theme='light'] code {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--accent-2);
+}
+
+:root[data-theme='light'] .card {
+  background: #ffffff;
+  box-shadow: var(--shadow-sm);
+  border-color: var(--border);
+}
+
+:root[data-theme='light'] .btn--primary {
+  background: var(--accent);
+  border-color: var(--accent-2);
+  box-shadow: none;
+}
+
+:root[data-theme='light'] .btn--primary:hover:not(:disabled) {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+:root[data-theme='light'] .btn--danger:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #991b1b;
+}
+
+:root[data-theme='light'] .btn--ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+:root[data-theme='light'] .icon-btn {
+  background: #ffffff;
+}

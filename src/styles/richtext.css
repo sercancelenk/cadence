@@ -1,0 +1,550 @@
+/* —— Rich text editor (Tiptap / ProseMirror) —— */
+.rich-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.rich-editor__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+}
+
+.rich-editor__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 8px;
+  margin-right: 4px;
+  border-right: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.rich-editor__group:last-of-type {
+  border-right: 0;
+  margin-right: 0;
+  padding-right: 0;
+}
+
+.rich-editor__btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1;
+}
+.rich-editor__btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.rich-editor__btn--active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
+}
+.rich-editor__btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.rich-editor__u {
+  text-decoration: underline;
+}
+
+.rich-editor__notice {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: color-mix(in srgb, #ffb24a 14%, var(--panel));
+  border-bottom: 1px solid color-mix(in srgb, #ffb24a 28%, transparent);
+}
+
+.rich-editor__pop,
+.rich-editor__link-pop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.rich-editor__pop-input,
+.rich-editor__link-input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.rich-editor__pop-input--date {
+  flex: 0 1 auto;
+  width: auto;
+}
+.rich-editor__date-preview {
+  align-self: center;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+.rich-editor__surface {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.rich-editor__surface .tiptap {
+  min-height: var(--rich-editor-min-h, 280px);
+  padding: 14px 16px;
+  outline: none;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.6;
+}
+.rich-editor__surface .tiptap:focus {
+  outline: none;
+}
+.rich-editor__surface .tiptap p.is-editor-empty:first-child::before {
+  color: var(--muted);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ProseMirror typography inside the editor */
+.rich-editor__prose h1,
+.rich-editor__surface .tiptap h1 { font-size: 1.45rem; margin: 0.6em 0 0.35em; font-weight: 700; }
+.rich-editor__surface .tiptap h2 { font-size: 1.25rem; margin: 0.55em 0 0.3em; font-weight: 700; }
+.rich-editor__surface .tiptap h3 { font-size: 1.1rem; margin: 0.5em 0 0.25em; font-weight: 700; }
+.rich-editor__surface .tiptap p { margin: 0.35em 0; }
+.rich-editor__surface .tiptap ul,
+.rich-editor__surface .tiptap ol { margin: 0.35em 0; padding-left: 1.4em; }
+.rich-editor__surface .tiptap a {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.rich-editor__surface .tiptap code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--panel) 55%, var(--bg));
+}
+.rich-editor__surface .tiptap pre {
+  margin: 0.5em 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel) 50%, var(--bg));
+  overflow-x: auto;
+}
+.rich-editor__surface .tiptap pre code {
+  padding: 0;
+  background: transparent;
+}
+.rich-editor__surface .tiptap hr {
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  margin: 0.75em 0;
+}
+.rich-editor__surface .tiptap blockquote {
+  margin: 0.5em 0;
+  padding: 0.35em 0 0.35em 12px;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  color: color-mix(in srgb, var(--text) 88%, var(--muted));
+}
+.rich-editor__surface .tiptap mark,
+.rich-editor__surface .tiptap .rich-editor-highlight {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.rich-editor__size-banner {
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.rich-editor__size-banner--hard {
+  background: color-mix(in srgb, #ffb24a 18%, var(--panel));
+  border-bottom-color: color-mix(in srgb, #ffb24a 35%, transparent);
+}
+
+/* Task list checkboxes */
+.rich-editor__surface .tiptap ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0;
+}
+.rich-editor__surface .tiptap ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.rich-editor__surface .tiptap ul[data-type='taskList'] li > label {
+  flex: 0 0 auto;
+  margin-top: 0.2em;
+  user-select: none;
+}
+.rich-editor__surface .tiptap ul[data-type='taskList'] li > div {
+  flex: 1 1 auto;
+}
+.rich-editor__surface .tiptap ul[data-type='taskList'] input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Tables */
+.rich-editor__surface .tiptap .tableWrapper {
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+.rich-editor__surface .tiptap table,
+.rich-editor__surface .tiptap .rich-editor-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.92em;
+}
+.rich-editor__surface .tiptap th,
+.rich-editor__surface .tiptap td {
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  padding: 6px 8px;
+  vertical-align: top;
+  position: relative;
+  min-width: 48px;
+}
+.rich-editor__surface .tiptap th {
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  font-weight: 600;
+}
+.rich-editor__surface .tiptap .selectedCell::after {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  content: '';
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+}
+.rich-editor__surface .tiptap .column-resize-handle {
+  background-color: var(--accent);
+  bottom: -2px;
+  pointer-events: none;
+  position: absolute;
+  right: -2px;
+  top: 0;
+  width: 4px;
+}
+.rich-editor__surface .tiptap.resize-cursor {
+  cursor: col-resize;
+}
+
+/* Images */
+.rich-editor-image-wrap {
+  display: inline-block;
+  position: relative;
+  max-width: 100%;
+  margin: 0.5em 0;
+  line-height: 0;
+  vertical-align: top;
+}
+
+.rich-editor-image-wrap.is-selected {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.rich-editor-image-wrap[data-has-width] {
+  max-width: 100%;
+}
+
+.rich-editor__surface .tiptap img,
+.rich-editor__surface .tiptap .rich-editor-image {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin: 0;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  cursor: zoom-in;
+}
+
+.rich-editor-image-wrap:not([data-has-width]) .rich-editor-image {
+  width: auto;
+  max-width: 100%;
+}
+
+.rich-editor-image__resize-handle {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--accent);
+  border: 2px solid var(--panel);
+  cursor: nwse-resize;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  z-index: 2;
+}
+
+.rich-editor-image__resize-handle:hover {
+  filter: brightness(1.08);
+}
+
+.rich-editor__surface .tiptap img.ProseMirror-selectednode {
+  outline: none;
+}
+
+/* Shared image lightbox — Notes + Todos (RichTextEditor) */
+.rich-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  background: rgba(8, 10, 18, 0.82);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: rich-image-lightbox-in 0.16s ease-out;
+}
+
+@keyframes rich-image-lightbox-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.rich-image-lightbox__close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rich-image-lightbox__close:hover {
+  background: var(--bg-elevated);
+}
+
+.rich-image-lightbox__toolbar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  z-index: 2;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  box-shadow: var(--shadow-md);
+}
+
+.rich-image-lightbox__tool {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rich-image-lightbox__tool:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.rich-image-lightbox__tool--label {
+  min-width: 64px;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rich-image-lightbox__stage {
+  position: relative;
+  width: min(96vw, 1400px);
+  height: min(92vh, 900px);
+  overflow: hidden;
+  touch-action: none;
+  cursor: zoom-in;
+}
+
+.rich-image-lightbox__stage--zoomed {
+  cursor: grab;
+}
+
+.rich-image-lightbox__stage--panning {
+  cursor: grabbing;
+}
+
+.rich-image-lightbox__layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.rich-image-lightbox__layer--measure {
+  visibility: hidden;
+}
+
+.rich-image-lightbox__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+.rich-image-lightbox__img--measure {
+  visibility: hidden;
+  width: auto;
+  height: auto;
+}
+
+.rich-image-lightbox__loading {
+  margin: 0;
+  font-size: 15px;
+}
+
+/* Date chips */
+.rich-editor__surface .tiptap time[data-date-chip],
+.rich-editor__surface .tiptap .rich-editor-date-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  margin: 0 2px;
+  border-radius: 999px;
+  font-size: 0.88em;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: baseline;
+  color: color-mix(in srgb, var(--accent) 85%, var(--text));
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  cursor: default;
+  user-select: none;
+}
+.rich-editor__surface .tiptap .ProseMirror-selectednode[data-date-chip] {
+  outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset: 1px;
+}
+
+/* —— Editor lab (temporary sandbox page) —— */
+.editor-lab__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.editor-lab__eyebrow {
+  margin: 0 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.editor-lab__actions {
+  align-items: center;
+}
+.editor-lab__saved {
+  color: var(--ok);
+}
+.editor-lab__mode {
+  margin: 0 0 12px;
+}
+
+.editor-lab__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .editor-lab__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.editor-lab__pane--editor {
+  padding: 0;
+  overflow: hidden;
+}
+.editor-lab__pane--editor .rich-editor {
+  border: 0;
+  border-radius: 0;
+  min-height: 420px;
+}
+
+.editor-lab__pane--meta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.editor-lab__meta-block {
+  padding: 14px 16px;
+}
+.editor-lab__meta-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+.editor-lab__pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 10px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.editor-lab__pre--json {
+  max-height: 320px;
+}

@@ -104,6 +104,7 @@ export function PlanningTaskCard({
           type="button"
           className={`planning-card__check${checked ? ' planning-card__check--on' : ''}`}
           aria-label={checked ? `Reopen "${item.title}"` : `Mark "${item.title}" done`}
+          title={checked ? `Reopen "${item.title}"` : `Mark "${item.title}" done`}
           aria-checked={checked}
           role="checkbox"
           onClick={onToggleComplete}
@@ -121,6 +122,7 @@ export function PlanningTaskCard({
           type="button"
           className={`planning-card__star${focused ? ' planning-card__star--on' : ''}`}
           aria-label={focused ? 'Remove from today focus' : 'Add to today focus'}
+          title={focused ? 'Remove from today focus' : 'Add to today focus'}
           aria-pressed={focused}
           onClick={onToggleFocus}
         >
@@ -188,8 +190,8 @@ export function PlanningQuadrantCell({
     >
       <header className="planning-quadrant__head">
         <h3 className="planning-quadrant__title">{title}</h3>
-        <p className="planning-quadrant__hint muted small">{hint}</p>
-        <span className="planning-quadrant__count muted small">{items.length}</span>
+        <p className="planning-quadrant__hint small">{hint}</p>
+        <span className="planning-quadrant__count">{items.length}</span>
       </header>
       <ul className="planning-quadrant__list">
         {items.length === 0 ? (

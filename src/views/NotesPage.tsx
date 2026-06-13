@@ -12,12 +12,14 @@ import {
   filterNotesForView,
   notePlainText,
   prefetchRichTextEditor,
+  useNoteGroupExpand,
   useNoteRevisionCapture,
   useNoteVersionHistory,
   useNotesEditor,
   useNotesLock,
-  useNotesManualReorder,
   useNotesSelection,
+  useNotesSidebarCollapse,
+  useNotesSidebarDnD,
   useNotesSort,
   useNotesViewMode,
   useSidebarResize,
@@ -40,11 +42,12 @@ const AITaskExtractorDialog = lazy(() =>
  * `docs/HEALTH-CHECK-AND-ROADMAP.md` (B2 notes module).
  */
 export function NotesPage() {
-  const { addNote, patchNote, replaceNote, removeNote, setNotesLock, update, flushPendingSave } =
+  const { addNote, addNoteGroup, updateNoteGroup, removeNoteGroup, patchNote, replaceNote, removeNote, setNotesLock, update, flushPendingSave } =
     useAppDataActions();
   const notesWorkspace = useAppDataSelector(
     (d) => ({
       notes: d.notes,
+      noteGroups: d.noteGroups,
       notesLock: d.notesLock,
       todoItems: d.todoItems,
       todoGroups: d.todoGroups,
@@ -52,6 +55,7 @@ export function NotesPage() {
     }),
     (a, b) =>
       a.notes === b.notes &&
+      a.noteGroups === b.noteGroups &&
       a.notesLock === b.notesLock &&
       a.todoItems === b.todoItems &&
       a.todoGroups === b.todoGroups &&
@@ -69,6 +73,11 @@ export function NotesPage() {
   );
 
   const { viewMode, setViewMode } = useNotesViewMode(user?.id ?? '');
+  const { isExpanded, toggleExpanded, expandGroup } = useNoteGroupExpand(user?.id ?? '');
+  const groups = useMemo(
+    () => [...notesWorkspace.noteGroups].sort((a, b) => a.sortOrder - b.sortOrder),
+    [notesWorkspace.noteGroups],
+  );
   const archivedCount = useMemo(
     () => notesWorkspace.notes.filter((n) => n.archived === true).length,
     [notesWorkspace.notes],
@@ -82,7 +91,7 @@ export function NotesPage() {
     prefetchRichTextEditor();
   }, []);
 
-  const { sortMode, setSortMode, notes } = useNotesSort(visibleNotes);
+  const { sortMode, setSortMode, notes } = useNotesSort(visibleNotes, user?.id);
   const { selectedId, setSelectedId, selected } = useNotesSelection(
     notes,
     notesWorkspace.notes,
@@ -141,6 +150,7 @@ export function NotesPage() {
     update,
     removeNote,
     captureRevision: captureAfterSave,
+    getLatestBodyFields: editorState.getLatestBodyFields,
   });
 
   const {
@@ -150,13 +160,32 @@ export function NotesPage() {
     endSidebarResize,
   } = useSidebarResize();
 
-  const reorder = useNotesManualReorder(sortMode, notes, update);
+  const { sidebarCollapsed, toggleSidebar, expandSidebar, collapseSidebar } =
+    useNotesSidebarCollapse(user?.id ?? '');
 
-  const onCreate = () => {
-    const id = addNote();
+  const dnd = useNotesSidebarDnD(sortMode, notes, update, (noteId, groupId) =>
+    patchNote(noteId, { groupId }),
+  );
+
+  const onCreate = (groupId?: string) => {
+    const id = addNote(groupId);
     setViewMode('active');
     setSelectedId(id);
     setDecrypted(null);
+    if (groupId) expandGroup(groupId);
+  };
+
+  const onCreateGroup = (name: string) => {
+    const id = addNoteGroup(name);
+    expandGroup(id);
+  };
+
+  const onRenameGroup = (groupId: string, name: string) => {
+    updateNoteGroup(groupId, { name });
+  };
+
+  const onRemoveGroup = (groupId: string) => {
+    removeNoteGroup(groupId);
   };
 
   const onTogglePinned = () => {
@@ -175,10 +204,21 @@ export function NotesPage() {
 
   return (
     <div
-      className={`notes-page${selected ? ' notes-page--mobile-detail' : ' notes-page--mobile-list'}`}
-      style={{ gridTemplateColumns: `minmax(0, ${sidebarWidth}px) 6px minmax(0, 1fr)` }}
+      className={[
+        'notes-page',
+        selected ? 'notes-page--mobile-detail' : 'notes-page--mobile-list',
+        sidebarCollapsed ? 'notes-page--sidebar-collapsed' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      style={
+        sidebarCollapsed
+          ? undefined
+          : { gridTemplateColumns: `minmax(0, ${sidebarWidth}px) 6px minmax(0, 1fr)` }
+      }
     >
       <NotesSidebar
+        groups={groups}
         notes={notes}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
@@ -188,36 +228,60 @@ export function NotesPage() {
         selectedId={selectedId}
         onSelectNote={setSelectedId}
         onCreateNote={onCreate}
+        onCreateGroup={onCreateGroup}
+        onRenameGroup={onRenameGroup}
+        onRemoveGroup={onRemoveGroup}
+        isGroupExpanded={isExpanded}
+        onToggleGroup={toggleExpanded}
         hasLock={lock.hasLock}
         hasRecovery={lock.hasRecovery}
         onOpenAddRecovery={lock.openAddRecovery}
         onOpenDisableLocking={lock.openDisableLocking}
         decrypted={decrypted}
-        draggingId={reorder.draggingId}
-        dropTargetId={reorder.dropTargetId}
-        onRowDragStart={reorder.onRowDragStart}
-        onRowDragOver={reorder.onRowDragOver}
-        onRowDrop={reorder.onRowDrop}
-        onRowDragEnd={reorder.onRowDragEnd}
+        draggingId={dnd.draggingId}
+        dropTargetId={dnd.dropTargetId}
+        dropTargetGroupId={dnd.dropTargetGroupId}
+        onNoteDragStart={dnd.onNoteDragStart}
+        onNoteDragOver={dnd.onNoteDragOver}
+        onNoteDrop={dnd.onNoteDrop}
+        onGroupDragOver={dnd.onGroupDragOver}
+        onGroupDrop={dnd.onGroupDrop}
+        onDragEnd={dnd.onDragEnd}
+        onCollapseSidebar={collapseSidebar}
       />
 
-      <div
-        className="notes-page__resize-handle"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize notes sidebar"
-        onPointerDown={beginSidebarResize}
-        onPointerMove={onSidebarResizeMove}
-        onPointerUp={endSidebarResize}
-        onPointerCancel={endSidebarResize}
-      />
+      {!sidebarCollapsed ? (
+        <div
+          className="notes-page__resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize notes sidebar"
+          title="Resize notes sidebar"
+          onPointerDown={beginSidebarResize}
+          onPointerMove={onSidebarResizeMove}
+          onPointerUp={endSidebarResize}
+          onPointerCancel={endSidebarResize}
+        />
+      ) : null}
 
       <section className="notes-page__main">
         {!selected ? (
           <div className="notes-page__placeholder">
-            {viewMode === 'archived'
-              ? 'Select an archived note on the left, or switch to Active.'
-              : 'Select a note on the left, or create a new one.'}
+            {sidebarCollapsed ? (
+              <button
+                type="button"
+                className="notes-page__show-list-btn"
+                title="Show notes list"
+                onClick={expandSidebar}
+              >
+                Show notes list
+              </button>
+            ) : null}
+            <p className="muted">
+              {viewMode === 'archived'
+                ? 'Select an archived note on the left, or switch to Active.'
+                : 'Select a note on the left, or create a new one.'}
+            </p>
           </div>
         ) : (
           <>
@@ -226,6 +290,8 @@ export function NotesPage() {
               editorReady={editorReady}
               busy={lock.busy}
               aiEnabled={aiEnabled}
+              sidebarCollapsed={sidebarCollapsed}
+              onToggleSidebar={toggleSidebar}
               onBack={() => setSelectedId(null)}
               onChangeTitle={onChangeTitle}
               onExtractTasks={() =>

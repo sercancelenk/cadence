@@ -25,6 +25,12 @@ export function filterNotesForView(notes: Note[], mode: NoteViewMode) {
   return notes.filter((n) => (mode === 'archived' ? n.archived === true : n.archived !== true));
 }
 
+/** Notes in the selected list, after the active/archived lens. */
+export function filterNotesForGroup(notes: Note[], groupId: string | null) {
+  if (!groupId) return notes;
+  return notes.filter((n) => n.groupId === groupId);
+}
+
 /**
  * Sort modes available in the sidebar dropdown. `manual` is special — it's
  * the only mode that lets the user drag rows up/down to reorder them
@@ -48,3 +54,14 @@ export const SORT_OPTIONS: { value: NoteSortMode; label: string }[] = [
 export const SIDEBAR_MIN_WIDTH = 220;
 export const SIDEBAR_MAX_WIDTH = 560;
 export const SIDEBAR_DEFAULT_WIDTH = 320;
+
+const LS_NOTE_SORT = 'cadence.notes.sortMode.v1';
+const LS_SIDEBAR_COLLAPSED = 'cadence.notes.sidebarCollapsed.v1';
+
+export function noteSortModeKey(userId: string) {
+  return `${LS_NOTE_SORT}:${userId}`;
+}
+
+export function noteSidebarCollapsedKey(userId: string) {
+  return `${LS_SIDEBAR_COLLAPSED}:${userId}`;
+}

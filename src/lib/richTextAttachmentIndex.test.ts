@@ -13,6 +13,7 @@ const baseData = (): AppData =>
     todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: '2020-01-01T00:00:00.000Z' }],
     todoItems: [],
     notes: [],
+    noteGroups: [],
   }) as AppData;
 
 describe('collectReferencedAttachmentIds', () => {

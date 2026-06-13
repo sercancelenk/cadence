@@ -56,10 +56,28 @@ export function CollapsibleCard({
     writePersisted(id, open);
   }, [id, open]);
 
+  useEffect(() => {
+    const focusFromHash = () => {
+      if (typeof window === 'undefined') return;
+      const target = window.location.hash.replace(/^#/, '');
+      if (target !== id) return;
+      setOpen(true);
+      requestAnimationFrame(() => {
+        document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    };
+    focusFromHash();
+    window.addEventListener('hashchange', focusFromHash);
+    return () => window.removeEventListener('hashchange', focusFromHash);
+  }, [id]);
+
   const bodyId = `${id}-body`;
 
   return (
-    <section className={`card card--collapsible${open ? ' card--open' : ' card--closed'}`}>
+    <section
+      id={id}
+      className={`card card--collapsible${open ? ' card--open' : ' card--closed'}`}
+    >
       <button
         type="button"
         className="card__toggle"

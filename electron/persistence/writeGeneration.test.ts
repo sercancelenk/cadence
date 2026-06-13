@@ -69,10 +69,12 @@ describe('writeGeneration', () => {
       items: [],
       todoGroups: [],
       todoItems: [],
+      notes: [],
     };
     expect(isValidSnapshotPayload(minimal)).toBe(true);
     expect(isValidSnapshotPayload({ ...minimal, version: 99 })).toBe(false);
     expect(isValidSnapshotPayload(null)).toBe(false);
+    expect(isValidSnapshotPayload({ version: 3, teams: [] })).toBe(true);
     expect(isValidSnapshotPayload({ version: 3 })).toBe(false);
   });
 });

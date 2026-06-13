@@ -121,6 +121,13 @@ const {
   collectReferencedAttachmentIdsFromNoteHistory,
   countNoteHistoryRevisions,
 } = require('./noteHistory.cjs');
+const {
+  RECOVERY_CODE_COUNT,
+  generateRecoveryCodes,
+  isRecoveryEnvelope,
+  wrapRecoverySecret,
+  unwrapRecoverySecret,
+} = require('./accountRecovery.cjs');
 
 /** Reject IPC saves larger than the LAN sync POST limit (defence against OOM). */
 const MAX_SAVE_PAYLOAD_BYTES = 25 * 1024 * 1024;
@@ -690,6 +697,119 @@ function restoreAttachmentsFromBackupDir(userId, backupAttDir) {
     restored += 1;
   }
   return { ok: true, restored };
+}
+
+/** Read attachment bytes for `ownerUserId`, including OS-keychain cached keys. */
+function readAttachmentBytesWithPersistedKey(ownerUserId, attachmentId) {
+  const fromMem = readAttachmentBytes(ownerUserId, attachmentId);
+  if (fromMem?.length) return fromMem;
+  const persisted = loadPersistedDataKey(ownerUserId);
+  if (!persisted) return null;
+  const encPath = attachmentPathForUser(ownerUserId, attachmentId, true);
+  if (encPath && fs.existsSync(encPath)) {
+    try {
+      const plain = decryptBuffer(fs.readFileSync(encPath, 'utf8'), persisted);
+      if (plain?.length) return plain;
+    } catch {
+      /* fall through */
+    }
+  }
+  const plainPath = attachmentPathForUser(ownerUserId, attachmentId, false);
+  if (plainPath && fs.existsSync(plainPath)) {
+    try {
+      const raw = fs.readFileSync(plainPath);
+      const text = raw.toString('utf8');
+      if (isEncryptedEnvelope(text)) {
+        return decryptBuffer(text, persisted);
+      }
+      return raw;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Portable export: decrypt sidecars so a bundle can be imported under another
+ * account (or machine) without carrying the source encryption key.
+ */
+function exportAttachmentsPortableToDir(userId, destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  let exported = 0;
+  for (const id of listAttachmentIdsOnDisk(userId)) {
+    const bytes = readAttachmentBytes(userId, id);
+    if (!bytes?.length) continue;
+    fs.writeFileSync(path.join(destDir, `${id}.bin`), bytes);
+    exported += 1;
+  }
+  return exported;
+}
+
+/**
+ * Portable import: accept plaintext `.bin` (preferred) or legacy encrypted
+ * sidecars from an older export, then re-encrypt under the signed-in account.
+ */
+function importAttachmentsPortableFromDir(userId, srcDir) {
+  if (!srcDir || !fs.existsSync(srcDir)) return { ok: true, restored: 0, skipped: 0 };
+  let restored = 0;
+  let skipped = 0;
+  for (const name of fs.readdirSync(srcDir)) {
+    const m = name.match(/^(.+)\.(cadenc|bin)$/);
+    if (!m) continue;
+    const id = sanitizeAttachmentId(m[1]);
+    if (!id) continue;
+    const filePath = path.join(srcDir, name);
+    let plain = null;
+    try {
+      const raw = fs.readFileSync(filePath);
+      const asText = raw.toString('utf8');
+      if (isEncryptedEnvelope(asText)) {
+        const key = dataKeys.get(userId);
+        plain = key ? decryptBuffer(asText, key) : null;
+      } else {
+        plain = raw;
+      }
+    } catch {
+      plain = null;
+    }
+    if (!plain?.length) {
+      skipped += 1;
+      continue;
+    }
+    const w = writeAttachmentBytes(userId, id, plain, detectAttachmentMime(plain));
+    if (w.ok) restored += 1;
+    else skipped += 1;
+  }
+  return { ok: true, restored, skipped };
+}
+
+/**
+ * After a JSON-only import on this machine, copy referenced images from other
+ * local account attachment folders (same device, pre-export salvage path).
+ */
+function salvageReferencedAttachmentsLocally(targetUserId, payload) {
+  const needed = collectReferencedAttachmentIdsFromPayload(payload);
+  if (!needed.length) return { restored: 0 };
+  const attRoot = path.join(app.getPath('userData'), ATTACHMENTS_DIRNAME);
+  if (!fs.existsSync(attRoot)) return { restored: 0 };
+  let restored = 0;
+  const siblingDirs = fs
+    .readdirSync(attRoot)
+    .filter((name) => name !== targetUserId && fs.statSync(path.join(attRoot, name)).isDirectory());
+  for (const attachmentId of needed) {
+    if (readAttachmentBytes(targetUserId, attachmentId)?.length) continue;
+    for (const ownerId of siblingDirs) {
+      const bytes = readAttachmentBytesWithPersistedKey(ownerId, attachmentId);
+      if (!bytes?.length) continue;
+      const w = writeAttachmentBytes(targetUserId, attachmentId, bytes, detectAttachmentMime(bytes));
+      if (w.ok) {
+        restored += 1;
+        break;
+      }
+    }
+  }
+  return { restored };
 }
 
 function pairedAttachmentsBackupDir(dataBackupPath) {
@@ -1285,6 +1405,15 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
         reason: existing.reason,
       };
     }
+    if (existing.ok && existing.data && isFutureDataVersion(existing.data)) {
+      console.error('[cadence] refusing to overwrite newer-version workspace on disk', { userId });
+      return {
+        ok: false,
+        reason: 'unsupported-version',
+        error:
+          'This workspace was saved by a newer version of Cadence. Update the app before saving changes.',
+      };
+    }
   }
 
   // Defence in depth against plaintext-leak: refuse to save when the
@@ -1311,7 +1440,19 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
     }
   }
 
-  snapshotCurrentDataFile(userId, 'pre-save');
+  const preSaveSnapshot = snapshotCurrentDataFile(userId, 'pre-save');
+
+  const rollbackPreSaveSnapshot = (snapshotPath) => {
+    if (!snapshotPath) return;
+    try {
+      const rollback = loadWorkspaceFromBackupSet(userId, snapshotPath);
+      if (rollback.ok) {
+        commitUserData(userId, rollback.workspace, { allowOverwriteUnreadable: true });
+      }
+    } catch (err) {
+      console.warn('[cadence] pre-save rollback failed', err);
+    }
+  };
 
   const hadShards = listMonthlyShardPathsForUser(userId).length > 0;
   const { baseWorkspace, shards } = splitWorkspaceForMonthlyShards(
@@ -1344,13 +1485,18 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
     const shardPath = monthlyShardPathForUser(userId, monthKey);
     const shardWrite = writeEncryptedObject(userId, shardPath, shardBody);
     if (!shardWrite.ok) {
-      console.warn('[cadence] monthly shard write failed (non-fatal)', {
+      console.error('[cadence] monthly shard write failed', {
         userId,
         monthKey,
         reason: shardWrite.reason,
         error: shardWrite.error,
       });
-      continue;
+      rollbackPreSaveSnapshot(preSaveSnapshot);
+      return {
+        ok: false,
+        reason: shardWrite.reason ?? 'io',
+        error: 'I/O error while writing monthly archive shard.',
+      };
     }
     writtenMonths.add(monthKey);
   }
@@ -1365,8 +1511,12 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
   }
 
   const verify = readUserDataResult(userId);
-  if (verify.ok && verify.data && !shardRoundTripMatches(payload, verify.data)) {
-    console.error('[cadence] post-save shard round-trip verification failed', { userId });
+  if (!verify.ok || !verify.data || !shardRoundTripMatches(payload, verify.data)) {
+    console.error('[cadence] post-save verification failed', {
+      userId,
+      verifyOk: verify.ok,
+    });
+    rollbackPreSaveSnapshot(preSaveSnapshot);
     return {
       ok: false,
       reason: 'verify-failed',
@@ -2113,10 +2263,14 @@ async function startSyncServer(port = SYNC_DEFAULT_PORT) {
                   JSON.stringify({
                     ok: false,
                     error:
-                      'payload rejected: required AppData fields (version, teams, people, items, todoGroups, todoItems) are missing or have the wrong shape',
+                      'payload rejected: snapshot must include version and at least one workspace collection array',
                   }),
                 );
                 return;
+              }
+              const coerced = { ...payload };
+              for (const key of ['teams', 'people', 'items', 'todoGroups', 'todoItems', 'notes']) {
+                if (!Array.isArray(coerced[key])) coerced[key] = [];
               }
 
               // Optimistic concurrency: if the client sent an `If-Match`
@@ -2152,11 +2306,23 @@ async function startSyncServer(port = SYNC_DEFAULT_PORT) {
                 }
               }
 
-              const writeRes = commitUserData(uid, payload);
+              const writeRes = commitUserData(uid, coerced);
+              if (writeRes.ok) {
+                try {
+                  if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('data:remoteUpdated', {
+                      writeGeneration: writeRes.writeGeneration,
+                    });
+                  }
+                } catch {
+                  /* best effort */
+                }
+              }
               // Always return the post-write ETag so the client can stop
               // tracking the previous one (otherwise a successful push
               // followed by another push would 412 against itself).
-              const newJson = JSON.stringify({ ok: true, data: payload });
+              const postData = writeRes.ok ? readUserData(uid) : coerced;
+              const newJson = JSON.stringify({ ok: true, data: postData });
               const newEtag = `"${crypto
                 .createHash('sha256')
                 .update(newJson)
@@ -2253,7 +2419,7 @@ function readSessionUserId() {
 }
 
 function writeSession(userId) {
-  writeJsonSafe(sessionPath(), { userId });
+  return writeJsonSafe(sessionPath(), { userId });
 }
 
 function clearSession() {
@@ -2271,7 +2437,7 @@ function readAccounts() {
 }
 
 function writeAccounts(data) {
-  writeJsonSafe(accountsPath(), data);
+  return writeJsonSafe(accountsPath(), data);
 }
 
 function normalizeEmail(email) {
@@ -2459,6 +2625,16 @@ function buildMenu() {
     {
       role: 'help',
       submenu: [
+        {
+          label: 'User guide',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow() || mainWindow;
+            if (!win) return;
+            const url = win.webContents.getURL();
+            const base = url.split('#')[0];
+            void win.loadURL(`${base}#/guide`);
+          },
+        },
         {
           label: 'Project on GitHub',
           click: () => {
@@ -2749,7 +2925,7 @@ function requestRendererFlushBeforeQuit() {
     return;
   }
   if (pendingQuitFlushTimeout) clearTimeout(pendingQuitFlushTimeout);
-  pendingQuitFlushTimeout = setTimeout(() => finishAppQuit(), 2500);
+  pendingQuitFlushTimeout = setTimeout(() => finishAppQuit(), 8000);
 }
 
 ipcMain.on('app:flush-done', () => {
@@ -3428,6 +3604,42 @@ ipcMain.handle('attachment:read', (_evt, payload = {}) => {
   };
 });
 
+/** Import one attachment from a portable backup (plaintext or legacy encrypted sidecar). */
+ipcMain.handle('attachment:importPortable', (_evt, payload = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  const attachmentId = sanitizeAttachmentId(payload.attachmentId);
+  if (!attachmentId) return { ok: false, error: 'Invalid attachment id.' };
+  const dataBase64 = typeof payload.dataBase64 === 'string' ? payload.dataBase64 : '';
+  if (!dataBase64) return { ok: false, error: 'Empty attachment payload.' };
+  let buffer;
+  try {
+    buffer = Buffer.from(dataBase64, 'base64');
+  } catch {
+    return { ok: false, error: 'Invalid attachment encoding.' };
+  }
+  if (!buffer.length) return { ok: false, error: 'Empty attachment payload.' };
+  if (buffer.length > 3 * 1024 * 1024) {
+    return { ok: false, error: 'Attachment exceeds size limit.' };
+  }
+
+  let plain = buffer;
+  if (payload.encrypted === true) {
+    const key = dataKeys.get(uid);
+    if (!key) return { ok: false, error: 'Session expired. Sign in again and retry import.' };
+    try {
+      const text = buffer.toString('utf8');
+      const decrypted = decryptBuffer(text, key);
+      if (!decrypted?.length) return { ok: false, error: 'Could not decrypt attachment (wrong account key).' };
+      plain = decrypted;
+    } catch {
+      return { ok: false, error: 'Could not decrypt attachment.' };
+    }
+  }
+
+  return writeAttachmentBytes(uid, attachmentId, plain, detectAttachmentMime(plain));
+});
+
 ipcMain.handle('attachment:gc', (_evt, payload = {}) => {
   const uid = readSessionUserId();
   if (!uid) return { ok: false, error: 'Not signed in.' };
@@ -3481,13 +3693,16 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
     const folder = path.join(pick.filePaths[0], `${APP_SLUG}-backup-${ts}`);
     fs.mkdirSync(folder, { recursive: true });
     fs.writeFileSync(path.join(folder, 'data.json'), JSON.stringify(payload, null, 2), 'utf8');
+    const attDest = path.join(folder, 'attachments');
+    const attachmentCount = exportAttachmentsPortableToDir(uid, attDest);
     fs.writeFileSync(
       path.join(folder, 'manifest.json'),
       JSON.stringify(
         {
           format: 'cadence-bundle-v2',
           exportedAt: new Date().toISOString(),
-          attachmentCount: listAttachmentIdsOnDisk(uid).length,
+          attachmentsPortable: true,
+          attachmentCount,
           noteHistoryRevisionCount: countNoteHistoryRevisions(uid),
         },
         null,
@@ -3495,12 +3710,6 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
       ),
       'utf8',
     );
-    const attSrc = attachmentsDirForUser(uid);
-    if (fs.existsSync(attSrc)) {
-      fs.cpSync(attSrc, path.join(folder, 'attachments'), { recursive: true });
-    } else {
-      fs.mkdirSync(path.join(folder, 'attachments'), { recursive: true });
-    }
     exportNoteHistoryToDir(uid, folder);
     return { ok: true, path: folder };
   } catch (err) {
@@ -3554,13 +3763,23 @@ ipcMain.handle('data:importBundle', async () => {
   snapshotCurrentDataFile(uid, 'pre-import');
   snapshotNoteHistoryForUser(uid, 'pre-import', Date.now());
   const attSrc = path.join(folder, 'attachments');
-  if (fs.existsSync(attSrc)) importAttachmentsFromDir(uid, attSrc);
+  const attResult = fs.existsSync(attSrc)
+    ? importAttachmentsPortableFromDir(uid, attSrc)
+    : { restored: 0, skipped: 0 };
   const histSrc = path.join(folder, NOTE_HISTORY_DIRNAME);
   if (fs.existsSync(histSrc)) importNoteHistoryFromDir(uid, histSrc);
   workspaceImportLockUid = uid;
   try {
     const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
-    return w.ok ? { ok: true, importedFrom: path.basename(folder), writeGeneration: w.writeGeneration } : w;
+    if (!w.ok) return w;
+    const salvaged = salvageReferencedAttachmentsLocally(uid, payload);
+    return {
+      ok: true,
+      importedFrom: path.basename(folder),
+      writeGeneration: w.writeGeneration,
+      attachmentsRestored: attResult.restored + salvaged.restored,
+      attachmentsSkipped: attResult.skipped ?? 0,
+    };
   } finally {
     workspaceImportLockUid = null;
   }
@@ -3585,7 +3804,13 @@ ipcMain.handle('data:importWorkspace', (_evt, payload) => {
   snapshotCurrentDataFile(uid, 'pre-import');
   workspaceImportLockUid = uid;
   try {
-    return commitUserData(uid, payload, { allowOverwriteUnreadable: true });
+    const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
+    if (!w.ok) return w;
+    const salvaged = salvageReferencedAttachmentsLocally(uid, payload);
+    return {
+      ...w,
+      attachmentsRestored: salvaged.restored,
+    };
   } finally {
     workspaceImportLockUid = null;
   }
@@ -4015,14 +4240,14 @@ ipcMain.handle('auth:clear', (_evt, { pin } = {}) => {
 // password). We still add a small in-memory rate limit so an unattended
 // machine doesn't let an attacker test thousands of passwords by mashing
 // "Reset PIN".
-const recoveryAttempts = { count: 0, blockedUntil: 0 };
-const RECOVERY_MAX_ATTEMPTS = 5;
-const RECOVERY_BLOCK_MS = 30_000;
+const pinResetAttempts = { count: 0, blockedUntil: 0 };
+const PIN_RESET_MAX_ATTEMPTS = 5;
+const PIN_RESET_BLOCK_MS = 30_000;
 
 ipcMain.handle('auth:resetWithAccountPassword', (_evt, { password } = {}) => {
   const now = Date.now();
-  if (recoveryAttempts.blockedUntil > now) {
-    const remainingSec = Math.ceil((recoveryAttempts.blockedUntil - now) / 1000);
+  if (pinResetAttempts.blockedUntil > now) {
+    const remainingSec = Math.ceil((pinResetAttempts.blockedUntil - now) / 1000);
     return {
       ok: false,
       error: `Too many attempts. Try again in ${remainingSec}s.`,
@@ -4042,15 +4267,15 @@ ipcMain.handle('auth:resetWithAccountPassword', (_evt, { password } = {}) => {
     const got = hashWithSalt(password, u.salt);
     const exp = Buffer.from(u.hash, 'hex');
     if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
-      recoveryAttempts.count += 1;
-      if (recoveryAttempts.count >= RECOVERY_MAX_ATTEMPTS) {
-        recoveryAttempts.blockedUntil = now + RECOVERY_BLOCK_MS;
-        recoveryAttempts.count = 0;
+      pinResetAttempts.count += 1;
+      if (pinResetAttempts.count >= PIN_RESET_MAX_ATTEMPTS) {
+        pinResetAttempts.blockedUntil = now + PIN_RESET_BLOCK_MS;
+        pinResetAttempts.count = 0;
       }
       return { ok: false, error: 'Incorrect account password.' };
     }
-    recoveryAttempts.count = 0;
-    recoveryAttempts.blockedUntil = 0;
+    pinResetAttempts.count = 0;
+    pinResetAttempts.blockedUntil = 0;
     if (fs.existsSync(authPath())) {
       try { fs.unlinkSync(authPath()); } catch (err) {
         return { ok: false, error: `Could not remove PIN file: ${String(err)}` };
@@ -4194,6 +4419,22 @@ ipcMain.handle('account:register', (_evt, { email, password, migrateLegacy, disp
   // pre-existing "re-login on restart" behaviour.
   persistDataKey(id, newKey);
 
+  // Recovery codes (optional field — older builds ignore `recoveryEnvelope`).
+  let recoveryCodes = null;
+  try {
+    const codes = generateRecoveryCodes();
+    const envelope = wrapRecoverySecret(newKey, codes);
+    const created = accounts.users.find((x) => x.id === id);
+    if (created) {
+      created.recoveryEnvelope = envelope;
+      created.recoveryConfiguredAt = new Date().toISOString();
+      writeAccounts(accounts);
+      recoveryCodes = codes;
+    }
+  } catch (err) {
+    console.warn('[cadence] recovery envelope setup failed at register', err);
+  }
+
   const userPath = dataPathForUser(id);
   if (migrateLegacy === true) {
     try {
@@ -4214,6 +4455,7 @@ ipcMain.handle('account:register', (_evt, { email, password, migrateLegacy, disp
         ok: true,
         user: { id, email: em, displayName: typeof displayName === 'string' && displayName.trim() ? displayName.trim() : undefined },
         warn: String(e),
+        recoveryCodes,
       };
     }
   }
@@ -4221,6 +4463,7 @@ ipcMain.handle('account:register', (_evt, { email, password, migrateLegacy, disp
   return {
     ok: true,
     user: { id, email: em, displayName: typeof displayName === 'string' && displayName.trim() ? displayName.trim() : undefined },
+    recoveryCodes,
   };
 });
 
@@ -4317,6 +4560,7 @@ ipcMain.handle('account:logout', () => {
   const uid = readSessionUserId();
   if (uid) {
     dataKeys.delete(uid);
+    pendingRecoveryEnvelopes.delete(uid);
     // Explicit logout means "don't auto-resume next time". Clearing the
     // cached key here is what makes Logout actually feel like a logout
     // even with "Stay signed in" turned on for the next session — the
@@ -4362,60 +4606,63 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
     return { ok: false, error: 'Current password is incorrect.' };
   }
 
-  // Decrypt with current key (or read plaintext) before rotating keys.
-  const file = dataPathForUser(uid);
-  let plaintextPayload = null;
-  if (fs.existsSync(file)) {
-    const text = fs.readFileSync(file, 'utf8');
-    if (isEncryptedFile(text)) {
-      const currentKey = dataKeys.get(uid);
-      if (!currentKey) {
-        return { ok: false, error: 'Session expired. Please sign in again.' };
-      }
-      const plain = decryptPayload(text, currentKey);
-      if (plain == null) {
-        return { ok: false, error: 'Could not decrypt your data with the current password.' };
-      }
-      try {
-        plaintextPayload = JSON.parse(plain);
-      } catch {
-        return { ok: false, error: 'Existing data file is corrupt.' };
-      }
-    } else {
-      try {
-        plaintextPayload = JSON.parse(text);
-      } catch {
-        plaintextPayload = null;
-      }
+  // Read merged workspace (base + monthly shards, CDNC1 envelope unwrapped) under the current key.
+  const previousKey = dataKeys.get(uid);
+  const loaded = readUserDataResult(uid);
+  if (!loaded.ok) {
+    if (loaded.reason === 'no-key') {
+      return { ok: false, error: 'Session expired. Please sign in again.' };
     }
+    if (loaded.reason === 'bad-key') {
+      return { ok: false, error: 'Could not decrypt your data with the current password.' };
+    }
+    return { ok: false, error: loaded.error ?? 'Could not read workspace.' };
   }
+  const workspacePayload = loaded.data;
 
-  // Generate fresh password hash + encryption salt → derive new key.
   const newSalt = crypto.randomBytes(16).toString('hex');
   const newHash = hashWithSalt(newPassword, newSalt).toString('hex');
   const newEncSalt = crypto.randomBytes(16).toString('hex');
   const newKey = deriveDataKey(newPassword, newEncSalt);
 
+  const preChangeSnapshot = snapshotCurrentDataFile(uid, 'pre-pwchange');
+  dataKeys.set(uid, newKey);
+  if (workspacePayload != null) {
+    const commitResult = commitUserData(uid, workspacePayload, { allowOverwriteUnreadable: true });
+    if (!commitResult?.ok) {
+      if (previousKey) dataKeys.set(uid, previousKey);
+      else dataKeys.delete(uid);
+      return {
+        ok: false,
+        error: commitResult?.error ?? 'Could not re-encrypt workspace with the new password.',
+      };
+    }
+  }
+
   u.salt = newSalt;
   u.hash = newHash;
   u.encSalt = newEncSalt;
   u.passwordChangedAt = new Date().toISOString();
-  writeAccounts(accounts);
-
-  // Snapshot the about-to-be-rotated file under its old key first, then swap
-  // to the new key and re-encrypt. The `allowOverwriteUnreadable` flag is
-  // required because the on-disk file was encrypted under the old key (which
-  // we just decrypted manually above) and the new key cannot decrypt it.
-  snapshotCurrentDataFile(uid, 'pre-pwchange');
-  dataKeys.set(uid, newKey);
-  if (plaintextPayload != null) {
-    commitUserData(uid, plaintextPayload, { allowOverwriteUnreadable: true });
+  if (u.recoveryEnvelope) {
+    delete u.recoveryEnvelope;
+    delete u.recoveryConfiguredAt;
+  }
+  if (!writeAccounts(accounts)) {
+    if (previousKey) dataKeys.set(uid, previousKey);
+    else dataKeys.delete(uid);
+    if (preChangeSnapshot) {
+      const restored = loadWorkspaceFromBackupSet(uid, preChangeSnapshot);
+      if (restored.ok) {
+        commitUserData(uid, restored.workspace, { allowOverwriteUnreadable: true });
+      }
+    }
+    return {
+      ok: false,
+      error:
+        'Could not save your new password to disk. Your workspace was restored to the previous password — try again.',
+    };
   }
 
-  // Refresh the OS-keychain cache with the rotated key. Without this the
-  // next restart would try to decrypt the newly-rotated data file with
-  // the OLD cached key, fail validation, and bounce the user back to
-  // the login screen — exactly the UX bug "Stay signed in" exists to fix.
   if (getUserRememberMe(u)) {
     persistDataKey(uid, newKey);
   } else {
@@ -4474,6 +4721,210 @@ ipcMain.handle('account:verifyPassword', (_evt, { password } = {}) => {
   } catch {
     return { ok: false, error: 'Could not verify account password.' };
   }
+});
+
+const recoverWithCodesAttempts = new Map();
+
+function recoverAttemptsFor(email) {
+  const key = String(email || '').toLowerCase();
+  if (!recoverWithCodesAttempts.has(key)) {
+    recoverWithCodesAttempts.set(key, { count: 0, blockedUntil: 0 });
+  }
+  return recoverWithCodesAttempts.get(key);
+}
+const RECOVER_WITH_CODES_MAX_ATTEMPTS = 5;
+const RECOVER_WITH_CODES_BLOCK_MS = 60_000;
+
+/** Pending recovery envelopes — not persisted until user confirms they saved codes. */
+const pendingRecoveryEnvelopes = new Map();
+
+ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } = {}) => {
+  const now = Date.now();
+  const attempts = recoverAttemptsFor(normalizeEmail(email));
+  if (attempts.blockedUntil > now) {
+    const remainingSec = Math.ceil((attempts.blockedUntil - now) / 1000);
+    return { ok: false, error: `Too many attempts. Try again in ${remainingSec}s.` };
+  }
+
+  const em = normalizeEmail(email);
+  if (!em || !Array.isArray(codes) || codes.length !== RECOVERY_CODE_COUNT) {
+    return { ok: false, error: 'Email and all recovery codes are required.' };
+  }
+  if (typeof newPassword !== 'string' || newPassword.length < 8) {
+    return { ok: false, error: 'New password must be at least 8 characters.' };
+  }
+
+  const accounts = readAccounts();
+  const u = accounts.users.find((x) => x.email === em);
+  if (!u || !isRecoveryEnvelope(u.recoveryEnvelope)) {
+    return { ok: false, error: 'Recovery is not available for this account on this device.' };
+  }
+
+  let dataKey;
+  try {
+    dataKey = unwrapRecoverySecret(u.recoveryEnvelope, codes);
+  } catch {
+    dataKey = null;
+  }
+  if (!dataKey) {
+    attempts.count += 1;
+    if (attempts.count >= RECOVER_WITH_CODES_MAX_ATTEMPTS) {
+      attempts.blockedUntil = now + RECOVER_WITH_CODES_BLOCK_MS;
+      attempts.count = 0;
+    }
+    return { ok: false, error: 'Recovery codes are incorrect.' };
+  }
+  attempts.count = 0;
+
+  dataKeys.set(u.id, dataKey);
+  const loaded = readUserDataResult(u.id);
+  if (!loaded.ok) {
+    dataKeys.delete(u.id);
+    if (loaded.reason === 'bad-key') {
+      return {
+        ok: false,
+        error:
+          'Recovery codes no longer match your data (for example after a password change). Restore from a backup export or sign in with your current password.',
+      };
+    }
+    return { ok: false, error: loaded.error ?? 'Could not read workspace.' };
+  }
+  const workspacePayload = loaded.data;
+
+  const newSalt = crypto.randomBytes(16).toString('hex');
+  const newHash = hashWithSalt(newPassword, newSalt).toString('hex');
+  const newEncSalt = crypto.randomBytes(16).toString('hex');
+  const newKey = deriveDataKey(newPassword, newEncSalt);
+
+  const preRecoverySnapshot = snapshotCurrentDataFile(u.id, 'pre-recovery');
+  dataKeys.set(u.id, newKey);
+  if (workspacePayload != null) {
+    const commitResult = commitUserData(u.id, workspacePayload, { allowOverwriteUnreadable: true });
+    if (!commitResult?.ok) {
+      dataKeys.set(u.id, dataKey);
+      return {
+        ok: false,
+        error: commitResult?.error ?? 'Could not re-encrypt workspace with the new password.',
+      };
+    }
+  }
+
+  u.salt = newSalt;
+  u.hash = newHash;
+  u.encSalt = newEncSalt;
+  u.passwordChangedAt = new Date().toISOString();
+  delete u.recoveryEnvelope;
+  delete u.recoveryConfiguredAt;
+  if (!writeAccounts(accounts)) {
+    dataKeys.set(u.id, dataKey);
+    if (preRecoverySnapshot) {
+      const restored = loadWorkspaceFromBackupSet(u.id, preRecoverySnapshot);
+      if (restored.ok) {
+        commitUserData(u.id, restored.workspace, { allowOverwriteUnreadable: true });
+      }
+    }
+    return {
+      ok: false,
+      error:
+        'Could not save your new password to disk. Your workspace was restored — try again or restore from backup.',
+    };
+  }
+
+  dataKeys.set(u.id, newKey);
+
+  if (getUserRememberMe(u)) {
+    persistDataKey(u.id, newKey);
+  } else {
+    clearPersistedDataKey(u.id);
+  }
+
+  if (!writeSession(u.id)) {
+    return {
+      ok: false,
+      error: 'Password was reset but the session could not be saved. Sign in with your new password.',
+    };
+  }
+  flushPendingDeepLink();
+
+  return {
+    ok: true,
+    user: { id: u.id, email: u.email, displayName: typeof u.displayName === 'string' ? u.displayName : undefined },
+    needsRecoverySetup: true,
+  };
+});
+
+ipcMain.handle('account:setupRecovery', (_evt, { password } = {}) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  if (typeof password !== 'string' || !password) {
+    return { ok: false, error: 'Account password is required.' };
+  }
+
+  const accounts = readAccounts();
+  const u = accounts.users.find((x) => x.id === uid);
+  if (!u || typeof u.salt !== 'string' || typeof u.hash !== 'string') {
+    return { ok: false, error: 'Account not found.' };
+  }
+
+  try {
+    const got = hashWithSalt(password, u.salt);
+    const exp = Buffer.from(u.hash, 'hex');
+    if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
+      return { ok: false, error: 'Incorrect account password.' };
+    }
+  } catch {
+    return { ok: false, error: 'Incorrect account password.' };
+  }
+
+  let dataKey = dataKeys.get(uid);
+  if (!dataKey) {
+    if (typeof u.encSalt !== 'string' || !u.encSalt) {
+      return { ok: false, error: 'Session expired. Please sign in again.' };
+    }
+    dataKey = deriveDataKey(password, u.encSalt);
+    dataKeys.set(uid, dataKey);
+  }
+
+  try {
+    const codes = generateRecoveryCodes();
+    const envelope = wrapRecoverySecret(dataKey, codes);
+    pendingRecoveryEnvelopes.set(uid, envelope);
+    return { ok: true, recoveryCodes: codes };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not create recovery codes.' };
+  }
+});
+
+ipcMain.handle('account:confirmRecoverySetup', () => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  const envelope = pendingRecoveryEnvelopes.get(uid);
+  if (!envelope || !isRecoveryEnvelope(envelope)) {
+    return { ok: false, error: 'No pending recovery setup. Generate codes again.' };
+  }
+
+  const accounts = readAccounts();
+  const u = accounts.users.find((x) => x.id === uid);
+  if (!u) return { ok: false, error: 'Account not found.' };
+
+  u.recoveryEnvelope = envelope;
+  u.recoveryConfiguredAt = new Date().toISOString();
+  writeAccounts(accounts);
+  pendingRecoveryEnvelopes.delete(uid);
+  return { ok: true };
+});
+
+ipcMain.handle('account:getRecoveryStatus', () => {
+  const uid = readSessionUserId();
+  if (!uid) return { configured: false, signedIn: false };
+  const { users } = readAccounts();
+  const u = users.find((x) => x.id === uid);
+  if (!u) return { configured: false, signedIn: false };
+  return {
+    signedIn: true,
+    configured: isRecoveryEnvelope(u.recoveryEnvelope),
+    configuredAt: typeof u.recoveryConfiguredAt === 'string' ? u.recoveryConfiguredAt : undefined,
+  };
 });
 
 /**

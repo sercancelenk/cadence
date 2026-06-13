@@ -20,9 +20,8 @@ This writes **`cadence-screenshot-demo.json`** in this folder.
    ```
    Or use the web/PWA build if you only need the browser UI.
 2. Sign in (or create a throwaway account). Use a **test account** — import replaces your whole workspace.
-3. **Settings → Data & backup → Backup & recovery → Import JSON**
-4. Choose `docs/demo/cadence-screenshot-demo.json`
-5. Confirm — the app imports via the main process and reloads without save conflicts.
+3. **Settings → Data & backup → Import portable backup** (accepts `.zip` or `.json`) → choose `docs/demo/cadence-screenshot-demo.json`
+4. Confirm — the app imports and reloads without save conflicts.
 
 ## What’s inside
 

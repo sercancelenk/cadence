@@ -87,6 +87,7 @@ export function QuickAddFab() {
             type="button"
             role="menuitem"
             className="quick-fab__menu-item"
+            title="Add task"
             onClick={() => openMode('task')}
           >
             <span className="quick-fab__menu-ic" aria-hidden>
@@ -98,6 +99,7 @@ export function QuickAddFab() {
             type="button"
             role="menuitem"
             className="quick-fab__menu-item"
+            title="Add note"
             onClick={() => openMode('note')}
           >
             <span className="quick-fab__menu-ic" aria-hidden>
@@ -112,6 +114,7 @@ export function QuickAddFab() {
         type="button"
         className={`quick-fab__btn${menuOpen ? ' quick-fab__btn--open' : ''}`}
         aria-label={menuOpen ? 'Close quick add menu' : 'Open quick add menu'}
+        title={menuOpen ? 'Close quick add menu' : 'Open quick add menu'}
         aria-expanded={menuOpen}
         aria-haspopup="menu"
         onClick={() => setMenuOpen((o) => !o)}
@@ -229,7 +232,7 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
             {isTask ? <IcListTodo size={18} /> : <IcStickyNote size={18} />}
           </span>
           <h2 className="quick-add-dialog__title">{isTask ? 'New task' : 'New note'}</h2>
-          <button type="button" className="quick-add-dialog__close" aria-label="Close" onClick={onClose}>
+          <button type="button" className="quick-add-dialog__close" aria-label="Close" title="Close" onClick={onClose}>
             <IcX size={18} />
           </button>
         </header>

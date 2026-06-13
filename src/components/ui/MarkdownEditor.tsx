@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { IcCheck, IcChevronDown, IcPencil } from '../icons';
+import { SYNC_BEFORE_APPLY } from '../../lib/syncApplyGuard';
 
 type Props = {
   value: string;
@@ -68,6 +69,13 @@ export function MarkdownEditor({
   const [headingOpen, setHeadingOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const isEmpty = !value.trim();
+
+  useEffect(() => {
+    if (!onBlur) return;
+    const flush = () => onBlur();
+    window.addEventListener(SYNC_BEFORE_APPLY, flush);
+    return () => window.removeEventListener(SYNC_BEFORE_APPLY, flush);
+  }, [onBlur]);
 
   /**
    * Apply a toolbar action to the current selection.
@@ -184,6 +192,7 @@ export function MarkdownEditor({
             className={`md-editor__tab${mode === 'edit' ? ' md-editor__tab--active' : ''}`}
             role="tab"
             aria-selected={mode === 'edit'}
+            title="Write"
             onClick={() => setMode('edit')}
           >
             <IcPencil size={14} />
@@ -194,7 +203,11 @@ export function MarkdownEditor({
             className={`md-editor__tab${mode === 'preview' ? ' md-editor__tab--active' : ''}`}
             role="tab"
             aria-selected={mode === 'preview'}
-            onClick={() => setMode('preview')}
+            title="Preview"
+            onClick={() => {
+              onBlur?.();
+              setMode('preview');
+            }}
           >
             <IcCheck size={14} />
             <span>Preview</span>

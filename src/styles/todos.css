@@ -1,0 +1,1102 @@
+/* —— To-dos (shares page-head and card rhythm with Teams) —— */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.todos-route {
+  --tp-bg: var(--panel);
+  --tp-text: var(--text);
+  --tp-muted: var(--muted);
+  --tp-faint: var(--muted);
+  --tp-divider: var(--border);
+  --tp-add: var(--accent);
+  --tp-schedule: var(--ok);
+  --tp-warn: var(--danger);
+  --tp-hover: var(--surface-hover);
+  --tp-input-bg: var(--input-bg);
+}
+
+:root:not([data-theme='light']) .todos-route {
+  color-scheme: dark;
+}
+
+.page-head.todos-route__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.todos-route__head-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.todos-route__display-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+:root[data-theme='light'] .todos-route__display-btn {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.todos-route__display-btn:hover {
+  background: var(--tp-hover);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--text);
+}
+
+.todos-route__display-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.todos-section__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.todos-section__toggle {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--tp-muted);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.todos-section__toggle:hover {
+  background: var(--tp-hover);
+  color: var(--tp-text);
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.todos-section__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.todos-section__chev {
+  transition: transform 0.2s ease;
+}
+
+.todos-section__toggle--collapsed .todos-section__chev {
+  transform: rotate(-90deg);
+}
+
+.todos-route__display-btn--icon-only {
+  gap: 0;
+  padding: 10px 12px;
+  min-width: 44px;
+  justify-content: center;
+}
+
+.todos-section__title {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tp-muted);
+  border: none;
+  background: transparent;
+  padding: 6px 0;
+  border-radius: 4px;
+}
+
+.todos-section__title:hover {
+  background: var(--tp-hover);
+  color: var(--tp-text);
+}
+
+.todos-section__title:focus {
+  outline: none;
+  background: var(--tp-hover);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.todos-section__menu {
+  position: relative;
+}
+
+.todos-section__menu-btn {
+  list-style: none;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--tp-muted);
+  font-size: 18px;
+  line-height: 1;
+  user-select: none;
+}
+
+.todos-section__menu-btn::-webkit-details-marker {
+  display: none;
+}
+
+.todos-section__menu-btn:hover {
+  background: var(--tp-hover);
+  color: var(--tp-text);
+}
+
+.todos-section__menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 168px;
+  padding: 6px;
+  /* Solid panel background so the popover never bleeds-through to the
+   * next list section beneath it. `var(--panel)` resolves to #22262f in
+   * dark theme and #ffffff in light — both fully opaque. */
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  /* Sits above siblings within this section's stacking context; the
+   * section itself is elevated via :has(...) above so the panel also
+   * paints above neighbouring sections. */
+  z-index: 30;
+}
+
+.todos-section__menu-item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.todos-section__menu-item:hover {
+  background: var(--tp-hover);
+}
+
+.todos-section__menu-item--danger {
+  color: var(--danger);
+}
+
+.todos-section__empty {
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: var(--tp-muted);
+}
+
+.todos-empty-hint {
+  margin-bottom: 14px;
+  border-left: 3px solid var(--accent);
+  padding: 18px 20px;
+}
+
+/* "Alarm" variant — used when every group is archived (the exact failure
+   mode the user reported as "data kayboldu"). Amber border + slightly
+   tinted background so it pops above the generic accent variant. The
+   user should never miss this in scrolling, even on a small screen. */
+.todos-empty-hint--alarm {
+  border-left-color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 10%, transparent);
+}
+
+.todos-empty-hint__title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.todos-empty-hint--alarm .todos-empty-hint__title {
+  color: #b45309;
+}
+
+.todos-empty-hint__body {
+  margin: 0 0 14px;
+}
+
+.todos-empty-hint .btn {
+  align-self: flex-start;
+}
+
+.todos-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.todos-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--tp-divider);
+  transition: background 0.12s ease;
+}
+
+.todos-row:last-child {
+  border-bottom: none;
+}
+
+.todos-row:hover {
+  background: var(--tp-hover);
+  border-radius: var(--radius-sm);
+}
+
+/* ---- Compact row layout ------------------------------------------------
+ *
+ * The default ("comfortable") row keeps generous padding and lets the
+ * toolbar wrap onto extra lines, which can stack to 3+ lines at typical
+ * desktop widths once you have Schedule + status + priority + group +
+ * trash sitting beside each other.
+ *
+ * Compact mode is the opinionated "fit in two lines" variant:
+ *   - row padding ~30 % tighter
+ *   - sub-row never wraps (toolbar shrinks instead)
+ *   - selects drop to a narrower min-width and use a smaller font
+ *   - "Schedule" button shows the icon only — its label is hidden
+ *   - status pills shrink so the title can still breathe
+ *
+ * The result is one row for the title + badges and one row for the
+ * meta + controls, regardless of how many secondary widgets the row
+ * contains.
+ */
+.todos-row--compact {
+  padding: 8px 6px;
+  gap: 10px;
+}
+
+.todos-row--compact .todos-row__sub {
+  margin-top: 4px;
+  /* Force everything below the title into a single line. The toolbar
+   * children all `flex: 0 1 auto` so they shrink before they wrap. */
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.todos-row--compact .todos-row__meta {
+  /* Stop the meta column from greedily taking 140 px + when the toolbar
+   * could use that width for its controls. We give it just enough for a
+   * date label and the icons. */
+  flex: 0 1 auto;
+  font-size: 11.5px;
+}
+
+.todos-row--compact .todos-row__toolbar {
+  flex-wrap: nowrap;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Last-resort overflow safety: on extremely narrow viewports the
+   * toolbar will horizontally scroll rather than stack onto a third
+   * line. Practically this almost never triggers — the shrunk controls
+   * fit on every desktop width we ship the Electron build at. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.todos-row--compact .todos-row__toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.todos-row--compact .todos-row__move {
+  min-width: 5.5rem;
+  max-width: 9rem;
+  font-size: 11.5px;
+  padding: 4px 6px;
+}
+
+.todos-row--compact .todos-row__sched-btn {
+  padding: 4px 8px;
+  font-size: 11.5px;
+}
+
+/* Hide the "Schedule" / "Reschedule" label in compact rows; the calendar
+ * icon is enough at that density. The aria-label on the button is still
+ * read by assistive tech, so we don't lose accessibility. */
+.todos-row--compact .todos-row__sched-btn > span {
+  display: none;
+}
+
+.todos-row--compact .todos-row__status {
+  height: 16px;
+  padding: 0 6px;
+  font-size: 9.5px;
+}
+
+.todos-row--compact .todos-row__check {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+.todos-row--compact .todos-row__handle {
+  margin-top: 1px;
+}
+
+.todos-row--done .todos-row__title {
+  text-decoration: line-through;
+  color: var(--tp-muted);
+}
+
+.todos-row--done .todos-row__meta {
+  opacity: 0.65;
+}
+
+.todos-row__check {
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--todo-ring, var(--border));
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+  color: var(--tp-text);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.1s ease;
+}
+
+.todos-row__check:hover {
+  border-color: var(--todo-ring, var(--accent));
+  transform: scale(1.05);
+}
+
+.todos-row__check--on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.todos-row__mid {
+  flex: 1;
+  min-width: 0;
+}
+
+.todos-row__topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Chips (status / priority / group) live in `.todos-row__sub` alongside
+ * the schedule trigger and the hover-only toolbar. The title spans full
+ * width on the line above so the chips never fight with it for room. */
+.todos-row__chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.todos-row__chip-btn {
+  cursor: pointer;
+  font: inherit;
+  /* Reset default <button> chrome so the chip-specific styles below
+   * (e.g. .todos-row__status--in_progress) define the look entirely. */
+  border: 1px solid transparent;
+  background: none;
+  padding: 0;
+  line-height: 1;
+  transition: filter 120ms ease, transform 100ms ease, background 120ms ease;
+}
+
+.todos-row__chip-btn:hover {
+  filter: brightness(1.1);
+}
+
+.todos-row__chip-btn:active {
+  transform: scale(0.97);
+}
+
+.todos-row__chip-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Popover that appears below a chip. Solid panel background so it
+ * never bleeds through to subsequent rows. The parent row is
+ * elevated via :has(...) below to dodge stacking-context issues. */
+.todos-row__chip-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 150px;
+  max-width: min(280px, 92vw);
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 30;
+}
+
+.todos-row__chip-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.todos-row__chip-menu-item:hover,
+.todos-row__chip-menu-item:focus-visible {
+  background: var(--tp-hover);
+  outline: none;
+}
+
+.todos-row__chip-menu-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Lift the row stacking context while any chip menu is open so its
+ * absolutely-positioned panel paints above the next row, even if that
+ * row has opacity / filter / transform creating its own context. */
+.todos-row:has(.todos-row__chip-menu) {
+  position: relative;
+  z-index: 30;
+}
+
+.todos-row__title {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tp-text);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 4px;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+  /* Clamp to 2 lines by default. Longer titles get an ellipsis; a
+   * single click toggles the clamp off (.--expanded) so the user can
+   * read the full text without entering edit mode. Double click drops
+   * straight into the markdown editor. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.todos-row__title--expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.todos-row__title:hover {
+  color: var(--accent);
+}
+
+/* ---- Unified edit form ----
+ * Mounted in place of the title + sub-row when the user double-clicks
+ * a task. Contains an autoresizing title input, a markdown editor for
+ * the body, and explicit Save / Cancel buttons. Replaces the older
+ * "title-only inline edit + separate details toggle" flow. */
+.todos-row__edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.todos-row__edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.todos-row__title-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tp-text);
+  border: 1px solid var(--tp-divider);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  background: var(--tp-input-bg);
+}
+
+.todos-row__title-input--multi {
+  resize: none;
+  line-height: 1.4;
+  overflow-y: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.todos-row__tag {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.todos-row__tag-name {
+  color: var(--tp-muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todos-row__hash {
+  font-weight: 700;
+}
+
+.todos-row__sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  /* Chips + schedule hug the left; the toolbar grows to fill the rest
+   * (flex: 1 1 0) and right-aligns its own children. We deliberately
+   * drop `space-between` here so individual chips stay close together
+   * — the toolbar's flex-grow handles the right-side push. */
+  gap: 6px 8px;
+  margin-top: 6px;
+}
+
+.todos-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--tp-muted);
+  /* Was `flex: 1 1 140px` — at typical desktop widths that 140 px basis
+   * was enough to push the toolbar onto its own line. Letting the meta
+   * shrink to its content frees that space for the toolbar so the whole
+   * sub-row usually fits in one line, falling back to a wrap only at
+   * truly narrow widths. */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.todos-row__meta-ic {
+  display: inline-flex;
+  color: var(--tp-schedule);
+}
+
+.todos-row__meta-ic--muted {
+  opacity: 0.65;
+}
+
+.todos-row__meta-ic--warn {
+  color: var(--tp-warn);
+}
+
+.todos-row__meta-warn {
+  color: var(--tp-warn);
+  font-weight: 600;
+}
+
+.todos-row__meta-placeholder {
+  color: var(--tp-muted);
+  opacity: 0.75;
+  font-style: italic;
+}
+
+.todos-row__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  /* `flex: 1 1 0` (instead of the old `1 1 220px`) means the toolbar
+   * stretches to fill whatever the meta hasn't claimed without forcing
+   * a wrap when the inline content would have fit in <220 px. */
+  flex: 1 1 0;
+  min-width: 0;
+  /* Hover-only secondary actions. Resting rows show only the schedule
+   * trigger on the left so the row reads as just "title + chips +
+   * date". The action buttons (details, AI, delete) fade in when the
+   * row is hovered or focused. On touch devices (no hover capability)
+   * we keep them visible so the UI stays usable. */
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.todos-row:hover .todos-row__toolbar,
+.todos-row:focus-within .todos-row__toolbar {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .todos-row__toolbar {
+    opacity: 1;
+  }
+}
+
+/* While confirming a delete, force the toolbar visible regardless of
+ * hover state — otherwise the "Sure?" affordance vanishes if the user
+ * happens to move the cursor off the row between clicks. */
+.todos-row:has(.todos-row__icon-btn--confirm) .todos-row__toolbar {
+  opacity: 1;
+}
+
+.todos-row__date-lbl {
+  display: flex;
+  align-items: center;
+  flex: 1 1 168px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.todos-row__date {
+  width: 100%;
+  min-width: 0;
+  max-width: 220px;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--tp-divider);
+  border-radius: var(--radius-sm);
+  color: var(--tp-text);
+  background: var(--tp-input-bg);
+}
+
+.todos-row__move {
+  /* Two select widgets sit side-by-side in this toolbar (status,
+   * priority, group). The old 7 rem floor pushed the trailing controls
+   * past the row's available width on most desktops, forcing the
+   * sub-row to wrap to a third line. 5.5 rem still fits "In progress"
+   * and "No priority" without truncating their labels. */
+  min-width: 5.5rem;
+  max-width: 10rem;
+  flex: 0 1 auto;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--tp-divider);
+  border-radius: var(--radius-sm);
+  background: var(--tp-input-bg);
+  color: var(--tp-text);
+}
+
+.todos-row__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--tp-muted);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.todos-row__icon-btn:hover {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.25);
+  color: var(--danger);
+}
+
+/* Inline markdown-details affordance.
+ *
+ * Three visual states:
+ *   1. Closed, empty body   → quiet icon (call to action)
+ *   2. Closed, has body     → tinted accent (this task carries notes)
+ *   3. Open                 → solid accent surface (currently editing)
+ *
+ * Chevron rotation is handled inline so it stays in sync with React
+ * state without an extra CSS class round-trip. */
+.todos-row__details-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--tp-muted);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.todos-row__details-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 30%, transparent);
+}
+
+.todos-row__details-btn--has-body {
+  color: var(--accent-2);
+}
+
+.todos-row__details-btn--open {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 35%, transparent);
+}
+
+/* The expanded details container sits flush against the row above and
+ * inherits its rounded corners on the bottom edge. Padding mirrors
+ * `.todos-row` so the content lines up visually. The editor itself
+ * provides its own internal padding/toolbar — we just give it a frame. */
+.todos-row__details {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--tp-divider);
+}
+
+:root[data-theme='light'] .todos-row__details {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.todos-row__details-loading {
+  padding: 12px;
+}
+
+/* Inline body preview rendered beneath the meta sub-row when the row
+ * is expanded (single-click on the title). Quiet container, indented
+ * so it reads as belonging to this task. Double-click anywhere inside
+ * drops into edit mode (handler lives on the wrapper in TSX). */
+.todos-row__body-preview {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  /* The MarkdownView ships its own list / heading styles. We only
+   * compress a couple of vertical margins so the preview doesn't
+   * look like a full Notes page inside a row. */
+}
+.todos-row__body-preview > *:first-child { margin-top: 0; }
+.todos-row__body-preview > *:last-child { margin-bottom: 0; }
+.todos-row__body-preview p { margin: 4px 0; }
+.todos-row__body-preview ul,
+.todos-row__body-preview ol { margin: 4px 0; padding-left: 22px; }
+.todos-row__body-preview h1,
+.todos-row__body-preview h2,
+.todos-row__body-preview h3 { margin: 8px 0 4px; font-size: 14px; }
+.todos-row__body-preview pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--panel) 60%, var(--bg));
+}
+.todos-row__body-preview code {
+  font-size: 12px;
+}
+
+.todos-section__add {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--tp-add);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.todos-section__add:hover {
+  background: var(--accent-soft);
+  color: var(--tp-add);
+  border-color: color-mix(in srgb, var(--tp-add) 35%, transparent);
+}
+
+.todos-section__add:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.todos-section__add--active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--tp-add) 45%, transparent);
+}
+
+.todos-add-inline--multi {
+  margin-bottom: 8px;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.todos-add-inline--multi .todos-add-inline__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.todos-add-inline__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.todos-add-inline__title {
+  width: 100%;
+}
+
+.textarea--task-title {
+  resize: none;
+  line-height: 1.45;
+  min-height: 4.4em;
+  overflow-y: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  width: 100%;
+}
+
+.todos-add-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 0;
+}
+
+.todos-add-inline__input {
+  flex: 1;
+  min-width: 160px;
+  font: inherit;
+  font-size: 15px;
+  padding: 10px 12px;
+  border: 1px solid var(--tp-divider);
+  border-radius: var(--radius-sm);
+  background: var(--tp-input-bg);
+  color: var(--tp-text);
+}
+
+.todos-add-inline__submit,
+.todos-add-inline__cancel {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--tp-divider);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--tp-text);
+  /* Ensures the label has space even when the button hasn't measured a
+   * width yet (helps against the old "blank pill" rendering we hit when
+   * a light-theme override accidentally hid the text). */
+  min-width: 64px;
+}
+
+/* Light-theme override applies ONLY to the secondary "Cancel" button —
+ * the primary submit gets its own contrasted treatment below so we don't
+ * end up with white text on a white background, which is what made the
+ * button look empty in earlier builds. */
+:root[data-theme='light'] .todos-add-inline__cancel {
+  background: #fff;
+}
+
+.todos-add-inline__submit {
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  border-color: var(--accent-2);
+  color: #fff;
+  /* The text colour is hard-coded white because every accent shade we
+   * ship (dark & light themes) is dark enough to give white >= AA
+   * contrast. Don't change to a theme var without re-checking contrast. */
+}
+
+:root[data-theme='light'] .todos-add-inline__submit {
+  /* Use the darker `--accent-2` end-stop on both ends so the light-theme
+   * gradient stays readable even on bright displays — the previous
+   * rgba(126,176,255,0.2) top stop washed out to near-white over a white
+   * card background and visually hid the label. */
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  border-color: var(--accent-2);
+  color: #fff;
+}
+
+.todos-add-inline__cancel {
+  color: var(--tp-muted);
+}
+
+/* Card that wraps the list-creator form when it's opened from the
+ * header "Add list" button. Sits right under the page header so it
+ * always lands in the user's existing line of sight — no scroll
+ * required to find the input. */
+.todos-new-list-card {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--tp-divider));
+}
+
+.todos-new-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.todos-new-list__input {
+  flex: 1;
+  min-width: 200px;
+  font: inherit;
+  font-size: 15px;
+  padding: 10px 12px;
+  border: 1px solid var(--tp-divider);
+  border-radius: var(--radius-sm);
+  background: var(--tp-input-bg);
+  color: var(--tp-text);
+}
+
+.todos-new-list__ok,
+.todos-new-list__cancel {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--tp-divider);
+}
+
+.todos-new-list__ok {
+  /* Solid accent → accent-2 gradient (no transparent top stop). The
+   * original `rgba(126,176,255,0.2)` top wash-out left the button looking
+   * empty on light-theme backgrounds because the transparent half blended
+   * straight into the white card behind it — same class of bug as the
+   * inline submit button used to have. */
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  color: #fff;
+  border-color: var(--accent-2);
+  min-width: 64px;
+}
+
+.todos-new-list__ok:disabled {
+  /* Slightly mute the gradient so the affordance still reads as a
+   * primary button but visibly waits for input. We avoid `opacity` on
+   * the whole element to keep the label contrast above AA. */
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 55%, transparent), color-mix(in srgb, var(--accent-2) 55%, transparent));
+  cursor: not-allowed;
+}
+
+.todos-new-list__cancel {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--tp-muted);
+}
+
+:root[data-theme='light'] .todos-new-list__cancel {
+  background: #fff;
+}
+
+@media (max-width: 560px) {
+  .page-head.todos-route__head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .todos-route__display-btn {
+    align-self: flex-start;
+  }
+
+  .todos-row__tag-name {
+    max-width: 100px;
+  }
+
+  .todos-row__toolbar {
+    justify-content: flex-start;
+    flex-basis: 100%;
+  }
+
+  .todos-row__date-lbl {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .todos-row__date {
+    max-width: none;
+  }
+}

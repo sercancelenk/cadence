@@ -189,7 +189,7 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
               {trimForDisplay(task.title, 110)}
             </p>
           </div>
-          <button type="button" className="ai-dialog__close" aria-label="Close" onClick={onClose}>
+          <button type="button" className="ai-dialog__close" aria-label="Close" title="Close" onClick={onClose}>
             <IcX size={18} />
           </button>
         </header>

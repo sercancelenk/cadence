@@ -11,5 +11,6 @@ export const PATH_ANALYTICS = '/analytics';
 export const PATH_ANALYTICS_ACTIVITY = '/analytics/activity';
 export const PATH_PROFILE = '/profile';
 export const PATH_SETTINGS = '/settings';
+export const PATH_GUIDE = '/guide';
 export const PATH_LOGIN = '/login';
 export const PATH_REGISTER = '/register';

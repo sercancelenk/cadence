@@ -1,5 +1,6 @@
 export { NoteBacklinks, type NoteBacklinksProps } from './NoteBacklinks';
 export { NotesBodyEditor, type NotesBodyEditorProps } from './NotesBodyEditor';
+export { NotesListRow, type NotesListRowProps } from './NotesListRow';
 export { NotesDetailHeader, type NotesDetailHeaderProps } from './NotesDetailHeader';
 export { NotesDialog, type NotesDialogProps } from './NotesDialog';
 export { NotesIconButton, type NotesIconButtonProps } from './NotesIconButton';
@@ -16,6 +17,7 @@ export {
   SIDEBAR_MIN_WIDTH,
   SORT_OPTIONS,
   filterNotesForView,
+  filterNotesForGroup,
   NOTE_VIEW_OPTIONS,
   type NoteViewMode,
 } from './notePreferences';
@@ -31,9 +33,11 @@ export { NotesVersionHistoryPanel, type NotesVersionHistoryPanelProps } from './
 export { useNoteRevisionCapture } from './useNoteRevisionCapture';
 export { useNoteVersionHistory } from './useNoteVersionHistory';
 export { useNotesEditor } from './useNotesEditor';
+export { useNoteGroupExpand } from './useNoteGroupExpand';
 export { useNotesLock } from './useNotesLock';
-export { useNotesManualReorder } from './useNotesManualReorder';
+export { useNotesSidebarDnD } from './useNotesSidebarDnD';
 export { useNotesSelection } from './useNotesSelection';
 export { useNotesSort } from './useNotesSort';
 export { useNotesViewMode } from './useNotesViewMode';
+export { useNotesSidebarCollapse } from './useNotesSidebarCollapse';
 export { useSidebarResize } from './useSidebarResize';
