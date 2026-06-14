@@ -7,9 +7,18 @@ import { PATH_TEAMS } from '../lib/routes';
 import { distinctCategoriesForTeam, SUGGESTED_CATEGORIES } from '../lib/categories';
 import { formatShort, isPast } from '../lib/datetime';
 import { kindLabel } from '../lib/labels';
-import { teamLeader, teamMe, teamPerson } from '../lib/teamPaths';
+import { teamLeader, teamMe, teamPeople as teamPeoplePath, teamPerson } from '../lib/teamPaths';
+import {
+  arrangeMemberSummaries,
+  MEMBER_SORT_OPTIONS,
+  summarizeTeamMembers,
+  type MemberSort,
+} from '../lib/teamMemberSummary';
 import type { Item, ItemKind, Person } from '../model';
 import { getSelfPerson, isLeaderPerson, isSelfPerson } from '../model';
+
+/** Show the search/sort controls only once a roster is big enough to warrant them. */
+const MEMBER_CONTROLS_THRESHOLD = 6;
 
 function openTasks(items: Item[]) {
   return items.filter((i) => i.kind === 'task' && !i.done);
@@ -45,6 +54,8 @@ export function TeamDashboard() {
   const [category, setCategory] = useState('');
   const [personId, setPersonId] = useState('');
   const [kind, setKind] = useState<ItemKind>('task');
+  const [memberQuery, setMemberQuery] = useState('');
+  const [memberSort, setMemberSort] = useState<MemberSort>('name');
   const submittingRef = useRef(false);
 
   const team = teamId ? data.teams.find((t) => t.id === teamId) : undefined;
@@ -66,6 +77,14 @@ export function TeamDashboard() {
   const tasks = useMemo(() => openTasks(items).sort(compareDue), [items]);
   const goals = useMemo(() => openGoals(items).sort(compareDue), [items]);
   const reminders = useMemo(() => upcomingReminders(items).sort(compareRemind), [items]);
+  const memberSummaries = useMemo(
+    () => (teamId ? summarizeTeamMembers(data, teamId) : []),
+    [data, teamId],
+  );
+  const arrangedMembers = useMemo(
+    () => arrangeMemberSummaries(memberSummaries, { query: memberQuery, sort: memberSort }),
+    [memberSummaries, memberQuery, memberSort],
+  );
 
   useEffect(() => {
     setPersonId(self?.id ?? '');
@@ -105,6 +124,91 @@ export function TeamDashboard() {
           <DashSpark d="M0 26 L22 20 L44 28 L66 12 L88 18 L110 10 L120 14" />
         </article>
       </div>
+
+      <section className="card">
+        <div className="row row--between">
+          <h2 className="card__title">
+            Team members <span className="pill">{memberSummaries.length}</span>
+          </h2>
+          <Link className="btn btn--ghost btn--small" to={teamPeoplePath(teamId)}>
+            Manage members
+          </Link>
+        </div>
+
+        {memberSummaries.length > MEMBER_CONTROLS_THRESHOLD ? (
+          <div className="row member-roster__controls" style={{ marginBottom: 12 }}>
+            <input
+              className="input input--grow"
+              type="search"
+              placeholder="Filter by name or role…"
+              value={memberQuery}
+              onChange={(e) => setMemberQuery(e.target.value)}
+              aria-label="Filter team members"
+            />
+            <select
+              className="select"
+              value={memberSort}
+              onChange={(e) => setMemberSort(e.target.value as MemberSort)}
+              aria-label="Sort team members"
+            >
+              {MEMBER_SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+
+        {memberSummaries.length === 0 ? (
+          <p className="muted">No members yet.</p>
+        ) : arrangedMembers.length === 0 ? (
+          <p className="muted">No members match &ldquo;{memberQuery.trim()}&rdquo;.</p>
+        ) : (
+          <div className="tiles">
+            {arrangedMembers.map((m) => {
+              const to = personLink(data, teamId, m.person.id);
+              return (
+                <Link
+                  key={m.person.id}
+                  to={to}
+                  className="tile tile__link member-tile"
+                  title={`Open ${m.person.name}'s workspace`}
+                >
+                  <div className="row row--between" style={{ alignItems: 'flex-start' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="tile__name">
+                        {m.person.name}
+                        {m.role === 'self' ? <span className="pill" style={{ marginLeft: 6 }}>You</span> : null}
+                        {m.role === 'leader' ? <span className="pill" style={{ marginLeft: 6 }}>Leader</span> : null}
+                      </div>
+                      <div className="muted small">{m.person.title || roleHint(m.role)}</div>
+                    </div>
+                    <span className="btn btn--primary btn--icon" aria-hidden>
+                      <span className="btn__icon">
+                        <IcArrowRight size={17} />
+                      </span>
+                    </span>
+                  </div>
+                  <div className="member-tile__stats muted small">
+                    <span>{m.openTasks} open {m.openTasks === 1 ? 'task' : 'tasks'}</span>
+                    {m.overdueTasks > 0 ? (
+                      <span className="pill pill--danger">{m.overdueTasks} overdue</span>
+                    ) : null}
+                    <span>·</span>
+                    <span>{m.openGoals} {m.openGoals === 1 ? 'goal' : 'goals'}</span>
+                    <span>·</span>
+                    <span>{m.upcomingReminders} reminder{m.upcomingReminders === 1 ? '' : 's'}</span>
+                  </div>
+                  <div className="muted small">
+                    {m.lastActivityAt ? `Last activity ${formatShort(m.lastActivityAt)}` : 'No activity yet'}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <section className="card">
         <h2 className="card__title">Quick add</h2>
@@ -260,6 +364,12 @@ export function TeamDashboard() {
       </section>
     </div>
   );
+}
+
+function roleHint(role: 'self' | 'leader' | 'member'): string {
+  if (role === 'self') return 'Your personal workspace';
+  if (role === 'leader') return 'Your manager';
+  return 'Open workspace';
 }
 
 function personName(data: { people: { id: string; name: string }[] }, id: string) {

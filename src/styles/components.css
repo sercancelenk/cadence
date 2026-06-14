@@ -443,6 +443,25 @@
 .tile__name {
   font-weight: 700;
 }
+.member-tile {
+  cursor: pointer;
+}
+.member-tile .tile__name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.member-tile__stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.member-roster__controls {
+  flex-wrap: wrap;
+  gap: 8px;
+}
 
 .field {
   display: flex;
