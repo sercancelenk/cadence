@@ -23,15 +23,15 @@ jobs:
     needs: ci
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
 
       - name: Cache Electron downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/Library/Caches/electron
@@ -44,7 +44,21 @@ jobs:
       - name: Otomatik sürüm numarası
         run: npm pkg set version=0.3.${{ github.run_number }}
 
-      - run: npm ci --no-audit --no-fund --prefer-offline
+      # Skip `npm ci` when node_modules for this exact lockfile is cached.
+      # The cached tree includes the extracted Electron binary (in
+      # node_modules/electron/dist), and the `runner.os` key segment keeps
+      # the macOS and Windows trees separate. `npm pkg set version` above
+      # only edits package.json, not package-lock.json, so the cache key is
+      # stable release-to-release until a dependency actually changes.
+      - name: Cache node_modules
+        id: node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund --prefer-offline
 
       - name: Validate release config and helper
         run: |
@@ -68,15 +82,15 @@ jobs:
     needs: ci
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
 
       - name: Cache Electron downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~\AppData\Local\electron\Cache
@@ -89,9 +103,23 @@ jobs:
       - name: Otomatik sürüm numarası
         run: npm pkg set version=0.3.${{ github.run_number }}
 
-      - run: npm ci --no-audit --no-fund --prefer-offline
+      # Skip `npm ci` when node_modules for this exact lockfile is cached.
+      # The cached tree includes the extracted Electron binary (in
+      # node_modules/electron/dist), and the `runner.os` key segment keeps
+      # the macOS and Windows trees separate. `npm pkg set version` above
+      # only edits package.json, not package-lock.json, so the cache key is
+      # stable release-to-release until a dependency actually changes.
+      - name: Cache node_modules
+        id: node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund --prefer-offline
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.x'
           # No packages.lock.json — helper csproj has no NuGet deps; cache would fail the job.

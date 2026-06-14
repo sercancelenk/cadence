@@ -44,14 +44,21 @@ jobs:
       NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
       NPM_CONFIG_FETCH_TIMEOUT: '600000'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
 
+      - name: Cache node_modules
+        id: node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (no electron binary)
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund --prefer-offline
 
       # Compiles the PWA into dist/app/ (vite.config picks `dist/app` when
@@ -64,7 +71,7 @@ jobs:
           CADENCE_BASE: /${{ github.event.repository.name }}/app/
 
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
@@ -77,4 +84,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

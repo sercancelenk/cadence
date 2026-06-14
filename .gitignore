@@ -2,6 +2,20 @@ node_modules
 dist
 release
 .DS_Store
+
+# Test / mutation / CI scratch output (regenerated; never commit)
+.stryker-tmp/
+coverage/
+reports/
+.nyc_output/
+stryker-*.txt
+vitest-*.txt
+test-run-*.txt
+npx-vitest-out.txt
+.vitest-tee.txt
+.node-test-*.txt
+npm-ci-exit.txt
+.npm-audit-*.txt
 electron/reminder/native/cadence-notify-schedule
 electron/reminder/native-windows/out/
 *.log

@@ -1311,11 +1311,11 @@ Issues and pull requests are welcome. Please:
 
 ### AI coding agents
 
-This repo ships agent context and reusable Cursor rules (`AGENTS.md` plus
-`.cursor/rules/make-feature.mdc` and `.cursor/rules/expert-code-review.mdc`) that steer
-AI agents toward production-ready, zero-data-loss work. See
-[AI agent rules & project context](docs/AI-AGENT-RULES.md) for how they're built, how
-to use them, and how to reuse the setup in other projects.
+This repo ships agent context and a reusable Cursor rule "team" (`AGENTS.md` plus
+`.cursor/rules/`: `developer-expert`, `code-review-expert`, `frontend-expert`,
+`technical-architect`, `devops-expert`, `test-expert`) that steer AI agents toward
+production-ready, zero-data-loss work. See [AI agent rules & project context](docs/AI-AGENT-RULES.md) for
+how they're built, how to use them, and how to reuse the setup in other projects.
 
 ---
 

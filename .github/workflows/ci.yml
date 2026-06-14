@@ -57,12 +57,25 @@ jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
+      # Skip the ~20s `npm ci` entirely when node_modules for this exact
+      # lockfile is already cached. Exact key only (no restore-keys) so a
+      # restore is all-or-nothing — a stale/partial tree is never used.
+      # The Linux jobs run with ELECTRON_SKIP_BINARY_DOWNLOAD, so their
+      # cached tree carries no platform binary; the `runner.os` segment
+      # keeps it from ever being restored onto the macOS/Windows packagers.
+      - name: Cache node_modules
+        id: node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (no electron binary)
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund --prefer-offline
       - name: Type check
         run: npm run typecheck
@@ -70,12 +83,25 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
+      # Skip the ~20s `npm ci` entirely when node_modules for this exact
+      # lockfile is already cached. Exact key only (no restore-keys) so a
+      # restore is all-or-nothing — a stale/partial tree is never used.
+      # The Linux jobs run with ELECTRON_SKIP_BINARY_DOWNLOAD, so their
+      # cached tree carries no platform binary; the `runner.os` segment
+      # keeps it from ever being restored onto the macOS/Windows packagers.
+      - name: Cache node_modules
+        id: node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (no electron binary)
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund --prefer-offline
       - name: Unit tests
         # On the `full` profile (the push/PR default) the coverage step
@@ -92,12 +118,25 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
+      # Skip the ~20s `npm ci` entirely when node_modules for this exact
+      # lockfile is already cached. Exact key only (no restore-keys) so a
+      # restore is all-or-nothing — a stale/partial tree is never used.
+      # The Linux jobs run with ELECTRON_SKIP_BINARY_DOWNLOAD, so their
+      # cached tree carries no platform binary; the `runner.os` segment
+      # keeps it from ever being restored onto the macOS/Windows packagers.
+      - name: Cache node_modules
+        id: node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (no electron binary)
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund --prefer-offline
       - name: Build web bundle
         run: npm run build:web
@@ -112,12 +151,25 @@ jobs:
     # `pages` profile never even spins up a runner for it.
     if: github.event_name != 'workflow_call' || inputs.profile == 'full' || inputs.profile == 'release'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
+      # Skip the ~20s `npm ci` entirely when node_modules for this exact
+      # lockfile is already cached. Exact key only (no restore-keys) so a
+      # restore is all-or-nothing — a stale/partial tree is never used.
+      # The Linux jobs run with ELECTRON_SKIP_BINARY_DOWNLOAD, so their
+      # cached tree carries no platform binary; the `runner.os` segment
+      # keeps it from ever being restored onto the macOS/Windows packagers.
+      - name: Cache node_modules
+        id: node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (no electron binary)
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund --prefer-offline
       # Playwright's preview server serves the freshly built web bundle.
       # This job builds it independently (rather than depending on the
@@ -126,7 +178,7 @@ jobs:
       - name: Build web bundle
         run: npm run build:web
       - name: Cache Playwright Chromium
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
