@@ -9,18 +9,12 @@
  * exposes a tiny event hook so the auto-sync hook re-binds when
  * the user flips the choice in Settings.
  *
- * Migration story
- * ===============
- *
- * Existing users (pre-Drive) only have a LAN pair in localStorage.
- * When `getActiveBackendId` finds no explicit selection it falls
- * back to "LAN if a pair exists, else null" — same observable
- * behaviour as before the refactor. Drive comes online only after
- * the user explicitly connects from Settings.
+ * Drive comes online only after the user explicitly connects from
+ * Settings. There is no implicit default — a device with no saved
+ * preference reports "no sync configured yet".
  */
 
 import { createGDriveBackend } from './gdrive';
-import { createLanBackend } from './lan';
 import type { SyncBackend, SyncBackendId } from './types';
 
 const ACTIVE_BACKEND_KEY = 'cadence.sync.activeBackend.v1';
@@ -29,17 +23,12 @@ const CHANGE_EVENT = 'cadence:sync-backend-changed';
 export function getActiveBackendId(): SyncBackendId | null {
   if (typeof window === 'undefined' || !window.localStorage) return null;
   const raw = window.localStorage.getItem(ACTIVE_BACKEND_KEY);
-  if (raw === 'lan' || raw === 'gdrive') return raw;
-  // Implicit default: if the user has an old-school LAN pair and
-  // hasn't expressed a preference, keep using LAN. Anything else
-  // means "no sync configured yet".
-  //
-  // Note we don't auto-pick `gdrive` here even if Drive tokens
-  // happen to be in localStorage — the user must opt in explicitly,
-  // because Drive sync needs the sync passphrase to be unlocked and
-  // we can't assume they want that on every device.
-  const lan = createLanBackend();
-  return lan ? 'lan' : null;
+  if (raw === 'gdrive') return raw;
+  // We don't auto-pick `gdrive` even if Drive tokens happen to be in
+  // localStorage — the user must opt in explicitly, because Drive sync
+  // needs the sync passphrase to be unlocked and we can't assume they
+  // want that on every device.
+  return null;
 }
 
 export function setActiveBackendId(id: SyncBackendId | null): void {
@@ -60,7 +49,6 @@ export function setActiveBackendId(id: SyncBackendId | null): void {
  */
 export function getActiveBackend(): SyncBackend | null {
   const id = getActiveBackendId();
-  if (id === 'lan') return createLanBackend();
   if (id === 'gdrive') return createGDriveBackend();
   return null;
 }
@@ -86,5 +74,4 @@ export function subscribeActiveBackend(cb: () => void): () => void {
 }
 
 export type { SyncBackend, SyncBackendId } from './types';
-export { createLanBackend, disconnectLan } from './lan';
 export { createGDriveBackend, disconnectGDrive } from './gdrive';

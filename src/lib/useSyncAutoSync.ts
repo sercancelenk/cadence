@@ -1,22 +1,17 @@
 /**
  * Provider-agnostic background sync. Drives whichever `SyncBackend` is
- * currently active.
+ * currently active (Google Drive today).
  *
- * Replaces `useLanSyncAutoPull`. The algorithm is similar to the
- * LAN-only version that shipped before — same triggers, same rate-
- * limits, same "push first if dirty, pull otherwise" precedence — but
- * the dirty check now reads from a **content fingerprint** (a stable
- * hash of the local snapshot) rather than the remote etag, because
- * for cloud backends the two are unrelated.
+ * The dirty check reads from a **content fingerprint** (a stable hash of the
+ * local snapshot) rather than the remote etag, because for cloud backends the
+ * two are unrelated.
  *
  * Why content fingerprint, not remote etag
  * ----------------------------------------
  *
- * LAN's host etag is `sha256(JSON({ok:true,data})).slice(0,16)`, which
- * is itself a content hash — so checking `localContentHash !== record.etag`
- * worked. Drive's `version` field is a Drive-managed counter (e.g.
- * `"5"`); comparing it against a 16-char hex hash would always
- * mismatch and pin the device into a push-every-30-seconds loop.
+ * Drive's `version` field is a Drive-managed counter (e.g. `"5"`); comparing
+ * it against a 16-char hex hash would always mismatch and pin the device into
+ * a push-every-30-seconds loop.
  *
  * The fix is to track BOTH:
  *   - `record.etag`              — the backend's remote concurrency token
@@ -35,14 +30,6 @@
  *   - On a true conflict (412 / version-mismatch) we bail silently.
  *     The user resolves explicitly via Settings → "Pull/Push" —
  *     auto-sync never decides for them.
- *
- * QR-pair landing path
- *
- *   This hook also runs the `?pair=` adoption sequence on mount, so a
- *   phone landing from a QR scan gets paired before its first auto-
- *   sync fires. That logic is LAN-specific; we keep it here (rather
- *   than inside the LAN backend) because it's a one-shot URL-driven
- *   side-effect, not part of the steady-state push/pull loop.
  */
 
 import { useCallback, useEffect, useRef } from 'react';
@@ -50,16 +37,10 @@ import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import type { AppData } from '../model';
 import { shapeOfData } from '../model';
-import { syncLanAttachments } from './lanAttachmentSync';
 import { collectReferencedAttachmentIds } from './richTextAttachmentIndex';
 import { parseRemoteSnapshot, snapshotParseErrorMessage } from './syncSnapshotGuard';
 import { prepareForRemoteApply } from './syncApplyGuard';
-import {
-  computeLocalEtag,
-  readPairFromUrl,
-  savePair,
-  stripPairFromUrl,
-} from './lanSyncClient';
+import { computeLocalEtag } from './syncFingerprint';
 import { getActiveBackend, subscribeActiveBackend } from './syncBackends';
 import {
   describePullOutcomeForLog,
@@ -146,15 +127,6 @@ async function maybeSyncAttachments(
     action === 'baseline-pulled' ||
     action === 'baseline-seeded';
   if (!successful) return;
-
-  if (backend.id === 'lan') {
-    try {
-      await syncLanAttachments(data, userId);
-    } catch (err) {
-      console.warn('[cadence] LAN attachment sync failed', err);
-    }
-    return;
-  }
 
   // Cloud backends (Google Drive) sync the encrypted JSON snapshot but NOT
   // the image sidecars. Rather than silently leaving a second device with
@@ -363,9 +335,7 @@ export type UseSyncAutoSyncOptions = {
    * Hook is rendered unconditionally for hook-order stability, but the
    * background polling timer + listeners are skipped entirely when this
    * flag is false. Enterprise policy uses this to keep sync code paths
-   * dormant on locked-down devices. QR-pair adoption is also gated —
-   * a phone that lands on a `?pair=` URL still won't save the pair if
-   * policy forbids LAN.
+   * dormant on locked-down devices.
    */
   enabled?: boolean;
 };
@@ -402,16 +372,6 @@ export function useSyncAutoSync(opts: UseSyncAutoSyncOptions = {}) {
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-
-    // QR-pair adoption (LAN only). Runs at most once per mount.
-    const incomingPair = readPairFromUrl();
-    if (incomingPair) {
-      savePair(incomingPair);
-      stripPairFromUrl();
-      // Refresh the backend ref so the very first sync after a fresh
-      // pair uses the just-saved credentials.
-      backendRef.current = getActiveBackend();
-    }
 
     const runSync = async (force: boolean) => {
       if (cancelled || inFlight.current) return;

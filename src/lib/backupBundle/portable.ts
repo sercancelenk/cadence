@@ -129,6 +129,16 @@ async function importAttachmentBytes(
 export type ImportPortableBackupDeps = {
   userId: string;
   importWorkspace: (data: AppData) => Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * Optional transform applied to the parsed remote workspace BEFORE it is
+   * handed to `importWorkspace`. The replace flow leaves this undefined (the
+   * remote snapshot is imported verbatim). The "merge from another device"
+   * flow supplies a function that folds the remote into the current local
+   * workspace additively (`mergeAppendWorkspace`), so importing never drops
+   * the items this device already has. Attachments are still imported by id,
+   * which is additive too — existing blobs are left in place.
+   */
+  transformWorkspace?: (remote: AppData) => AppData;
 };
 
 /**
@@ -152,7 +162,8 @@ export async function importPortableBackupFile(
     if (parsed.kind !== 'ok') {
       return { ok: false, error: snapshotParseErrorMessage(parsed) };
     }
-    const r = await deps.importWorkspace(parsed.data);
+    const toImport = deps.transformWorkspace ? deps.transformWorkspace(parsed.data) : parsed.data;
+    const r = await deps.importWorkspace(toImport);
     if (!r.ok) return r;
     revokeAttachmentBlobUrls();
     return { ok: true, attachmentsImported: 0, attachmentsSkipped: 0, attachmentsEncryptedSkipped: 0 };
@@ -212,7 +223,8 @@ export async function importPortableBackupFile(
   let attachmentsSkipped = 0;
   let attachmentsEncryptedSkipped = 0;
 
-  const r = await deps.importWorkspace(parsed.data);
+  const toImport = deps.transformWorkspace ? deps.transformWorkspace(parsed.data) : parsed.data;
+  const r = await deps.importWorkspace(toImport);
   if (!r.ok) return r;
 
   for (const [id, bytes] of bundle.attachments) {

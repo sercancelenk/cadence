@@ -29,7 +29,7 @@ describe('syncEvents pub-sub', () => {
   it('notifies subscribers via CustomEvent', () => {
     const received: SyncEvent[] = [];
     const unsub = subscribeSyncEvents((e) => received.push(e));
-    publishSyncEvent({ kind: 'error', backendId: 'lan', text: 'Failed', code: 'timeout' });
+    publishSyncEvent({ kind: 'error', backendId: 'gdrive', text: 'Failed', code: 'timeout' });
     unsub();
     expect(received).toHaveLength(1);
     expect(received[0].code).toBe('timeout');

@@ -44,7 +44,12 @@ import {
 
 export type Features = {
   sync: {
-    /** LAN sync (mDNS + HTTPS server in Electron, mobile QR pairing). */
+    /**
+     * Legacy LAN-sync flag. Same-Wi-Fi LAN sync has been removed; this field
+     * is retained only so older `policy.json` files keep parsing. It no longer
+     * gates any runtime capability.
+     * @deprecated
+     */
     lan: boolean;
     /** Cloud sync via Google Drive appdata folder. */
     cloud: boolean;

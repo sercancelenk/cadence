@@ -208,7 +208,7 @@ describe('runSyncCycle (steady state — record exists)', () => {
     // sees "clean". The easiest way to get one is to compute it from
     // the same `localData` we will pass in.
     const local = makeData('local');
-    const { computeLocalEtag } = await import('./lanSyncClient');
+    const { computeLocalEtag } = await import('./syncFingerprint');
     const fp = await computeLocalEtag(local);
     const fake = makeFakeBackend(
       { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
@@ -228,7 +228,7 @@ describe('runSyncCycle (steady state — record exists)', () => {
 
   it('applies remote when conditional pull returns new data', async () => {
     const local = makeData('local');
-    const { computeLocalEtag } = await import('./lanSyncClient');
+    const { computeLocalEtag } = await import('./syncFingerprint');
     const fp = await computeLocalEtag(local);
     const fake = makeFakeBackend(
       { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
@@ -287,7 +287,7 @@ describe('runSyncCycle (steady state — record exists)', () => {
 
   it('refuses to apply corrupt remote on a conditional pull', async () => {
     const local = makeData('local');
-    const { computeLocalEtag } = await import('./lanSyncClient');
+    const { computeLocalEtag } = await import('./syncFingerprint');
     const fp = await computeLocalEtag(local);
     const fake = makeFakeBackend(
       { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
@@ -308,7 +308,7 @@ describe('runSyncCycle (steady state — record exists)', () => {
 
   it('skips pull when local fingerprint changes during apply guard', async () => {
     const local = makeData('local');
-    const { computeLocalEtag } = await import('./lanSyncClient');
+    const { computeLocalEtag } = await import('./syncFingerprint');
     const fp = await computeLocalEtag(local);
     let current = local;
     const fake = makeFakeBackend(
@@ -362,7 +362,7 @@ describe('runSyncCycle (additional branches)', () => {
 
   it('reports pull-error on steady-state conditional pull failure', async () => {
     const local = makeData('local');
-    const { computeLocalEtag } = await import('./lanSyncClient');
+    const { computeLocalEtag } = await import('./syncFingerprint');
     const fp = await computeLocalEtag(local);
     const fake = makeFakeBackend(
       { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
@@ -409,7 +409,7 @@ describe('runSyncCycle (additional branches)', () => {
     // in flight were silently overwritten. The guard now also compares
     // against the fingerprint captured BEFORE the pull started.
     const local = makeData('local');
-    const { computeLocalEtag } = await import('./lanSyncClient');
+    const { computeLocalEtag } = await import('./syncFingerprint');
     const fp = await computeLocalEtag(local);
     let current = local;
     const fake = makeFakeBackend(
@@ -450,7 +450,7 @@ describe('runSyncCycle (additional branches)', () => {
         { id: 'n1', title: 'Keep me', body: 'important', locked: false, createdAt: '2026-05-19T00:00:00.000Z', updatedAt: '2026-05-19T00:00:00.000Z' },
       ],
     } as unknown as AppData;
-    const { computeLocalEtag } = await import('./lanSyncClient');
+    const { computeLocalEtag } = await import('./syncFingerprint');
     const fp = await computeLocalEtag(local);
     const fake = makeFakeBackend(
       { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
@@ -471,60 +471,6 @@ describe('runSyncCycle (additional branches)', () => {
     expect(fake.record?.etag).toBe('rev-1'); // record untouched → retried later
     expect(events.some((e) => e.code === 'empty-remote')).toBe(true);
     unsubscribe();
-  });
-
-  it('syncs LAN attachments after a successful push on lan backend', async () => {
-    const syncSpy = vi.spyOn(await import('./lanAttachmentSync'), 'syncLanAttachments');
-    const lanBackend: SyncBackend = {
-      id: 'lan',
-      displayName: 'LAN',
-      e2eEncryption: false,
-      async status() {
-        return 'ready';
-      },
-      async pull() {
-        return { kind: 'not-modified' };
-      },
-      async push() {
-        return { kind: 'ok', etag: 'rev-2' };
-      },
-      getRecord() {
-        return { etag: 'rev-1', localFingerprint: '"old-fingerprint"', lastSyncedAt: '2026-05-19T00:00:00.000Z' };
-      },
-      setRecord() {},
-      describe() {
-        return 'lan';
-      },
-    };
-
-    const local = makeData('local');
-    await runSyncCycle({
-      backend: lanBackend,
-      localData: local,
-      applyRemote: () => {},
-      userId: 'user-1',
-    });
-
-    expect(syncSpy).toHaveBeenCalledWith(local, 'user-1');
-    syncSpy.mockRestore();
-  });
-
-  it('does not sync LAN attachments for gdrive backend', async () => {
-    const syncSpy = vi.spyOn(await import('./lanAttachmentSync'), 'syncLanAttachments');
-    const fake = makeFakeBackend(
-      { etag: 'rev-1', localFingerprint: '"old-fingerprint"', lastSyncedAt: '2026-05-19T00:00:00.000Z' },
-      { push: { kind: 'ok', etag: 'rev-2' } },
-    );
-
-    await runSyncCycle({
-      backend: fake.backend,
-      localData: makeData('local'),
-      applyRemote: () => {},
-      userId: 'user-1',
-    });
-
-    expect(syncSpy).not.toHaveBeenCalled();
-    syncSpy.mockRestore();
   });
 
   it('warns once per session that gdrive sync omits images when attachments exist', async () => {
@@ -594,7 +540,7 @@ describe('runSyncCycle (additional branches)', () => {
   });
 
   it('continues when computeLocalEtag throws (safe fingerprint fallback)', async () => {
-    vi.spyOn(await import('./lanSyncClient'), 'computeLocalEtag').mockRejectedValue(new Error('no crypto'));
+    vi.spyOn(await import('./syncFingerprint'), 'computeLocalEtag').mockRejectedValue(new Error('no crypto'));
     const fake = makeFakeBackend(
       { etag: 'rev-1', localFingerprint: 'fp-old', lastSyncedAt: '2026-05-19T00:00:00.000Z' },
       { pull: { kind: 'not-modified' } },
@@ -625,7 +571,7 @@ describe('runSyncCycle (additional branches)', () => {
   });
 
   it('skips dirty push when fingerprint is empty and does conditional pull', async () => {
-    vi.spyOn(await import('./lanSyncClient'), 'computeLocalEtag').mockResolvedValue('');
+    vi.spyOn(await import('./syncFingerprint'), 'computeLocalEtag').mockResolvedValue('');
     const fake = makeFakeBackend(
       { etag: 'rev-1', localFingerprint: 'fp-old', lastSyncedAt: '2026-05-19T00:00:00.000Z' },
       { pull: { kind: 'not-modified' } },
@@ -640,58 +586,4 @@ describe('runSyncCycle (additional branches)', () => {
     vi.restoreAllMocks();
   });
 
-  it('syncs LAN attachments after baseline-pulled when userId is set', async () => {
-    const syncSpy = vi.spyOn(await import('./lanAttachmentSync'), 'syncLanAttachments');
-    const lanBackend: SyncBackend = {
-      id: 'lan',
-      displayName: 'LAN',
-      e2eEncryption: false,
-      status: async () => 'ready',
-      pull: async () => ({ kind: 'ok', data: makeData('remote'), etag: 'rev-1' }),
-      push: async () => ({ kind: 'ok', etag: 'rev-1' }),
-      getRecord: () => null,
-      setRecord: () => {},
-      describe: () => 'lan',
-    };
-    await runSyncCycle({
-      backend: lanBackend,
-      localData: makeData('local'),
-      applyRemote: () => {},
-      userId: 'user-42',
-    });
-    expect(syncSpy).toHaveBeenCalledWith(expect.objectContaining({ version: 3 }), 'user-42');
-    syncSpy.mockRestore();
-  });
-
-  it('logs and continues when LAN attachment sync throws', async () => {
-    const syncSpy = vi
-      .spyOn(await import('./lanAttachmentSync'), 'syncLanAttachments')
-      .mockRejectedValue(new Error('lan down'));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const lanBackend: SyncBackend = {
-      id: 'lan',
-      displayName: 'LAN',
-      e2eEncryption: false,
-      status: async () => 'ready',
-      pull: async () => ({ kind: 'not-modified' }),
-      push: async () => ({ kind: 'ok', etag: 'rev-2' }),
-      getRecord: () => ({
-        etag: 'rev-1',
-        localFingerprint: '"old-fingerprint"',
-        lastSyncedAt: '2026-05-19T00:00:00.000Z',
-      }),
-      setRecord: () => {},
-      describe: () => 'lan',
-    };
-    const action = await runSyncCycle({
-      backend: lanBackend,
-      localData: makeData('local'),
-      applyRemote: () => {},
-      userId: 'user-1',
-    });
-    expect(action).toBe('pushed');
-    expect(warn).toHaveBeenCalled();
-    syncSpy.mockRestore();
-    warn.mockRestore();
-  });
 });

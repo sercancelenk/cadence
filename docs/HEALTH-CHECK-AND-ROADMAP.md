@@ -12,9 +12,9 @@
 
 Cadence is a **local-first leadership workspace** (Electron desktop + installable PWA) with todos, notes, teams/1:1s, agenda, analytics, optional LAN/cloud sync, and BYO-key AI. For an MVP at `0.2.x`, the project is **stronger than typical indie apps** in data durability, sync safety, and operator documentation.
 
-The main gaps are not in the core desktop data path — they are in **sustainability** (very large source files), **LAN sync host UI refresh** (low priority for single-user companion use), and **mobile UX polish** (desktop-only affordances still visible on PWA).
+The main gaps are not in the core desktop data path — they are in **sustainability** (very large source files) and **mobile UX polish** (desktop-only affordances still visible on PWA).
 
-**LAN sync intent (clarified 1.9):** One user, desktop host + phone/PWA client on the same Wi‑Fi — not multi-user collaboration. Conflicts are edge cases when both devices edit before sync; see [docs/LAN-SYNC.md](./LAN-SYNC.md).
+**Cross-device intent:** One user, multiple devices. Two non-collaborative paths: cloud sync (Google Drive, E2E-encrypted) for always-on convergence, and an offline encrypted-backup transfer that merges additively. Neither is multi-user collaboration; see [docs/LAN-SYNC.md](./LAN-SYNC.md).
 
 ### Overall health score
 
@@ -27,9 +27,9 @@ The main gaps are not in the core desktop data path — they are in **sustainabi
 | Documentation | **9.5 / 10** | README + operator docs + in-app user guide (`/guide`) |
 | Mobile / PWA UX | **6.0 / 10** | Works; not yet a curated lite experience |
 | Maintainability | **8.0 / 10** | Todos + Notes slimmed; Settings + main.cjs still oversized |
-| **Composite** | **8.5 / 10** | **Ship-ready for personal desktop + phone companion via LAN** |
+| **Composite** | **8.5 / 10** | **Ship-ready for personal desktop + phone companion (Drive sync or offline transfer)** |
 
-**Bottom line:** Safe to use Cadence as a daily driver on **Electron desktop** (verified: edit → quit → relaunch persist; export → delete → import restore). PWA data is separate, unencrypted, and browser-scoped — pair from the desktop host per [LAN-SYNC.md](./LAN-SYNC.md). LAN sync is **supported** for one-user / two-device workflow; simultaneous multi-device editing is discouraged.
+**Bottom line:** Safe to use Cadence as a daily driver on **Electron desktop** (verified: edit → quit → relaunch persist; export → delete → import restore). PWA data is separate, unencrypted, and browser-scoped — move data across with Google Drive sync or an offline encrypted-backup merge per [LAN-SYNC.md](./LAN-SYNC.md). Cross-device is **supported** for one-user / multi-device workflow; simultaneous multi-device editing is discouraged.
 
 ---
 
@@ -176,7 +176,7 @@ Reference implementations in:
 | **Editor UX** | Shared `RichTextDocumentPane`; Esc → preview; sticky tabs + toolbar; save status |
 | **Utilities** | Sidebar **Utilities** section; **Document** scratch pad; **JSON / YAML** editor with Edit/Diff, folding, format/validate, JSON compact/stringify |
 | **Production hardening (Phase F)** | fsync refusal; before-quit renderer flush; sandbox; CDNC1 envelope; IPC policy guard; crash reporting init; `usePersistStatus` / selector migration (Notes, Todos, shell); `STORAGE_PREFIX` fix; manual smoke: restart persist + backup restore **verified 2026-06-04** |
-| **LAN sync docs** | [docs/LAN-SYNC.md](./LAN-SYNC.md) — single-user companion workflow |
+| **Cross-device docs** | [docs/LAN-SYNC.md](./LAN-SYNC.md) — offline encrypted-backup transfer + merge |
 | **Account recovery codes** | Optional `recoveryEnvelope`; MetaMask-style 8 codes; `/recover` password reset; confirm-before-persist on regenerate |
 | **Portable ZIP backup** | Cross-platform `data.json` + `attachments/*.bin`; desktop folder backup unchanged; legacy JSON import preserved |
 | **Note version history** | Desktop `note-history/` in full backup; revision panel in Notes |
@@ -217,8 +217,8 @@ Reference implementations in:
 - Preload exposes whitelisted IPC only (`electron/preload.cjs`)
 - Production CSP: `script-src 'self'` (strict); dev relaxes for Vite HMR
 - Password: scrypt hash; data key: AES-256-GCM derived at login
-- LAN sync: HTTPS + token; self-signed cert (documented one-time phone warning)
 - Cloud sync: E2E encrypted snapshots before upload; Drive sees ciphertext only
+- Offline transfer: encrypted backup file moved by the user; additive merge never overwrites local data
 
 ### Open questions
 
@@ -244,7 +244,7 @@ Assume: anyone with device unlock can read `localStorage`. Mitigation = OS-level
 | `structuredText.test.ts` | 16 | JSON/YAML format, validation |
 | `features.test.ts` | 26 | Policy precedence, enterprise build |
 | `gdrive.test.ts` | 19 | Sync push/pull, conflicts, retries |
-| `lanSyncClient.test.ts` | 15 | Pairing URL/token handling |
+| `mergeWorkspace.test.ts` | 11 | Additive cross-device merge import |
 | `useSyncAutoSync.test.ts` | 10+ | Auto-sync algorithm |
 | `commitEnvelope.test.ts` | 4 | CDNC1 envelope round-trip |
 | `writeGeneration.test.ts` | — | Generation commit rules |
@@ -269,17 +269,17 @@ CI (`.github/workflows/ci.yml`) on every push/PR: `tsc` → `npm test` → `buil
 
 ## Mobile / PWA UX
 
-The PWA **works** as a **companion** surface (drawer nav, safe-area, launch → `/todos`, offline shell, LAN sync pair/pull). Desktop remains the primary workspace; phone = capture, agenda, quick edits, sync from host.
+The PWA **works** as a **companion** surface (drawer nav, safe-area, launch → `/todos`, offline shell, Google Drive sync). Desktop remains the primary workspace; phone = capture, agenda, quick edits, synced via Drive or an imported backup.
 
 ### Product definition (agreed 2026-06)
 
 | Role | Mobile (PWA) | Desktop (Electron) |
 |---|---|---|
-| Primary use | To-dos, Agenda, Notes capture, LAN pull | Full workspace: Teams, 1:1, Planning matrix, backups, restore |
-| Data authority | Same account; often synced from desktop host | Authoritative encrypted file + rolling snapshots |
+| Primary use | To-dos, Agenda, Notes capture, Drive sync | Full workspace: Teams, 1:1, Planning matrix, backups, restore |
+| Data authority | Same account; synced via Drive or an imported backup | Authoritative encrypted file + rolling snapshots |
 | Navigation | Lite sidebar via `isMobileWeb()` | Full sidebar |
 
-**Core mobile features (ship / keep):** To-dos, Agenda, Notes, Quick add, Search, Export JSON, LAN sync, PWA reminders (where OS supports).
+**Core mobile features (ship / keep):** To-dos, Agenda, Notes, Quick add, Search, Export JSON, Google Drive sync, PWA reminders (where OS supports).
 
 **Hide or defer on mobile:** snapshot restore, folder import, PIN, Teams/People editing, Utilities editors, Analytics/Activity (read-only deep links OK).
 
@@ -499,19 +499,17 @@ These are **product** bets, not health fixes. Schedule after Phase A unless user
 
 ---
 
-### Phase G — LAN sync polish (optional)
+### Phase G — Cross-device sync polish (optional)
 
-*Goal: Improve multi-device UX when the same user edits on phone + desktop. **Not required** for the companion workflow documented in [LAN-SYNC.md](./LAN-SYNC.md) (sequential edit, desktop primary).*
+*Goal: Improve multi-device UX when the same user edits on phone + desktop. The same-Wi-Fi LAN sync server was **removed** in favour of (a) Google Drive cloud sync and (b) an offline encrypted-backup transfer that merges additively — see [LAN-SYNC.md](./LAN-SYNC.md).*
 
 | ID | Item | Effort | Priority | Notes |
 |---|---|---|---|---|
-| **G1** | Host renderer reload after LAN POST | M | Low | Phone push updates disk but host UI may lag until reload |
-| **G2** | Auto-sync 412 → toast/banner | S | Low | Currently silent; manual Settings resolves |
-| **G3** | Return `writeGeneration` in LAN GET/POST | S | Low | Unify HTTP ETag + IPC generation tracking |
-| **G4** | Require `If-Match` on all LAN POSTs | S | Low | Remove legacy last-write-wins |
-| **G5** | LAN sync integration test (push/pull/conflict) | M | Medium | HTTP handler + client round-trip |
+| **G1** | Auto-sync 412 (Drive) → toast/banner | S | Low | Currently silent; manual Settings Pull/Push resolves |
+| **G2** | Surface merge summary detail in a dialog | S | Low | Toast shows counts; a dialog could list imported titles |
+| **G3** | Drive sync integration test for conflict UX | M | Medium | Push/pull/412 against the `fetch`-mocked backend |
 
-**Deferred (not needed for single-user companion):** field-level merge (C5), CRDT/OT.
+**Deferred (not needed for single-user, non-collaborative use):** field-level merge (C5), CRDT/OT.
 
 ---
 
@@ -548,8 +546,8 @@ Use this doc as the agenda. Recommended order:
 | React providers | `src/providers/index.ts` (barrel), individual `*Context.tsx` |
 | Feature flags | `src/lib/features.tsx` |
 | Rich text | `src/components/ui/RichTextEditor.tsx`, `src/components/ui/RichTextDocumentPane.tsx`, `src/lib/richTextBody.ts` |
-| Attachments | `electron/main.cjs` (GC, backup), `src/lib/richTextAttachmentStore.ts`, `src/lib/lanAttachmentSync.ts` |
-| Sync safety | `src/lib/syncSnapshotGuard.ts`, `src/lib/useSyncAutoSync.ts`, [docs/LAN-SYNC.md](./LAN-SYNC.md) |
+| Attachments | `electron/main.cjs` (GC, backup), `src/lib/richTextAttachmentStore.ts` |
+| Sync safety | `src/lib/syncSnapshotGuard.ts`, `src/lib/useSyncAutoSync.ts`, `src/lib/syncFingerprint.ts`, `src/core/model/mergeWorkspace.ts` |
 | Production persist | `electron/persistence/commitEnvelope.cjs`, `electron/persistence/writeGeneration.cjs`, `src/lib/persistQueue.ts` |
 | Reminders | `electron/reminder/`, `src/lib/reminderDelivery/`, `public/sw.js` |
 | Mobile shell | `src/lib/runtime.ts`, `src/components/Layout.tsx`, `src/components/AppSidebar.tsx`, `src/app.css` (`@media max-width: 700px`) |

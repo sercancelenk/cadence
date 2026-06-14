@@ -151,7 +151,7 @@ Cadence is designed so **existing users are never forced to migrate**:
 
 Both are off by default. See [LAN-SYNC.md](./LAN-SYNC.md) and README for setup.
 
-- **LAN sync** — same Wi-Fi, QR pairing, TLS between your devices. No Cadence cloud.
+- **Offline device transfer** — export an encrypted backup file, carry it across (AirDrop / Files / USB), and **merge it in** on the other device. Additive and lossless; no cloud, no network link between devices.
 - **Cloud sync (Google Drive)** — end-to-end encrypted backup to *your* Drive with a sync passphrase you choose.
 
 ---
@@ -182,7 +182,7 @@ Native macOS menus expose additional shortcuts when running the desktop build, i
 
 ## Privacy in one paragraph
 
-Your workspace is encrypted on disk (desktop), stored locally, and never sent to Cadence servers. Network use is limited to: GitHub Releases (auto-update), your chosen AI provider (if configured), LAN sync (if enabled), and Google Drive (if cloud sync is enabled). No telemetry.
+Your workspace is encrypted on disk (desktop), stored locally, and never sent to Cadence servers. Network use is limited to: GitHub Releases (auto-update), your chosen AI provider (if configured), and Google Drive (if cloud sync is enabled). No telemetry.
 
 ---
 

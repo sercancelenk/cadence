@@ -107,7 +107,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | 🔐 **Recovery codes** | Optional MetaMask-style codes to reset your account password on this device without data loss. Generate at sign-up or in Settings; use `/recover` if you forget your password. Existing accounts without codes behave exactly as before. |
 | 📦 **Workspace storage** | Desktop app splits large workspaces into monthly files for efficiency while keeping a full copy in the base file for downgrade safety. **Settings → Storage & cache** shows a per-area size breakdown (notes, tasks, teams, archives). |
 | 🛡️ **Data-integrity guard** | After every successful save, a per-device fingerprint records how much content you had. On the next boot, if the loaded file is meaningfully smaller, an amber banner spells out the before/after counts and links straight to *Backups & recovery* — so "my data vanished" is caught before you panic. |
-| 📡 **Optional LAN sync** | Token-protected **HTTPS** server inside Electron (off by default) with self-signed TLS (RSA 2048 / SHA-256), constant-time token compare, DNS-rebinding resistance, same-LAN CORS, ETag optimistic concurrency and payload-shape validation. The host also serves the PWA itself, so an iPhone can scan the QR code and open `https://<host-ip>:9787/` directly — no cloud round-trip. |
+| 📦 **Offline device transfer** | Move a workspace between devices with no cloud and no network link between them: export an encrypted portable backup, carry it across (AirDrop / Files / USB), and **merge it in additively**. The merge keeps every local item, dedupes by id + content signature, protects local config (passphrase, active team), and is idempotent — re-importing the same file is a no-op. |
 | 🚫 **No telemetry** | Zero network calls outside of (a) the auto-updater hitting GitHub Releases, and (b) the AI assistant hitting whichever provider you configured. Nothing else dials home. |
 | 🏢 **Enterprise / shared-device ready** | Three onboarding presets (Personal / Work-Standard / Work-Strict) the user picks at first launch, plus an admin-deployable `policy.json` (cross-platform, 5-layer search) that **wins over the user preset** and gates Sync / AI / Export / Updates with defence-in-depth in the Electron main process. A separate "Cadence for Work" build flavor (`npm run build:enterprise`) ships a locked binary with its own app ID and update channel. See [docs/ENTERPRISE.md](docs/ENTERPRISE.md) and [docs/DEPLOYMENT-AND-POLICY.md](docs/DEPLOYMENT-AND-POLICY.md) (updates, fresh installs, self-restriction). |
 
@@ -142,7 +142,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 - [Install](#install)
 - [Getting started](#getting-started)
 - [Concepts](#concepts)
-- [Power features](#power-features) (notes, to-dos, AI, backups, LAN sync, …)
+- [Power features](#power-features) (notes, to-dos, AI, backups, device sync, …)
 - [Mobile / PWA](#mobile--pwa)
 - [Keyboard & native menus](#keyboard--native-menus)
 - [Data, privacy and backups](#data-privacy-and-backups)
@@ -182,7 +182,7 @@ Because the DMG is signed with a **Developer ID Application** certificate **and*
    **Android:** tap **⋮** → **Install app**.
 3. Launch from the home-screen icon. The app opens full-screen and jumps straight to the To-dos page.
 
-> **Mobile data is separate by default.** The PWA stores its own data in the phone's `localStorage` (independent of the desktop's encrypted file). To move data between devices use [LAN sync](#lan-sync-multi-device-no-cloud), or *Settings → Backup → Export JSON / Import JSON* as a manual fallback.
+> **Mobile data is separate by default.** The PWA stores its own data in the phone's `localStorage` (independent of the desktop's encrypted file). To move data between devices use [Cloud sync (Google Drive)](#cloud-sync-google-drive-end-to-end-encrypted), or [move an encrypted backup file across](#move-data-between-devices-offline-no-cloud) (*Settings → Backup → Export*, then *Import / merge* on the other device).
 
 ### Unsigned local builds
 
@@ -467,84 +467,30 @@ This panel is purely diagnostic — you can ignore it forever and nothing degrad
 - **View mode** — name, role, department, phone, email and bio rendered as a read-only grid; an **Edit** button (top-right) flips the same card into form mode with a Save / Cancel pair.
 - **Change password** — a secondary tab that asks for **Current password**, **New password** and **Confirm**. On Electron the new password is also used to **re-encrypt your data file** in a single atomic swap; the old key is wiped from memory immediately.
 
-### LAN sync (multi-device, no cloud)
+### Move data between devices (offline, no cloud)
 
 > **Companion guide:** For the recommended **one user, desktop + phone** workflow, troubleshooting, and golden rules, see **[docs/LAN-SYNC.md](docs/LAN-SYNC.md)**.
 
-`Settings → Multi-device sync` lets two devices on the same Wi-Fi share a workspace without any cloud service:
+When you don't want any cloud service involved, Cadence moves a workspace between devices with an **encrypted portable backup file** — no network connection between the devices is ever required:
 
-- The Electron app runs an optional, opt-in **HTTPS** server (default port `9787`) protected by a **bearer token** stored in `sync.json`. The TLS certificate is **generated on this device** (self-signed, never leaves the machine) and persisted in `cadence-sync-tls.json` next to the workspace data.
-- Endpoints:
-  - `GET  /v1/ping` — **unauthenticated** reachability probe; clients hit this to distinguish "host unreachable" from "host reachable but wrong token".
-  - `GET  /v1/snapshot` — returns the active user's data, with an `ETag` header. Clients sending `If-None-Match` get a zero-body **304 Not Modified** when nothing has changed since their last pull.
-  - `POST /v1/snapshot` — replaces the active user's data (Bearer token required). Clients sending `If-Match` get a **412 Precondition Failed** if the host has moved on since their last pull — Cadence then prompts to pull the newer version instead of silently overwriting it.
-  - `GET  /*` — serves the **bundled PWA assets** (index.html, JS, CSS, icons) from the host's own `dist/` folder. This is what defeats the "https://github.io → http://lan" mixed-content block and powers QR pairing, see below.
-- Settings shows the host's reachable LAN URLs, the pairing token (with a Rotate button), a **scannable QR code** for one-tap mobile pairing and a **Pair with another device** form for the *client* side.
-- The server auto-resumes on next launch if you previously enabled it.
+1. On the source device, open **Settings → Backup** and **Export** a portable backup (a `.zip` that bundles the encrypted workspace JSON plus image attachments, or a plain JSON export for text-only).
+2. Carry the file across by whatever means you already trust — AirDrop, Files, a USB stick, a private chat to yourself.
+3. On the target device, open **Settings → Backup** and choose **Import / merge**.
 
-**QR-code pairing.** The host card renders a QR encoding `https://<lan-ip>:9787/?pair=<base64url(token)>`. Open the iPhone/Android camera, point it at the code, tap the URL banner — the phone opens the PWA bundled on the desktop. On the *first* pairing the browser shows a **"Your connection is not private"** warning because the cert is self-signed and the phone doesn't know about it yet; tap **Advanced → Visit Website / Proceed Anyway** once and your phone will remember this device permanently. The PWA then loads from the host (same-origin, no mixed-content) and the **`?pair=` handler** stores the URL + token in the phone's `localStorage` automatically. No typing the IP, no typing the 192-bit token, no further warnings.
+There are two distinct import modes, and the difference matters for data safety:
 
-**Bidirectional auto-sync.** Once a client is paired, the app keeps both sides in sync in the background — **push first, pull after**:
+- **Replace (restore a backup)** overwrites the target workspace with the file's contents. Use this to restore a device from a known-good backup.
+- **Merge items from another device** is **additive and lossless**: every item already on the target is kept verbatim, and only entities the target doesn't already have are appended. Re-importing the same file is a no-op (idempotent), and your local config — profile, AI settings, notes passphrase, active team — is never touched. This is the safe choice for "I made notes on my phone, fold them into my desktop."
 
-- ~500 ms after launch (opening the PWA on your phone shows the latest data straight away and ships any unpushed edits up).
-- On window focus and `visibilitychange` to visible (you tabbed away → came back, or unlocked the phone).
-- On `online` events (the OS just told us Wi-Fi came back).
+The merge is implemented by `mergeAppendWorkspace` (`src/core/model/mergeWorkspace.ts`) and deduplicates by entity `id` first, then by a stable content signature, so the same logical note created independently on both devices doesn't import as a near-duplicate. Because there are no tombstones in the model, a merge can never delete anything — the documented trade-off is that re-importing an old file can resurrect an item you had deleted locally.
 
-Each cycle computes the local snapshot's ETag (same SHA-256 prefix formula the host uses, so the bytes line up) and compares with `pair.etag` (the host's last-confirmed ETag):
-
-- **First pair** (no prior etag) → pull only, adopt the host's state and ETag.
-- **Local matches host** → conditional pull with `If-None-Match`. The host returns **304 Not Modified** with zero body when nothing has changed since.
-- **Local differs from host** → push with `If-Match: pair.etag`. On 200 OK we adopt the new ETag and skip the pull (the host now has our snapshot, there's nothing to download). On **412 Precondition Failed** we *silently bail* — the desktop edited too, and overwriting either side would lose data. The next manual Push from Settings surfaces an explicit "Pull host's version first?" dialog so the user resolves the conflict deliberately.
-
-All cycles share the same throttle (minimum 30 s between attempts, no calls when `navigator.onLine` is false, in-flight lock to prevent concurrent runs). Errors are silent in the background path — the badge going stale is the signal — while Settings shows targeted messages for explicit Pull/Push actions.
-
-**Optimistic concurrency.** Manual **Push to host** sends `If-Match: <pair.etag>` too — if the host's snapshot has moved on, the request is rejected with **412** and the UI offers a "Pull host's version first?" dialog. Last-write-wins becomes a deliberate choice, never an accident.
-
-**Connection badge.** When this device is paired, the *Pair with another device* card flips to **Paired with host** — green dot, the canonical host URL, "synced 3 min ago" relative timestamp (auto-refreshes every minute) and a **Disconnect** button that clears the saved pair.
-
-**Mobile / PWA pairing — why HTTPS:** modern browsers' "HTTPS-Only Mode" (Firefox), "Always use secure connections" (Chrome) and Safari Private Relay refuse to navigate to `http://` URLs in many configurations. They also block `fetch()` from HTTPS pages to HTTP hosts entirely (active mixed-content rule). Self-signed HTTPS on the desktop sidesteps both: the URL is `https://`, so browsers navigate to it; and a github.io-hosted PWA can `fetch` it without mixed-content blocking. The trade-off is the one-time **"Your connection is not private"** warning on first pairing per device — the certificate is generated by the host with a 800-day validity (within Apple's hard cap), persists on disk, and is reissued only when the LAN IP changes or expiry nears.
-
-**Cert fingerprint display.** The host card shows the first 8 bytes of the SHA-256 cert fingerprint so a security-conscious user can verify out-of-band that the warning on their phone matches the certificate the host actually issued.
-
-**Client UX**: the pair form normalises whatever you type (adds `https://`, defaults port `9787`), has a **Test reachability** button that pings `/v1/ping` with an 8-second timeout, and gives targeted error messages — `401` ("token rotated/wrong"), `503` ("no user signed in on the host"), `412` ("host has newer changes"), timeout ("check Wi-Fi and that the host server is running") instead of a generic "Pull failed".
-
-#### Sync security — what we did and didn't do
-
-The threat model is "untrusted devices on the same Wi-Fi" and "a malicious public website trying to reach into the user's LAN through their browser". Defenses, in code:
-
-- **TLS encryption on the wire.** Sync runs over HTTPS with a self-signed cert (RSA 2048, SHA-256), TLS 1.2+. Even an attacker who's joined your Wi-Fi sees only encrypted bytes — not the workspace, not the bearer token.
-- **Random 192-bit token.** `crypto.randomBytes(24)` per workspace, base64-encoded. Brute-force is not on the table.
-- **Constant-time token compare.** `crypto.timingSafeEqual` instead of `===`, plus a small artificial delay on failure paths so 401 vs 200 cannot be cleanly differentiated by latency measurement.
-- **DNS-rebinding defense.** Every request's `Host:` header is checked against a private-IP / localhost / `.local` allow-list. A browser that's been tricked into thinking `attacker.com` resolves to your LAN IP still sends `Host: attacker.com` — we send back 403 before any route runs.
-- **CORS without wildcards.** `Access-Control-Allow-Origin: *` is never returned. We echo the request `Origin` only when it parses to a private-IP / localhost / `.local` hostname, otherwise no CORS header is set — so a malicious public web origin can't pivot through the user's browser even if it had the token.
-- **Payload shape validation.** `POST /v1/snapshot` rejects bodies that don't have the required `AppData` discriminators (`version`, `teams`, `people`, `items`, `todoGroups`, `todoItems`) with a 422 before writing.
-- **Minimal `/v1/ping`.** Returns `{ ok: true, name: 'leeadman-sync' }` only — no version, no session indicator, no fingerprintable metadata.
-- **Body size cap.** `POST` bodies over 25 MB get an explicit `413 Payload Too Large` response (with a JSON error body) before we keep buffering, instead of a bare socket reset that the client would render as a useless "Pull failed".
-- **Refuse-to-overwrite + auto-backup.** Even if a properly-authenticated client pushes a corrupt-but-shape-valid payload, the writer takes a snapshot before saving and refuses to save an undecipherable file. Worst case: one round-trip to the **Backups & recovery** tab.
-
-#### Why self-signed HTTPS (not plain HTTP, not a real CA cert)
-
-We tried plain HTTP first. It didn't survive contact with modern browsers:
-
-- Firefox's *HTTPS-Only Mode* (default in some installs) refuses to navigate to `http://` URLs — the QR-scan flow dies before it begins.
-- Chrome's *Always use secure connections* does the same. Safari Private Relay forwards LAN IPs in opaque ways that broke pairing on some networks.
-- The active mixed-content rule prevents `https://*.github.io` from `fetch`-ing `http://192.168.x.x`, so a PWA installed from GitHub Pages couldn't talk to the host at all.
-
-A *real* CA-signed certificate is also off the table: it requires a public DNS name resolvable from the internet and ports 80/443 reachable for ACME challenge — which is exactly what a LAN-only tool is trying to avoid.
-
-That leaves self-signed HTTPS, which we do. The cost is a **one-time** "Your connection is not private" warning on each device — the phone caches the cert exception after the user taps "Proceed Anyway" once. Every subsequent visit is silent. To keep the prompt rare we:
-
-- Generate the cert with all detected LAN IPs in the **Subject Alternative Names** (Wi-Fi + Ethernet + VPN at once), so changing networks usually doesn't re-trigger the warning.
-- Set validity to **800 days** — under Apple's 825-day hard limit for self-signed server certs, so iOS Safari accepts it.
-- Re-issue automatically only when (a) the cert is within 30 days of expiry, or (b) a current interface IP isn't covered by the existing SAN list (you joined a new network).
-
-On a trusted home network, self-signed HTTPS + the bearer token + the hardening below is honest and works with modern browsers' defaults. If your threat model includes an untrusted Wi-Fi network (a coffee shop, a hotel) — don't run the sync server there at all; the toggle is off by default for a reason.
+For an always-on, anywhere experience (not just file transfer), see **Cloud sync (Google Drive)** below.
 
 ---
 
 ### Cloud sync (Google Drive, end-to-end encrypted)
 
-LAN sync is great when both devices share a network, but the moment you walk out the door your phone is on its own. **Cloud sync** plugs Cadence into your own Google Drive so the same encrypted snapshot is reachable from anywhere — without giving Google the ability to read your notes.
+Moving a backup file by hand is great when you're at your desk, but the moment you want both devices to stay current on their own, manual transfer gets tedious. **Cloud sync** plugs Cadence into your own Google Drive so the same encrypted snapshot is reachable from anywhere — without giving Google the ability to read your notes.
 
 #### What you get
 
@@ -704,8 +650,6 @@ Standard shortcuts apply (⌘ Q, ⌘ W, ⌘ R, ⌘ F, ⌘ , …). The global **�
   - `leeadman-data.json` — legacy single-user file from pre-accounts versions (only present if you upgraded from an old install). Auto-imported on first login.
   - `backups/<userId>/data-<label>-<timestamp>.json` — rolling auto-snapshots (50 slots; labels include `launch`, `post-login`, `pre-save`, `pre-pwchange`, `pre-restore`).
   - `auth-lock.json` — optional PIN hash.
-  - `sync.json` — LAN sync server config (token + enabled flag) when sync is on.
-  - `cadence-sync-tls.json` — self-signed TLS key/cert/SAN-list for the HTTPS sync server. Regenerated when expired (800-day life) or when the LAN IP list changes.
 - **Encryption-at-rest** (Electron): your data file is wrapped in **AES-256-GCM**. The 256-bit key is derived from your password with `scrypt(password, encSalt)` at login and lives only in main-process memory until logout. Changing your password atomically decrypts with the old key, derives a fresh `encSalt`, and re-encrypts under the new key. Legacy plaintext files from older versions are upgraded silently on the first save after login.
 - **Refuse-to-overwrite guard**: when the data writer finds an existing file it can't decrypt with the in-memory key, it refuses to write — your data stays safe and the UI surfaces a banner pointing at *Settings → Backups & recovery*.
 - **PIN protection** is an additional launch-time UI barrier (not the encryption key). It can be enabled/disabled independently in Settings. If you forget it, the lock screen has a "Forgot PIN? Reset with account password" flow (rate-limited).
@@ -845,7 +789,7 @@ The suite covers the parts of the codebase that have the highest blast radius if
 
 - **`src/lib/snapshotCrypto.test.ts`** — round-trip encrypt/decrypt, wrong passphrase, tampering detection, unsupported-version branch.
 - **`src/lib/syncSnapshotGuard.test.ts`** — `parseRemoteSnapshot` accepts every valid shape and refuses every invalid one (defends against an empty/garbled remote overwriting your local data).
-- **`src/lib/lanSyncClient.test.ts`** — URL normalisation, content-hash computation, relative-time formatting.
+- **`src/core/model/mergeWorkspace.test.ts`** — the additive "import items from another device" merge: additive-only, no overwrite, content dedupe, idempotency, singleton protection.
 - **`src/lib/useSyncAutoSync.test.ts`** — the full sync state machine (first-time pull, first-time seed, dirty push, clean pull, not-modified, conflict, auth-required, corrupt-remote) against a scripted `FakeBackend`.
 - **`src/lib/syncBackends/gdrive.test.ts`** — 19 integration scenarios against a `fetch`-mocked Drive (auth, pull-ok, no-snapshot, wrong-password, not-modified, file-create, file-update, conflict, 401, network-error, 5xx retry-loop, 413 too-large, status, disconnect).
 - **`src/lib/syncBackends/gdriveAuth.test.ts`** — OAuth token persistence, silent refresh-on-expiry, `signOut` revoke, redirect broker handling, runtime client-ID override priority.
@@ -860,7 +804,7 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npm run build
 
 ### Windows / Linux builds (experimental, not in CI)
 
-GitHub Releases ship signed macOS DMG + ZIP only. The renderer and the Electron main process are platform-agnostic (atomic fsync'ed writes, scrypt + AES-256-GCM, LAN sync, auto-updater all work on Windows and Linux), but the project's `electron-builder` config and release workflow only target macOS by design — adding Windows code signing infrastructure and ongoing CI minutes isn't worth it until there's real demand.
+GitHub Releases ship signed macOS DMG + ZIP only. The renderer and the Electron main process are platform-agnostic (atomic fsync'ed writes, scrypt + AES-256-GCM, Google Drive sync, auto-updater all work on Windows and Linux), but the project's `electron-builder` config and release workflow only target macOS by design — adding Windows code signing infrastructure and ongoing CI minutes isn't worth it until there's real demand.
 
 If you want to run Cadence on Windows or Linux today, you can build locally:
 
@@ -1088,11 +1032,11 @@ The signed binary uses the entitlements at [`build/entitlements.mac.plist`](./bu
 │       ├── AnalyticsPage.tsx       # Local analytics dashboard (SVG charts)
 │       ├── People.tsx              # Person workspace + Timeline + 1:1 Mode tabs
 │       ├── ProfilePage.tsx         # Avatar, view/edit toggle, change-password tab
-│       ├── Settings.tsx            # Theme, PIN, AI key, backups & recovery, LAN sync
+│       ├── Settings.tsx            # Theme, PIN, AI key, backups & recovery, cloud sync
 │       └── LoginPage.tsx / RegisterPage.tsx
 ├── public/                         # PWA static assets (manifest, sw.js, icons)
 ├── docs/
-│   ├── LAN-SYNC.md                 # Single-user desktop + phone companion workflow
+│   ├── LAN-SYNC.md                 # Offline device-to-device transfer (encrypted backup + merge)
 │   ├── HEALTH-CHECK-AND-ROADMAP.md # Living health score + phased roadmap
 │   ├── electron-guide.md           # Practical Electron tutorial walking through this codebase
 │   ├── DEPLOYMENT-AND-POLICY.md
@@ -1122,7 +1066,7 @@ that doubles as a hands-on Electron tutorial:
 > **[docs/electron-guide.md](docs/electron-guide.md)** — a practical Electron
 > tutorial walking through this codebase: the two-process model, the preload
 > bridge, IPC patterns, the security checklist, AES-256-GCM encryption at
-> rest, the auto-update flow, the LAN sync HTTP server, the build pipeline,
+> rest, the auto-update flow, the Google Drive OAuth loopback server, the build pipeline,
 > debugging tips and the most common pitfalls.
 
 It's written so a developer who has never touched Electron can read it
@@ -1280,7 +1224,7 @@ doesn't get lost between releases.
 |---|---|---|
 | 4.1 | **Toast action button support** (e.g. "Undo" after a destructive action) | The `Toast` provider in `src/components/ui/Toast.tsx` already owns the lifecycle, an `action?: { label, onClick }` slot would let destructive flows replace `window.confirm` while still being safely reversible. |
 | 4.2 | **Settings bundle split** | `dist/assets/Settings-*.js` is ~68 kB / 20 kB gzip — Sync, Cloud Sync and AI sub-sections could be lazy-loaded as siblings of the main page, dropping the initial Settings chunk by roughly half. |
-| 4.3 | **LAN sync "remember passphrase on this device" toggle** | Cleans up the `TODO` in `src/lib/syncSession.ts` (line 45). The passphrase already lives in `sessionStorage` — exposing the policy as a Settings toggle just makes it discoverable. |
+| 4.3 | **Cloud sync "remember passphrase on this device" toggle** | Cleans up the `TODO` in `src/lib/syncSession.ts` (line 45). The passphrase already lives in `sessionStorage` — exposing the policy as a Settings toggle just makes it discoverable. |
 | 4.4 | **Auto-updater TLS pinning (defence-in-depth)** | `electron-updater` already verifies the Apple-signed binary; pinning a GitHub Releases certificate fingerprint at the IPC boundary would catch a hypothetical MITM at the download step even if the signature check were ever bypassed. |
 | 4.5 | **Toast queue position preference** | Bottom-right is sensible default, but power users might want top-right (closer to where they typically focus). One-line addition to the toast container. |
 | 4.6 | **`window.alert` → toast migration sweep** | Done for v1 in Settings + RegisterPage; spot-check other route surfaces (TodosPage, NotesPage, dialogs) for any remaining native dialogs that should be toasts. |

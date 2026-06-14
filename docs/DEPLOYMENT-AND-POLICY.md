@@ -15,7 +15,7 @@ Keep this file in the repo so we do not re-discover the same answers in chat.
 
 Both paths:
 
-- Gate **LAN sync**, **Google Drive sync**, **AI**, **JSON export**, and **update checks** independently.
+- Gate **Google Drive sync**, **AI**, **JSON export**, and **update checks** independently.
 - Enforce sensitive IPC in the Electron **main process** (renderer cannot bypass sync by calling IPC directly).
 - Leave **tasks, notes, backups, PIN** intact — only outbound / exfiltration surfaces change.
 

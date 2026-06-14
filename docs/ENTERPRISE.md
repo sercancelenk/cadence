@@ -16,20 +16,25 @@ the device controls what the app exposes.
 
 ## 1. What the policy controls
 
-Cadence groups its outbound / data-leaving features into five flags:
+Cadence groups its outbound / data-leaving features into four flags:
 
 | Flag | What it gates | Why an admin might disable it |
 | --- | --- | --- |
-| `features.sync.lan` | Same-Wi-Fi device pairing (Electron-only HTTPS server) | Prevent peer-to-peer copying of company data |
 | `features.sync.cloud` | Google Drive sync (E2E-encrypted snapshots in the user's own Drive) | Prevent any cloud upload of company data |
 | `features.ai` | Bring-your-own-key AI assistant (calls OpenAI / Anthropic directly from the renderer) | Block company content from reaching LLM providers |
 | `features.dataExport` | "Export JSON" button in Settings → Backup | Block USB / personal-email exfiltration |
 | `features.updateCheck` | Periodic + manual GitHub Releases ping | Required only for fully air-gapped deployments |
 
+> **Legacy flag:** `features.sync.lan` is still accepted for backward
+> compatibility with older `policy.json` files, but same-Wi-Fi LAN sync has
+> been removed — the flag now gates nothing and can be dropped from new
+> policies.
+
 A user **does not need to be aware of the policy**. Disabled features
 simply do not render their entry points in the UI. Where defence in depth
-matters (LAN sync server start-up), the policy is also enforced inside the
-Electron main process so a buggy or modified renderer cannot bypass it.
+matters (e.g. the Google Drive OAuth handshake), the policy is also enforced
+inside the Electron main process so a buggy or modified renderer cannot
+bypass it.
 
 ---
 
@@ -38,15 +43,15 @@ Electron main process so a buggy or modified renderer cannot bypass it.
 Most deployments don't need to think about individual flags. Pick one of
 the three named presets:
 
-| Preset | LAN sync | Cloud sync | AI | Export | Updates |
-| --- | :---: | :---: | :---: | :---: | :---: |
-| `personal` (default if no policy) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `work-standard` | ✗ | ✗ | ✓ | ✓ | ✓ |
-| `work-strict` | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Preset | Cloud sync | AI | Export | Updates |
+| --- | :---: | :---: | :---: | :---: |
+| `personal` (default if no policy) | ✓ | ✓ | ✓ | ✓ |
+| `work-standard` | ✗ | ✓ | ✓ | ✓ |
+| `work-strict` | ✗ | ✗ | ✗ | ✓ |
 
-If you need something the presets don't cover (e.g. "LAN sync is fine on
-our network, but no cloud, no AI, no exports") use a preset as the base
-and override the specific flags with a `features` block:
+If you need something the presets don't cover (e.g. "cloud sync is fine,
+but no AI and no exports") use a preset as the base and override the
+specific flags with a `features` block:
 
 ```json
 {
@@ -119,9 +124,9 @@ hit wins; later candidates are ignored.
 - **Disabled features are invisible**. The Sync / Cloud sync / AI
   Settings cards do not render. The "Export JSON" button does not render.
   Manual update check does not render.
-- **Sync server is enforced server-side**. Even if a modified renderer
-  tried to call `sync:enable`, the Electron main process refuses with
-  the policy reason.
+- **Cloud sync is enforced server-side**. Even if a modified renderer
+  tried to call `gdrive:beginAuth`, the Electron main process refuses with
+  the policy reason when `features.sync.cloud` is disabled.
 
 ---
 
@@ -224,10 +229,10 @@ After deploying, on each affected device:
 4. Confirm the "what's enabled" grid matches your policy.
 5. Confirm the gated cards are NOT visible in Settings (Sync, Cloud
    sync, AI, etc. depending on which flags you disabled).
-6. (Optional) Try `Settings → Sync` if you disabled LAN sync — the
-   section should not exist. Even calling the IPC programmatically
-   from DevTools will receive a "disabled by your organization policy"
-   error from the main process.
+6. (Optional) Try `Settings → Cloud sync` if you disabled it — the
+   section should not exist. Even calling the `gdrive:beginAuth` IPC
+   programmatically from DevTools will receive a "disabled by your
+   organization policy" error from the main process.
 
 ---
 
@@ -272,7 +277,7 @@ still arrive but no company content can leave the device.
 **Where do feature gates live in the codebase?**
 - `src/lib/features.tsx` — types, presets, precedence rules, React context.
 - `electron/main.cjs` — policy file loader (5-layer search) +
-  defence-in-depth gating for LAN sync server start.
+  defence-in-depth gating for the cloud-sync OAuth handshake.
 - Individual views (`Settings.tsx`, `TodosPage.tsx`, `People.tsx`) call
   `useFeatures()` to conditionally render their AI / sync / export UI.
 

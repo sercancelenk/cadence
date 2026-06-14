@@ -109,6 +109,40 @@ describe('portable backup', () => {
     expect(attachmentMocks.revokeAttachmentBlobUrls).toHaveBeenCalled();
   });
 
+  it('applies transformWorkspace before importing a JSON export (additive merge)', async () => {
+    const { importPortableBackupFile } = await import('./portable');
+    const importWorkspace = vi.fn().mockResolvedValue({ ok: true });
+    const transformed = normalizeData({
+      teams: [{ id: 'merged', name: 'Merged', createdAt: TS, status: 'active' }],
+    });
+    const transformWorkspace = vi.fn().mockReturnValue(transformed);
+    const file = new File([JSON.stringify(minimalWorkspace())], 'workspace.json', {
+      type: 'application/json',
+    });
+    const result = await importPortableBackupFile(file, { userId: 'u1', importWorkspace, transformWorkspace });
+    expect(result.ok).toBe(true);
+    expect(transformWorkspace).toHaveBeenCalledTimes(1);
+    expect(transformWorkspace).toHaveBeenCalledWith(expect.objectContaining({ teams: expect.any(Array) }));
+    expect(importWorkspace).toHaveBeenCalledWith(transformed);
+  });
+
+  it('applies transformWorkspace before importing a portable ZIP (additive merge)', async () => {
+    const { importPortableBackupFile } = await import('./portable');
+    const importWorkspace = vi.fn().mockResolvedValue({ ok: true });
+    const transformed = normalizeData({
+      teams: [{ id: 'merged', name: 'Merged', createdAt: TS, status: 'active' }],
+    });
+    const transformWorkspace = vi.fn().mockReturnValue(transformed);
+    const result = await importPortableBackupFile(buildPortableZip(), {
+      userId: 'u1',
+      importWorkspace,
+      transformWorkspace,
+    });
+    expect(result.ok).toBe(true);
+    expect(transformWorkspace).toHaveBeenCalledTimes(1);
+    expect(importWorkspace).toHaveBeenCalledWith(transformed);
+  });
+
   it('rejects invalid JSON imports', async () => {
     const { importPortableBackupFile } = await import('./portable');
     const file = new File(['{not json'], 'broken.json', { type: 'application/json' });

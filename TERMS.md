@@ -11,7 +11,7 @@ Cadence is software you install and run on your own devices. There is no Cadence
 
 - the desktop app (DMG / future Windows / Linux builds),
 - the Progressive Web App hosted at `https://<owner>.github.io/cadence/app/`, and
-- the optional integrations Cadence ships (LAN sync, Google Drive sync, AI assistant via your own API key).
+- the optional integrations Cadence ships (Google Drive sync, AI assistant via your own API key).
 
 ## 2. No warranty
 
@@ -38,7 +38,7 @@ You may not use Cadence to:
 
 - store, process, or transmit content that you do not have the right to store, process, or transmit;
 - interfere with another user's ability to use Cadence;
-- attempt to break the security of the LAN sync server or another user's installation;
+- attempt to break the security of the cloud-sync integration or another user's installation;
 - impersonate someone else when prompting the AI assistant or capturing 1:1 notes about that person.
 
 ## 6. Open source

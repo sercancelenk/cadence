@@ -29,8 +29,8 @@ function writePersisted(id: string, open: boolean) {
 /**
  * Wraps a Settings section in a collapsible card with persistent open/closed
  * state per `id`. Click anywhere on the header to toggle. Inner `card` blocks
- * (e.g. the host / pair sub-cards inside Multi-device sync) keep behaving as
- * regular cards so the collapse only applies to the top-level section.
+ * (e.g. nested sub-cards inside a settings section) keep behaving as regular
+ * cards so the collapse only applies to the top-level section.
  *
  * Persisted under `localStorage["cadence:settings:section:<id>"]` as `"1"`
  * (open) or `"0"` (closed). Default is open unless the caller passes

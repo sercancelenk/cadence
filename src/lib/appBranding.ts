@@ -53,9 +53,9 @@ export const STORAGE_PREFIX = APP_SLUG;
 export const STORAGE_PREFIX_LEGACY = APP_SLUG_LEGACY;
 
 /**
- * Identifier embedded in `/v1/ping` responses from the LAN sync server.
- * Peers should accept both during the rename window so older devices keep
- * pairing with newer ones.
+ * Legacy sync identifier kept for branding/back-compat. It previously tagged
+ * the (now removed) LAN sync server's probe responses; retained so the rename
+ * window stays consistent with `SYNC_FINGERPRINT_LEGACY`.
  */
 export const SYNC_FINGERPRINT = `${APP_SLUG}-sync` as const;
 export const SYNC_FINGERPRINT_LEGACY = `${APP_SLUG_LEGACY}-sync` as const;

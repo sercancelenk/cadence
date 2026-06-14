@@ -125,10 +125,6 @@ const api = {
   accountGetRememberMe: () => ipcRenderer.invoke('account:getRememberMe'),
   accountSetRememberMe: (payload) => ipcRenderer.invoke('account:setRememberMe', payload),
   policyGet: () => ipcRenderer.invoke('policy:get'),
-  syncStatus: () => ipcRenderer.invoke('sync:status'),
-  syncEnable: () => ipcRenderer.invoke('sync:enable'),
-  syncDisable: () => ipcRenderer.invoke('sync:disable'),
-  syncRotateToken: () => ipcRenderer.invoke('sync:rotateToken'),
   gdriveAuth: {
     // Loopback OAuth flow for Electron. Main process spins up a
     // localhost HTTP server, opens the system browser, captures the

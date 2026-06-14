@@ -6,8 +6,8 @@
  * again on this device.
  *
  * Why this exists:
- *   The app is genuinely complex (teams, todos, notes, LAN sync,
- *   cloud sync, AI assistant). Without a tour, new users land on an
+ *   The app is genuinely complex (teams, todos, notes, cloud sync,
+ *   AI assistant). Without a tour, new users land on an
  *   empty workspace and bounce. Three short cards in a row are enough
  *   to set expectations and point at the two features that need any
  *   setup (cloud sync, AI key) without being annoying.
@@ -27,12 +27,11 @@
  *     `.surface` tokens (no inline colours).
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccount } from '../AccountContext';
 import { RecoveryCodesPanel } from './RecoveryCodesPanel';
 import { useMobileWeb } from '../lib/runtime';
-import { loadPair } from '../lib/lanSyncClient';
 import { loadStoredTokens, isClientConfigured } from '../lib/syncBackends/gdriveAuth';
 import {
   clearPendingRecoveryCodes,
@@ -71,8 +70,6 @@ function markCompleted(accountId: string): void {
  * returning, not new.
  */
 function looksLikeReturningDevice(): boolean {
-  // LAN sync pair persisted = device was paired before.
-  if (loadPair()) return true;
   // Drive sync tokens persisted = device signed into Drive before.
   if (loadStoredTokens()) return true;
   return false;
@@ -91,6 +88,16 @@ export function WelcomeTour() {
   const [chosenPreset, setChosenPreset] = useState<PresetName | null>(null);
   const [pendingRecovery, setPendingRecovery] = useState<string[] | null>(() => readPendingRecoveryCodes());
   const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
+  // The recovery step is consumed once the user advances past it, but we must
+  // keep it in the `steps` array for the rest of the tour. Removing it mid-flow
+  // shifts every subsequent index and pushes `step` out of bounds — which threw
+  // "Cannot read properties of undefined" right after sign-up. Track completion
+  // with a flag instead of mutating `pendingRecovery`.
+  const [recoveryDone, setRecoveryDone] = useState(false);
+  // Choosing a preset flips `hasUserPreset` to true, which would otherwise drop
+  // the profile step from `steps` on the next render (another index shift). Snap
+  // the value when the tour opens so the step list length stays stable.
+  const initialHasUserPresetRef = useRef<boolean | null>(null);
 
   // Decide ONCE on mount whether this run should show the tour. We
   // recompute only when the account changes (e.g. user signs out
@@ -115,10 +122,17 @@ export function WelcomeTour() {
   useEffect(() => {
     setPendingRecovery(readPendingRecoveryCodes());
     setRecoveryAcknowledged(false);
+    setRecoveryDone(false);
     setStep(0);
+    initialHasUserPresetRef.current = null;
   }, [user?.id]);
 
   if (!open || !user) return null;
+
+  // Lazily freeze whether the profile step is needed (see ref declaration).
+  if (initialHasUserPresetRef.current === null) {
+    initialHasUserPresetRef.current = hasUserPreset;
+  }
 
   const dismiss = () => {
     setOpen(false);
@@ -141,7 +155,7 @@ export function WelcomeTour() {
   // is the single source of truth for "where will you use Cadence?".
   const steps: Step[] = [];
 
-  const needsProfileStep = !managed && !hasUserPreset && shouldShowTour;
+  const needsProfileStep = !managed && !initialHasUserPresetRef.current && shouldShowTour;
 
   if (needsProfileStep) {
     steps.push({
@@ -255,35 +269,30 @@ export function WelcomeTour() {
   // available under the current policy/preset. Otherwise we'd be teasing
   // the user about a feature they can't actually use. On the phone
   // companion surface we skip it entirely — pairing happens on the host.
-  if (!mobileWeb && (features.sync.lan || features.sync.cloud)) {
+  if (!mobileWeb && features.sync.cloud) {
     steps.push({
       title: 'Sync across devices, on your terms',
       body: (
         <>
           <p>
-            Cadence has up to two ways to keep multiple devices in sync — both optional, and you
-            can mix them. (Some options may be unavailable in your profile.)
+            Keep multiple devices in sync — optional, and entirely under your control.
           </p>
           <ul className="welcome-tour__bullets">
-            {features.sync.lan ? (
-              <li>
-                <strong>LAN sync</strong> — turn your computer into a tiny private host. Your phone
-                joins by scanning a QR code on the same Wi-Fi. No cloud, no account.
-              </li>
-            ) : null}
-            {features.sync.cloud ? (
-              <li>
-                <strong>Cloud sync (Google Drive)</strong>{' '}
-                {isClientConfigured() ? (
-                  <>— end-to-end encrypted, stored in your own Drive&apos;s hidden app folder.</>
-                ) : (
-                  <>
-                    — available when your administrator configures a Google OAuth client ID. See
-                    Settings for current status.
-                  </>
-                )}
-              </li>
-            ) : null}
+            <li>
+              <strong>Cloud sync (Google Drive)</strong>{' '}
+              {isClientConfigured() ? (
+                <>— end-to-end encrypted, stored in your own Drive&apos;s hidden app folder.</>
+              ) : (
+                <>
+                  — available when your administrator configures a Google OAuth client ID. See
+                  Settings for current status.
+                </>
+              )}
+            </li>
+            <li>
+              <strong>Encrypted backup file</strong> — export a portable ZIP and move it to another
+              device (AirDrop, Files, USB), then merge it in. Fully offline, no cloud.
+            </li>
           </ul>
         </>
       ),
@@ -297,10 +306,10 @@ export function WelcomeTour() {
       <>
         <p>You can start using Cadence right now without configuring anything. When you&apos;re ready:</p>
         <ul className="welcome-tour__bullets">
-          {features.sync.lan || features.sync.cloud ? (
+          {features.sync.cloud ? (
             <li>
-              Open <Link to="/settings">Settings → Sync</Link> to pair a device or sign in to a
-              cloud backend.
+              Open <Link to="/settings">Settings → Sync</Link> to sign in to a cloud backend, or use
+              Settings → Data &amp; backup to move data between devices with an encrypted file.
             </li>
           ) : null}
           {features.ai ? (
@@ -324,16 +333,20 @@ export function WelcomeTour() {
 
   } // shouldShowTour
 
+  // Defensive: if the step list ever shrinks below `step` (e.g. a future
+  // conditional step), don't crash — just close instead of dereferencing
+  // `undefined`.
   const cur = steps[step];
+  if (!cur) return null;
   const isLast = step === steps.length - 1;
   const nextAllowed = cur.nextEnabled !== false;
-  const hasOutstandingRecovery = !!pendingRecovery;
+  const hasOutstandingRecovery = !!pendingRecovery && !recoveryDone;
   const canSkip = !cur.isRecovery && !hasOutstandingRecovery;
 
   const advance = () => {
     if (cur.isRecovery) {
       clearPendingRecoveryCodes();
-      setPendingRecovery(null);
+      setRecoveryDone(true);
       setRecoveryAcknowledged(false);
     }
     setStep((s) => s + 1);
@@ -342,7 +355,7 @@ export function WelcomeTour() {
   const finish = () => {
     if (cur.isRecovery) {
       clearPendingRecoveryCodes();
-      setPendingRecovery(null);
+      setRecoveryDone(true);
     }
     dismiss();
   };

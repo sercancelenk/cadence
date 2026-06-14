@@ -9,14 +9,8 @@ import type { SyncBackend } from './types';
 const ACTIVE_BACKEND_KEY = 'cadence.sync.activeBackend.v1';
 const CHANGE_EVENT = 'cadence:sync-backend-changed';
 
-const { createLanBackend, createGDriveBackend } = vi.hoisted(() => ({
-  createLanBackend: vi.fn<() => SyncBackend | null>(),
+const { createGDriveBackend } = vi.hoisted(() => ({
   createGDriveBackend: vi.fn<() => SyncBackend | null>(),
-}));
-
-vi.mock('./lan', () => ({
-  createLanBackend,
-  disconnectLan: vi.fn(),
 }));
 
 vi.mock('./gdrive', () => ({
@@ -31,11 +25,11 @@ import {
   subscribeActiveBackend,
 } from './index';
 
-function fakeBackend(id: 'lan' | 'gdrive'): SyncBackend {
+function fakeBackend(): SyncBackend {
   return {
-    id,
-    displayName: id,
-    e2eEncryption: id === 'gdrive',
+    id: 'gdrive',
+    displayName: 'gdrive',
+    e2eEncryption: true,
     async status() {
       return 'ready';
     },
@@ -50,7 +44,7 @@ function fakeBackend(id: 'lan' | 'gdrive'): SyncBackend {
     },
     setRecord() {},
     describe() {
-      return id;
+      return 'gdrive';
     },
   };
 }
@@ -59,7 +53,6 @@ describe('syncBackends registry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
-    createLanBackend.mockReturnValue(null);
     createGDriveBackend.mockReturnValue(null);
   });
 
@@ -68,30 +61,18 @@ describe('syncBackends registry', () => {
   });
 
   describe('getActiveBackendId', () => {
-    it('returns explicit lan selection from localStorage', () => {
-      window.localStorage.setItem(ACTIVE_BACKEND_KEY, 'lan');
-      expect(getActiveBackendId()).toBe('lan');
-    });
-
     it('returns explicit gdrive selection from localStorage', () => {
       window.localStorage.setItem(ACTIVE_BACKEND_KEY, 'gdrive');
       expect(getActiveBackendId()).toBe('gdrive');
-    });
-
-    it('falls back to lan when a pair exists but no explicit selection', () => {
-      createLanBackend.mockReturnValue(fakeBackend('lan'));
-      expect(getActiveBackendId()).toBe('lan');
-      expect(createLanBackend).toHaveBeenCalled();
     });
 
     it('returns null when nothing is configured', () => {
       expect(getActiveBackendId()).toBeNull();
     });
 
-    it('ignores invalid localStorage values and falls back', () => {
+    it('ignores invalid localStorage values and returns null', () => {
       window.localStorage.setItem(ACTIVE_BACKEND_KEY, 'dropbox');
-      createLanBackend.mockReturnValue(fakeBackend('lan'));
-      expect(getActiveBackendId()).toBe('lan');
+      expect(getActiveBackendId()).toBeNull();
     });
   });
 
@@ -108,23 +89,16 @@ describe('syncBackends registry', () => {
     });
 
     it('removes the key when clearing selection', () => {
-      window.localStorage.setItem(ACTIVE_BACKEND_KEY, 'lan');
+      window.localStorage.setItem(ACTIVE_BACKEND_KEY, 'gdrive');
       setActiveBackendId(null);
       expect(window.localStorage.getItem(ACTIVE_BACKEND_KEY)).toBeNull();
     });
   });
 
   describe('getActiveBackend', () => {
-    it('instantiates the LAN backend when lan is active', () => {
-      window.localStorage.setItem(ACTIVE_BACKEND_KEY, 'lan');
-      const lan = fakeBackend('lan');
-      createLanBackend.mockReturnValue(lan);
-      expect(getActiveBackend()).toBe(lan);
-    });
-
     it('instantiates the GDrive backend when gdrive is active', () => {
       window.localStorage.setItem(ACTIVE_BACKEND_KEY, 'gdrive');
-      const drive = fakeBackend('gdrive');
+      const drive = fakeBackend();
       createGDriveBackend.mockReturnValue(drive);
       expect(getActiveBackend()).toBe(drive);
     });
@@ -133,9 +107,9 @@ describe('syncBackends registry', () => {
       expect(getActiveBackend()).toBeNull();
     });
 
-    it('returns null when lan is selected but pair was cleared', () => {
-      window.localStorage.setItem(ACTIVE_BACKEND_KEY, 'lan');
-      createLanBackend.mockReturnValue(null);
+    it('returns null when gdrive is selected but the user signed out', () => {
+      window.localStorage.setItem(ACTIVE_BACKEND_KEY, 'gdrive');
+      createGDriveBackend.mockReturnValue(null);
       expect(getActiveBackend()).toBeNull();
     });
   });
@@ -145,11 +119,11 @@ describe('syncBackends registry', () => {
       const cb = vi.fn();
       const unsub = subscribeActiveBackend(cb);
 
-      setActiveBackendId('lan');
+      setActiveBackendId('gdrive');
       expect(cb).toHaveBeenCalledTimes(1);
 
       unsub();
-      setActiveBackendId('gdrive');
+      setActiveBackendId(null);
       expect(cb).toHaveBeenCalledTimes(1);
     });
 

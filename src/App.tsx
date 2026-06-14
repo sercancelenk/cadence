@@ -59,22 +59,21 @@ const TeamLeaderPage = lazy(() => import('./views/People').then((m) => ({ defaul
 
 /**
  * Pick the router and its basename based on where this bundle is being
- * served from. There are four distinct runtime contexts the same source
+ * served from. There are three distinct runtime contexts the same source
  * has to support:
  *
  *   1. Electron desktop (`file://`)   — BASE_URL='./' → HashRouter, no basename.
  *   2. Vite dev server (`http://localhost:5173/`) — BASE_URL='/' → BrowserRouter, '/'.
  *   3. GitHub Pages PWA (`/cadence/app/`)         — BASE_URL='/cadence/app/' → BrowserRouter, '/cadence/app'.
- *   4. LAN sync server (`https://<lan-ip>:9787/`) — the Electron-built bundle
- *      gets served over HTTPS to mobile devices. BASE_URL='./' here too,
- *      which means BrowserRouter would activate with basename='.', a
- *      string React Router cannot parse — every route silently fails to
- *      match and the page renders as a bare <body> ("black screen").
+ *
+ * The trap is a relative-base build (BASE_URL='./') served over http(s):
+ * BrowserRouter would activate with basename='.', a string React Router
+ * cannot parse — every route silently fails to match and the page renders
+ * as a bare <body> ("black screen").
  *
  * The fix: any build that emitted relative asset paths (BASE_URL='./')
  * is an Electron-style bundle. Treat it as HashRouter regardless of how
- * it's being delivered, so it survives being mirrored from the LAN sync
- * server too.
+ * it's being delivered.
  */
 const baseUrl = import.meta.env.BASE_URL || '/';
 const isElectronStyleBundle = baseUrl === './';
@@ -179,13 +178,13 @@ function AppRoutes() {
   useElectronReminderBridge();
   usePwaReminderBridge();
   useReminderWatcher();
-  // Keep this device's workspace in sync with the paired host (if any).
-  // No-op when the user hasn't paired yet, so safe to mount unconditionally —
-  // BUT when policy disables both sync backends we don't even want to
-  // start the polling timer. Saves battery on shared/work devices and
+  // Keep this device's workspace in sync with the active cloud backend (if
+  // configured). No-op when the user hasn't connected one, so safe to mount
+  // unconditionally — BUT when policy disables cloud sync we don't even want
+  // to start the polling timer. Saves battery on shared/work devices and
   // avoids any debug-log noise that might hint at a hidden code path.
   const { features } = useFeatures();
-  useSyncAutoSync({ enabled: features.sync.lan || features.sync.cloud });
+  useSyncAutoSync({ enabled: features.sync.cloud });
   return (
     <>
       <CommandPalette />

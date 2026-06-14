@@ -22,14 +22,11 @@ function shouldRegister(): boolean {
   if (w.cadence || w.leeadman) return false;
   // file:// and chrome:// scopes cannot host a SW.
   if (window.location.protocol !== 'http:' && window.location.protocol !== 'https:') return false;
-  // We used to gate SW registration on the explicit `CADENCE_PWA=1` build
-  // flag (GitHub Pages bundle only). That left the LAN sync host blind:
-  // the *Electron-style* bundle that the desktop serves at
-  // `https://<lan-ip>:9787/` was missing the SW and so iOS couldn't install
-  // it as a real PWA — only as a stale shortcut without offline cache.
-  // Now we register whenever the runtime is an actual browser (http/https
-  // + no Electron bridge). The manifest is bundled in dist/ for both build
-  // targets, and `sw.js` is too, so the install flow works either way.
+  // We register the service worker whenever the runtime is an actual
+  // browser (http/https + no Electron bridge), rather than gating on an
+  // explicit `CADENCE_PWA=1` build flag. The manifest and `sw.js` are
+  // bundled in dist/ for every build target, so the install flow works
+  // wherever the bundle is served from a real origin.
   return true;
 }
 

@@ -38,7 +38,7 @@
  * that we'll never end up in a generic-error fallback in practice.
  */
 
-export type SyncBackendId = 'lan' | 'gdrive';
+export type SyncBackendId = 'gdrive';
 
 export type SyncStatus =
   | 'ready'           // signed in / paired, last probe succeeded
@@ -137,6 +137,6 @@ export interface SyncBackend {
   /** Persist a new sync record. Backends may merge against the existing record. */
   setRecord(record: SyncRecord): void;
 
-  /** Short human description for the Settings card ("leeadman.local:9787", "you@gmail.com"). */
+  /** Short human description for the Settings card (e.g. "you@gmail.com"). */
   describe(): string;
 }

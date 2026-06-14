@@ -7,3 +7,5 @@ PROJECT MAP:
 - Persistence: [dosya formatı / DB ne ise]. Migration pattern: [varsa].
 - Test: *.test.ts colocated. Run: [komut].
 - Conventions: strict TS no `any`, [naming, state mgmt yaklaşımın].
+- LANGUAGE: Communicate with me in Turkish or English. Keep all code, identifiers, comments, and git commit messages in English.
+- Always begin every reply, thought, follow up, thinking etc with a line: `🧭 Active rules: <names of all .cursor/rules currently applied>`.

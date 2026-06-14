@@ -27,7 +27,7 @@ side of the app — add IPC handlers, harden security, ship native features.
 7. [Encryption-at-rest with AES-256-GCM](#7-encryption-at-rest-with-aes-256-gcm)
 8. [Auto-update flow with `electron-updater`](#8-auto-update-flow-with-electron-updater)
 9. [Native notifications](#9-native-notifications)
-10. [LAN sync HTTP server](#10-lan-sync-http-server)
+10. [Google Drive OAuth loopback server](#10-google-drive-oauth-loopback-server)
 11. [Build pipeline (Vite + electron-builder)](#11-build-pipeline-vite--electron-builder)
 12. [Local development workflow](#12-local-development-workflow)
 13. [Debugging](#13-debugging)
@@ -213,7 +213,7 @@ ipcMain.handle('data:save', (_evt, payload) => {
 });
 ```
 
-We use channel names like `data:load`, `account:login`, `sync:status`. The
+We use channel names like `data:load`, `account:login`, `policy:get`. The
 prefix is just a convention to keep them tidy in one file.
 
 > Don't use the older `ipcMain.on` + `event.reply` pattern unless you really
@@ -263,7 +263,7 @@ contextBridge.exposeInMainWorld('cadence', {
   saveData: (data) => ipcRenderer.invoke('data:save', data),
   accountLogin: (payload) => ipcRenderer.invoke('account:login', payload),
   accountChangePassword: (payload) => ipcRenderer.invoke('account:changePassword', payload),
-  syncEnable: () => ipcRenderer.invoke('sync:enable'),
+  policyGet: () => ipcRenderer.invoke('policy:get'),
   // …etc.
 });
 ```
@@ -603,31 +603,32 @@ Manual QA checklist and deferred items (systemd user unit, E2E reminder tests) a
 
 ---
 
-## 10. LAN sync HTTP server
+## 10. Google Drive OAuth loopback server
 
 Electron lets us spin up a tiny HTTP server right inside the main process
-using Node's built-in `http` module. We use this for opt-in same-Wi-Fi sync:
+using Node's built-in `http` module. We use this for the Google Drive
+sign-in flow: the OAuth "Desktop app" client redirects back to a loopback
+URL, so the main process listens on an ephemeral `127.0.0.1` port just long
+enough to capture the authorization code, then closes the server.
 
 ```js
 const server = http.createServer((req, res) => {
-  applyCors(res);
-  if (req.method === 'OPTIONS') { res.statusCode = 204; return res.end(); }
-  if (req.headers.authorization !== `Bearer ${cfg.token}`) {
-    res.statusCode = 401;
-    return res.end(JSON.stringify({ error: 'unauthorised' }));
-  }
-  // …handle GET/POST /v1/snapshot
+  const url = new URL(req.url, 'http://127.0.0.1');
+  if (url.pathname !== '/oauth') { res.writeHead(404).end('not found'); return; }
+  // validate `state`, capture `code`, show a friendly HTML page, then settle
 });
-server.listen(port, '0.0.0.0', resolve);
+server.listen(0, '127.0.0.1', resolve); // ephemeral loopback port
 ```
 
-Because the server lives in the same process as the IPC handlers, it can
-call `readUserData(uid)` / `writeUserData(uid, payload)` directly — same
-encryption, same atomicity. There's no extra database to keep in sync.
+PKCE is mirrored in the main process so it never trusts a renderer-supplied
+verifier. The handshake is gated by `isFeatureAllowed('sync.cloud')` as
+defence-in-depth, and the server is torn down as soon as the code arrives or
+a 5-minute timeout elapses — nothing is left listening.
 
-The server is started/stopped via `sync:enable` / `sync:disable` IPC
-handlers, and its config (token + enabled flag) is persisted to
-`sync.json` so it auto-resumes on next launch.
+Cross-device data movement without the cloud uses an exported encrypted
+portable backup (ZIP) that is merged in additively via
+`mergeAppendWorkspace` (see `src/core/model/mergeWorkspace.ts`) — no
+long-running server involved.
 
 ---
 

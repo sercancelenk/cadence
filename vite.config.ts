@@ -116,7 +116,6 @@ export default defineConfig({
           if (id.includes('@codemirror') || id.includes('/codemirror/') || id.includes('/lezer-')) {
             return 'vendor-codemirror';
           }
-          if (id.includes('qrcode')) return 'vendor-qrcode';
           if (id.includes('/yaml/') || id.includes('yaml/dist')) return 'vendor-yaml';
           return 'vendor-misc';
         },

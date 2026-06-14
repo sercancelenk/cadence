@@ -1,6 +1,6 @@
 /**
  * Collect attachment ids referenced by ProseMirror bodies in AppData.
- * Used for search, LAN sync, orphan GC (renderer hints), and export manifests.
+ * Used for search, sync, orphan GC (renderer hints), and export manifests.
  */
 
 import type { AppData } from '../model';

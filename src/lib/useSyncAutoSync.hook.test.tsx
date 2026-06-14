@@ -6,8 +6,6 @@ import type { SyncBackend } from './syncBackends/types';
 const mocks = vi.hoisted(() => ({
   replaceAll: vi.fn(),
   flushPendingSave: vi.fn(async () => undefined),
-  savePair: vi.fn(),
-  stripPairFromUrl: vi.fn(),
   backend: null as SyncBackend | null,
   backendSubscriber: null as (() => void) | null,
 }));
@@ -23,16 +21,6 @@ vi.mock('../AppDataContext', () => ({
     data: { version: 3 } as AppData,
   }),
 }));
-
-vi.mock('./lanSyncClient', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./lanSyncClient')>();
-  return {
-    ...actual,
-    readPairFromUrl: () => ({ host: '192.168.1.10', token: 'abc' }),
-    savePair: mocks.savePair,
-    stripPairFromUrl: mocks.stripPairFromUrl,
-  };
-});
 
 vi.mock('./syncBackends', () => ({
   getActiveBackend: () => mocks.backend,
@@ -67,8 +55,6 @@ describe('useSyncAutoSync hook', () => {
     vi.useFakeTimers();
     mocks.replaceAll.mockReset();
     mocks.flushPendingSave.mockClear();
-    mocks.savePair.mockClear();
-    mocks.stripPairFromUrl.mockClear();
     const fake = makeBackend();
     mocks.backend = fake.backend;
   });
@@ -86,13 +72,10 @@ describe('useSyncAutoSync hook', () => {
     addSpy.mockRestore();
   });
 
-  it('adopts LAN pair params and runs an initial sync when enabled', async () => {
+  it('runs an initial sync when enabled', async () => {
     const fake = makeBackend();
     mocks.backend = fake.backend;
     renderHook(() => useSyncAutoSync({ enabled: true }));
-
-    expect(mocks.savePair).toHaveBeenCalledWith({ host: '192.168.1.10', token: 'abc' });
-    expect(mocks.stripPairFromUrl).toHaveBeenCalled();
 
     await act(async () => {
       vi.advanceTimersByTime(600);

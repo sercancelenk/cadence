@@ -1,7 +1,7 @@
 # Cadence — Privacy Policy
 
 **Effective date:** 2026-05-20
-**Last updated:** 2026-05-20
+**Last updated:** 2026-06-14
 
 This document explains exactly what data Cadence collects, where it lives, and who can read it. We err on the side of "explain plainly", not "lawyer-tight". If anything is unclear, open an issue at <https://github.com/sercancelenk/cadence/issues>.
 
@@ -9,7 +9,7 @@ This document explains exactly what data Cadence collects, where it lives, and w
 
 Cadence is a **local-first** app: every note, todo, team, person, goal and reminder you create is stored on the devices you install Cadence on, encrypted at rest, and never sent to any server we run. The only times your data leaves your device are:
 
-1. **When you opt in to LAN sync** — Cadence runs a tiny HTTPS server **on your own computer** and pairs another device of yours over your Wi-Fi network. Nothing transits the public internet.
+1. **When you move a backup file yourself** — you can export an encrypted backup and carry it to another device (AirDrop, Files, USB). This is a file *you* move; Cadence sends nothing over any network for it.
 2. **When you opt in to cloud sync (Google Drive)** — Cadence encrypts your snapshot **before** uploading it to **your own** Google Drive account, in a hidden per-app folder. The decryption key is your sync passphrase, which never leaves your device.
 3. **When you opt in to the AI assistant** — Cadence sends only the text you explicitly ask the assistant about (e.g. the contents of one task) to the AI provider you chose (Anthropic, OpenAI, Google), using **your own API key**. We never see this traffic.
 
@@ -21,9 +21,8 @@ Cadence does not collect telemetry. Cadence does not phone home. Cadence does no
 |---|---|---|
 | Desktop (Electron) — `app.getPath('userData')` | The full AppData JSON (teams, people, items, todos, notes, settings) | AES-256-GCM with a key derived from your account password (scrypt) |
 | Desktop — same path | Backups: rolling 50-snapshot history | Same as above |
-| Desktop — `cadence-sync-tls.json` | Self-signed HTTPS certificate for LAN sync | Plaintext; the matching private key never leaves disk |
 | Browser PWA — `localStorage` | The same AppData JSON | Browser-managed (sandbox); Cadence does not add a second layer |
-| Browser PWA — `localStorage` (sync keys) | LAN pair token, Google OAuth tokens, sync record | Plaintext (see threat model below) |
+| Browser PWA — `localStorage` (sync keys) | Google OAuth tokens, sync record | Plaintext (see threat model below) |
 | Browser PWA — `sessionStorage` | Sync passphrase (only when "unlocked" for the current tab session) | Plaintext (cleared on tab close) |
 | Browser PWA — `IndexedDB`/`localStorage` (notes lock) | Notes-feature encryption key envelope (when you enabled Notes lock) | AES-256-GCM with a key derived from your Notes passphrase (PBKDF2) |
 
@@ -31,7 +30,6 @@ Cadence does not collect telemetry. Cadence does not phone home. Cadence does no
 
 For the items marked "plaintext" in `localStorage`/`sessionStorage`:
 
-- The LAN pair token only grants access to your own computer's local sync server. It is only useful to an attacker who can also reach your local network.
 - The Google OAuth refresh token only grants access to a single hidden folder in your Google Drive (`drive.appdata` scope). It does NOT grant access to the rest of your Drive, Gmail, Calendar or any other Google service.
 - The sync passphrase only decrypts already-uploaded encrypted snapshots. Without **also** stealing the OAuth tokens or the encrypted blob, it is useless.
 
@@ -39,15 +37,14 @@ In short: an attacker would need both client-side access AND server-side access 
 
 ## Data Cadence sends over the network
 
-### LAN sync (you, opt-in)
+### Offline backup transfer (you, no network)
 
-When you enable Settings → Multi-device sync, Cadence:
+When you move data between your own devices with an exported backup, Cadence:
 
-- Starts an HTTPS server on the local network address of the device, protected by a one-time bearer token.
-- Generates a QR code containing `https://<your-LAN-IP>:9787/?pair=<token>`.
-- The phone or other device you pair with sends and receives the full AppData JSON over that connection, authenticated by the bearer token.
+- Writes an encrypted backup file (portable ZIP or JSON) to a location you choose.
+- Does nothing else — moving that file to another device (AirDrop, Files, USB) and importing it there is entirely under your control.
 
-Cadence never sends this data anywhere else. The HTTPS connection terminates on your own machine.
+No server, no pairing, and no network connection between the devices is involved.
 
 ### Cloud sync to Google Drive (you, opt-in)
 

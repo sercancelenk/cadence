@@ -161,8 +161,8 @@
               counts, <em>Reveal in Finder</em>, restore confirmation). If a
               boot loads meaningfully less than your last save, an amber banner
               tells you before you panic. When you want two devices to share a
-              workspace, an <strong>opt-in LAN server</strong> lets them talk
-              directly — your bytes stay between your phone and your laptop.
+              workspace, move an <strong>encrypted backup file</strong> across
+              and merge it in — your bytes stay between your phone and your laptop.
             </p>
           </article>
 
@@ -178,9 +178,9 @@
               The desktop data file is wrapped in <strong>AES-256-GCM</strong>
               with a key derived from your account password via
               <code>scrypt</code>. Notes get an additional opt-in passphrase
-              lockbox. LAN sync rides over <strong>TLS 1.2+</strong> with a
-              self-signed cert and a 192-bit bearer token — bytes are
-              encrypted whether they're sitting still or in motion.
+              lockbox. Cloud sync wraps each snapshot in
+              <strong>AES-256-GCM</strong> before it leaves your device — bytes
+              are encrypted whether they're sitting still or in motion.
             </p>
           </article>
 
@@ -356,7 +356,7 @@
               recovery codes),
               <strong>Data &amp; backup</strong> (portable ZIP on every platform,
               full folders on desktop, 50 rolling snapshots),
-              <strong>Sync</strong> (LAN + Google Drive),
+              <strong>Sync</strong> (offline transfer + Google Drive),
               <strong>Integrations</strong> (AI and reminders) and
               <strong>About</strong> (in-app user guide).
             </p>
@@ -365,7 +365,7 @@
               <li>Portable ZIP — workspace + images across devices</li>
               <li>One-click backup &amp; recovery with snapshot counts</li>
               <li>Workspace storage breakdown on desktop</li>
-              <li>Opt-in LAN sync with QR pairing · optional cloud sync</li>
+              <li>Offline backup transfer (additive merge) · optional cloud sync</li>
             </ul>
           </div>
           <figure class="feature__media">
@@ -477,33 +477,32 @@
         <div class="sync__inner">
           <p class="kicker">
             <span class="kicker__dot kicker__dot--slate" aria-hidden></span>
-            Two ways to stay in step · TLS on the wire · End-to-end encrypted
+            Two ways to stay in step · End-to-end encrypted · Your keys
           </p>
           <h2 id="sync-h" class="section__title">
             Sync your way. The keys never leave your devices.
           </h2>
           <p class="section__sub">
             Most apps force a single sync model — Cadence gives you two.
-            Pair devices over <strong>your own Wi-Fi</strong> when you
-            want zero-cloud privacy, or back up to <strong>your own
-            Google Drive</strong> with end-to-end encryption when you
-            need off-network access. Either way, your keys never leave
-            your devices, and we never see your data.
+            Move an <strong>encrypted backup file</strong> between your own
+            devices when you want zero-cloud privacy, or back up to
+            <strong>your own Google Drive</strong> with end-to-end encryption
+            when you need always-on, off-network access. Either way, your keys
+            never leave your devices, and we never see your data.
           </p>
 
-          <!-- Two-way pick. We make the choice explicit upfront, then
-               the cards below dig into the LAN side; cloud sync gets
-               its own card row underneath. -->
+          <!-- Two-way pick: an offline file transfer (with additive merge)
+               vs. cloud sync. Cloud sync gets its own card row underneath. -->
           <div class="sync-options" aria-label="Sync options at a glance">
             <article class="sync-option">
-              <h3>LAN sync</h3>
-              <p class="sync-option__lede">Same Wi-Fi · Zero cloud</p>
+              <h3>Offline transfer</h3>
+              <p class="sync-option__lede">A file you move · Zero cloud</p>
               <ul class="sync-option__list">
-                <li>One QR scan to pair</li>
-                <li>Bytes never leave your network</li>
-                <li>Built-in HTTPS host, TLS 1.2+</li>
+                <li>Export an encrypted backup, carry it across</li>
+                <li>Additive merge never overwrites local data</li>
+                <li>No network link between devices</li>
               </ul>
-              <p class="sync-option__hint">Best for: home / office, privacy-first</p>
+              <p class="sync-option__hint">Best for: privacy-first, air-gapped</p>
             </article>
 
             <article class="sync-option">
@@ -514,7 +513,7 @@
                 <li>Hidden <code>appdata</code> folder in <em>your</em> Drive</li>
                 <li>Optimistic concurrency · token refresh built-in</li>
               </ul>
-              <p class="sync-option__hint">Best for: working away from your LAN</p>
+              <p class="sync-option__hint">Best for: always-on, multiple devices</p>
             </article>
           </div>
 
@@ -527,39 +526,15 @@
                   <path d="M10 11V9a2 2 0 0 1 4 0v2" />
                 </svg>
               </div>
-              <h3>HTTPS by default</h3>
+              <h3>Encrypted backup file</h3>
               <p>
-                Self-signed RSA-2048 / SHA-256 cert generated on the host,
-                persisted on disk, auto-renewed when expiry nears or the
-                LAN IP list changes. TLS 1.2 minimum. Works around HTTPS-Only
-                Mode and Safari Private Relay so a phone PWA can talk to
-                the desktop without mixed-content errors.
+                Export a portable ZIP — your workspace JSON plus image
+                attachments — wrapped with the same on-device encryption
+                as your data file. Move it however you already trust:
+                AirDrop, Files, a USB stick. Nothing ever touches a
+                network, a server, or the public internet.
               </p>
-              <p class="sync-card__hint">TLS 1.2+ · RSA 2048 · SHA-256</p>
-            </article>
-
-            <article class="sync-card">
-              <div class="sync-card__icon" aria-hidden>
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="3" width="7" height="7" rx="1" />
-                  <rect x="14" y="3" width="7" height="7" rx="1" />
-                  <rect x="3" y="14" width="7" height="7" rx="1" />
-                  <path d="M14 14h3v3" />
-                  <path d="M21 14v0" />
-                  <path d="M14 21h3" />
-                  <path d="M21 18v3" />
-                </svg>
-              </div>
-              <h3>One QR scan to pair</h3>
-              <p>
-                The host's Settings card renders a scannable QR encoding
-                the URL plus a 192-bit bearer token. Point your iPhone
-                or Android camera, tap the URL banner — the bundled PWA
-                loads from the desktop, the device pairs, the green
-                <em>Connected</em> badge lights up. No typing IPs, no
-                copying tokens, no second app to install.
-              </p>
-              <p class="sync-card__hint">192-bit token · base64url payload</p>
+              <p class="sync-card__hint">Portable ZIP · workspace + images</p>
             </article>
 
             <article class="sync-card">
@@ -571,16 +546,15 @@
                   <path d="M21 20v-4h-4" />
                 </svg>
               </div>
-              <h3>Bidirectional auto-sync</h3>
+              <h3>Additive merge</h3>
               <p>
-                Paired devices stay in step in the background —
-                <em>push first, pull after</em> — on launch, on window
-                focus, on visibility change, when the network comes back.
-                SHA-256 ETags decide direction so we never overwrite a
-                remote that moved on, and never re-download bytes you
-                already have.
+                Importing folds the file into the device's current
+                workspace — <em>every local item is kept</em>, and only
+                entities you don't already have are appended. Dedupes by
+                id and by content signature, so the same note made on two
+                devices won't import twice.
               </p>
-              <p class="sync-card__hint">If-Match · If-None-Match · 304 short-circuit</p>
+              <p class="sync-card__hint">Lossless · dedupe by id + content</p>
             </article>
 
             <article class="sync-card">
@@ -590,16 +564,14 @@
                   <path d="m9 12 2 2 4-4" />
                 </svg>
               </div>
-              <h3>Optimistic concurrency</h3>
+              <h3>Never overwrites, never locks you out</h3>
               <p>
-                The host rejects pushes with a <code>412 Precondition
-                Failed</code> when an ETag is stale; the app surfaces an
-                explicit <em>"Pull host's version first?"</em> prompt.
-                Last-write-wins becomes a deliberate decision, not an
-                accident. Background auto-sync backs off silently so
-                manual resolution stays the single source of truth.
+                A merge can't replace or delete anything you already have,
+                and it never touches local config — your profile, active
+                team and notes passphrase stay put. Re-importing the same
+                file is a no-op, so it's always safe to run again.
               </p>
-              <p class="sync-card__hint">412 conflict guard · No silent overwrites</p>
+              <p class="sync-card__hint">Idempotent · config-safe</p>
             </article>
           </div>
 
@@ -609,7 +581,7 @@
               <span class="kicker__dot kicker__dot--amber" aria-hidden></span>
               Cloud sync · End-to-end encrypted · Your Drive, your keys
             </p>
-            <h2 class="section__title">When you can't be on the same Wi-Fi.</h2>
+            <h2 class="section__title">When you want it always on, everywhere.</h2>
             <p class="section__sub">
               Google Drive sync gives you the convenience of cloud backup
               without the privacy trade. Cadence wraps every snapshot
@@ -857,14 +829,14 @@
           </div>
 
           <div class="privacy-card">
-            <h3>Optional LAN sync (off by default)</h3>
+            <h3>Cloud sync (off by default)</h3>
             <p>
-              Settings → Multi-device sync exposes an HTTPS server (TLS
-              1.2+, self-signed cert generated on the host) protected by
-              a 192-bit bearer token and an ETag conflict guard. QR-code
-              pairing on phones, bidirectional auto-sync once paired.
-              See the <a href="#sync">Sync section</a> above for the
-              full story.
+              Settings → Cloud sync connects <em>your</em> Google Drive and
+              uploads only AES-256-GCM ciphertext (key derived from a sync
+              passphrase you choose) with an optimistic-concurrency conflict
+              guard. Prefer no cloud? Export an encrypted backup and merge it
+              in on the other device. See the <a href="#sync">Sync section</a>
+              above for the full story.
             </p>
           </div>
 
