@@ -1,7 +1,12 @@
 # CI runs on every push and PR to keep `main` releasable. The same
-# job is also invoked as a dependency by the Release and Pages
+# workflow is also invoked as a dependency by the Release and Pages
 # workflows (via `workflow_call`) so a deploy never goes out without
-# the type-check + tests + build all having passed.
+# the type-check + tests + build all having passed. A called workflow
+# only reports success once ALL of its jobs finish, so splitting the
+# work into parallel jobs below still acts as a single gate.
+#
+# Jobs run in parallel (each on its own runner) instead of one long
+# serial chain — wall-clock time is the slowest job, not the sum.
 #
 # Profiles (workflow_call only):
 #   full    — push/PR default: coverage + E2E + PWA
@@ -31,27 +36,26 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'workflow_call' }}
 
+# Shared across every job. The electron postinstall otherwise tries to
+# download the platform-specific Electron binary (~120 MB) from GitHub
+# Releases and intermittently fails with "RequestError: socket hang up"
+# on Ubuntu runners. Skipping it is safe here because we never run the
+# desktop app in CI; the Release workflow (which packages Electron)
+# keeps the default behaviour. The npm retry knobs harden against
+# transient registry timeouts; the placeholder OAuth client id makes
+# the Google Drive backend treat itself as configured so the relevant
+# tests exercise the configured path.
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+  NPM_CONFIG_FETCH_RETRIES: '5'
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: '20000'
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
+  NPM_CONFIG_FETCH_TIMEOUT: '600000'
+  VITE_GOOGLE_OAUTH_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
+
 jobs:
-  check:
+  typecheck:
     runs-on: ubuntu-latest
-    # CI only needs to type-check, test, and build the web bundle. The
-    # electron postinstall otherwise tries to download the platform-
-    # specific Electron binary (~120 MB) from GitHub Releases and
-    # intermittently fails with "RequestError: socket hang up" on
-    # Ubuntu runners. Skipping the binary is safe here because we never
-    # actually run the desktop app in CI; the Release workflow (which
-    # packages Electron) keeps the default behaviour.
-    env:
-      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      # Harden npm against transient registry timeouts on Ubuntu runners.
-      NPM_CONFIG_FETCH_RETRIES: '5'
-      NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: '20000'
-      NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
-      NPM_CONFIG_FETCH_TIMEOUT: '600000'
-      # CI uses a placeholder client ID so the Google Drive backend
-      # treats itself as configured (and the relevant tests exercise
-      # the configured path). Production builds inject a real value.
-      VITE_GOOGLE_OAUTH_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,28 +63,74 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - name: Install dependencies (no electron binary)
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-audit --no-fund --prefer-offline
       - name: Type check
         run: npm run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies (no electron binary)
+        run: npm ci --no-audit --no-fund --prefer-offline
       - name: Unit tests
+        # On the `full` profile (the push/PR default) the coverage step
+        # below runs the exact same Vitest suite, so running `npm test`
+        # here too just doubles the test time for no extra signal. Only
+        # run the standalone unit pass for the release/pages gates, where
+        # coverage is intentionally skipped.
+        if: github.event_name == 'workflow_call' && inputs.profile != 'full'
         run: npm test
       - name: Unit test coverage (core + lib, 95% line gate)
         if: github.event_name != 'workflow_call' || inputs.profile == 'full'
         run: npm run test:coverage
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies (no electron binary)
+        run: npm ci --no-audit --no-fund --prefer-offline
+      - name: Build web bundle
+        run: npm run build:web
+      - name: Build PWA bundle
+        if: github.event_name != 'workflow_call' || inputs.profile == 'full'
+        run: npm run build:pwa
+
+  e2e:
+    runs-on: ubuntu-latest
+    # E2E is part of the full (push/PR) and release gates, but not the
+    # pages gate. Gating the whole job (not just its steps) means the
+    # `pages` profile never even spins up a runner for it.
+    if: github.event_name != 'workflow_call' || inputs.profile == 'full' || inputs.profile == 'release'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies (no electron binary)
+        run: npm ci --no-audit --no-fund --prefer-offline
+      # Playwright's preview server serves the freshly built web bundle.
+      # This job builds it independently (rather than depending on the
+      # `build` job) so it can run fully in parallel — the web build is
+      # only a couple of seconds.
       - name: Build web bundle
         run: npm run build:web
       - name: Cache Playwright Chromium
-        if: github.event_name != 'workflow_call' || inputs.profile == 'full' || inputs.profile == 'release'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Install Playwright Chromium
-        if: github.event_name != 'workflow_call' || inputs.profile == 'full' || inputs.profile == 'release'
         run: npx playwright install chromium --with-deps
       - name: Smoke E2E
-        if: github.event_name != 'workflow_call' || inputs.profile == 'full' || inputs.profile == 'release'
         run: npm run test:e2e
-      - name: Build PWA bundle
-        if: github.event_name != 'workflow_call' || inputs.profile == 'full'
-        run: npm run build:pwa

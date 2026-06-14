@@ -47,6 +47,7 @@
     Helvetica, Arial, sans-serif;
   --font-feature: 'ss01', 'ss02';
   --topbar-h: 56px;
+  --mobile-tabbar-h: 58px;
   --sidebar-w: 280px;
   --sidebar-w-collapsed: 72px;
 

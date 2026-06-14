@@ -18,6 +18,7 @@ import { useSession } from '../AuthContext';
 import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { sortedTeams } from '../lib/teamSort';
 import { TEAM_STATUS_OPTIONS, teamStatusLabel } from '../lib/teamStatus';
+import { useMobileWeb } from '../lib/runtime';
 import { PATH_HOME, PATH_TEAMS } from '../lib/routes';
 import { teamBase } from '../lib/teamPaths';
 import { useTheme } from '../ThemeContext';
@@ -64,6 +65,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
   const location = useLocation();
   const teamMatch = useMatch({ path: '/teams/:teamId/*', end: false });
   const activeTeamId = teamMatch?.params.teamId;
+  const mobileWeb = useMobileWeb();
   const { rememberTeam, toggleFavoriteTeam, updateTeam, flushPendingSave } = useAppDataActions();
   const topBarData = useAppDataSelector(
     (d) => ({
@@ -111,6 +113,13 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
 
   const initials = profile.displayName.trim().slice(0, 2).toUpperCase() || 'ME';
   const crumb = breadcrumb;
+
+  // On the mobile-web (PWA) companion surface, Teams is intentionally
+  // absent from the lite navigation. The team switcher only earns its
+  // space when the user is actually inside a `/teams/:id` route (e.g.
+  // arrived via a deep link); otherwise it's dead chrome that competes
+  // with the search button on a narrow top bar.
+  const showTeamSwitcher = !mobileWeb || !!activeTeamId;
 
   /** Detect the platform once for the keyboard-shortcut badge — Mac users
    *  see ⌘K, everyone else sees Ctrl+K. We can't rely on the OS in the
@@ -165,6 +174,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
           <span className="topbar__search-text">Search teams, notes, tasks…</span>
           <kbd className="topbar__search-kbd">{shortcutLabel}</kbd>
         </button>
+        {showTeamSwitcher ? (
         <div className="team-switcher" ref={switcherRef}>
           <button
             type="button"
@@ -222,6 +232,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
             </div>
           ) : null}
         </div>
+        ) : null}
         {currentTeam ? (
           <select
             className="select select--compact topbar__status"

@@ -44,7 +44,7 @@ jobs:
       - name: Otomatik sürüm numarası
         run: npm pkg set version=0.3.${{ github.run_number }}
 
-      - run: npm ci --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund --prefer-offline
 
       - name: Validate release config and helper
         run: |
@@ -89,7 +89,7 @@ jobs:
       - name: Otomatik sürüm numarası
         run: npm pkg set version=0.3.${{ github.run_number }}
 
-      - run: npm ci --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund --prefer-offline
 
       - uses: actions/setup-dotnet@v4
         with:

@@ -31,6 +31,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useAccount } from '../AccountContext';
 import { RecoveryCodesPanel } from './RecoveryCodesPanel';
+import { useMobileWeb } from '../lib/runtime';
 import { loadPair } from '../lib/lanSyncClient';
 import { loadStoredTokens, isClientConfigured } from '../lib/syncBackends/gdriveAuth';
 import {
@@ -80,6 +81,11 @@ function looksLikeReturningDevice(): boolean {
 export function WelcomeTour() {
   const { user } = useAccount();
   const { managed, hasUserPreset, setPreset, features } = useFeatures();
+  // On the phone companion surface we show a deliberately shorter tour:
+  // the mandatory recovery step (if any) plus a single "what is this"
+  // card. The sync/next-steps deep-dives belong on the desktop host
+  // where setup actually happens.
+  const mobileWeb = useMobileWeb();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
   const [chosenPreset, setChosenPreset] = useState<PresetName | null>(null);
@@ -230,7 +236,15 @@ export function WelcomeTour() {
             <strong>Notes</strong> with optional passphrase-protected encryption.
           </li>
           <li>
-            <strong>Teams</strong>, people, agendas, and analytics.
+            {mobileWeb ? (
+              <>
+                <strong>Agenda</strong> and quick capture — your desktop stays the full workspace.
+              </>
+            ) : (
+              <>
+                <strong>Teams</strong>, people, agendas, and analytics.
+              </>
+            )}
           </li>
         </ul>
       </>
@@ -239,8 +253,9 @@ export function WelcomeTour() {
 
   // Sync overview only makes sense when at least one sync backend is
   // available under the current policy/preset. Otherwise we'd be teasing
-  // the user about a feature they can't actually use.
-  if (features.sync.lan || features.sync.cloud) {
+  // the user about a feature they can't actually use. On the phone
+  // companion surface we skip it entirely — pairing happens on the host.
+  if (!mobileWeb && (features.sync.lan || features.sync.cloud)) {
     steps.push({
       title: 'Sync across devices, on your terms',
       body: (
@@ -275,6 +290,7 @@ export function WelcomeTour() {
     });
   }
 
+  if (!mobileWeb) {
   steps.push({
     title: 'A couple of next steps (all optional)',
     body: (
@@ -304,6 +320,7 @@ export function WelcomeTour() {
       </>
     ),
   });
+  } // !mobileWeb
 
   } // shouldShowTour
 

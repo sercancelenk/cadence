@@ -52,7 +52,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies (no electron binary)
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-audit --no-fund --prefer-offline
 
       # Compiles the PWA into dist/app/ (vite.config picks `dist/app` when
       # CADENCE_PWA=1) and the marketing landing into dist/ root, with

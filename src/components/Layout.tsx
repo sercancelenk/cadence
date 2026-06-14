@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { AppSidebar } from './AppSidebar';
 import { TopBar } from './TopBar';
+import { MobileTabBar } from './MobileTabBar';
 import { QuickAddFab } from './QuickAddFab';
 import { BackToTopFab } from './BackToTopFab';
 import { usePersistStatus } from '../AppDataContext';
@@ -60,6 +61,7 @@ export function Layout() {
         'app-shell',
         navCollapsed ? 'app-shell--nav-collapsed' : '',
         isMobile ? 'app-shell--mobile' : '',
+        isMobile ? 'app-shell--has-tabbar' : '',
         drawerOpen ? 'app-shell--drawer-open' : '',
       ]
         .filter(Boolean)
@@ -88,6 +90,9 @@ export function Layout() {
       </div>
       <BackToTopFab />
       <QuickAddFab />
+      {isMobile ? (
+        <MobileTabBar onToggleMore={() => setNavCollapsed((c) => !c)} moreActive={drawerOpen} />
+      ) : null}
     </div>
   );
 }

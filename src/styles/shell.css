@@ -1120,3 +1120,70 @@
 .profile-form .field:first-of-type {
   margin-top: 0;
 }
+
+/* ============================================================
+   Mobile bottom tab bar
+   ------------------------------------------------------------
+   Rendered only on the mobile viewport (see Layout). Gives the
+   three primary daily-loop surfaces large thumb targets plus a
+   "More" tab that opens the existing slide-in drawer. Sits below
+   the drawer + backdrop (z 60 / 55) so opening the drawer covers
+   it; the FABs (z 79/80) float above and are offset upward by the
+   `.app-shell--has-tabbar` rules so they never sit on the bar.
+   ============================================================ */
+.mobile-tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  height: calc(var(--mobile-tabbar-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 16px -8px rgba(0, 0, 0, 0.4);
+}
+
+.mobile-tabbar__tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-tabbar__tab--active {
+  color: var(--accent);
+}
+
+.mobile-tabbar__ic {
+  display: inline-flex;
+  line-height: 0;
+}
+
+.mobile-tabbar__label {
+  letter-spacing: 0.01em;
+}
+
+/* Lift the floating action buttons so they stack above the tab bar
+   instead of overlapping it (page content clearance is handled by the
+   `.app-shell--mobile .main--scroll` rule in dialogs.css). */
+.app-shell--has-tabbar .quick-fab {
+  bottom: calc(var(--mobile-tabbar-h) + 16px + env(safe-area-inset-bottom));
+}
+
+.app-shell--has-tabbar .back-to-top-fab {
+  bottom: calc(var(--mobile-tabbar-h) + 16px + 64px + env(safe-area-inset-bottom));
+}

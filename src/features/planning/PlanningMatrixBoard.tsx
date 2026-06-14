@@ -45,7 +45,7 @@ export function PlanningMatrixBoard({
       <div className="planning-matrix__head">
         <h2 className="planning-matrix__title">Eisenhower matrix</h2>
         <p className="planning-matrix__lead muted small">
-          {hubItems.length}/{PLANNING_HUB_MAX_ITEMS} in hub · drag tasks between quadrants · today
+          {hubItems.length}/{PLANNING_HUB_MAX_ITEMS} in hub · drag or tap “Move” to classify · today
           focus up to {PLANNING_FOCUS_MAX}
         </p>
       </div>

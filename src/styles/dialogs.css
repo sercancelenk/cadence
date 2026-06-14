@@ -979,9 +979,10 @@
   }
 
   .app-shell--mobile .main--scroll {
-    /* iOS smooth scrolling and safe-area awareness */
+    /* iOS smooth scrolling, safe-area awareness, and clearance for the
+       fixed bottom tab bar so the last row of content isn't hidden. */
     -webkit-overflow-scrolling: touch;
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: calc(var(--mobile-tabbar-h) + env(safe-area-inset-bottom) + 12px);
   }
 
   /* Avoid iOS auto-zoom on focus by ensuring inputs render at ≥16px. */
