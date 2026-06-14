@@ -34,4 +34,17 @@ describe('parseSaveDataResult', () => {
       writeGeneration: 9,
     });
   });
+
+  it('reads structured success without writeGeneration', () => {
+    expect(parseSaveDataResult({ ok: true })).toEqual({ ok: true });
+  });
+
+  it('maps unexpected IPC payloads to write-rejected', () => {
+    const r = parseSaveDataResult(null as unknown as false);
+    expect(r).toEqual({
+      ok: false,
+      reason: 'write-rejected',
+      error: 'Unexpected save response from the main process.',
+    });
+  });
 });

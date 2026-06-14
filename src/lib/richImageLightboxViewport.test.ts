@@ -3,6 +3,8 @@ import {
   clampScale,
   computeFitTransform,
   constrainTransform,
+  distanceBetween,
+  midpoint,
   panBy,
   scaleBoundsForFit,
   wheelZoomFactor,
@@ -19,6 +21,20 @@ describe('richImageLightboxViewport', () => {
     expect(fit.scale).toBe(0.5);
     expect(fit.x).toBe(0);
     expect(fit.y).toBe(0);
+  });
+
+  it('returns a neutral transform for invalid dimensions', () => {
+    expect(computeFitTransform({ w: 0, h: 600 }, image)).toEqual({ scale: 1, x: 0, y: 0 });
+    expect(computeFitTransform(viewport, { w: 0, h: 0 })).toEqual({ scale: 1, x: 0, y: 0 });
+  });
+
+  it('zoomAtPoint no-ops for invalid factors and clamped scales', () => {
+    const fit = computeFitTransform(viewport, image);
+    const bounds = scaleBoundsForFit(fit.scale, image);
+    expect(zoomAtPoint(fit, 0, { x: 1, y: 1 }, bounds)).toBe(fit);
+    expect(zoomAtPoint(fit, Number.NaN, { x: 1, y: 1 }, bounds)).toBe(fit);
+    const maxed = { ...fit, scale: bounds.maxScale };
+    expect(zoomAtPoint(maxed, 2, { x: 1, y: 1 }, bounds)).toBe(maxed);
   });
 
   it('zoomAtPoint keeps the cursor anchor stable', () => {
@@ -66,10 +82,18 @@ describe('richImageLightboxViewport', () => {
   it('wheelZoomFactor zooms in for negative deltaY', () => {
     expect(wheelZoomFactor(-100, 0)).toBeGreaterThan(1);
     expect(wheelZoomFactor(100, 0)).toBeLessThan(1);
+    expect(wheelZoomFactor(1, 1)).not.toBe(1);
+    expect(wheelZoomFactor(1, 2)).not.toBe(1);
   });
 
   it('zoomPercentLabel is relative to fit scale', () => {
     expect(zoomPercentLabel(0.5, 0.5)).toBe('100%');
     expect(zoomPercentLabel(1, 0.5)).toBe('200%');
+    expect(zoomPercentLabel(1, 0)).toBe('100%');
+  });
+
+  it('computes distance and midpoint helpers', () => {
+    expect(distanceBetween({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(5);
+    expect(midpoint({ x: 0, y: 0 }, { x: 10, y: 20 })).toEqual({ x: 5, y: 10 });
   });
 });

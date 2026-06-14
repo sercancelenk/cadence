@@ -47,6 +47,13 @@ describe('backupBundle zipStore', () => {
 });
 
 describe('backupBundle parse', () => {
+  it('rejects unsafe archive entry paths', () => {
+    expect(isSafeBundleEntryPath('')).toBe(false);
+    expect(isSafeBundleEntryPath('folder\\data.json')).toBe(false);
+    expect(isSafeBundleEntryPath('.hidden')).toBe(false);
+    expect(isSafeBundleEntryPath('attachments/../data.json')).toBe(false);
+  });
+
   it('finds data.json inside a single top-level folder', () => {
     const prefix = resolveBundleRoot([
       'cadence-backup-2026/data.json',
@@ -70,9 +77,13 @@ describe('backupBundle parse', () => {
         }),
       ),
       'attachments/note-abcd12345678.bin': enc.encode('img-bytes'),
+      'attachments/note-legacy12345678.cadenc': enc.encode('legacy-bytes'),
+      'attachments/nested/extra.bin': enc.encode('skip'),
     });
     expect(bundle.manifest?.attachmentCount).toBe(1);
     expect(bundle.attachments.get('note-abcd12345678')?.length).toBeGreaterThan(0);
+    expect(bundle.attachments.get('note-legacy12345678')?.length).toBeGreaterThan(0);
+    expect(bundle.attachments.has('nested/extra')).toBe(false);
   });
 
   it('rejects archives over the size guard', async () => {
@@ -121,5 +132,14 @@ describe('backupBundle parse', () => {
       notes: [{ id: 'n1', title: 'T', body: '' }],
       teams: [],
     });
+  });
+
+  it('ignores manifests with an unknown format', () => {
+    const enc = new TextEncoder();
+    const bundle = parseBundleEntries({
+      [BACKUP_DATA_FILE]: enc.encode(JSON.stringify({ notes: [], teams: [] })),
+      'manifest.json': enc.encode(JSON.stringify({ format: 'legacy-v1', exportedAt: '2026-01-01' })),
+    });
+    expect(bundle.manifest).toBeNull();
   });
 });

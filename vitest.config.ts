@@ -15,7 +15,14 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/lib/**', 'src/core/**'],
-      exclude: ['**/*.test.*', '**/vite-env.d.ts'],
+      exclude: [
+        '**/*.test.*',
+        '**/vite-env.d.ts',
+        // Type-only modules — no runtime code to instrument.
+        'src/lib/reminderDelivery/types.ts',
+        'src/lib/syncBackends/types.ts',
+        'src/lib/noteRevision/types.ts',
+      ],
       thresholds: {
         lines: 95,
         statements: 90,
