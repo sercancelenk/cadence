@@ -47,4 +47,30 @@ describe('richTextImport', () => {
     expect(doc.type).toBe('doc');
     expect(doc.content?.length).toBeGreaterThan(0);
   });
+
+  it('preserves cadence-attachment image references through markdown import', () => {
+    const doc = markdownToRichDoc('![diagram](cadence-attachment://att-123)');
+    const json = JSON.stringify(doc);
+    expect(json).toContain('"type":"image"');
+    expect(json).toContain('cadence-attachment://att-123');
+  });
+
+  it('preserves inline HTML formatting instead of dropping it', () => {
+    // Legacy bodies could contain raw HTML; html:true keeps it, and the Tiptap
+    // schema maps <u>/<strong> to underline/bold marks rather than discarding.
+    const doc = markdownToRichDoc('Plain <u>under</u> and <strong>strong</strong> text');
+    const json = JSON.stringify(doc);
+    expect(json).toContain('under');
+    expect(json).toContain('strong');
+    expect(json).toMatch(/underline|bold/);
+  });
+
+  it('drops unsafe HTML tags while keeping their text content', () => {
+    const doc = markdownToRichDoc('Before <script>alert(1)</script> after');
+    const json = JSON.stringify(doc);
+    expect(json).not.toContain('<script');
+    expect(json).not.toContain('alert(1)');
+    expect(json).toContain('Before');
+    expect(json).toContain('after');
+  });
 });

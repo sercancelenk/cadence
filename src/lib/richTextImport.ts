@@ -27,8 +27,14 @@ function upgradeTaskListHtml(html: string): string {
   );
 }
 
+// `html: true` so inline/block HTML embedded in legacy note bodies is carried
+// through to the intermediate HTML string instead of being silently dropped.
+// It is never persisted raw: `generateJSON` re-parses it against the Tiptap
+// schema below, which only emits known node/mark types (unknown or unsafe tags
+// such as <script> are discarded), so this preserves content without widening
+// the attack surface of the local-first editor.
 const md = new MarkdownIt('default', {
-  html: false,
+  html: true,
   linkify: true,
   breaks: true,
 })

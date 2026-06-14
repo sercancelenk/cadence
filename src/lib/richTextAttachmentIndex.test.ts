@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { collectReferencedAttachmentIds, attachmentRefsFromBody } from './richTextAttachmentIndex';
+import {
+  collectReferencedAttachmentIds,
+  attachmentRefsFromBody,
+  attachmentRefsFromAnyBody,
+} from './richTextAttachmentIndex';
 import { serializeRichDoc } from './richText';
 import type { AppData } from '../model';
 
@@ -140,5 +144,46 @@ describe('attachmentRefsFromBody', () => {
     });
     expect(attachmentRefsFromBody(body, 'prosemirror')).toEqual(['note-only-1234567890']);
     expect(attachmentRefsFromBody('plain', undefined)).toEqual([]);
+  });
+});
+
+describe('attachmentRefsFromAnyBody', () => {
+  it('extracts ids from prosemirror bodies (delegates to structural scan)', () => {
+    const body = serializeRichDoc({
+      type: 'doc',
+      content: [
+        {
+          type: 'image',
+          attrs: { attachmentId: 'pm-image-1234567890', src: 'cadence-attachment://pm-image-1234567890' },
+        },
+      ],
+    });
+    expect(attachmentRefsFromAnyBody(body, 'prosemirror')).toEqual(['pm-image-1234567890']);
+  });
+
+  it('extracts ids from markdown bodies that prosemirror scan would miss', () => {
+    const md = 'Here is an image ![alt](cadence-attachment://md-image-1234567890) inline.';
+    expect(attachmentRefsFromBody(md, 'markdown')).toEqual([]); // prosemirror-only scan misses it
+    expect(attachmentRefsFromAnyBody(md, 'markdown')).toEqual(['md-image-1234567890']);
+  });
+
+  it('extracts ids from inline HTML images embedded in markdown', () => {
+    const md = '<img src="cadence-attachment://html-img-1234567890" alt="x" />';
+    expect(attachmentRefsFromAnyBody(md, 'markdown')).toEqual(['html-img-1234567890']);
+  });
+
+  it('returns an empty array for markdown with no attachment URIs', () => {
+    expect(attachmentRefsFromAnyBody('just text', 'markdown')).toEqual([]);
+    expect(attachmentRefsFromAnyBody(undefined, undefined)).toEqual([]);
+  });
+
+  it('ignores malformed attachment ids (too short)', () => {
+    expect(attachmentRefsFromAnyBody('![x](cadence-attachment://short)', 'markdown')).toEqual([]);
+  });
+
+  it('dedupes repeated references', () => {
+    const md =
+      '![a](cadence-attachment://dup-image-1234567890) and again ![b](cadence-attachment://dup-image-1234567890)';
+    expect(attachmentRefsFromAnyBody(md, 'markdown')).toEqual(['dup-image-1234567890']);
   });
 });

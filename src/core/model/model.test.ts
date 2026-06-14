@@ -168,6 +168,98 @@ describe('normalizeData — profile round-trip', () => {
   });
 });
 
+/**
+ * `withExtras` carries unknown fields through a load → save round-trip so an
+ * older build doesn't drop data written by a newer build. These tests lock
+ * down its two load-bearing invariants:
+ *
+ *   1. CONFIDENTIALITY — it must NEVER resurrect a stripped secret. A locked
+ *      note's plaintext `body` / `bodyPlainText` are deliberately dropped; the
+ *      parser emits them as explicit (empty/undefined) keys so `withExtras`
+ *      treats them as "known" and does not copy the raw plaintext back. If a
+ *      refactor ever breaks that, this test fails instead of silently leaking
+ *      plaintext into the saved (and synced) file.
+ *   2. FORWARD-COMPAT — genuinely-unknown top-level keys survive untouched.
+ */
+describe('normalizeData — withExtras invariants', () => {
+  const baseRaw = {
+    version: 3,
+    teams: [{ id: 't1', name: 'Team', createdAt: '2026-01-01T00:00:00.000Z', status: 'active' }],
+    people: [],
+    items: [],
+    notifiedReminderIds: [],
+    todoGroups: [{ id: 'g1', name: 'General', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+    todoItems: [],
+  };
+
+  it('never resurrects a locked note plaintext body/bodyPlainText', () => {
+    const norm = normalizeData({
+      ...baseRaw,
+      notes: [
+        {
+          id: 'n1',
+          title: 'Secret',
+          locked: true,
+          cipher: { ivB64: 'aaaa', cipherB64: 'bbbb' },
+          // Hostile / leftover plaintext that must be discarded for a locked note.
+          body: 'TOP SECRET plaintext',
+          bodyPlainText: 'TOP SECRET plaintext',
+          // A field a newer build might add — should be carried through.
+          futureNoteField: { tag: 'keep-me' },
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const note = norm.notes.find((n) => n.id === 'n1');
+    expect(note).toBeDefined();
+    expect(note?.locked).toBe(true);
+    expect(note?.body).toBe('');
+    expect(note?.bodyPlainText).toBeUndefined();
+    // The serialized form must not leak the plaintext anywhere.
+    expect(JSON.stringify(note)).not.toContain('TOP SECRET');
+    // ...but an unknown forward-compat field on the note is preserved.
+    expect((note as unknown as Record<string, unknown>).futureNoteField).toEqual({
+      tag: 'keep-me',
+    });
+  });
+
+  it('preserves unknown top-level keys for forward compatibility', () => {
+    const norm = normalizeData({
+      ...baseRaw,
+      // A whole collection a newer Cadence build might introduce.
+      futureCollection: [{ id: 'x1', value: 42 }],
+    });
+    expect((norm as unknown as Record<string, unknown>).futureCollection).toEqual([
+      { id: 'x1', value: 42 },
+    ]);
+    // Known fields still win and are normalized as usual.
+    expect(norm.version).toBe(DATA_VERSION);
+  });
+
+  it('keeps plaintext when a note claims locked but carries no usable cipher', () => {
+    const norm = normalizeData({
+      ...baseRaw,
+      notes: [
+        {
+          id: 'n2',
+          title: 'Half-locked',
+          locked: true,
+          // No cipher persisted yet (interrupted lock-write / broken peer).
+          body: 'recoverable plaintext',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const note = norm.notes.find((n) => n.id === 'n2');
+    expect(note).toBeDefined();
+    // Degrades to unlocked-with-content rather than a permanently-empty shell.
+    expect(note?.locked).toBe(false);
+    expect(note?.body).toBe('recoverable plaintext');
+  });
+});
+
 describe('shapeOfData — last-known-good fingerprint', () => {
   it('returns zeroed shape for null / undefined', () => {
     expect(shapeOfData(null)).toEqual({
@@ -1337,6 +1429,55 @@ describe('normalizeData — exhaustive parse/load/migration', () => {
     expect(norm.notes[2]?.cipher).toBeUndefined();
   });
 
+  it('recovers plaintext when a note is flagged locked but has no usable cipher', () => {
+    // Simulates an interrupted lock-write (or sync from a broken peer): the
+    // row says locked:true but the cipher never made it to disk while the
+    // plaintext body is still present. We must NOT discard the plaintext into
+    // a permanently-locked empty shell.
+    const norm = normalizeData({
+      ...baseV3(),
+      notes: [
+        {
+          id: 'n-half-locked',
+          title: 'Recoverable',
+          body: 'still here',
+          bodyFormat: 'markdown',
+          bodyPlainText: 'still here',
+          locked: true,
+          cipher: { ivB64: 1, cipherB64: null },
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+    });
+    const note = norm.notes.find((n) => n.id === 'n-half-locked')!;
+    expect(note.locked).toBe(false);
+    expect(note.body).toBe('still here');
+    expect(note.bodyPlainText).toBe('still here');
+    expect(note.cipher).toBeUndefined();
+  });
+
+  it('keeps a genuinely-locked note locked when its cipher is valid', () => {
+    const norm = normalizeData({
+      ...baseV3(),
+      notes: [
+        {
+          id: 'n-locked',
+          title: 'Secret',
+          body: 'should-be-stripped',
+          locked: true,
+          cipher: { ivB64: 'aXY=', cipherB64: 'Y2lwaA==' },
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+    });
+    const note = norm.notes.find((n) => n.id === 'n-locked')!;
+    expect(note.locked).toBe(true);
+    expect(note.body).toBe('');
+    expect(note.cipher).toEqual({ ivB64: 'aXY=', cipherB64: 'Y2lwaA==' });
+  });
+
   it('does not create note lists or assign groupId when loading legacy workspaces', () => {
     const norm = normalizeData({
       ...baseV3(),
@@ -1729,5 +1870,138 @@ describe('normalizeData — exhaustive parse/load/migration', () => {
     expect(teamPeople(norm, 't1')).toEqual([
       expect.objectContaining({ id: 'p1', name: 'Pat' }),
     ]);
+  });
+});
+
+/**
+ * Forward-compatibility (cross-version data-loss prevention).
+ *
+ * A file written by a NEWER Cadence build can carry top-level keys and
+ * per-entity fields this build doesn't know about. An older build must
+ * round-trip (load → save) those unknown fields untouched — otherwise it
+ * silently strips the newer data and, via sync, propagates the loss to
+ * every device. These tests lock that guarantee in.
+ */
+describe('normalizeData — forward-compatible unknown-field passthrough', () => {
+  const FTS = '2026-06-01T12:00:00.000Z';
+
+  function futureFile(extra: Record<string, unknown> = {}) {
+    return {
+      version: 3,
+      teams: [{ id: 't1', name: 'Alpha', createdAt: FTS, status: 'active', emoji: '🚀' }],
+      people: [{ id: 'p1', teamId: 't1', name: 'Pat', createdAt: FTS, pronouns: 'they/them' }],
+      items: [
+        { id: 'i1', personId: 'p1', kind: 'note', title: 'X', body: '', createdAt: FTS, updatedAt: FTS, mood: 'great' },
+      ],
+      notifiedReminderIds: [],
+      todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: FTS, colorTag: 'blue' }],
+      todoItems: [
+        { id: 'td1', groupId: 'g1', title: 'Do it', status: 'todo', done: false, createdAt: FTS, updatedAt: FTS, estimateMins: 25 },
+      ],
+      notes: [
+        { id: 'n1', title: 'Hi', body: 'hello', locked: false, createdAt: FTS, updatedAt: FTS, color: 'red', tags: ['a', 'b'] },
+      ],
+      noteGroups: [{ id: 'ng1', name: 'Refs', sortOrder: 0, createdAt: FTS, icon: 'star' }],
+      profile: { displayName: 'Me', favoriteTeamIds: [], avatarShape: 'circle' },
+      // Whole top-level collections / objects a future version might add:
+      calendars: [{ id: 'c1', name: 'Work' }],
+      futureSetting: { theme: 'neon' },
+      ...extra,
+    };
+  }
+
+  it('preserves unknown top-level keys', () => {
+    const norm = normalizeData(futureFile()) as unknown as Record<string, unknown>;
+    expect(norm.calendars).toEqual([{ id: 'c1', name: 'Work' }]);
+    expect(norm.futureSetting).toEqual({ theme: 'neon' });
+  });
+
+  it('preserves unknown per-entity fields on every content collection', () => {
+    const norm = normalizeData(futureFile());
+    expect((norm.teams[0] as unknown as Record<string, unknown>).emoji).toBe('🚀');
+    expect((norm.people.find((p) => p.id === 'p1') as unknown as Record<string, unknown>).pronouns).toBe('they/them');
+    expect((norm.items[0] as unknown as Record<string, unknown>).mood).toBe('great');
+    expect((norm.todoGroups.find((g) => g.id === 'g1') as unknown as Record<string, unknown>).colorTag).toBe('blue');
+    expect((norm.todoItems[0] as unknown as Record<string, unknown>).estimateMins).toBe(25);
+    expect((norm.notes[0] as unknown as Record<string, unknown>).color).toBe('red');
+    expect((norm.notes[0] as unknown as Record<string, unknown>).tags).toEqual(['a', 'b']);
+    expect((norm.noteGroups[0] as unknown as Record<string, unknown>).icon).toBe('star');
+    expect((norm.profile as unknown as Record<string, unknown>).avatarShape).toBe('circle');
+  });
+
+  it('survives a full normalize → persist JSON → normalize round trip', () => {
+    const once = normalizeData(futureFile());
+    const json = appDataToPersistJson(once);
+    const twice = normalizeData(JSON.parse(json)) as unknown as Record<string, unknown>;
+    expect(twice.calendars).toEqual([{ id: 'c1', name: 'Work' }]);
+    expect(twice.futureSetting).toEqual({ theme: 'neon' });
+    expect((twice.notes as Record<string, unknown>[])[0].color).toBe('red');
+    expect((twice.todoItems as Record<string, unknown>[])[0].estimateMins).toBe(25);
+  });
+
+  it('never lets an unknown extra override a known field', () => {
+    // A hostile/garbage file tries to smuggle a bogus value under a known
+    // key name — the parser must win, not the raw passthrough.
+    const norm = normalizeData({
+      version: 3,
+      teams: [{ id: 't1', name: 'Real', createdAt: FTS, status: 'bogus-status', extraOnly: 'kept' }],
+      notes: [{ id: 'n1', title: 'T', body: 'B', locked: false, createdAt: FTS, updatedAt: FTS, done: 'not-a-real-field-but-unknown' }],
+    });
+    expect(norm.teams[0]!.status).toBe('active'); // sanitised, not 'bogus-status'
+    expect((norm.teams[0] as unknown as Record<string, unknown>).extraOnly).toBe('kept');
+    // `done` is unknown on a Note, so it's preserved verbatim (harmless), but
+    // the note's real content is intact.
+    expect(norm.notes[0]!.title).toBe('T');
+    expect(norm.notes[0]!.body).toBe('B');
+  });
+
+  it('does not reintroduce a locked note plaintext body via passthrough', () => {
+    // Locked note: plaintext `body` / `bodyPlainText` are deliberately stripped.
+    // They are KNOWN keys, so passthrough must not carry them back.
+    const norm = normalizeData({
+      version: 3,
+      teams: [{ id: 't1', name: 'A', createdAt: FTS, status: 'active' }],
+      notes: [
+        {
+          id: 'n1',
+          title: 'Secret',
+          body: 'PLAINTEXT-SHOULD-NOT-PERSIST',
+          bodyPlainText: 'PLAINTEXT-SHOULD-NOT-PERSIST',
+          locked: true,
+          cipher: { ivB64: 'aXY=', cipherB64: 'Y2lwaA==' },
+          createdAt: FTS,
+          updatedAt: FTS,
+          futureMeta: 'kept',
+        },
+      ],
+    });
+    expect(norm.notes[0]!.locked).toBe(true);
+    expect(norm.notes[0]!.body).toBe('');
+    expect(norm.notes[0]!.bodyPlainText).toBeUndefined();
+    expect((norm.notes[0] as unknown as Record<string, unknown>).futureMeta).toBe('kept');
+  });
+
+  it('adds no surprise keys when the file has no unknown fields', () => {
+    const clean = {
+      version: 3,
+      teams: [{ id: 't1', name: 'A', createdAt: FTS, status: 'active' }],
+      people: [],
+      items: [],
+      notifiedReminderIds: [],
+      todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: FTS }],
+      todoItems: [],
+      notes: [],
+      noteGroups: [],
+    };
+    const norm = normalizeData(clean) as unknown as Record<string, unknown>;
+    // Only the canonical AppData keys (no stray passthrough wrapper).
+    const allowed = new Set([
+      'version', 'teams', 'people', 'items', 'notifiedReminderIds', 'lastTeamId',
+      'profile', 'todoGroups', 'todoItems', 'aiSettings', 'notes', 'noteGroups',
+      'notesLock', 'utilityDocument', 'utilityStructuredText',
+    ]);
+    for (const key of Object.keys(norm)) {
+      expect(allowed.has(key)).toBe(true);
+    }
   });
 });

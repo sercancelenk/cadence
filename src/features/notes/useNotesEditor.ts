@@ -6,7 +6,7 @@ import {
   type RichTextBodyFields,
 } from '../../lib/richTextBody';
 import { encryptBodyWithMaster } from '../../lib/notesCrypto';
-import { attachmentRefsFromBody } from '../../lib/richTextAttachmentIndex';
+import { attachmentRefsFromAnyBody } from '../../lib/richTextAttachmentIndex';
 import { canonicalDocSignature } from '../../lib/richTextBody';
 import { noteSnapshotFromNote } from '../../lib/noteRevision/noteRevisionStore';
 import type { NoteRevisionSnapshot } from '../../lib/noteRevision/types';
@@ -25,14 +25,17 @@ export type NoteRevisionCapture = (
 
 function noteForRevisionSnapshot(note: Note, fields?: RichTextBodyFields): Note {
   if (!fields) return note;
-  const attachmentRefs = attachmentRefsFromBody(fields.body, fields.bodyFormat);
+  const attachmentRefs = attachmentRefsFromAnyBody(fields.body, fields.bodyFormat);
   if (note.locked) {
     return {
       ...note,
       body: '',
       bodyFormat: fields.bodyFormat,
       bodyPlainText: undefined,
-      attachmentRefs: attachmentRefs.length ? attachmentRefs : undefined,
+      // Always an array (even empty) so orphan GC can trust it: a present
+      // attachmentRefs list means "these are all the attachments this locked
+      // note uses", which is the signal GC needs to safely prune the rest.
+      attachmentRefs,
       lockedBodySignature: canonicalDocSignature(fields.body, fields.bodyFormat),
     };
   }
@@ -77,7 +80,7 @@ export function useNotesEditor(
     encryptGenByNote.current.set(noteId, myGen);
     const cipher = await encryptBodyWithMaster(key, pending.body);
     if (encryptGenByNote.current.get(noteId) !== myGen) return;
-    const attachmentRefs = attachmentRefsFromBody(pending.body, pending.bodyFormat);
+    const attachmentRefs = attachmentRefsFromAnyBody(pending.body, pending.bodyFormat);
     const nextNote: Note = {
       ...note,
       body: '',
@@ -85,7 +88,7 @@ export function useNotesEditor(
       cipher,
       bodyFormat: pending.bodyFormat,
       bodyPlainText: undefined,
-      attachmentRefs: attachmentRefs.length ? attachmentRefs : undefined,
+      attachmentRefs,
       lockedBodySignature: canonicalDocSignature(pending.body, pending.bodyFormat),
     };
     latestRevisionNoteRef.current = nextNote;
@@ -205,7 +208,7 @@ export function useNotesEditor(
     void (async () => {
       const cipher = await encryptBodyWithMaster(key, fields.body);
       if (encryptGenByNote.current.get(noteId) !== myGen) return;
-      const attachmentRefs = attachmentRefsFromBody(fields.body, fields.bodyFormat);
+      const attachmentRefs = attachmentRefsFromAnyBody(fields.body, fields.bodyFormat);
       const nextNote: Note = {
         ...selected,
         body: '',
@@ -213,7 +216,7 @@ export function useNotesEditor(
         cipher,
         bodyFormat: fields.bodyFormat,
         bodyPlainText: undefined,
-        attachmentRefs: attachmentRefs.length ? attachmentRefs : undefined,
+        attachmentRefs,
         lockedBodySignature: canonicalDocSignature(fields.body, fields.bodyFormat),
       };
       rememberRevisionNote(nextNote);

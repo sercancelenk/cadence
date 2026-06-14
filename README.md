@@ -1309,6 +1309,14 @@ Issues and pull requests are welcome. Please:
    - `npm run build:web` — Electron-targeted Vite build.
    - `npm run build:pwa` — Pages-targeted Vite build.
 
+### AI coding agents
+
+This repo ships agent context and reusable Cursor rules (`AGENTS.md` plus
+`.cursor/rules/make-feature.mdc` and `.cursor/rules/expert-code-review.mdc`) that steer
+AI agents toward production-ready, zero-data-loss work. See
+[AI agent rules & project context](docs/AI-AGENT-RULES.md) for how they're built, how
+to use them, and how to reuse the setup in other projects.
+
 ---
 
 ## Migration notes (from Leeadman)

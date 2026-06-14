@@ -1,0 +1,10 @@
+# .cursorignore
+node_modules/
+dist/
+out/
+build/
+release/
+.git/
+*.log
+package-lock.json
+yarn.lock

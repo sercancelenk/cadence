@@ -531,10 +531,57 @@ function defaultTodoBundle(): { todoGroups: TodoGroup[]; todoItems: TodoItem[] }
   };
 }
 
+/**
+ * Forward-compatibility passthrough.
+ *
+ * A workspace file written by a NEWER Cadence build may carry top-level
+ * keys or per-entity fields that this (older) build does not understand
+ * yet. The defensive parsers in this module only copy the fields they
+ * recognise, so a naive load → save round-trip on an older build would
+ * silently DROP the newer data — and, via LAN / cloud sync, propagate
+ * that loss to every other device sharing the workspace.
+ *
+ * `withExtras` prevents that: after a parser has produced its known-shape
+ * object, we copy back any own-keys from the raw input that the parser
+ * did not emit. Known fields are spread LAST, so they always win — this
+ * helper can never override, corrupt, or re-introduce a value we already
+ * understand (including fields we deliberately strip, e.g. a locked
+ * note's plaintext body, which the parser still emits as a present key).
+ * It only carries genuinely-unknown extras through untouched.
+ *
+ * SCOPE — this is a TOP-LEVEL / unknown-KEY passthrough only. The merge is
+ * shallow: extras are preserved for keys the parser never emits, but newer
+ * SUB-fields nested inside a known key (e.g. a future field added inside
+ * `cipher` or `profile`) are still dropped, because the parser rebuilds
+ * those objects field-by-field under a key that already exists in `parsed`.
+ * Deep forward-compat would require per-parser `withExtras` at each level.
+ *
+ * CONFIDENTIALITY INVARIANT — safety against re-injecting stripped secrets
+ * (e.g. a locked note's plaintext `body` / `bodyPlainText`) relies on every
+ * intentionally-dropped field being emitted as an EXPLICIT key on `parsed`
+ * (set to `''` / `undefined`), so `key in parsed` is true and the raw value
+ * is not copied back. Do not change a parser to omit such a key conditionally
+ * without keeping it present, or `withExtras` would resurrect the secret.
+ * This invariant is locked down by a regression test (see model.test.ts).
+ *
+ * The result is a forward-compatible round-trip for top-level keys: an older
+ * build opening a newer file keeps those newer fields intact when it saves.
+ */
+function withExtras<T extends object>(raw: Record<string, unknown>, parsed: T): T {
+  let extra: Record<string, unknown> | null = null;
+  for (const key of Object.keys(raw)) {
+    if (!(key in parsed)) {
+      if (!extra) extra = {};
+      extra[key] = raw[key];
+    }
+  }
+  return extra ? ({ ...extra, ...parsed } as T) : parsed;
+}
+
 function parsePeople(raw: unknown[]): Person[] {
   return raw
     .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
-    .map((p) => ({
+    .map((p) => withExtras(p, {
       id: typeof p.id === 'string' ? p.id : uuid(),
       teamId: typeof p.teamId === 'string' ? p.teamId : '',
       name: typeof p.name === 'string' && p.name.trim() ? p.name : 'Unnamed',
@@ -553,12 +600,12 @@ function parseTeams(raw: unknown[]): Team[] {
     .map((t) => {
       const st = t.status;
       const status = statuses.includes(st as TeamStatus) ? (st as TeamStatus) : 'active';
-      return {
+      return withExtras(t, {
         id: typeof t.id === 'string' ? t.id : uuid(),
         name: typeof t.name === 'string' && t.name.trim() ? t.name : 'Team',
         createdAt: typeof t.createdAt === 'string' ? t.createdAt : nowIso(),
         status,
-      };
+      });
     });
 }
 
@@ -588,7 +635,7 @@ function parseItems(raw: unknown[]): Item[] {
         typeof repeatRaw === 'string' && repeats.includes(repeatRaw as ReminderRepeat)
           ? (repeatRaw as ReminderRepeat)
           : undefined;
-      return {
+      return withExtras(it, {
         id: typeof it.id === 'string' ? it.id : uuid(),
         personId: typeof it.personId === 'string' ? it.personId : '',
         kind,
@@ -606,7 +653,7 @@ function parseItems(raw: unknown[]): Item[] {
         category: typeof it.category === 'string' && it.category.trim() ? it.category.trim() : undefined,
         createdAt: typeof it.createdAt === 'string' ? it.createdAt : nowIso(),
         updatedAt: typeof it.updatedAt === 'string' ? it.updatedAt : nowIso(),
-      };
+      });
     });
 }
 
@@ -622,7 +669,7 @@ function parseTodoGroups(raw: unknown[]): TodoGroup[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object')
-    .map((g, i) => ({
+    .map((g, i) => withExtras(g, {
       id: typeof g.id === 'string' ? g.id : uuid(),
       name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'List',
       sortOrder: typeof g.sortOrder === 'number' ? g.sortOrder : i,
@@ -714,7 +761,7 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
           }
         }
       }
-      return {
+      return withExtras(x, {
         id: typeof x.id === 'string' ? x.id : uuid(),
         groupId: typeof x.groupId === 'string' ? x.groupId : '',
         title,
@@ -738,7 +785,7 @@ function parseTodoItems(raw: unknown[]): TodoItem[] {
         archived: parseOptionalBoolean(x.archived) === true ? true : undefined,
         createdAt: typeof x.createdAt === 'string' ? x.createdAt : nowIso(),
         updatedAt: typeof x.updatedAt === 'string' ? x.updatedAt : nowIso(),
-      };
+      });
     });
 }
 
@@ -996,7 +1043,10 @@ export function normalizeData(raw: unknown): AppData {
     notesLock = undefined;
   }
 
-  let data: AppData = {
+  // `withExtras` keeps any unrecognised top-level keys (e.g. a collection a
+  // newer Cadence build added) so an older build round-trips a newer file
+  // without dropping data. Known keys below always win.
+  let data: AppData = withExtras(o, {
     version: DATA_VERSION,
     teams,
     people,
@@ -1012,7 +1062,7 @@ export function normalizeData(raw: unknown): AppData {
     utilityDocument,
     utilityStructuredText,
     profile: parseProfile(o.profile),
-  };
+  });
 
   data = ensureTeamsHaveSelf(data);
   data = ensureTeamsHaveLeader(data);
@@ -1080,14 +1130,14 @@ function parseAISettings(raw: unknown): AISettings | undefined {
   const extractionGuidance =
     typeof o.extractionGuidance === 'string' ? o.extractionGuidance : undefined;
   if (!provider && !apiKey && !model && !systemPrompt && !extractionGuidance) return undefined;
-  return { provider, apiKey, model, systemPrompt, extractionGuidance };
+  return withExtras(o, { provider, apiKey, model, systemPrompt, extractionGuidance });
 }
 
 function parseNoteGroups(raw: unknown[]): NoteGroup[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object')
-    .map((g, i) => ({
+    .map((g, i) => withExtras(g, {
       id: typeof g.id === 'string' ? g.id : uuid(),
       name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Notes',
       sortOrder: typeof g.sortOrder === 'number' ? g.sortOrder : i,
@@ -1104,8 +1154,8 @@ function parseNotes(raw: unknown): Note[] {
     if (!n || typeof n !== 'object') continue;
     const o = n as Record<string, unknown>;
     if (typeof o.id !== 'string' || !o.id) continue;
-    const locked = !!o.locked;
-    const cipher = locked && o.cipher && typeof o.cipher === 'object'
+    const lockedFlag = !!o.locked;
+    const cipher = lockedFlag && o.cipher && typeof o.cipher === 'object'
       ? (() => {
           const c = o.cipher as Record<string, unknown>;
           if (typeof c.ivB64 === 'string' && typeof c.cipherB64 === 'string') {
@@ -1114,7 +1164,16 @@ function parseNotes(raw: unknown): Note[] {
           return undefined;
         })()
       : undefined;
-    out.push({
+    // Data-loss guard: a note that claims to be locked but carries no usable
+    // cipher cannot be decrypted, and the lock/disable flows skip such rows
+    // (they require `n.cipher`). If we still stripped its plaintext `body`
+    // here, an interrupted lock-write (cipher not yet persisted) or a sync
+    // from a broken peer would turn recoverable plaintext into a permanently
+    // empty locked shell. So we only honour `locked` when a valid cipher is
+    // present; otherwise we keep whatever plaintext remains and treat the row
+    // as unlocked, preserving the content instead of discarding it.
+    const locked = lockedFlag && !!cipher;
+    out.push(withExtras(o, {
       id: o.id,
       title: typeof o.title === 'string' ? o.title : '',
       body: typeof o.body === 'string' && !locked ? o.body : '',
@@ -1138,7 +1197,7 @@ function parseNotes(raw: unknown): Note[] {
       groupId: typeof o.groupId === 'string' && o.groupId ? o.groupId : undefined,
       createdAt: typeof o.createdAt === 'string' ? o.createdAt : nowIso(),
       updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
-    });
+    }));
   }
   return out;
 }
@@ -1147,26 +1206,26 @@ function parseUtilityDocument(raw: unknown): UtilityDocument | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const o = raw as Record<string, unknown>;
   if (typeof o.body !== 'string') return undefined;
-  return {
+  return withExtras<UtilityDocument>(o, {
     body: o.body,
     bodyFormat:
       o.bodyFormat === 'markdown' || o.bodyFormat === 'prosemirror' ? o.bodyFormat : undefined,
     bodyPlainText: typeof o.bodyPlainText === 'string' ? o.bodyPlainText : undefined,
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
-  };
+  });
 }
 
 function parseUtilityStructuredText(raw: unknown): UtilityStructuredText | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const o = raw as Record<string, unknown>;
   if (typeof o.content !== 'string') return undefined;
-  return {
+  return withExtras<UtilityStructuredText>(o, {
     content: o.content,
     diffContentLeft: typeof o.diffContentLeft === 'string' ? o.diffContentLeft : undefined,
     diffContent: typeof o.diffContent === 'string' ? o.diffContent : undefined,
     language: o.language === 'yaml' ? 'yaml' : 'json',
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
-  };
+  });
 }
 
 function parseNotesLock(raw: unknown): NotesLock | undefined {
@@ -1218,7 +1277,7 @@ function parseProfile(raw: unknown): UserProfile | undefined {
     typeof o.avatarDataUrl === 'string' && o.avatarDataUrl.startsWith('data:')
       ? o.avatarDataUrl
       : undefined;
-  return {
+  return withExtras(o, {
     displayName: typeof o.displayName === 'string' && o.displayName.trim() ? o.displayName.trim() : 'Me',
     favoriteTeamIds: fav,
     jobTitle: typeof o.jobTitle === 'string' && o.jobTitle.trim() ? o.jobTitle.trim() : undefined,
@@ -1226,7 +1285,7 @@ function parseProfile(raw: unknown): UserProfile | undefined {
     phone: typeof o.phone === 'string' && o.phone.trim() ? o.phone.trim() : undefined,
     bio: typeof o.bio === 'string' && o.bio.trim() ? o.bio.trim() : undefined,
     avatarDataUrl: avatar,
-  };
+  });
 }
 
 function ensureProfile(data: AppData): AppData {
@@ -1243,7 +1302,9 @@ function ensureProfile(data: AppData): AppData {
     typeof raw.avatarDataUrl === 'string' && raw.avatarDataUrl.startsWith('data:')
       ? raw.avatarDataUrl
       : undefined;
-  const profile: UserProfile = {
+  // Preserve any forward-compat extras carried on the profile (parseProfile
+  // keeps unknown keys; rebuilding the object here must not drop them).
+  const profile: UserProfile = withExtras(raw as unknown as Record<string, unknown>, {
     displayName: raw.displayName?.trim() ? raw.displayName.trim() : 'Me',
     favoriteTeamIds: fav,
     jobTitle: raw.jobTitle?.trim() || undefined,
@@ -1251,6 +1312,6 @@ function ensureProfile(data: AppData): AppData {
     phone: raw.phone?.trim() || undefined,
     bio: raw.bio?.trim() || undefined,
     avatarDataUrl: avatar,
-  };
+  });
   return { ...data, profile, teams };
 }

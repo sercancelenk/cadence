@@ -49,7 +49,9 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import type { AppData } from '../model';
+import { shapeOfData } from '../model';
 import { syncLanAttachments } from './lanAttachmentSync';
+import { collectReferencedAttachmentIds } from './richTextAttachmentIndex';
 import { parseRemoteSnapshot, snapshotParseErrorMessage } from './syncSnapshotGuard';
 import { prepareForRemoteApply } from './syncApplyGuard';
 import {
@@ -119,28 +121,78 @@ export type SyncCycleAction =
   | 'push-error'
   | 'corrupt-remote'
   | 'unsupported-remote'
-  | 'local-changed-during-pull';
+  | 'local-changed-during-pull'
+  | 'empty-remote-skipped';
 
-async function maybeSyncLanAttachments(
+/**
+ * One-shot-per-session guard so the cloud "images aren't synced" notice
+ * doesn't repeat every 30s cycle. Exposed reset is test-only.
+ */
+let cloudAttachmentNoticeShown = false;
+export function __resetCloudAttachmentNotice(): void {
+  cloudAttachmentNoticeShown = false;
+}
+
+async function maybeSyncAttachments(
   backend: SyncBackend,
   data: AppData,
   userId: string | undefined,
   action: SyncCycleAction,
 ): Promise<void> {
-  if (backend.id !== 'lan' || !userId) return;
-  if (
-    action !== 'pushed' &&
-    action !== 'pulled' &&
-    action !== 'baseline-pulled' &&
-    action !== 'baseline-seeded'
-  ) {
+  if (!userId) return;
+  const successful =
+    action === 'pushed' ||
+    action === 'pulled' ||
+    action === 'baseline-pulled' ||
+    action === 'baseline-seeded';
+  if (!successful) return;
+
+  if (backend.id === 'lan') {
+    try {
+      await syncLanAttachments(data, userId);
+    } catch (err) {
+      console.warn('[cadence] LAN attachment sync failed', err);
+    }
     return;
   }
-  try {
-    await syncLanAttachments(data, userId);
-  } catch (err) {
-    console.warn('[cadence] LAN attachment sync failed', err);
+
+  // Cloud backends (Google Drive) sync the encrypted JSON snapshot but NOT
+  // the image sidecars. Rather than silently leaving a second device with
+  // broken images — or a Drive-only user thinking their backup is complete —
+  // we surface this once per session when the workspace actually references
+  // images, and point at the portable ZIP backup (which DOES include images).
+  // Data is never lost on the source device; this is a transparency guard.
+  if (backend.id === 'gdrive' && !cloudAttachmentNoticeShown) {
+    if (collectReferencedAttachmentIds(data).length > 0) {
+      cloudAttachmentNoticeShown = true;
+      publishSyncEvent({
+        kind: 'info',
+        backendId: backend.id,
+        code: 'attachments-not-synced',
+        text:
+          'Google Drive sync covers your text and structure, but note images are not uploaded. Use Settings → portable backup (ZIP) to keep a complete copy that includes images.',
+      });
+    }
   }
+}
+
+/**
+ * Counts "real" user content to decide whether a remote snapshot is materially
+ * empty before letting it overwrite a populated local workspace — never to gate
+ * normal syncs.
+ *
+ * Built on `shapeOfData` so the "default scaffold doesn't count" conventions
+ * live in ONE place: `shapeOfData.total` already subtracts the auto-seeded
+ * "My first team" and excludes the `__self__` / `__leader__` people. We then
+ * subtract `todoGroups` because `normalizeData` always seeds a default group,
+ * so its presence is not a signal of actual user data. Deriving from
+ * `shapeOfData` (rather than re-summing here) means the empty-remote guard
+ * can't silently drift from the integrity-banner heuristic if the seeding
+ * rules ever change.
+ */
+function materialContentCount(d: AppData): number {
+  const s = shapeOfData(d);
+  return Math.max(0, s.total - s.todoGroups);
 }
 
 export async function runSyncCycle(args: {
@@ -157,12 +209,24 @@ export async function runSyncCycle(args: {
   const record = backend.getRecord();
   const backendId = backend.id;
 
-  async function applyRemoteIfLocalStable(remote: AppData): Promise<SyncCycleAction | null> {
+  async function applyRemoteIfLocalStable(
+    remote: AppData,
+    baselineFp: string,
+  ): Promise<SyncCycleAction | null> {
     const fpBefore = await safeFingerprint(getLocal());
     await flushLocal();
     await prepareForRemoteApply();
     const fpAfter = await safeFingerprint(getLocal());
-    if (fpBefore && fpAfter !== fpBefore) {
+    // Two windows can dirty local state between "decide to pull" and "apply":
+    //   1. the network pull itself (caught by comparing against `baselineFp`,
+    //      the fingerprint captured BEFORE backend.pull()), and
+    //   2. the flush / editor-commit step (caught by fpBefore vs fpAfter).
+    // Either one means the user has edits the remote would clobber, so we bail
+    // and let the next cycle push instead. Without the `baselineFp` check,
+    // edits made during a slow (multi-second) pull were silently overwritten.
+    const changedDuringFlush = !!fpBefore && fpAfter !== fpBefore;
+    const changedDuringPull = !!baselineFp && fpAfter !== baselineFp;
+    if (changedDuringFlush || changedDuringPull) {
       publishSyncEvent({
         kind: 'info',
         backendId,
@@ -171,12 +235,34 @@ export async function runSyncCycle(args: {
       });
       return 'local-changed-during-pull';
     }
+    // Data-loss guard: never let a structurally-valid but materially-empty
+    // remote snapshot wipe a local workspace that still has real content.
+    // `parseRemoteSnapshot` only checks shape, so `{ teams: [] }` (or any
+    // all-empty payload) passes it. If a buggy/old peer pushed such a snapshot,
+    // applying it here would erase the user's notes/todos/people. We refuse and
+    // surface an error; the user resolves explicitly via Settings → Pull/Push.
+    if (materialContentCount(remote) === 0 && materialContentCount(getLocal()) > 0) {
+      publishSyncEvent({
+        kind: 'error',
+        backendId,
+        code: 'empty-remote',
+        text:
+          'Skipped sync — the remote snapshot is empty but this device still has data. Resolve in Settings before syncing.',
+      });
+      return 'empty-remote-skipped';
+    }
     applyRemote(remote);
     return null;
   }
 
   if (!record?.localFingerprint) {
-    const pullOutcome = await backend.pull();
+    // Kick off the network pull synchronously so callers (and tests) observe
+    // backend.pull() immediately, then capture the pre-pull fingerprint while
+    // the request is in flight. This lets us detect edits made during the pull
+    // without delaying the request itself.
+    const pullPromise = backend.pull();
+    const prePullFp = await safeFingerprint(getLocal());
+    const pullOutcome = await pullPromise;
     if (pullOutcome.kind === 'ok') {
       const parsed = parseRemoteSnapshot(pullOutcome.data);
       if (parsed.kind !== 'ok') {
@@ -188,7 +274,7 @@ export async function runSyncCycle(args: {
         });
         return parsed.kind === 'unsupported-version' ? 'unsupported-remote' : 'corrupt-remote';
       }
-      const blocked = await applyRemoteIfLocalStable(parsed.data);
+      const blocked = await applyRemoteIfLocalStable(parsed.data, prePullFp);
       if (blocked) return blocked;
       const fp = await safeFingerprint(parsed.data);
       backend.setRecord({
@@ -197,7 +283,7 @@ export async function runSyncCycle(args: {
         lastSyncedAt: new Date().toISOString(),
       });
       publishSyncEvent({ kind: 'success', backendId, text: 'Synced baseline from remote.' });
-      await maybeSyncLanAttachments(backend, parsed.data, userId, 'baseline-pulled');
+      await maybeSyncAttachments(backend, parsed.data, userId, 'baseline-pulled');
       return 'baseline-pulled';
     }
     if (pullOutcome.kind === 'no-snapshot') {
@@ -210,7 +296,7 @@ export async function runSyncCycle(args: {
           lastSyncedAt: new Date().toISOString(),
         });
         publishSyncEvent({ kind: 'success', backendId, text: 'Seeded remote with current workspace.' });
-        await maybeSyncLanAttachments(backend, localData, userId, 'baseline-seeded');
+        await maybeSyncAttachments(backend, localData, userId, 'baseline-seeded');
         return 'baseline-seeded';
       }
       publishOutcome(backendId, 'push', pushOutcome);
@@ -230,7 +316,7 @@ export async function runSyncCycle(args: {
         localFingerprint: currentFingerprint,
         lastSyncedAt: new Date().toISOString(),
       });
-      await maybeSyncLanAttachments(backend, localData, userId, 'pushed');
+      await maybeSyncAttachments(backend, localData, userId, 'pushed');
       return 'pushed';
     }
     publishOutcome(backendId, 'push', pushOutcome);
@@ -249,7 +335,7 @@ export async function runSyncCycle(args: {
       });
       return parsed.kind === 'unsupported-version' ? 'unsupported-remote' : 'corrupt-remote';
     }
-    const blocked = await applyRemoteIfLocalStable(parsed.data);
+    const blocked = await applyRemoteIfLocalStable(parsed.data, currentFingerprint);
     if (blocked) return blocked;
     const fp = await safeFingerprint(parsed.data);
     backend.setRecord({
@@ -257,7 +343,7 @@ export async function runSyncCycle(args: {
       localFingerprint: fp,
       lastSyncedAt: new Date().toISOString(),
     });
-    await maybeSyncLanAttachments(backend, parsed.data, userId, 'pulled');
+    await maybeSyncAttachments(backend, parsed.data, userId, 'pulled');
     return 'pulled';
   }
   if (pullOutcome.kind === 'not-modified') {

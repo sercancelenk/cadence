@@ -12,7 +12,7 @@ import {
 import type { NotesUnlockApi } from '../../providers/NotesUnlockContext';
 import type { Note, NotesLock } from '../../model';
 import { purgeNoteRevisionHistory } from '../../lib/noteRevision/noteRevisionStore';
-import { attachmentRefsFromBody } from '../../lib/richTextAttachmentIndex';
+import { attachmentRefsFromAnyBody } from '../../lib/richTextAttachmentIndex';
 import { canonicalDocSignature } from '../../lib/richTextBody';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
 import type { NoteRevisionCapture } from './useNotesEditor';
@@ -105,6 +105,24 @@ export function useNotesLock({
                 bodyFormat: targetNote.bodyFormat,
                 bodyPlainText: targetNote.bodyPlainText,
               });
+              // Heal attachment bookkeeping for orphan GC. Legacy locked notes
+              // (and notes synced from older peers) may be missing an
+              // attachmentRefs array, which the conservative GC treats as
+              // "opaque" and refuses to prune around. Now that we have the
+              // plaintext, derive the accurate refs and persist them — metadata
+              // only (cipher/body untouched, updatedAt preserved) — so GC can
+              // run again without risking a locked note's images.
+              const healed = attachmentRefsFromAnyBody(body, targetNote.bodyFormat);
+              const current = Array.isArray(targetNote.attachmentRefs)
+                ? targetNote.attachmentRefs
+                : null;
+              const unchanged =
+                current !== null &&
+                current.length === healed.length &&
+                healed.every((id) => current.includes(id));
+              if (!unchanged) {
+                replaceNote({ ...targetNote, attachmentRefs: healed });
+              }
             } finally {
               setBusy(false);
             }
@@ -128,7 +146,7 @@ export function useNotesLock({
               pending?.noteId === targetNote.id
                 ? (pending.bodyFormat ?? targetNote.bodyFormat)
                 : targetNote.bodyFormat ?? decrypted?.bodyFormat;
-            const attachmentRefs = attachmentRefsFromBody(bodyToLock, bodyFormat);
+            const attachmentRefs = attachmentRefsFromAnyBody(bodyToLock, bodyFormat);
             const cipher = await encryptBodyWithMaster(key, bodyToLock);
             const nextNote: Note = {
               ...targetNote,
@@ -137,7 +155,7 @@ export function useNotesLock({
               cipher,
               bodyFormat,
               bodyPlainText: undefined,
-              attachmentRefs: attachmentRefs.length ? attachmentRefs : undefined,
+              attachmentRefs,
               lockedBodySignature: canonicalDocSignature(bodyToLock, bodyFormat),
             };
             replaceNote(nextNote);

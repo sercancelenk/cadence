@@ -634,8 +634,34 @@ function deleteAttachmentFiles(userId, attachmentId) {
   }
 }
 
+// A locked note's body is opaque ciphertext, so GC can only learn which
+// attachments it references from `attachmentRefs`. We treat the PRESENCE of an
+// `attachmentRefs` array as the trust signal: the current format-aware lock /
+// unlock-backfill paths always write an accurate array (for both prosemirror
+// and markdown bodies), and older app versions only ever wrote a refs array
+// for prosemirror notes that genuinely had images — they wrote `undefined`
+// otherwise. So an array is always an accurate enumeration, while a missing
+// array means "never authoritatively scanned" (legacy/markdown/old-peer rows)
+// and the file set could hide references we can't see. In that case we must NOT
+// treat unreferenced files as orphans. Such rows self-heal the next time the
+// user unlocks the note (the backfill writes the array).
+function payloadHasUnscannableLockedNote(payload) {
+  for (const n of payload?.notes || []) {
+    if (!n || n.locked !== true) continue;
+    if (!Array.isArray(n.attachmentRefs)) return true;
+  }
+  return false;
+}
+
 function pruneOrphanAttachments(userId, payload) {
   try {
+    // Data-loss guard: if any locked note's attachment references can't be
+    // determined, skip deletion entirely. Accumulating a few orphan files on
+    // disk is strictly preferable to permanently deleting an image that a
+    // locked note still points at (we could never recover it from ciphertext).
+    if (payloadHasUnscannableLockedNote(payload)) {
+      return { ok: true, pruned: 0, skipped: 'locked-notes-unscannable' };
+    }
     const referenced = collectReferencedAttachmentIdsFromPayload(payload);
     for (const id of collectReferencedAttachmentIdsFromNoteHistory(userId)) {
       referenced.add(id);

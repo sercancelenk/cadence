@@ -403,6 +403,76 @@ describe('runSyncCycle (additional branches)', () => {
     expect(fake.record).toBeNull();
   });
 
+  it('skips applying remote when local is edited during the network pull itself', async () => {
+    // Regression: previously the apply guard only compared local state
+    // before/after the flush step, so edits made while a slow pull was
+    // in flight were silently overwritten. The guard now also compares
+    // against the fingerprint captured BEFORE the pull started.
+    const local = makeData('local');
+    const { computeLocalEtag } = await import('./lanSyncClient');
+    const fp = await computeLocalEtag(local);
+    let current = local;
+    const fake = makeFakeBackend(
+      { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
+      {
+        pull: async () => {
+          // User edits while the pull request is in flight.
+          current = makeData('local-edited-during-pull');
+          return { kind: 'ok', data: makeData('remote'), etag: 'rev-2' };
+        },
+      },
+    );
+    const applied: AppData[] = [];
+    const { events, unsubscribe } = captureEvents();
+
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: local,
+      getLocalData: () => current,
+      flushLocal: async () => {},
+      applyRemote: (d) => applied.push(d),
+    });
+
+    expect(action).toBe('local-changed-during-pull');
+    expect(applied).toHaveLength(0);
+    expect(fake.record?.etag).toBe('rev-1');
+    expect(events.some((e) => e.code === 'local-edits')).toBe(true);
+    unsubscribe();
+  });
+
+  it('refuses to apply a structurally-valid but empty remote over a populated local workspace', async () => {
+    // `parseRemoteSnapshot` only checks shape, so an all-empty payload
+    // (e.g. pushed by a buggy/old peer) passes it. Applying it would wipe
+    // the user's data — the guard must skip and surface an error instead.
+    const local = {
+      ...makeData('local'),
+      notes: [
+        { id: 'n1', title: 'Keep me', body: 'important', locked: false, createdAt: '2026-05-19T00:00:00.000Z', updatedAt: '2026-05-19T00:00:00.000Z' },
+      ],
+    } as unknown as AppData;
+    const { computeLocalEtag } = await import('./lanSyncClient');
+    const fp = await computeLocalEtag(local);
+    const fake = makeFakeBackend(
+      { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
+      { pull: { kind: 'ok', data: makeData('remote'), etag: 'rev-2' } }, // makeData = empty workspace
+    );
+    const applied: AppData[] = [];
+    const { events, unsubscribe } = captureEvents();
+
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: local,
+      getLocalData: () => local,
+      applyRemote: (d) => applied.push(d),
+    });
+
+    expect(action).toBe('empty-remote-skipped');
+    expect(applied).toHaveLength(0);
+    expect(fake.record?.etag).toBe('rev-1'); // record untouched → retried later
+    expect(events.some((e) => e.code === 'empty-remote')).toBe(true);
+    unsubscribe();
+  });
+
   it('syncs LAN attachments after a successful push on lan backend', async () => {
     const syncSpy = vi.spyOn(await import('./lanAttachmentSync'), 'syncLanAttachments');
     const lanBackend: SyncBackend = {
@@ -455,6 +525,72 @@ describe('runSyncCycle (additional branches)', () => {
 
     expect(syncSpy).not.toHaveBeenCalled();
     syncSpy.mockRestore();
+  });
+
+  it('warns once per session that gdrive sync omits images when attachments exist', async () => {
+    const { __resetCloudAttachmentNotice } = await import('./useSyncAutoSync');
+    __resetCloudAttachmentNotice();
+
+    const local = {
+      ...makeData('local'),
+      notes: [
+        {
+          id: 'n1',
+          title: 'has image',
+          body: '',
+          locked: true,
+          cipher: { ivB64: 'a', cipherB64: 'b' },
+          attachmentRefs: ['att-12345678'],
+          createdAt: '2026-05-19T00:00:00.000Z',
+          updatedAt: '2026-05-19T00:00:00.000Z',
+        },
+      ],
+    } as unknown as AppData;
+
+    // Always-dirty drive backend: getRecord returns a stale fingerprint and
+    // setRecord is a no-op, so every cycle pushes (a "successful" action).
+    const driveBackend: SyncBackend = {
+      id: 'gdrive',
+      displayName: 'Drive',
+      e2eEncryption: true,
+      status: async () => 'ready',
+      pull: async () => ({ kind: 'not-modified' }),
+      push: async () => ({ kind: 'ok', etag: 'rev-x' }),
+      getRecord: () => ({ etag: 'rev-1', localFingerprint: '"always-stale"', lastSyncedAt: '2026-05-19T00:00:00.000Z' }),
+      setRecord: () => {},
+      describe: () => 'drive',
+    };
+
+    const { events, unsubscribe } = captureEvents();
+    const a1 = await runSyncCycle({ backend: driveBackend, localData: local, applyRemote: () => {}, userId: 'u1' });
+    const a2 = await runSyncCycle({ backend: driveBackend, localData: local, applyRemote: () => {}, userId: 'u1' });
+
+    expect(a1).toBe('pushed');
+    expect(a2).toBe('pushed');
+    expect(events.filter((e) => e.code === 'attachments-not-synced')).toHaveLength(1);
+    unsubscribe();
+  });
+
+  it('does not warn about gdrive image sync when there are no attachments', async () => {
+    const { __resetCloudAttachmentNotice } = await import('./useSyncAutoSync');
+    __resetCloudAttachmentNotice();
+
+    const driveBackend: SyncBackend = {
+      id: 'gdrive',
+      displayName: 'Drive',
+      e2eEncryption: true,
+      status: async () => 'ready',
+      pull: async () => ({ kind: 'not-modified' }),
+      push: async () => ({ kind: 'ok', etag: 'rev-x' }),
+      getRecord: () => ({ etag: 'rev-1', localFingerprint: '"always-stale"', lastSyncedAt: '2026-05-19T00:00:00.000Z' }),
+      setRecord: () => {},
+      describe: () => 'drive',
+    };
+
+    const { events, unsubscribe } = captureEvents();
+    await runSyncCycle({ backend: driveBackend, localData: makeData('local'), applyRemote: () => {}, userId: 'u1' });
+    expect(events.some((e) => e.code === 'attachments-not-synced')).toBe(false);
+    unsubscribe();
   });
 
   it('continues when computeLocalEtag throws (safe fingerprint fallback)', async () => {

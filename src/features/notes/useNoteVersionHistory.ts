@@ -13,6 +13,7 @@ import {
 } from '../../lib/noteRevision/noteRevisionStore';
 import type { NoteRevisionPayload } from '../../lib/noteRevision/types';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
+import { runBeforeFlushHooks } from '../../lib/pendingSaveFlush';
 import { displayNoteTitle } from './notePreferences';
 
 export function useNoteVersionHistory(
@@ -143,6 +144,13 @@ export function useNoteVersionHistory(
     setBusy(true);
     setError(null);
     try {
+      // Commit any in-flight edits (e.g. a locked note still encrypting its
+      // latest keystrokes) BEFORE we checkpoint and overwrite. Running the
+      // before-flush hooks both writes those edits into AppData and records an
+      // autosave revision, so restoring an older version can never silently
+      // discard pending changes that hadn't been persisted yet.
+      await runBeforeFlushHooks();
+      await flushPendingSave();
       const checkpointOk = await tryAppendNoteRevision(
         noteSnapshotFromNote(note),
         noteSnapshotFromNote(note),
