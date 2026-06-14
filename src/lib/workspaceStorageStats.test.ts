@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { emptyData } from '../model';
 import { estimateWorkspaceStorage, formatStorageBytes } from './workspaceStorageStats';
 
@@ -80,6 +80,23 @@ describe('estimateWorkspaceStorage', () => {
     expect(b.teamItemsBytes).toBeGreaterThan(0);
     expect(b.otherBytes).toBeGreaterThan(0);
     expect(b.totalBytes).toBeGreaterThan(b.teamItemsBytes);
+  });
+
+  it('returns zero bytes when JSON serialisation fails', () => {
+    const stringify = vi.spyOn(JSON, 'stringify').mockImplementation(() => {
+      throw new TypeError('circular');
+    });
+    const b = estimateWorkspaceStorage(emptyData());
+    expect(b.totalBytes).toBe(0);
+    stringify.mockRestore();
+  });
+
+  it('estimates byte length without TextEncoder', () => {
+    const Original = globalThis.TextEncoder;
+    vi.stubGlobal('TextEncoder', undefined);
+    const b = estimateWorkspaceStorage(emptyData());
+    expect(b.totalBytes).toBeGreaterThan(0);
+    vi.stubGlobal('TextEncoder', Original);
   });
 });
 

@@ -9,8 +9,9 @@
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { parseRemoteSnapshot } from './syncSnapshotGuard';
+import { describe, expect, it, vi } from 'vitest';
+import { parseRemoteSnapshot, snapshotParseErrorMessage } from './syncSnapshotGuard';
+import * as model from '../model';
 import { appDataToPersistJson, DATA_VERSION } from '../model';
 import { filterPlanningHubItems } from './planningMatrix';
 import { collectActivityRecords } from './todoActivityReport';
@@ -160,6 +161,30 @@ describe('parseRemoteSnapshot', () => {
     expect(filterPlanningHubItems(result.data.todoItems).length).toBeGreaterThanOrEqual(5);
     const activity = collectActivityRecords(result.data, { source: 'personal' });
     expect(activity.length).toBeGreaterThan(0);
+  });
+
+  it('rethrows unexpected normalisation errors', () => {
+    vi.spyOn(model, 'normalizeData').mockImplementation(() => {
+      throw new TypeError('unexpected');
+    });
+    expect(() => parseRemoteSnapshot({ notes: [{ id: 'n1', title: 'A', body: '' }] })).toThrow(
+      'unexpected',
+    );
+    vi.restoreAllMocks();
+  });
+
+  it('formats unsupported-version errors for the UI', () => {
+    const msg = snapshotParseErrorMessage({
+      kind: 'unsupported-version',
+      fileVersion: DATA_VERSION + 2,
+      error: 'unsupported',
+    });
+    expect(msg).toMatch(/data version/);
+    expect(msg).toMatch(String(DATA_VERSION + 2));
+  });
+
+  it('formats invalid snapshot errors for the UI', () => {
+    expect(snapshotParseErrorMessage({ kind: 'invalid' })).toMatch(/unrecognisable shape/i);
   });
 
   it('returns unsupported-version for future workspace files instead of throwing', () => {

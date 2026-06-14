@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { zipStorePack, zipStoreUnpack } from './zipStore';
-import { parseBundleEntries, resolveBundleRoot } from './parse';
+import { isSafeBundleEntryPath, parseBundleEntries, resolveBundleRoot } from './parse';
 import { BACKUP_DATA_FILE } from './types';
 
 describe('backupBundle zipStore', () => {
@@ -14,6 +14,35 @@ describe('backupBundle zipStore', () => {
     const out = zipStoreUnpack(zip);
     expect(new TextDecoder().decode(out['data.json'])).toBe('{"notes":[]}');
     expect(new TextDecoder().decode(out['attachments/note-abcd12345678.bin'])).toBe('fake-image');
+  });
+
+  it('rejects invalid and unsupported ZIP archives', () => {
+    expect(zipStoreUnpack(new Uint8Array(10))).toEqual({});
+    expect(() => zipStoreUnpack(new Uint8Array(22))).toThrow(/Not a valid ZIP archive/i);
+
+    const zip = zipStorePack({ 'data.json': new TextEncoder().encode('{}') });
+    const dv = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+    let centralOffset = -1;
+    for (let i = 0; i < zip.length - 4; i++) {
+      if (dv.getUint32(i, true) === 0x02014b50) {
+        centralOffset = i;
+        break;
+      }
+    }
+    expect(centralOffset).toBeGreaterThan(0);
+    dv.setUint16(centralOffset + 10, 8);
+    expect(() => zipStoreUnpack(zip)).toThrow(/Unsupported ZIP compression/i);
+
+    const corrupt = zip.slice();
+    const corruptDv = new DataView(corrupt.buffer, corrupt.byteOffset, corrupt.byteLength);
+    corruptDv.setUint32(centralOffset, 0);
+    expect(() => zipStoreUnpack(corrupt)).toThrow(/central directory is corrupt/i);
+
+    const missingLocal = zip.slice();
+    const missingLocalDv = new DataView(missingLocal.buffer, missingLocal.byteOffset, missingLocal.byteLength);
+    const localOffset = missingLocalDv.getUint32(centralOffset + 42, true);
+    missingLocalDv.setUint32(localOffset, 0);
+    expect(() => zipStoreUnpack(missingLocal)).toThrow(/local header missing/i);
   });
 });
 
@@ -56,5 +85,41 @@ describe('backupBundle parse', () => {
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/too large/i);
+  });
+
+  it('rejects unsafe and nested bundle layouts', () => {
+    expect(isSafeBundleEntryPath('../data.json')).toBe(false);
+    expect(isSafeBundleEntryPath('__MACOSX/foo')).toBe(false);
+    expect(() => parseBundleEntries({})).toThrow(/missing data\.json/i);
+    const enc = new TextEncoder();
+    expect(() =>
+      parseBundleEntries({
+        'folder-a/data.json': enc.encode('{}'),
+        'folder-b/data.json': enc.encode('{}'),
+      }),
+    ).toThrow(/multiple folders/i);
+    expect(() =>
+      parseBundleEntries({
+        [BACKUP_DATA_FILE]: enc.encode('not-json'),
+      }),
+    ).toThrow(/not valid JSON/i);
+  });
+
+  it('unwraps commit envelopes and tolerates broken manifests', () => {
+    const enc = new TextEncoder();
+    const bundle = parseBundleEntries({
+      [BACKUP_DATA_FILE]: enc.encode(
+        JSON.stringify({
+          magic: 'CDNC1',
+          workspace: { notes: [{ id: 'n1', title: 'T', body: '' }], teams: [] },
+        }),
+      ),
+      'manifest.json': enc.encode('not-json'),
+    });
+    expect(bundle.manifest).toBeNull();
+    expect(bundle.workspaceRaw).toEqual({
+      notes: [{ id: 'n1', title: 'T', body: '' }],
+      teams: [],
+    });
   });
 });

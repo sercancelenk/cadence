@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectReferencedAttachmentIds } from './richTextAttachmentIndex';
+import { collectReferencedAttachmentIds, attachmentRefsFromBody } from './richTextAttachmentIndex';
 import { serializeRichDoc } from './richText';
 import type { AppData } from '../model';
 
@@ -93,6 +93,23 @@ describe('collectReferencedAttachmentIds', () => {
     expect(collectReferencedAttachmentIds(data)).toContain('utility-scratch-333333333333');
   });
 
+  it('collects explicit attachmentRefs on notes', () => {
+    const data = baseData();
+    data.notes = [
+      {
+        id: 'n1',
+        title: 'T',
+        body: '',
+        locked: false,
+        sortOrder: 0,
+        createdAt: '2020-01-01T00:00:00.000Z',
+        updatedAt: '2020-01-01T00:00:00.000Z',
+        attachmentRefs: ['note-sidecar-123456789'],
+      },
+    ];
+    expect(collectReferencedAttachmentIds(data)).toEqual(['note-sidecar-123456789']);
+  });
+
   it('ignores legacy markdown bodies', () => {
     const data = baseData();
     data.notes = [
@@ -107,5 +124,21 @@ describe('collectReferencedAttachmentIds', () => {
       },
     ];
     expect(collectReferencedAttachmentIds(data)).toEqual([]);
+  });
+});
+
+describe('attachmentRefsFromBody', () => {
+  it('returns ids from a prosemirror body', () => {
+    const body = serializeRichDoc({
+      type: 'doc',
+      content: [
+        {
+          type: 'image',
+          attrs: { attachmentId: 'note-only-1234567890', src: 'cadence-attachment://note-only-1234567890' },
+        },
+      ],
+    });
+    expect(attachmentRefsFromBody(body, 'prosemirror')).toEqual(['note-only-1234567890']);
+    expect(attachmentRefsFromBody('plain', undefined)).toEqual([]);
   });
 });

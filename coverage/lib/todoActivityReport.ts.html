@@ -23,16 +23,16 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">94.85% </span>
+                <span class="strong">95.03% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>129/136</span>
+                <span class='fraction'>134/141</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">80.67% </span>
+                <span class="strong">81.3% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>96/119</span>
+                <span class='fraction'>100/123</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">99.13% </span>
+                <span class="strong">99.16% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>114/115</span>
+                <span class='fraction'>119/120</span>
             </div>
         
             
@@ -422,7 +422,21 @@
 <a name='L357'></a><a href='#L357'>357</a>
 <a name='L358'></a><a href='#L358'>358</a>
 <a name='L359'></a><a href='#L359'>359</a>
-<a name='L360'></a><a href='#L360'>360</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a>
+<a name='L373'></a><a href='#L373'>373</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -498,15 +512,16 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">11x</span>
-<span class="cline-any cline-yes">11x</span>
-<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">12x</span>
+<span class="cline-any cline-yes">12x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -552,12 +567,23 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">10x</span>
-<span class="cline-any cline-yes">10x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">8x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -790,6 +816,7 @@ import { teamPerson } from './teamPaths';
 &nbsp;
 export type ActivityPeriodPreset =
   | 'today'
+  | 'yesterday'
   | 'this_week'
   | 'this_month'
   | 'this_year'
@@ -850,6 +877,7 @@ export type ActivityReport = {
 &nbsp;
 export const ACTIVITY_PERIOD_OPTIONS: { value: ActivityPeriodPreset; label: string }[] = [
   { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
   { value: 'this_week', label: 'This week' },
   { value: 'this_month', label: 'This month' },
   { value: 'this_year', label: 'This year' },
@@ -923,6 +951,17 @@ export function getActivityPeriod(preset: ActivityPeriodPreset, ref = new Date()
       label: start.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }),
     };
   }
+  if (preset === 'yesterday') {
+    const end = startOfDay(now);
+    const start = new Date(end);
+    start.setDate(start.getDate() - 1);
+    return {
+      preset,
+      start,
+      end,
+      label: start.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }),
+    };
+  }
   if (preset === 'this_week') {
     const start = startOfWeek(now);
     const end = new Date(start);
@@ -972,7 +1011,7 @@ export function getActivityPeriod(preset: ActivityPeriodPreset, ref = new Date()
 &nbsp;
 /** Reference instant for “still open” — end of period for historical presets, now otherwise. */
 export function activityOpenReferenceAt(period: ActivityPeriod, ref = new Date()): Date {
-  if (period.preset === 'last_year') return period.end;
+  if (period.preset === 'last_year' || period.preset === 'yesterday') return period.end;
   return ref;
 }
 &nbsp;
@@ -1147,7 +1186,7 @@ export function buildActivityReportFromData(
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-06-11T18:40:48.653Z
+                at 2026-06-14T00:23:19.749Z
             </div>
         <script src="../prettify.js"></script>
         <script>

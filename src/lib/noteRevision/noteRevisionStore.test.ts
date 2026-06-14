@@ -125,6 +125,59 @@ describe('noteRevisionStore', () => {
     });
   });
 
+  it('returns false when a forced locked snapshot lacks cipher material', async () => {
+    (window as { cadence?: { noteHistoryAppend?: ReturnType<typeof vi.fn> } }).cadence = {
+      noteHistoryAppend: vi.fn().mockResolvedValue({ ok: true }),
+    };
+    const locked = { ...noteSnapshotFromNote(note), locked: true, cipher: undefined };
+    await expect(
+      tryAppendNoteRevision(null, locked, 'manual', { force: true }),
+    ).resolves.toBe(false);
+  });
+
+  it('returns empty lists when IPC reports failure', async () => {
+    (window as { cadence?: { noteHistoryList?: ReturnType<typeof vi.fn> } }).cadence = {
+      noteHistoryList: vi.fn().mockResolvedValue({ ok: false }),
+    };
+    await expect(listNoteRevisions(note.id)).resolves.toEqual([]);
+  });
+
+  it('returns null when read IPC reports failure', async () => {
+    (window as { cadence?: { noteHistoryRead?: ReturnType<typeof vi.fn> } }).cadence = {
+      noteHistoryRead: vi.fn().mockResolvedValue({ ok: false }),
+    };
+    await expect(readNoteRevision(note.id, 'rev-1')).resolves.toBeNull();
+  });
+
+  it('swallows purge IPC failures', async () => {
+    (window as { cadence?: { noteHistoryPurge?: ReturnType<typeof vi.fn> } }).cadence = {
+      noteHistoryPurge: vi.fn().mockRejectedValue(new Error('ipc down')),
+    };
+    await expect(purgeNoteRevisionHistory(note.id)).resolves.toBeUndefined();
+  });
+
+  it('appends locked revisions with cipher metadata', async () => {
+    const append = vi.fn().mockResolvedValue({ ok: true });
+    (window as { cadence?: { noteHistoryAppend?: typeof append } }).cadence = {
+      noteHistoryAppend: append,
+    };
+    const locked = {
+      ...noteSnapshotFromNote(note),
+      locked: true,
+      cipher: { ivB64: 'iv', cipherB64: 'cipher' },
+      attachmentRefs: ['att-1'],
+      lockedBodySignature: 'sig',
+    };
+    await tryAppendNoteRevision(null, locked, 'lock', { force: true });
+    expect(append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachmentIds: ['att-1'],
+        plainContentSignature: 'sig',
+        cipher: locked.cipher,
+      }),
+    );
+  });
+
   it('maps locked revisions to cipher patches', () => {
     const patch = revisionToNotePatch({
       id: 'r2',

@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { isElectronApp, isMobileViewport, isMobileWeb, MOBILE_BREAKPOINT_PX, useMobileWeb } from './runtime';
+import {
+  backupPlatform,
+  backupPlatformLabel,
+  isElectronApp,
+  isMobileViewport,
+  isMobileWeb,
+  MOBILE_BREAKPOINT_PX,
+  useMobileWeb,
+} from './runtime';
 
 function mockMatchMedia(matches: boolean) {
   window.matchMedia = vi.fn((query: string) => {
@@ -17,6 +25,28 @@ function mockMatchMedia(matches: boolean) {
     } as MediaQueryList;
   });
 }
+
+describe('backupPlatform', () => {
+  afterEach(() => {
+    delete window.cadence;
+    delete (window as { matchMedia?: typeof window.matchMedia }).matchMedia;
+  });
+
+  it('prefers desktop when Electron IPC is available', () => {
+    window.cadence = { saveData: async () => true } as unknown as Window['cadence'];
+    expect(backupPlatform()).toBe('desktop');
+    expect(backupPlatformLabel('desktop')).toBe('Desktop app');
+  });
+
+  it('detects mobile web and labels each platform', () => {
+    mockMatchMedia(true);
+    expect(backupPlatform()).toBe('mobile');
+    expect(backupPlatformLabel('mobile')).toBe('Mobile browser');
+    mockMatchMedia(false);
+    expect(backupPlatform()).toBe('web');
+    expect(backupPlatformLabel('web')).toBe('Web browser');
+  });
+});
 
 describe('isElectronApp', () => {
   afterEach(() => {

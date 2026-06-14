@@ -16,6 +16,7 @@ import {
 import {
   addItem,
   addNote,
+  addNoteGroup,
   addPerson,
   addTeam,
   addTodoGroup,
@@ -714,6 +715,26 @@ describe('notes and utilities', () => {
     expect(d.notes.find((n) => n.id === 'n-2')?.title).toBe('Patched');
     d = patchNote(d, 'n-2', { pinned: true });
     expect(d.notes.find((n) => n.id === 'n-2')?.pinned).toBe(true);
+  });
+
+  it('patchNote assigns and clears note list membership', () => {
+    let d = addNote(emptyData(), 'n-3');
+    d = addNoteGroup(d, 'Inbox', 'list-1');
+    d = patchNote(d, 'n-3', { groupId: 'list-1' });
+    expect(d.notes.find((n) => n.id === 'n-3')?.groupId).toBe('list-1');
+    d = patchNote(d, 'n-3', { groupId: 'missing-list' });
+    expect(d.notes.find((n) => n.id === 'n-3')?.groupId).toBeUndefined();
+    d = patchNote(d, 'n-3', { groupId: undefined });
+    expect(d.notes.find((n) => n.id === 'n-3')?.groupId).toBeUndefined();
+  });
+
+  it('addNoteGroup creates a list with stable ordering', () => {
+    const base = emptyData();
+    const next = addNoteGroup(base, '  Ideas  ', 'list-a');
+    expect(next.noteGroups).toHaveLength(1);
+    expect(next.noteGroups[0]).toEqual(
+      expect.objectContaining({ id: 'list-a', name: 'Ideas', sortOrder: expect.any(Number) }),
+    );
   });
 
   it('removeNote drops note from list', () => {
