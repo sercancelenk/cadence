@@ -27,6 +27,11 @@ vi.mock('../richTextAttachmentIndex', () => ({
 
 const TS = '2026-06-01T12:00:00.000Z';
 
+/** Copy bytes so TS accepts them as BlobPart (ArrayBuffer vs ArrayBufferLike). */
+function zipAsFile(bytes: Uint8Array, name = 'cadence-backup.zip'): File {
+  return new File([bytes.slice()], name, { type: 'application/zip' });
+}
+
 function minimalWorkspace(): AppData {
   return normalizeData({
     teams: [{ id: 't1', name: 'Team', createdAt: TS, status: 'active' }],
@@ -48,7 +53,7 @@ function buildPortableZip(extra?: Record<string, Uint8Array>): File {
     ),
     ...extra,
   };
-  return new File([zipStorePack(files)], 'cadence-backup.zip', { type: 'application/zip' });
+  return zipAsFile(zipStorePack(files));
 }
 
 describe('portable backup', () => {
@@ -256,7 +261,7 @@ describe('portable backup', () => {
 
   it('rejects ZIP bundles missing data.json', async () => {
     const { importPortableBackupFile } = await import('./portable');
-    const file = new File([zipStorePack({ 'readme.txt': new TextEncoder().encode('hi') })], 'empty.zip');
+    const file = zipAsFile(zipStorePack({ 'readme.txt': new TextEncoder().encode('hi') }), 'empty.zip');
     const result = await importPortableBackupFile(file, {
       userId: 'u1',
       importWorkspace: async () => ({ ok: true }),
@@ -290,20 +295,18 @@ describe('portable backup', () => {
   it('rejects ZIP bundles with unrecognisable workspace data', async () => {
     const { importPortableBackupFile } = await import('./portable');
     const enc = new TextEncoder();
-    const file = new File(
-      [
-        zipStorePack({
-          [BACKUP_DATA_FILE]: enc.encode('{}'),
-          [BACKUP_MANIFEST_FILE]: enc.encode(
-            JSON.stringify({
-              format: BACKUP_BUNDLE_FORMAT,
-              exportedAt: TS,
-              attachmentsPortable: true,
-              attachmentCount: 0,
-            }),
-          ),
-        }),
-      ],
+    const file = zipAsFile(
+      zipStorePack({
+        [BACKUP_DATA_FILE]: enc.encode('{}'),
+        [BACKUP_MANIFEST_FILE]: enc.encode(
+          JSON.stringify({
+            format: BACKUP_BUNDLE_FORMAT,
+            exportedAt: TS,
+            attachmentsPortable: true,
+            attachmentCount: 0,
+          }),
+        ),
+      }),
       'empty-workspace.zip',
     );
     const result = await importPortableBackupFile(file, {
