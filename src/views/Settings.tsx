@@ -15,7 +15,7 @@ import {
 } from '../lib/appBranding';
 import { resolveAppProfileLabel } from '../lib/appProfileLabel';
 import type { AIProvider } from '../model';
-import { AI_PROVIDER_OPTIONS, appDataToPersistJson, compactAppDataForPersist } from '../model';
+import { AI_PROVIDER_OPTIONS, appDataToPersistJson, compactAppDataForPersist, normalizeData } from '../model';
 import type { CacheBreakdownEntry, CacheStats, DataFileInfo, DataSources, SaveError } from '../vite-env';
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
 import { RecoveryCodesPanel } from '../components/RecoveryCodesPanel';
@@ -236,7 +236,12 @@ export function Settings() {
     } catch {
       /* best effort */
     }
-    const blob = new Blob([appDataToPersistJson(data)], { type: 'application/json' });
+    // Normalize defensively so the backup file is always a complete, canonical
+    // (current-version) schema — even if the in-memory snapshot predates a
+    // migration — which keeps round-trip restores forward-compatible.
+    const blob = new Blob([appDataToPersistJson(normalizeData(data))], {
+      type: 'application/json',
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

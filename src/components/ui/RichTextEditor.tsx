@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 import { SYNC_BEFORE_APPLY } from '../../lib/syncApplyGuard';
+import { registerBeforeFlushHook } from '../../lib/pendingSaveFlush';
 import { createPortal } from 'react-dom';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { RichTextBodyFormat, RichTextDoc, RichTextPayload } from '../../lib/richText';
@@ -324,6 +325,13 @@ export function RichTextEditor({
     window.addEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
     return () => window.removeEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
   }, [flushPending]);
+
+  // Flush the debounced onChange buffer whenever a consumer drains pending
+  // saves (version restore, "Save version", delete, pre-sync apply). Without
+  // this the last <=120ms of typing could be missed by those code paths since
+  // the editor stays mounted (so the unmount flush never fires). Runs in the
+  // 'editor' phase so locked-note encryption (default phase) sees this content.
+  useEffect(() => registerBeforeFlushHook(() => flushPending(), 'editor'), [flushPending]);
 
   const trackAttachmentId = useCallback((id: string) => {
     attachmentIdsRef.current.add(id);

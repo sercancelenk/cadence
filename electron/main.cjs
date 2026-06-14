@@ -1093,17 +1093,18 @@ function isEncryptedEnvelope(text) {
  * Atomic binary write (same durability guarantees as `writeJsonText`).
  */
 function writeBinaryFile(filePath, buffer) {
+  const tmp = `${filePath}.tmp`;
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const tmp = `${filePath}.tmp`;
     const fd = fs.openSync(tmp, 'w');
     try {
       fs.writeSync(fd, buffer, 0, buffer.length);
-      try {
-        fs.fsyncSync(fd);
-      } catch (err) {
-        console.warn('[cadence] fsync(file) failed (continuing)', err);
-      }
+      // A failed fsync means the bytes may not have reached stable storage. For
+      // an attachment binary that is silent corruption after a crash, so let it
+      // throw and abort the write rather than promoting a possibly-truncated
+      // temp file into place. (Directory fsync below stays best-effort because
+      // some platforms — Windows — legitimately don't support it.)
+      fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
     }
@@ -1121,6 +1122,12 @@ function writeBinaryFile(filePath, buffer) {
     return true;
   } catch (err) {
     console.error('[cadence] failed to write binary', filePath, err);
+    // Best-effort cleanup so a partial temp file can't linger or be promoted.
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* nothing to clean up */
+    }
     return false;
   }
 }
@@ -3219,8 +3226,17 @@ function loadWorkspaceFromBackupSet(uid, backupPath) {
     if (!name.includes('-shard-')) continue;
     const sr = readParsedFile(uid, path.join(dir, name));
     if (!sr.ok) {
-      console.warn('[cadence] skipping unreadable shard backup', name, sr.reason);
-      continue;
+      // The base file decrypted fine, so the key is correct — an unreadable
+      // sibling shard means this backup set is genuinely incomplete/corrupt.
+      // Silently skipping it would reconstruct a PARTIAL workspace and restore
+      // it over the live data: exactly the silent data loss we must prevent.
+      // Fail loud so the user can pick a different backup instead.
+      console.error('[cadence] unreadable shard in backup set — refusing partial restore', name, sr.reason);
+      return {
+        ok: false,
+        reason: 'incomplete-backup',
+        error: `This backup is incomplete: a monthly data file ("${name}") could not be read (${sr.reason || 'unknown error'}). Restoring it would silently drop part of your notes and tasks. Choose a different backup, or repair this one before restoring.`,
+      };
     }
     shardPartials.push(unwrapShardPayload(sr.parsed));
   }
@@ -3385,14 +3401,22 @@ ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
   // Snapshot the existing live file under a "pre-restore" label so the user
   // can undo the restore if they picked the wrong source.
   snapshotCurrentDataFile(uid, 'pre-restore');
-  const attBackup = pairedAttachmentsBackupDir(resolved);
-  if (attBackup) restoreAttachmentsFromBackupDir(uid, attBackup);
-  const histBackup = pairedNoteHistoryBackupDir(resolved);
-  if (histBackup) importNoteHistoryFromDir(uid, histBackup);
   workspaceImportLockUid = uid;
   try {
+    // Commit the workspace FIRST. `writeUserData` preflights the data version
+    // (refusing a future-version backup) and durably writes atomically, so a
+    // failed/refused commit leaves the live attachments + note history intact.
+    // Only once the workspace is on disk do we swap the sidecars — otherwise a
+    // commit failure would strand new attachments/history against the old
+    // workspace (dangling refs / orphaned blobs).
     const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
-    return w.ok ? { ok: true, restoredFrom: path.basename(resolved), writeGeneration: w.writeGeneration } : w;
+    if (!w.ok) return w;
+
+    const attBackup = pairedAttachmentsBackupDir(resolved);
+    if (attBackup) restoreAttachmentsFromBackupDir(uid, attBackup);
+    const histBackup = pairedNoteHistoryBackupDir(resolved);
+    if (histBackup) importNoteHistoryFromDir(uid, histBackup);
+    return { ok: true, restoredFrom: path.basename(resolved), writeGeneration: w.writeGeneration };
   } finally {
     workspaceImportLockUid = null;
   }
@@ -3788,16 +3812,21 @@ ipcMain.handle('data:importBundle', async () => {
   }
   snapshotCurrentDataFile(uid, 'pre-import');
   snapshotNoteHistoryForUser(uid, 'pre-import', Date.now());
-  const attSrc = path.join(folder, 'attachments');
-  const attResult = fs.existsSync(attSrc)
-    ? importAttachmentsPortableFromDir(uid, attSrc)
-    : { restored: 0, skipped: 0 };
-  const histSrc = path.join(folder, NOTE_HISTORY_DIRNAME);
-  if (fs.existsSync(histSrc)) importNoteHistoryFromDir(uid, histSrc);
   workspaceImportLockUid = uid;
   try {
+    // Commit the workspace FIRST (version-preflighted + atomic). Only after it
+    // is durably on disk do we swap the attachment/history sidecars, so a
+    // failed/refused commit can't leave new sidecars paired with the old
+    // workspace.
     const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
     if (!w.ok) return w;
+
+    const attSrc = path.join(folder, 'attachments');
+    const attResult = fs.existsSync(attSrc)
+      ? importAttachmentsPortableFromDir(uid, attSrc)
+      : { restored: 0, skipped: 0 };
+    const histSrc = path.join(folder, NOTE_HISTORY_DIRNAME);
+    if (fs.existsSync(histSrc)) importNoteHistoryFromDir(uid, histSrc);
     const salvaged = salvageReferencedAttachmentsLocally(uid, payload);
     return {
       ok: true,

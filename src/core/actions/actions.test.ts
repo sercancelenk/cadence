@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { emptyData, type AppData } from '../model';
 import {
   addItem,
+  addNote,
   addPerson,
   addTodoItem,
+  moveNoteToGroup,
+  patchNote,
+  patchNoteLockState,
   removeItem,
   removePerson,
   removeTodoItem,
@@ -151,6 +155,120 @@ describe('core actions — data safety', () => {
     expect(next.items.find((i) => i.id === itemId)?.dueAt).toBe('2026-06-15T12:00:00.000Z');
     expect(next.items.find((i) => i.id === itemId)?.remindAt).toBe(remindAt);
     expect(next.notifiedReminderIds).toContain(key);
+  });
+});
+
+describe('patchNoteLockState — locked-note encrypt commit', () => {
+  const cipher = { ivB64: 'aXY=', cipherB64: 'Y2lwaGVy' };
+
+  function seedNote(): { data: AppData; id: string } {
+    const data = addNote(emptyData(), 'note-lock-1');
+    return { data, id: data.notes[0]!.id };
+  }
+
+  it('clears plaintext and writes the cipher/lock fields', () => {
+    const { data, id } = seedNote();
+    const withBody = patchNote(data, id, { body: 'secret plan', bodyFormat: 'markdown' });
+    const next = patchNoteLockState(withBody, id, {
+      cipher,
+      bodyFormat: 'prosemirror',
+      attachmentRefs: ['att-1'],
+      lockedBodySignature: 'sig-abc',
+    });
+    const note = next.notes.find((n) => n.id === id)!;
+    expect(note.locked).toBe(true);
+    expect(note.body).toBe('');
+    expect(note.bodyPlainText).toBeUndefined();
+    expect(note.cipher).toEqual(cipher);
+    expect(note.bodyFormat).toBe('prosemirror');
+    expect(note.attachmentRefs).toEqual(['att-1']);
+    expect(note.lockedBodySignature).toBe('sig-abc');
+  });
+
+  it('preserves a concurrent title/pin edit made during the encrypt window (BLOCKER #1)', () => {
+    const { data, id } = seedNote();
+    // Snapshot captured at keystroke time (what the async encrypt closure holds).
+    const stale = data.notes[0]!;
+    expect(stale.title).toBe('');
+    // While the body encrypts, the user retitles and pins the note.
+    const liveData = patchNote(data, id, { title: 'Renamed while locking', pinned: true });
+    // The encrypt result is committed by merging onto the LIVE note, not the
+    // stale snapshot — so the rename/pin must survive.
+    const next = patchNoteLockState(liveData, id, {
+      cipher,
+      bodyFormat: 'prosemirror',
+      attachmentRefs: [],
+      lockedBodySignature: 'sig-1',
+    });
+    const note = next.notes.find((n) => n.id === id)!;
+    expect(note.title).toBe('Renamed while locking');
+    expect(note.pinned).toBe(true);
+    expect(note.locked).toBe(true);
+    expect(note.cipher).toEqual(cipher);
+  });
+
+  it('no-ops when the note was deleted during the encrypt window', () => {
+    const { data, id } = seedNote();
+    const deleted: AppData = { ...data, notes: [] };
+    const next = patchNoteLockState(deleted, id, {
+      cipher,
+      attachmentRefs: [],
+      lockedBodySignature: 'sig-1',
+    });
+    expect(next.notes).toHaveLength(0);
+  });
+});
+
+describe('moveNoteToGroup — manual order safety', () => {
+  function withNote(data: AppData, patch: Partial<import('../model').Note>): AppData {
+    const id = `n-${data.notes.length + 1}`;
+    const t = '2026-01-01T00:00:00.000Z';
+    return {
+      ...data,
+      notes: [
+        ...data.notes,
+        { id, title: id, body: '', locked: false, createdAt: t, updatedAt: t, ...patch },
+      ],
+    };
+  }
+
+  it('appends to the destination tier with a non-colliding sortOrder', () => {
+    let data = emptyData();
+    data = { ...data, noteGroups: [{ id: 'g1', name: 'G1', sortOrder: 0, createdAt: 'x' }] };
+    // Two notes already in g1 with manual order 0,1; one ungrouped note to move.
+    data = withNote(data, { groupId: 'g1', sortOrder: 0 });
+    data = withNote(data, { groupId: 'g1', sortOrder: 1 });
+    data = withNote(data, { groupId: undefined, sortOrder: 0 });
+    const movingId = data.notes[2]!.id;
+    const next = moveNoteToGroup(data, movingId, 'g1');
+    const moved = next.notes.find((n) => n.id === movingId)!;
+    expect(moved.groupId).toBe('g1');
+    expect(moved.sortOrder).toBe(2);
+    // No two notes in g1 share a sortOrder now.
+    const orders = next.notes.filter((n) => n.groupId === 'g1').map((n) => n.sortOrder);
+    expect(new Set(orders).size).toBe(orders.length);
+  });
+
+  it('ignores an unknown destination group (falls back to ungrouped)', () => {
+    let data = emptyData();
+    data = withNote(data, { groupId: 'g1', sortOrder: 0 });
+    const id = data.notes[0]!.id;
+    const next = moveNoteToGroup(data, id, 'does-not-exist');
+    expect(next.notes[0]!.groupId).toBeUndefined();
+  });
+
+  it('no-ops when the note is already in the target group', () => {
+    let data = emptyData();
+    data = { ...data, noteGroups: [{ id: 'g1', name: 'G1', sortOrder: 0, createdAt: 'x' }] };
+    data = withNote(data, { groupId: 'g1', sortOrder: 5 });
+    const id = data.notes[0]!.id;
+    const next = moveNoteToGroup(data, id, 'g1');
+    expect(next).toBe(data);
+  });
+
+  it('no-ops when the note does not exist', () => {
+    const data = emptyData();
+    expect(moveNoteToGroup(data, 'missing', 'g1')).toBe(data);
   });
 });
 

@@ -107,7 +107,7 @@ export function NotesPage() {
   const editorState = useNotesEditor(
     selected,
     patchNote,
-    replaceNote,
+    update,
     unlock,
     (...args) => revisionCaptureRef.current?.captureAfterSave(...args),
   );
@@ -163,9 +163,7 @@ export function NotesPage() {
   const { sidebarCollapsed, toggleSidebar, expandSidebar, collapseSidebar } =
     useNotesSidebarCollapse(user?.id ?? '');
 
-  const dnd = useNotesSidebarDnD(sortMode, notes, update, (noteId, groupId) =>
-    patchNote(noteId, { groupId }),
-  );
+  const dnd = useNotesSidebarDnD(sortMode, notes, update);
 
   const onCreate = (groupId?: string) => {
     const id = addNote(groupId);

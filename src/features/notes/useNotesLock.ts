@@ -13,11 +13,13 @@ import type { NotesUnlockApi } from '../../providers/NotesUnlockContext';
 import type { Note, NotesLock } from '../../model';
 import { purgeNoteRevisionHistory } from '../../lib/noteRevision/noteRevisionStore';
 import { attachmentRefsFromAnyBody } from '../../lib/richTextAttachmentIndex';
-import { canonicalDocSignature } from '../../lib/richTextBody';
+import { backfillBodyPlainText, canonicalDocSignature } from '../../lib/richTextBody';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
 import type { NoteRevisionCapture } from './useNotesEditor';
 import { FORCE_RESET_PHRASE, MIN_NOTES_PASSPHRASE_LENGTH, type PendingIntent } from './noteLockTypes';
 import { prepareForRemoteApply } from '../../lib/syncApplyGuard';
+import { runBeforeFlushHooks } from '../../lib/pendingSaveFlush';
+import { patchNoteLockState } from '../../core/actions';
 import { PLACEHOLDER_TITLE } from './notePreferences';
 
 /**
@@ -148,6 +150,16 @@ export function useNotesLock({
                 : targetNote.bodyFormat ?? decrypted?.bodyFormat;
             const attachmentRefs = attachmentRefsFromAnyBody(bodyToLock, bodyFormat);
             const cipher = await encryptBodyWithMaster(key, bodyToLock);
+            const lockedBodySignature = canonicalDocSignature(bodyToLock, bodyFormat);
+            // Merge onto the live note (preserve concurrent title/pin/archive).
+            update((d) =>
+              patchNoteLockState(d, targetNote.id, {
+                cipher,
+                bodyFormat,
+                attachmentRefs,
+                lockedBodySignature,
+              }),
+            );
             const nextNote: Note = {
               ...targetNote,
               body: '',
@@ -156,9 +168,8 @@ export function useNotesLock({
               bodyFormat,
               bodyPlainText: undefined,
               attachmentRefs,
-              lockedBodySignature: canonicalDocSignature(bodyToLock, bodyFormat),
+              lockedBodySignature,
             };
-            replaceNote(nextNote);
             captureRevision?.(targetNote, nextNote, 'lock', { force: true });
             setDecrypted(null);
             unlock.clear();
@@ -178,13 +189,19 @@ export function useNotesLock({
               setPendingIntent('unlock-selected');
               return;
             }
+            // Rebuild the denormalised plaintext now that we hold the cleartext,
+            // so search/AI index this note without waiting for the next edit.
+            const { bodyPlainText } = backfillBodyPlainText({
+              body,
+              bodyFormat: targetNote.bodyFormat,
+            });
             replaceNote({
               ...targetNote,
               body,
               locked: false,
               cipher: undefined,
               bodyFormat: targetNote.bodyFormat,
-              bodyPlainText: targetNote.bodyPlainText,
+              bodyPlainText,
               attachmentRefs: undefined,
               lockedBodySignature: undefined,
             });
@@ -192,7 +209,7 @@ export function useNotesLock({
               noteId: targetNote.id,
               body,
               bodyFormat: targetNote.bodyFormat,
-              bodyPlainText: targetNote.bodyPlainText,
+              bodyPlainText,
             });
           } finally {
             setBusy(false);
@@ -204,7 +221,7 @@ export function useNotesLock({
           setDisableErr(null);
           try {
             const lockedNotes = data.notes.filter((n) => n.locked && n.cipher);
-            const decryptedPairs: { id: string; body: string }[] = [];
+            const decryptedPairs: { id: string; body: string; bodyPlainText?: string }[] = [];
             for (const n of lockedNotes) {
               const body = await decryptBodyWithMaster(key, n.cipher!);
               if (body === null) {
@@ -215,16 +232,27 @@ export function useNotesLock({
                 );
                 return;
               }
-              decryptedPairs.push({ id: n.id, body });
+              const { bodyPlainText } = backfillBodyPlainText({ body, bodyFormat: n.bodyFormat });
+              decryptedPairs.push({ id: n.id, body, bodyPlainText });
             }
             update((d) => {
-              const lookup = new Map(decryptedPairs.map((p) => [p.id, p.body]));
+              const lookup = new Map(decryptedPairs.map((p) => [p.id, p]));
               const now = new Date().toISOString();
-              const nextNotes = d.notes.map((n) =>
-                lookup.has(n.id)
-                  ? { ...n, body: lookup.get(n.id)!, locked: false, cipher: undefined, updatedAt: now }
-                  : n,
-              );
+              const nextNotes = d.notes.map((n) => {
+                const restored = lookup.get(n.id);
+                return restored
+                  ? {
+                      ...n,
+                      body: restored.body,
+                      bodyPlainText: restored.bodyPlainText,
+                      locked: false,
+                      cipher: undefined,
+                      attachmentRefs: undefined,
+                      lockedBodySignature: undefined,
+                      updatedAt: now,
+                    }
+                  : n;
+              });
               const { notesLock: _drop, ...rest } = d;
               return { ...(rest as typeof d), notes: nextNotes };
             });
@@ -278,9 +306,20 @@ export function useNotesLock({
 
   const confirmDelete = () => {
     if (!confirmRemoveId) return;
-    void purgeNoteRevisionHistory(confirmRemoveId);
-    removeNote(confirmRemoveId);
+    const id = confirmRemoveId;
     setConfirmRemoveId(null);
+    void (async () => {
+      // Commit any in-flight edits (editor debounce buffer + a locked note still
+      // encrypting) BEFORE we mutate the workspace, so deleting one note can't
+      // race away another note's unsaved keystrokes.
+      try {
+        await runBeforeFlushHooks();
+      } catch {
+        /* best effort — never block a delete on a flush hook */
+      }
+      void purgeNoteRevisionHistory(id);
+      removeNote(id);
+    })();
   };
 
   const submitSetup = async () => {

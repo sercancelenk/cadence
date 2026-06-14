@@ -15,11 +15,16 @@ export function sortNotes(notes: Note[], sortMode: NoteSortMode): Note[] {
     (a.title || PLACEHOLDER_TITLE).localeCompare(b.title || PLACEHOLDER_TITLE, undefined, {
       sensitivity: 'base',
     });
+  // Stable, edit-invariant tie-break for manual order. Using `updatedAt` here
+  // made notes jump position whenever they were edited; `createdAt` + `id`
+  // never change, so equal/absent sortOrder values resolve deterministically.
+  const cmpStable = (a: Note, b: Note) =>
+    (a.createdAt || '').localeCompare(b.createdAt || '') || a.id.localeCompare(b.id);
   const cmpManual = (a: Note, b: Note) => {
     const ao = typeof a.sortOrder === 'number' ? a.sortOrder : Number.POSITIVE_INFINITY;
     const bo = typeof b.sortOrder === 'number' ? b.sortOrder : Number.POSITIVE_INFINITY;
     if (ao !== bo) return ao - bo;
-    return cmpUpdated(a, b);
+    return cmpStable(a, b);
   };
   const cmp =
     sortMode === 'created'

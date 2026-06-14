@@ -932,6 +932,49 @@ export function replaceNote(data: AppData, note: Note): AppData {
   };
 }
 
+/**
+ * Apply ONLY the lock-state fields of an encrypt result onto the *current*
+ * note in `data`, preserving every other field (title, pinned, archived,
+ * groupId, sortOrder, lastOpenedAt, …).
+ *
+ * The encrypt path is asynchronous: the renderer derives the ciphertext from a
+ * note snapshot captured at keystroke time, then commits the result a few
+ * microseconds later. Writing the whole captured note back (the old
+ * `replaceNote` path) would clobber any metadata the user changed during that
+ * window — e.g. retitling or pinning a locked note while it re-encrypts. By
+ * merging onto the live `n` we keep that concurrent edit and only overwrite the
+ * body/cipher bookkeeping. No-ops if the note was deleted meanwhile.
+ */
+export function patchNoteLockState(
+  data: AppData,
+  id: string,
+  fields: {
+    cipher: NonNullable<Note['cipher']>;
+    bodyFormat?: Note['bodyFormat'];
+    attachmentRefs: string[];
+    lockedBodySignature?: string;
+  },
+): AppData {
+  return {
+    ...data,
+    notes: data.notes.map((n) =>
+      n.id === id
+        ? {
+            ...n,
+            body: '',
+            locked: true,
+            cipher: fields.cipher,
+            bodyFormat: fields.bodyFormat,
+            bodyPlainText: undefined,
+            attachmentRefs: fields.attachmentRefs,
+            lockedBodySignature: fields.lockedBodySignature,
+            updatedAt: nowIso(),
+          }
+        : n,
+    ),
+  };
+}
+
 export function patchNote(
   data: AppData,
   id: string,
@@ -972,6 +1015,41 @@ export function patchNote(
 
 export function removeNote(data: AppData, id: string): AppData {
   return { ...data, notes: data.notes.filter((n) => n.id !== id) };
+}
+
+/**
+ * Move a note into `groupId` (or ungrouped when undefined) AND give it a
+ * deterministic manual position at the end of the destination tier.
+ *
+ * Manual `sortOrder` is only meaningful within a tier of (pinned-state ×
+ * group). A bare group change that left `sortOrder` untouched would collide
+ * with an existing order in the destination group, so the moved note's manual
+ * position became non-deterministic. Appending (max + 1) keeps every tier's
+ * ordering stable. No-ops if the note is missing or already in that group.
+ */
+export function moveNoteToGroup(
+  data: AppData,
+  noteId: string,
+  groupId: string | undefined,
+): AppData {
+  const moving = data.notes.find((n) => n.id === noteId);
+  if (!moving) return data;
+  const gid = groupId && data.noteGroups.some((g) => g.id === groupId) ? groupId : undefined;
+  if ((moving.groupId ?? undefined) === gid) return data;
+  let tierMax = -1;
+  for (const n of data.notes) {
+    if (n.id === noteId) continue;
+    if (!!n.pinned !== !!moving.pinned) continue;
+    if ((n.groupId ?? undefined) !== gid) continue;
+    const o = typeof n.sortOrder === 'number' ? n.sortOrder : -1;
+    if (o > tierMax) tierMax = o;
+  }
+  return {
+    ...data,
+    notes: data.notes.map((n) =>
+      n.id === noteId ? { ...n, groupId: gid, sortOrder: tierMax + 1 } : n,
+    ),
+  };
 }
 
 export function setNotesLock(data: AppData, lock: NotesLock | undefined): AppData {

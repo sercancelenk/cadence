@@ -1,12 +1,12 @@
 import { useCallback, useState } from 'react';
 import type { AppData, Note } from '../../model';
+import { moveNoteToGroup } from '../../core/actions';
 import type { NoteSortMode } from './notePreferences';
 
 export function useNotesSidebarDnD(
   sortMode: NoteSortMode,
   notes: Note[],
   update: (fn: (d: AppData) => AppData) => void,
-  patchNoteGroup: (noteId: string, groupId: string | undefined) => void,
 ) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -72,14 +72,14 @@ export function useNotesSidebarDnD(
           }),
         }));
       } else if (dragged.groupId !== target.groupId) {
-        patchNoteGroup(draggingId, target.groupId);
+        update((d) => moveNoteToGroup(d, draggingId, target.groupId));
       }
 
       setDraggingId(null);
       setDropTargetId(null);
       setDropTargetGroupId(null);
     },
-    [sortMode, draggingId, notes, update, patchNoteGroup],
+    [sortMode, draggingId, notes, update],
   );
 
   const onGroupDragOver = useCallback(
@@ -97,12 +97,12 @@ export function useNotesSidebarDnD(
     (e: React.DragEvent<HTMLLIElement>, groupId: string) => {
       if (!draggingId) return;
       e.preventDefault();
-      patchNoteGroup(draggingId, groupId);
+      update((d) => moveNoteToGroup(d, draggingId, groupId));
       setDraggingId(null);
       setDropTargetId(null);
       setDropTargetGroupId(null);
     },
-    [draggingId, patchNoteGroup],
+    [draggingId, update],
   );
 
   const onDragEnd = useCallback(() => {

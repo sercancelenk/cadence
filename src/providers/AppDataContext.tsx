@@ -356,6 +356,39 @@ function clearLastShape(userId: string) {
 }
 
 /**
+ * Monotonic write counter for the browser/PWA localStorage backend, published
+ * alongside the data on every successful write. The Electron backend gets its
+ * write-generation from the main process; the PWA had none, so two tabs of the
+ * same workspace could silently overwrite each other (last-write-wins). Other
+ * tabs read this on the `storage` event to detect that the workspace changed
+ * underneath them and either adopt the new snapshot (no local edits pending) or
+ * surface a `write-conflict` banner instead of clobbering the other tab.
+ */
+function generationKeyForUser(userId: string) {
+  return `${STORAGE_PREFIX}-gen-${userId}`;
+}
+
+function readLocalGeneration(userId: string): number {
+  if (typeof window === 'undefined' || !window.localStorage) return 0;
+  try {
+    const raw = window.localStorage.getItem(generationKeyForUser(userId));
+    const n = raw ? Number.parseInt(raw, 10) : 0;
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeLocalGeneration(userId: string, gen: number) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(generationKeyForUser(userId), String(gen));
+  } catch {
+    /* best effort — conflict detection degrades, data write already happened */
+  }
+}
+
+/**
  * Decide whether the freshly loaded shape is "much smaller" than the
  * last-known-good marker. We're deliberately conservative: a few items
  * less is normal (the user deleted something between sessions). Only
@@ -489,7 +522,7 @@ async function loadInitial(userId: string): Promise<LoadInitialResult> {
     try {
       return {
         data: normalizeData(raw ? JSON.parse(raw) : null),
-        writeGeneration: 0,
+        writeGeneration: readLocalGeneration(userId),
       };
     } catch (err) {
       if (isUnsupportedDataVersionError(err)) {
@@ -647,6 +680,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           writeGenerationRef.current = r.writeGeneration;
         } else if (window.cadence?.saveData) {
           writeGenerationRef.current = gen + 1;
+        } else {
+          // PWA/localStorage backend: advance and publish our generation so
+          // other tabs of this workspace can detect the change.
+          writeGenerationRef.current = gen + 1;
+          writeLocalGeneration(uid, writeGenerationRef.current);
         }
       } else if (typeof r.writeGeneration === 'number') {
         writeGenerationRef.current = r.writeGeneration;
@@ -781,8 +819,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       pendingSave.current = null;
       try {
         localStorage.setItem(storageKeyForUser(uid), appDataToPersistJson(payload));
-      } catch {
-        /* best effort */
+        writeGenerationRef.current += 1;
+        writeLocalGeneration(uid, writeGenerationRef.current);
+      } catch (err) {
+        // A silent drop here (e.g. QuotaExceeded on a backgrounded mobile tab)
+        // is exactly the data loss we must never hide. Re-queue the payload so
+        // a later flush can retry, and surface a banner that becomes visible
+        // when the tab is foregrounded again.
+        pendingSave.current = payload;
+        setLastSaveError({
+          reason: 'localstorage-error',
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Could not save your latest changes before the tab was hidden.',
+          at: Date.now(),
+        });
       }
     };
 
@@ -1053,6 +1105,55 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const reload = useCallback(async () => {
     await syncFromDisk();
   }, [syncFromDisk]);
+
+  // PWA multi-tab safety. The Electron backend routes concurrent writes through
+  // the main-process write-generation; the browser/localStorage backend had no
+  // such guard, so two tabs of the same workspace silently clobbered each other
+  // (last-write-wins). We listen for the cross-tab `storage` event on the data
+  // key and compare the published generation.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    if (window.cadence?.saveData) return; // Electron has its own conflict path.
+
+    const handleExternalWrite = async (uid: string, incomingGen: number) => {
+      // Flush the editor's debounce buffer so a half-typed sentence counts as a
+      // real local edit instead of being silently discarded by an adopt.
+      await runBeforeFlushHooks();
+      if (writeGenerationRef.current >= incomingGen) return;
+      const hasUnsavedLocalEdits = pendingSave.current !== null || saveTimer.current !== null;
+      if (hasUnsavedLocalEdits) {
+        // Adopting would drop this tab's edits; saving would clobber the other
+        // tab's write. Block writes and ask the user to reload — same contract
+        // as the Electron write-conflict path.
+        persistBlockedRef.current = true;
+        setLastSaveError({
+          reason: 'write-conflict',
+          error: 'Another tab updated this workspace. Reload from storage to continue editing.',
+          at: Date.now(),
+        });
+        return;
+      }
+      // No pending local edits — safe to adopt the other tab's snapshot without
+      // routing through syncFromDisk (which would re-persist our stale memory).
+      const loaded = await loadInitial(uid);
+      applyLoadedWorkspace(uid, loaded);
+      recreatePersistQueue();
+    };
+
+    const onStorage = (e: StorageEvent) => {
+      const uid = userIdRef.current;
+      if (!uid) return;
+      // The generation sidecar is written *after* the data, so reacting to it
+      // (in addition to the data key) guarantees we read a fresh generation.
+      if (e.key !== storageKeyForUser(uid) && e.key !== generationKeyForUser(uid)) return;
+      const incomingGen = readLocalGeneration(uid);
+      if (incomingGen <= writeGenerationRef.current) return;
+      void handleExternalWrite(uid, incomingGen);
+    };
+
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [applyLoadedWorkspace, recreatePersistQueue]);
 
   const dismissDataLossSuspicion = useCallback(() => {
     setDataLossSuspicion(null);

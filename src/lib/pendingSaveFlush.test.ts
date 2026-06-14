@@ -41,4 +41,34 @@ describe('pendingSaveFlush', () => {
     unregisterFlushPendingSave();
     await expect(flushPendingSaveGlobal()).resolves.toBeUndefined();
   });
+
+  it("runs 'editor' phase hooks before 'default' phase hooks", async () => {
+    const order: string[] = [];
+    // Register default first, editor second — phase must win over insertion.
+    const disposeDefault = registerBeforeFlushHook(() => {
+      order.push('default');
+    });
+    const disposeEditor = registerBeforeFlushHook(() => {
+      order.push('editor');
+    }, 'editor');
+    await runBeforeFlushHooks();
+    disposeDefault();
+    disposeEditor();
+    expect(order).toEqual(['editor', 'default']);
+  });
+
+  it("awaits an async 'editor' hook before running 'default' hooks", async () => {
+    const order: string[] = [];
+    const disposeEditor = registerBeforeFlushHook(async () => {
+      await Promise.resolve();
+      order.push('editor');
+    }, 'editor');
+    const disposeDefault = registerBeforeFlushHook(() => {
+      order.push('default');
+    });
+    await runBeforeFlushHooks();
+    disposeEditor();
+    disposeDefault();
+    expect(order).toEqual(['editor', 'default']);
+  });
 });

@@ -8,13 +8,14 @@ import {
 import { encryptBodyWithMaster } from '../../lib/notesCrypto';
 import { attachmentRefsFromAnyBody } from '../../lib/richTextAttachmentIndex';
 import { canonicalDocSignature } from '../../lib/richTextBody';
+import { patchNoteLockState } from '../../core/actions';
+import type { AppData } from '../../model';
 import { noteSnapshotFromNote } from '../../lib/noteRevision/noteRevisionStore';
 import type { NoteRevisionSnapshot } from '../../lib/noteRevision/types';
 import type { NotesUnlockApi } from '../../providers/NotesUnlockContext';
 import type { Note } from '../../model';
 import type { NoteRevisionTrigger } from '../../lib/noteRevision/types';
 import { registerBeforeFlushHook } from '../../lib/pendingSaveFlush';
-import { SYNC_BEFORE_APPLY } from '../../lib/syncApplyGuard';
 
 export type NoteRevisionCapture = (
   prev: Note,
@@ -50,7 +51,7 @@ function noteForRevisionSnapshot(note: Note, fields?: RichTextBodyFields): Note 
 export function useNotesEditor(
   selected: Note | null,
   patchNote: (id: string, patch: Partial<Note>) => void,
-  replaceNote: (note: Note) => void,
+  update: (fn: (d: AppData) => AppData) => void,
   unlock: NotesUnlockApi,
   captureRevision?: NoteRevisionCapture,
 ) {
@@ -81,6 +82,17 @@ export function useNotesEditor(
     const cipher = await encryptBodyWithMaster(key, pending.body);
     if (encryptGenByNote.current.get(noteId) !== myGen) return;
     const attachmentRefs = attachmentRefsFromAnyBody(pending.body, pending.bodyFormat);
+    const lockedBodySignature = canonicalDocSignature(pending.body, pending.bodyFormat);
+    // Merge only the lock-state fields onto the live note so a title/pin/archive
+    // change made while we were encrypting is preserved (see patchNoteLockState).
+    update((d) =>
+      patchNoteLockState(d, noteId, {
+        cipher,
+        bodyFormat: pending.bodyFormat,
+        attachmentRefs,
+        lockedBodySignature,
+      }),
+    );
     const nextNote: Note = {
       ...note,
       body: '',
@@ -89,25 +101,16 @@ export function useNotesEditor(
       bodyFormat: pending.bodyFormat,
       bodyPlainText: undefined,
       attachmentRefs,
-      lockedBodySignature: canonicalDocSignature(pending.body, pending.bodyFormat),
+      lockedBodySignature,
     };
     latestRevisionNoteRef.current = nextNote;
-    replaceNote(nextNote);
     captureRevision?.(note, nextNote, 'autosave');
     latestBodyFieldsRef.current = null;
     pendingLockedNoteRef.current = null;
-  }, [unlock, replaceNote, captureRevision]);
+  }, [unlock, update, captureRevision]);
 
   useEffect(() => {
     return registerBeforeFlushHook(() => flushPendingLockedBody());
-  }, [flushPendingLockedBody]);
-
-  useEffect(() => {
-    const onBeforeSync = () => {
-      void flushPendingLockedBody();
-    };
-    window.addEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
-    return () => window.removeEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
   }, [flushPendingLockedBody]);
 
   const decryptedForSelected = useMemo(() => {
@@ -200,7 +203,11 @@ export function useNotesEditor(
       return;
     }
     setDecrypted({ noteId: selected.id, ...fields });
-    rememberRevisionNote(noteForRevisionSnapshot(selected, fields));
+    // NOTE: do NOT publish a revision snapshot with the new plaintext signature
+    // yet — the matching ciphertext is still encrypting below. Until it lands,
+    // latestRevisionNoteRef must keep the previous (cipher ↔ signature
+    // consistent) note so a mid-flight session/restore flush can never persist a
+    // revision whose signature disagrees with its cipher.
     pendingLockedNoteRef.current = selected;
     const noteId = selected.id;
     const myGen = (encryptGenByNote.current.get(noteId) ?? 0) + 1;
@@ -209,6 +216,15 @@ export function useNotesEditor(
       const cipher = await encryptBodyWithMaster(key, fields.body);
       if (encryptGenByNote.current.get(noteId) !== myGen) return;
       const attachmentRefs = attachmentRefsFromAnyBody(fields.body, fields.bodyFormat);
+      const lockedBodySignature = canonicalDocSignature(fields.body, fields.bodyFormat);
+      update((d) =>
+        patchNoteLockState(d, noteId, {
+          cipher,
+          bodyFormat: fields.bodyFormat,
+          attachmentRefs,
+          lockedBodySignature,
+        }),
+      );
       const nextNote: Note = {
         ...selected,
         body: '',
@@ -217,10 +233,9 @@ export function useNotesEditor(
         bodyFormat: fields.bodyFormat,
         bodyPlainText: undefined,
         attachmentRefs,
-        lockedBodySignature: canonicalDocSignature(fields.body, fields.bodyFormat),
+        lockedBodySignature,
       };
       rememberRevisionNote(nextNote);
-      replaceNote(nextNote);
       captureRevision?.(prev, nextNote, 'autosave');
     })();
   };
