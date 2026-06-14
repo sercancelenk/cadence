@@ -241,6 +241,15 @@
   box-shadow: none;
 }
 
+.planning-quadrant--drop-target {
+  box-shadow: inset 0 0 0 2px var(--plan-q-accent);
+  background: color-mix(in srgb, var(--plan-q-accent) 12%, var(--plan-q-bg));
+}
+
+.planning-quadrant--unsorted.planning-quadrant--drop-target {
+  box-shadow: inset 0 0 0 2px var(--plan-q-accent);
+}
+
 .planning-matrix__grid + .planning-quadrant--unsorted {
   margin-top: 4px;
 }
@@ -304,7 +313,17 @@
 }
 
 .planning-card--dragging {
-  opacity: 0.55;
+  opacity: 0.42;
+  transform: scale(0.97);
+  box-shadow:
+    0 10px 28px color-mix(in srgb, var(--accent) 22%, transparent),
+    inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+.planning-card--dragging .planning-card__handle {
+  color: var(--accent);
+  cursor: grabbing;
 }
 
 .planning-card--focus {

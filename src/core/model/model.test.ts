@@ -506,6 +506,31 @@ describe('normalizeData — load edge cases', () => {
     expect(norm.teams[0]?.name).toBe('Default team');
   });
 
+  it('treats version-less modern-shaped exports as v2+ instead of v1 migration', () => {
+    const norm = normalizeData({
+      teams: [{ id: 't1', name: 'Team A', createdAt: '2026-01-01T00:00:00.000Z', status: 'active' }],
+      todoGroups: [{ id: 'g1', name: 'General', sortOrder: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+      todoItems: [
+        {
+          id: 'todo-1',
+          groupId: 'g1',
+          title: 'Keep me',
+          status: 'todo',
+          done: false,
+          sortOrder: 0,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      people: [],
+      items: [],
+      notes: [],
+    });
+    expect(norm.todoItems).toHaveLength(1);
+    expect(norm.todoItems[0]?.title).toBe('Keep me');
+    expect(norm.teams[0]?.name).toBe('Team A');
+  });
+
   it('creates a default team when teams array is empty', () => {
     const norm = normalizeData({ version: 3, teams: [], people: [], items: [] });
     expect(norm.teams).toHaveLength(1);

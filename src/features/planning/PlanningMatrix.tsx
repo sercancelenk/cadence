@@ -94,6 +94,10 @@ export function PlanningTaskCard({
           onDragStart={(e) => {
             e.dataTransfer.setData('text/plain', item.id);
             e.dataTransfer.effectAllowed = 'move';
+            const card = e.currentTarget.closest('.planning-card');
+            if (card instanceof HTMLElement) {
+              e.dataTransfer.setDragImage(card, 24, 16);
+            }
             onDragStart();
           }}
           onDragEnd={onDragEnd}
@@ -150,7 +154,7 @@ export type PlanningQuadrantCellProps = {
   groupById: Map<string, TodoGroup>;
   focusIds: Set<string>;
   draggingId: string | null;
-  onDrop: (quadrant: PlanningQuadrant) => void;
+  onDrop: (quadrant: PlanningQuadrant, itemId: string) => void;
   onToggleFocus: (id: string) => void;
   onRemoveFromHub: (id: string) => void;
   onToggleComplete: (id: string) => void;
@@ -175,17 +179,33 @@ export function PlanningQuadrantCell({
   onDragStart,
   onDragEnd,
 }: PlanningQuadrantCellProps) {
+  const [dropActive, setDropActive] = useState(false);
+
   return (
     <section
-      className={`planning-quadrant planning-quadrant--${quadrant}`}
+      className={`planning-quadrant planning-quadrant--${quadrant}${
+        dropActive ? ' planning-quadrant--drop-target' : ''
+      }`}
       aria-label={`${title} quadrant`}
+      onDragEnter={(e) => {
+        if (!e.dataTransfer.types.includes('text/plain')) return;
+        e.preventDefault();
+        setDropActive(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setDropActive(false);
+      }}
       onDragOver={(e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
+        setDropActive(true);
       }}
       onDrop={(e) => {
         e.preventDefault();
-        onDrop(quadrant);
+        setDropActive(false);
+        const itemId = e.dataTransfer.getData('text/plain');
+        if (itemId) onDrop(quadrant, itemId);
       }}
     >
       <header className="planning-quadrant__head">

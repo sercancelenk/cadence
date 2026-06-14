@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { useAccount } from './AccountContext';
 import { STORAGE_PREFIX } from '../lib/appBranding';
-import { registerFlushPendingSave, unregisterFlushPendingSave } from '../lib/pendingSaveFlush';
+import { registerFlushPendingSave, runBeforeFlushHooks, unregisterFlushPendingSave } from '../lib/pendingSaveFlush';
 import { revokeAttachmentBlobUrls } from '../lib/richTextAttachmentStore';
 import { isReminderSlotNotified, reminderNotifyKey } from '../lib/reminderNotify';
 import { supportsPwaOsSchedule } from '../lib/reminderDelivery/capabilities';
@@ -281,6 +281,19 @@ const ActionsCtx = createContext<Omit<
 
 const SAVE_DEBOUNCE_MS = 400;
 
+/** Load failures that must not be overwritten by an empty in-memory workspace. */
+const PERSIST_BLOCK_LOAD_REASONS = new Set([
+  'unsupported-version',
+  'bad-key',
+  'no-key',
+  'parse',
+  'io',
+]);
+
+function shouldBlockPersistOnLoad(reason: string | undefined): boolean {
+  return !!reason && PERSIST_BLOCK_LOAD_REASONS.has(reason);
+}
+
 function storageKeyForUser(userId: string) {
   return `${STORAGE_PREFIX}-data-${userId}`;
 }
@@ -420,12 +433,33 @@ async function loadInitial(userId: string): Promise<LoadInitialResult> {
               loadError: { reason: 'unsupported-version', error: err.message },
             };
           }
-          throw err;
+          return {
+            data: normalizeData(null),
+            writeGeneration,
+            loadError: {
+              reason: 'parse',
+              error: err instanceof Error ? err.message : 'Could not parse workspace data.',
+            },
+          };
         }
       }
-      return { data: normalizeData(null), writeGeneration };
-    } catch {
-      return { data: normalizeData(null), writeGeneration: 0 };
+      return {
+        data: normalizeData(null),
+        writeGeneration,
+        loadError: {
+          reason: r.reason ?? 'load-failed',
+          error: r.error ?? 'Could not load your workspace from disk.',
+        },
+      };
+    } catch (err) {
+      return {
+        data: normalizeData(null),
+        writeGeneration: 0,
+        loadError: {
+          reason: 'io',
+          error: err instanceof Error ? err.message : 'Could not load workspace from disk.',
+        },
+      };
     }
   }
   if (api?.loadData) {
@@ -440,7 +474,14 @@ async function loadInitial(userId: string): Promise<LoadInitialResult> {
           loadError: { reason: 'unsupported-version', error: err.message },
         };
       }
-      return { data: normalizeData(null), writeGeneration: 0 };
+      return {
+        data: normalizeData(null),
+        writeGeneration: 0,
+        loadError: {
+          reason: 'parse',
+          error: err instanceof Error ? err.message : 'Could not parse workspace data.',
+        },
+      };
     }
   }
   try {
@@ -458,10 +499,24 @@ async function loadInitial(userId: string): Promise<LoadInitialResult> {
           loadError: { reason: 'unsupported-version', error: err.message },
         };
       }
-      throw err;
+      return {
+        data: normalizeData(null),
+        writeGeneration: 0,
+        loadError: {
+          reason: 'parse',
+          error: err instanceof Error ? err.message : 'Workspace file is corrupt or unreadable.',
+        },
+      };
     }
-  } catch {
-    return { data: normalizeData(null), writeGeneration: 0 };
+  } catch (err) {
+    return {
+      data: normalizeData(null),
+      writeGeneration: 0,
+      loadError: {
+        reason: 'io',
+        error: err instanceof Error ? err.message : 'Could not read browser storage.',
+      },
+    };
   }
 }
 
@@ -540,6 +595,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         if (typeof evt?.writeGeneration === 'number') {
           writeGenerationRef.current = evt.writeGeneration;
         }
+        persistBlockedRef.current = true;
         setLastSaveError({
           reason: 'write-conflict',
           error:
@@ -614,6 +670,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           writeGenerationRef.current = r.writeGeneration;
         }
         if (shouldSurfacePersistError(r.reason)) {
+          if (r.reason === 'write-conflict') {
+            persistBlockedRef.current = true;
+          }
           setLastSaveError({
             reason: r.reason,
             error:
@@ -643,6 +702,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         writeGenerationRef.current = r.writeGeneration;
       }
       if (shouldSurfacePersistError(r.reason)) {
+        if (r.reason === 'write-conflict') {
+          persistBlockedRef.current = true;
+        }
         setLastSaveError({
           reason: r.reason,
           error:
@@ -657,12 +719,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [shouldSurfacePersistError]);
 
   const flushPendingSave = useCallback(async () => {
+    await runBeforeFlushHooks();
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
     const uid = userIdRef.current;
-    const next = pendingSave.current;
+    const next = pendingSave.current ?? snapshotStoreRef.current.getSnapshot();
     pendingSave.current = null;
 
     await persistQueueRef.current.flush();
@@ -759,7 +822,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const loaded = await loadInitial(userId);
       if (cancelled) return;
-      persistBlockedRef.current = loaded.loadError?.reason === 'unsupported-version';
+      persistBlockedRef.current = shouldBlockPersistOnLoad(loaded.loadError?.reason);
       writeGenerationRef.current = loaded.writeGeneration;
       if (loaded.loadError) {
         setLastSaveError({
@@ -840,6 +903,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const replaceAll = useCallback(
     (next: AppData) => {
       const normalized = normalizeData(next);
+      persistBlockedRef.current = false;
       setData(normalized);
       // A replaceAll is either a sync pull or a backup restore — both
       // are explicit "I want this snapshot" events. Clear any
@@ -885,6 +949,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const applyLoadedWorkspace = useCallback((uid: string, loaded: LoadInitialResult) => {
     writeGenerationRef.current = loaded.writeGeneration;
+    persistBlockedRef.current = loaded.loadError
+      ? shouldBlockPersistOnLoad(loaded.loadError.reason)
+      : false;
     if (loaded.loadError) {
       setLastSaveError({
         reason: loaded.loadError.reason,
@@ -908,14 +975,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const syncFromDisk = useCallback(async () => {
     const uid = userIdRef.current;
     if (!uid) return;
+    await flushPendingSave();
     await prepareForRemoteApply();
     await prepareForExternalWorkspaceReplace();
     setReady(false);
     const loaded = await loadInitial(uid);
     applyLoadedWorkspace(uid, loaded);
     recreatePersistQueue();
-    setLastSaveError(null);
-  }, [applyLoadedWorkspace, prepareForExternalWorkspaceReplace, recreatePersistQueue]);
+  }, [applyLoadedWorkspace, flushPendingSave, prepareForExternalWorkspaceReplace, recreatePersistQueue]);
 
   useEffect(() => {
     const off = window.cadence?.onRemoteUpdated?.(() => {
@@ -935,6 +1002,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (!uid) return { ok: false, error: 'Not signed in.' };
 
       await prepareForRemoteApply();
+      await flushPendingSave();
       await prepareForExternalWorkspaceReplace();
 
       const payload = compactAppDataForPersist(normalized);
@@ -976,11 +1044,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const loaded = await loadInitial(uid);
       applyLoadedWorkspace(uid, loaded);
       recreatePersistQueue();
-      setLastSaveError(null);
       revokeAttachmentBlobUrls();
       return { ok: true, attachmentsRestored };
     },
-    [applyLoadedWorkspace, prepareForExternalWorkspaceReplace, recreatePersistQueue],
+    [applyLoadedWorkspace, flushPendingSave, prepareForExternalWorkspaceReplace, recreatePersistQueue],
   );
 
   const reload = useCallback(async () => {

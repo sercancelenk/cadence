@@ -6,7 +6,7 @@ import {
   revokeAttachmentBlobUrls,
 } from '../richTextAttachmentStore';
 import { appDataToPersistJson, normalizeData, type AppData } from '../../model';
-import { parseRemoteSnapshot } from '../syncSnapshotGuard';
+import { parseRemoteSnapshot, snapshotParseErrorMessage } from '../syncSnapshotGuard';
 import { parseBundleEntries } from './parse';
 import {
   BACKUP_ATTACHMENTS_DIR,
@@ -150,7 +150,7 @@ export async function importPortableBackupFile(
     }
     const parsed = parseRemoteSnapshot(raw);
     if (parsed.kind !== 'ok') {
-      return { ok: false, error: 'This JSON does not look like a Cadence workspace backup.' };
+      return { ok: false, error: snapshotParseErrorMessage(parsed) };
     }
     const r = await deps.importWorkspace(parsed.data);
     if (!r.ok) return r;
@@ -192,7 +192,7 @@ export async function importPortableBackupFile(
 
   const parsed = parseRemoteSnapshot(bundle.workspaceRaw);
   if (parsed.kind !== 'ok') {
-    return { ok: false, error: 'Backup data.json is not a recognisable Cadence workspace.' };
+    return { ok: false, error: snapshotParseErrorMessage(parsed) };
   }
 
   if (!window.cadence?.attachmentImportPortable) {

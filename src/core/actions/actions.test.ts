@@ -105,6 +105,17 @@ describe('core actions — data safety', () => {
     expect(u?.groupId).toBe(t.groupId);
   });
 
+  it('updateTodoItem clears planning axes when explicitly set to undefined', () => {
+    const d = seedWithTodo();
+    const id = d.todoItems[0]!.id;
+    const classified = updateTodoItem(d, id, { planImportant: true, planUrgent: true, planInHub: true });
+    const unsorted = updateTodoItem(classified, id, { planImportant: undefined, planUrgent: undefined });
+    const row = unsorted.todoItems.find((x) => x.id === id);
+    expect(row?.planImportant).toBeUndefined();
+    expect(row?.planUrgent).toBeUndefined();
+    expect(row?.planInHub).toBe(true);
+  });
+
   it('changing dueAt alone does not clear notified reminder slots', () => {
     const d = seedWithTodo();
     const id = d.todoItems[0]!.id;

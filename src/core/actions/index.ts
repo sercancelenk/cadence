@@ -729,11 +729,9 @@ export function updateTodoItem(
         patch.priority !== undefined ? (patch.priority || undefined) : x.priority;
 
       const planInHub = patch.planInHub !== undefined ? patch.planInHub : x.planInHub;
-      const planImportant =
-        patch.planImportant !== undefined ? patch.planImportant : x.planImportant;
-      const planUrgent = patch.planUrgent !== undefined ? patch.planUrgent : x.planUrgent;
-      const planFocusToday =
-        patch.planFocusToday !== undefined ? patch.planFocusToday : x.planFocusToday;
+      const planImportant = 'planImportant' in patch ? patch.planImportant : x.planImportant;
+      const planUrgent = 'planUrgent' in patch ? patch.planUrgent : x.planUrgent;
+      const planFocusToday = 'planFocusToday' in patch ? patch.planFocusToday : x.planFocusToday;
       const nextArchived =
         patch.archived !== undefined ? (patch.archived ? true : undefined) : x.archived;
       const resolvedPlanFocusToday =

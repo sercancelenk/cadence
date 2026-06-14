@@ -33,7 +33,7 @@
  * as a clean AppData.
  */
 
-import { normalizeData, type AppData } from '../model';
+import { normalizeData, type AppData, isUnsupportedDataVersionError } from '../model';
 
 const KNOWN_COLLECTION_KEYS = ['teams', 'people', 'items', 'todoGroups', 'todoItems', 'notes'] as const;
 
@@ -49,7 +49,15 @@ function workspaceCandidate(raw: unknown): unknown {
 
 export type SnapshotParseResult =
   | { kind: 'ok'; data: AppData }
-  | { kind: 'invalid' };
+  | { kind: 'invalid' }
+  | { kind: 'unsupported-version'; fileVersion: number; error: string };
+
+export function snapshotParseErrorMessage(result: SnapshotParseResult): string {
+  if (result.kind === 'unsupported-version') {
+    return `Remote snapshot uses data version ${result.fileVersion}, which this app cannot read. Update Cadence on this device before syncing.`;
+  }
+  return 'Remote snapshot has an unrecognisable shape — refusing to overwrite local data.';
+}
 
 export function parseRemoteSnapshot(raw: unknown): SnapshotParseResult {
   const candidate = workspaceCandidate(raw);
@@ -63,5 +71,12 @@ export function parseRemoteSnapshot(raw: unknown): SnapshotParseResult {
     }
   }
   if (!plausible) return { kind: 'invalid' };
-  return { kind: 'ok', data: normalizeData(candidate) };
+  try {
+    return { kind: 'ok', data: normalizeData(candidate) };
+  } catch (err) {
+    if (isUnsupportedDataVersionError(err)) {
+      return { kind: 'unsupported-version', fileVersion: err.fileVersion, error: err.message };
+    }
+    throw err;
+  }
 }

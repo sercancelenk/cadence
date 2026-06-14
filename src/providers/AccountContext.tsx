@@ -314,6 +314,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       if (oldPassword === newPassword) {
         return { ok: false as const, error: 'New password must be different from the current one.' };
       }
+      await flushPendingSaveGlobal();
       if (window.cadence?.accountChangePassword) {
         const r = await window.cadence.accountChangePassword({ oldPassword, newPassword });
         return r?.ok
@@ -354,6 +355,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       }
 
       if (window.cadence?.accountRecoverWithCodes) {
+        await flushPendingSaveGlobal();
         const r = await window.cadence.accountRecoverWithCodes({ email: em, codes, newPassword });
         if (r?.ok && r.user) {
           setUser(r.user);

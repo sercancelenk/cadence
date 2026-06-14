@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseRemoteSnapshot } from './syncSnapshotGuard';
-import { appDataToPersistJson } from '../model';
+import { appDataToPersistJson, DATA_VERSION } from '../model';
 import { filterPlanningHubItems } from './planningMatrix';
 import { collectActivityRecords } from './todoActivityReport';
 
@@ -160,5 +160,17 @@ describe('parseRemoteSnapshot', () => {
     expect(filterPlanningHubItems(result.data.todoItems).length).toBeGreaterThanOrEqual(5);
     const activity = collectActivityRecords(result.data, { source: 'personal' });
     expect(activity.length).toBeGreaterThan(0);
+  });
+
+  it('returns unsupported-version for future workspace files instead of throwing', () => {
+    const result = parseRemoteSnapshot({
+      version: DATA_VERSION + 1,
+      teams: [{ id: 't1', name: 'A', createdAt: TS, status: 'active' }],
+      notes: [{ id: 'n1', title: 'Note', body: 'hi', createdAt: TS, updatedAt: TS }],
+    });
+    expect(result.kind).toBe('unsupported-version');
+    if (result.kind === 'unsupported-version') {
+      expect(result.fileVersion).toBe(DATA_VERSION + 1);
+    }
   });
 });

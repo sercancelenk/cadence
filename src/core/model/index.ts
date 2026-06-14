@@ -760,7 +760,8 @@ function migrateV1ToV2(o: Record<string, unknown>): AppData {
         name: typeof p.name === 'string' && p.name.trim() ? p.name : 'Unnamed',
         title: typeof p.title === 'string' ? p.title : undefined,
         isSelf,
-        scratchpad: '',
+        scratchpad: typeof p.scratchpad === 'string' ? p.scratchpad : '',
+        agenda: typeof p.agenda === 'string' ? p.agenda : '',
         createdAt: typeof p.createdAt === 'string' ? p.createdAt : t,
       };
     });
@@ -944,7 +945,11 @@ export function normalizeData(raw: unknown): AppData {
   if (!raw || typeof raw !== 'object') return base;
 
   const o = raw as Record<string, unknown>;
-  const ver = typeof o.version === 'number' ? o.version : 1;
+  let ver = typeof o.version === 'number' ? o.version : 1;
+  // Hand-edited or partial exports may omit `version` but still carry v2+ collections.
+  if (ver < 2 && (Array.isArray(o.teams) || Array.isArray(o.todoGroups) || Array.isArray(o.todoItems) || Array.isArray(o.notes))) {
+    ver = 2;
+  }
 
   if (ver > DATA_VERSION) {
     throw new UnsupportedDataVersionError(ver, DATA_VERSION);

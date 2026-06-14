@@ -35,9 +35,8 @@ export function PlanningMatrixBoard({
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
   const byQuadrant = useMemo(() => groupPlanningItemsByQuadrant(hubItems), [hubItems]);
 
-  const handleDrop = (quadrant: PlanningQuadrant) => {
-    if (!draggingId) return;
-    onMoveToQuadrant(draggingId, quadrant);
+  const handleDrop = (quadrant: PlanningQuadrant, itemId: string) => {
+    onMoveToQuadrant(itemId, quadrant);
     setDraggingId(null);
   };
 

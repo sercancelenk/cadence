@@ -50,7 +50,7 @@ import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import type { AppData } from '../model';
 import { syncLanAttachments } from './lanAttachmentSync';
-import { parseRemoteSnapshot } from './syncSnapshotGuard';
+import { parseRemoteSnapshot, snapshotParseErrorMessage } from './syncSnapshotGuard';
 import { prepareForRemoteApply } from './syncApplyGuard';
 import {
   computeLocalEtag,
@@ -118,6 +118,7 @@ export type SyncCycleAction =
   | 'pull-error'
   | 'push-error'
   | 'corrupt-remote'
+  | 'unsupported-remote'
   | 'local-changed-during-pull';
 
 async function maybeSyncLanAttachments(
@@ -182,10 +183,10 @@ export async function runSyncCycle(args: {
         publishSyncEvent({
           kind: 'error',
           backendId,
-          code: 'corrupt',
-          text: 'Remote snapshot has an unrecognised shape — refusing to overwrite local data.',
+          code: parsed.kind === 'unsupported-version' ? 'unsupported-version' : 'corrupt',
+          text: snapshotParseErrorMessage(parsed),
         });
-        return 'corrupt-remote';
+        return parsed.kind === 'unsupported-version' ? 'unsupported-remote' : 'corrupt-remote';
       }
       const blocked = await applyRemoteIfLocalStable(parsed.data);
       if (blocked) return blocked;
@@ -243,10 +244,10 @@ export async function runSyncCycle(args: {
       publishSyncEvent({
         kind: 'error',
         backendId,
-        code: 'corrupt',
-        text: 'Remote snapshot has an unrecognised shape — refusing to overwrite local data.',
+        code: parsed.kind === 'unsupported-version' ? 'unsupported-version' : 'corrupt',
+        text: snapshotParseErrorMessage(parsed),
       });
-      return 'corrupt-remote';
+      return parsed.kind === 'unsupported-version' ? 'unsupported-remote' : 'corrupt-remote';
     }
     const blocked = await applyRemoteIfLocalStable(parsed.data);
     if (blocked) return blocked;

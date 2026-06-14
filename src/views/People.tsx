@@ -253,10 +253,19 @@ export function PersonWorkspace({ personId }: { personId: string }) {
   }, [data, teamId]);
 
   const scratchpadDirty = person ? scratchpad !== (person.scratchpad ?? '') : false;
+  const profileDirty = person
+    ? name.trim() !== person.name.trim() || title !== (person.title ?? '')
+    : false;
   const scratchpadRef = useRef(scratchpad);
   const scratchpadDirtyRef = useRef(scratchpadDirty);
+  const profileDirtyRef = useRef(profileDirty);
+  const nameRef = useRef(name);
+  const titleRef = useRef(title);
   scratchpadRef.current = scratchpad;
   scratchpadDirtyRef.current = scratchpadDirty;
+  profileDirtyRef.current = profileDirty;
+  nameRef.current = name;
+  titleRef.current = title;
 
   useEffect(() => {
     if (!person) {
@@ -267,10 +276,19 @@ export function PersonWorkspace({ personId }: { personId: string }) {
     }
     setName(person.name);
     setTitle(person.title ?? '');
+    setScratchpad(person.scratchpad ?? '');
+  }, [person?.id]);
+
+  useEffect(() => {
+    if (!person) return;
+    if (!profileDirty) {
+      setName(person.name);
+      setTitle(person.title ?? '');
+    }
     if (!scratchpadDirty) {
       setScratchpad(person.scratchpad ?? '');
     }
-  }, [person?.id, person?.name, person?.title, person?.scratchpad, scratchpadDirty]);
+  }, [person?.name, person?.title, person?.scratchpad, profileDirty, scratchpadDirty]);
 
   useEffect(() => {
     if (!person || !scratchpadDirty) return;
@@ -284,7 +302,14 @@ export function PersonWorkspace({ personId }: { personId: string }) {
   useEffect(() => {
     const personId = person?.id;
     return () => {
-      if (personId && scratchpadDirtyRef.current) {
+      if (!personId) return;
+      if (profileDirtyRef.current) {
+        updatePerson(personId, {
+          name: nameRef.current.trim() || 'Unnamed',
+          title: titleRef.current,
+          scratchpad: scratchpadRef.current,
+        });
+      } else if (scratchpadDirtyRef.current) {
         updatePerson(personId, { scratchpad: scratchpadRef.current });
       }
     };
@@ -292,7 +317,14 @@ export function PersonWorkspace({ personId }: { personId: string }) {
 
   useEffect(() => {
     const onBeforeSync = () => {
-      if (person && scratchpadDirty) {
+      if (!person) return;
+      if (profileDirty) {
+        updatePerson(person.id, {
+          name: name.trim() || person.name,
+          title,
+          scratchpad,
+        });
+      } else if (scratchpadDirty) {
         updatePerson(person.id, { scratchpad });
       }
     };
@@ -301,7 +333,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
       window.removeEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
       onBeforeSync();
     };
-  }, [person?.id, scratchpad, scratchpadDirty, updatePerson]);
+  }, [person?.id, name, title, scratchpad, profileDirty, scratchpadDirty, updatePerson]);
 
   if (!teamId) {
     return (
@@ -1262,10 +1294,14 @@ function PersonMeetingMode({
   agendaDirtyRef.current = agendaDirty;
 
   useEffect(() => {
+    setAgenda(person.agenda ?? defaultAgenda());
+  }, [person.id]);
+
+  useEffect(() => {
     if (!agendaDirty) {
       setAgenda(person.agenda ?? defaultAgenda());
     }
-  }, [person.id, person.agenda, agendaDirty]);
+  }, [person.agenda, agendaDirty]);
 
   useEffect(() => {
     if (!agendaDirty) return;

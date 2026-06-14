@@ -58,6 +58,10 @@ const isEnterprise = distribution === 'enterprise';
 // static files at its root and be uploaded as a single artifact.
 const outDir = isPwa ? 'dist/app' : 'dist';
 
+function isReactCoreVendor(id: string): boolean {
+  return /node_modules\/(react|react-dom|scheduler)(\/|$)/.test(id);
+}
+
 export default defineConfig({
   plugins: [react()],
   base,
@@ -90,14 +94,30 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          // Vendor splitting yields better long-term caching and parallel
-          // download. React + Router are cached separately from the page-
-          // specific chunks, and the Markdown stack rides with the People
-          // route only.
+          // Vendor splitting yields better long-term caching, parallel download,
+          // and keeps each chunk under Vite's 500 kB advisory limit.
           if (!id.includes('node_modules')) return undefined;
           if (id.includes('react-router')) return 'vendor-router';
-          if (id.includes('react-markdown') || id.includes('remark-') || id.includes('micromark') || id.includes('mdast-') || id.includes('unified') || id.includes('vfile') || id.includes('hast-')) return 'vendor-markdown';
-          if (id.includes('react') || id.includes('scheduler')) return 'vendor-react';
+          if (
+            id.includes('react-markdown') ||
+            id.includes('remark-') ||
+            id.includes('micromark') ||
+            id.includes('mdast-') ||
+            id.includes('unified') ||
+            id.includes('vfile') ||
+            id.includes('hast-')
+          ) {
+            return 'vendor-markdown';
+          }
+          if (isReactCoreVendor(id)) return 'vendor-react';
+          if (id.includes('@tiptap/') || id.includes('/prosemirror-')) {
+            return 'vendor-richtext';
+          }
+          if (id.includes('@codemirror') || id.includes('/codemirror/') || id.includes('/lezer-')) {
+            return 'vendor-codemirror';
+          }
+          if (id.includes('qrcode')) return 'vendor-qrcode';
+          if (id.includes('/yaml/') || id.includes('yaml/dist')) return 'vendor-yaml';
           return 'vendor-misc';
         },
       },

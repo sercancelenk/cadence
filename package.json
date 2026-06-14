@@ -27,6 +27,7 @@
     "check:env": "node scripts/check-env.mjs",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
+    "check:release": "npm run typecheck && npm test && npm run build:web && npx playwright install chromium && npm run test:e2e",
     "ci:local": "cross-env ELECTRON_SKIP_BINARY_DOWNLOAD=1 VITE_GOOGLE_OAUTH_CLIENT_ID=ci-placeholder.apps.googleusercontent.com npm run typecheck && npm test && npm run test:coverage && npm run build:web && npx playwright install chromium && npm run test:e2e && npm run build:pwa",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

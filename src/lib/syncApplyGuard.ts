@@ -5,8 +5,11 @@
  */
 export const SYNC_BEFORE_APPLY = 'cadence:before-sync-apply';
 
+import { runBeforeFlushHooks } from './pendingSaveFlush';
+
 export async function prepareForRemoteApply(): Promise<void> {
   if (typeof window === 'undefined') return;
+  await runBeforeFlushHooks();
   window.dispatchEvent(new CustomEvent(SYNC_BEFORE_APPLY));
   await new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));

@@ -13,6 +13,8 @@ import type { NoteRevisionSnapshot } from '../../lib/noteRevision/types';
 import type { NotesUnlockApi } from '../../providers/NotesUnlockContext';
 import type { Note } from '../../model';
 import type { NoteRevisionTrigger } from '../../lib/noteRevision/types';
+import { registerBeforeFlushHook } from '../../lib/pendingSaveFlush';
+import { SYNC_BEFORE_APPLY } from '../../lib/syncApplyGuard';
 
 export type NoteRevisionCapture = (
   prev: Note,
@@ -56,6 +58,54 @@ export function useNotesEditor(
   const encryptGenByNote = useRef(new Map<string, number>());
   const latestRevisionNoteRef = useRef<Note | null>(null);
   const latestBodyFieldsRef = useRef<({ noteId: string } & RichTextBodyFields) | null>(null);
+  const pendingLockedNoteRef = useRef<Note | null>(null);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+
+  const flushPendingLockedBody = useCallback(async () => {
+    const pending = latestBodyFieldsRef.current;
+    const note = pendingLockedNoteRef.current;
+    if (!pending || !note || pending.noteId !== note.id || !note.locked) return;
+    if (noteBodyPatchIsNoOp(note, pending)) {
+      latestBodyFieldsRef.current = null;
+      return;
+    }
+    const key = unlock.read();
+    if (!key) return;
+    const noteId = note.id;
+    const myGen = (encryptGenByNote.current.get(noteId) ?? 0) + 1;
+    encryptGenByNote.current.set(noteId, myGen);
+    const cipher = await encryptBodyWithMaster(key, pending.body);
+    if (encryptGenByNote.current.get(noteId) !== myGen) return;
+    const attachmentRefs = attachmentRefsFromBody(pending.body, pending.bodyFormat);
+    const nextNote: Note = {
+      ...note,
+      body: '',
+      locked: true,
+      cipher,
+      bodyFormat: pending.bodyFormat,
+      bodyPlainText: undefined,
+      attachmentRefs: attachmentRefs.length ? attachmentRefs : undefined,
+      lockedBodySignature: canonicalDocSignature(pending.body, pending.bodyFormat),
+    };
+    latestRevisionNoteRef.current = nextNote;
+    replaceNote(nextNote);
+    captureRevision?.(note, nextNote, 'autosave');
+    latestBodyFieldsRef.current = null;
+    pendingLockedNoteRef.current = null;
+  }, [unlock, replaceNote, captureRevision]);
+
+  useEffect(() => {
+    return registerBeforeFlushHook(() => flushPendingLockedBody());
+  }, [flushPendingLockedBody]);
+
+  useEffect(() => {
+    const onBeforeSync = () => {
+      void flushPendingLockedBody();
+    };
+    window.addEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
+    return () => window.removeEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
+  }, [flushPendingLockedBody]);
 
   const decryptedForSelected = useMemo(() => {
     if (!selected || !decrypted || decrypted.noteId !== selected.id) return null;
@@ -82,10 +132,17 @@ export function useNotesEditor(
   }, [selected]);
 
   useEffect(() => {
+    return () => {
+      void flushPendingLockedBody();
+    };
+  }, [selected?.id, flushPendingLockedBody]);
+
+  useEffect(() => {
     if (!selected) {
       setDecrypted(null);
       latestRevisionNoteRef.current = null;
       latestBodyFieldsRef.current = null;
+      pendingLockedNoteRef.current = null;
       return;
     }
     if (decrypted && decrypted.noteId !== selected.id) {
@@ -141,6 +198,7 @@ export function useNotesEditor(
     }
     setDecrypted({ noteId: selected.id, ...fields });
     rememberRevisionNote(noteForRevisionSnapshot(selected, fields));
+    pendingLockedNoteRef.current = selected;
     const noteId = selected.id;
     const myGen = (encryptGenByNote.current.get(noteId) ?? 0) + 1;
     encryptGenByNote.current.set(noteId, myGen);

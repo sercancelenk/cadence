@@ -33,7 +33,7 @@ import {
   savePair,
   type LanSyncPair,
 } from '../lib/lanSyncClient';
-import { parseRemoteSnapshot } from '../lib/syncSnapshotGuard';
+import { parseRemoteSnapshot, snapshotParseErrorMessage } from '../lib/syncSnapshotGuard';
 import { prepareForRemoteApply } from '../lib/syncApplyGuard';
 import { estimateWorkspaceStorage } from '../lib/workspaceStorageStats';
 import { isElectronApp, backupPlatform, backupPlatformLabel } from '../lib/runtime';
@@ -921,7 +921,7 @@ function SyncSection() {
         if (parsed.kind !== 'ok') {
           setPairMsg({
             kind: 'error',
-            text: 'Host returned a snapshot with an unrecognised shape — refusing to overwrite local data.',
+            text: snapshotParseErrorMessage(parsed),
           });
           return;
         }
@@ -993,7 +993,7 @@ function SyncSection() {
             if (parsed.kind !== 'ok') {
               setPairMsg({
                 kind: 'error',
-                text: 'Host returned a snapshot with an unrecognised shape — refusing to overwrite local data.',
+                text: snapshotParseErrorMessage(parsed),
               });
               return;
             }
@@ -1746,8 +1746,7 @@ function CloudSyncSection() {
           if (parsed.kind !== 'ok') {
             setMsg({
               kind: 'error',
-              text:
-                'Drive returned a snapshot with an unrecognised shape — refusing to overwrite local data.',
+              text: snapshotParseErrorMessage(parsed),
             });
             return;
           }
