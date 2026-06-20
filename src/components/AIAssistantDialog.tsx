@@ -4,9 +4,10 @@ import { useAppData } from '../AppDataContext';
 import { askAI, AIError, buildTaskPrompt, isAIConfigured } from '../lib/ai';
 import { useFeatures } from '../lib/features';
 import { Button } from './ui/Button';
+import { AppModal } from './ui/AppModal';
 import { MarkdownView } from './ui/MarkdownEditor';
 import { AutoResizeTextarea } from './ui/AutoResizeTextarea';
-import { IcAlertTriangle, IcRefresh, IcSparkles, IcX } from './icons';
+import { IcAlertTriangle, IcRefresh, IcSparkles } from './icons';
 
 type Props = {
   open: boolean;
@@ -176,24 +177,75 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
     );
   };
 
-  return (
-    <div className="ai-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="ai-dialog" onClick={(e) => e.stopPropagation()}>
-        <header className="ai-dialog__header">
-          <span className="ai-dialog__icon">
-            <IcSparkles size={18} />
-          </span>
-          <div className="ai-dialog__titlewrap">
-            <h2 className="ai-dialog__title">AI Assistant</h2>
-            <p className="ai-dialog__sub" title={task.title}>
-              {trimForDisplay(task.title, 110)}
-            </p>
-          </div>
-          <button type="button" className="ai-dialog__close" aria-label="Close" title="Close" onClick={onClose}>
-            <IcX size={18} />
-          </button>
-        </header>
+  const followupFooter =
+    turns.length > 0 ? (
+      <form className="ai-dialog__followup" onSubmit={submitFollowup}>
+        <AutoResizeTextarea
+          className="textarea ai-dialog__followup-input"
+          placeholder="Ask a follow-up — Enter to send, Shift+Enter for a new line"
+          value={followup}
+          onChange={setFollowup}
+          minRows={1}
+          maxRows={5}
+          submitMode="enter"
+          disabled={busy}
+          onSubmit={() => {
+            const text = followup.trim();
+            if (!text || busy) return;
+            setFollowup('');
+            void send(text);
+          }}
+          ariaLabel="Follow-up question"
+        />
+        <div className="ai-dialog__actions">
+          {lastWasTruncated ? (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={continueGeneration}
+              title="The provider reported it cut the reply off at the token budget — click to resume."
+            >
+              Continue
+            </Button>
+          ) : null}
+          {busy ? (
+            <Button type="button" variant="ghost" onClick={() => abortRef.current?.abort()}>
+              Stop
+            </Button>
+          ) : (
+            <Button type="submit" variant="primary" disabled={!followup.trim()}>
+              Send
+            </Button>
+          )}
+          {canSaveToNotes ? (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                if (!lastAssistant) return;
+                onAppendToBody?.(lastAssistant.content);
+              }}
+            >
+              Save to notes
+            </Button>
+          ) : null}
+        </div>
+      </form>
+    ) : undefined;
 
+  return (
+    <AppModal
+      onClose={onClose}
+      title="AI Assistant"
+      description={trimForDisplay(task.title, 110)}
+      icon={<IcSparkles size={18} />}
+      size="lg"
+      layout="flex"
+      showCloseButton
+      bodyRef={scrollerRef}
+      bodyClassName="ai-dialog__scroll"
+      footer={followupFooter}
+    >
         {!isAIConfigured(aiSettings) ? (
           <div className="ai-dialog__empty">
             <p>You haven't configured an AI provider yet.</p>
@@ -204,113 +256,51 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
           </div>
         ) : (
           <>
-            <div className="ai-dialog__scroll" ref={scrollerRef}>
-              {turns.length === 0 && !busy ? (
-                <div className="ai-dialog__intro">
-                  <p>
-                    Ask the assistant how to approach <strong>{trimForDisplay(task.title, 80)}</strong>. Your task
-                    title{task.body ? ' and notes are' : ' is'} sent to {providerLabel(aiSettings.provider)}.
-                  </p>
-                  <Button type="button" variant="primary" icon={<IcSparkles size={16} />} onClick={startInitial}>
-                    Ask for recommendations
-                  </Button>
-                </div>
-              ) : (
-                <ul className="ai-thread">
-                  {turns.map((t) => (
-                    <li key={t.id} className={`ai-turn ai-turn--${t.role}`}>
-                      <div className="ai-turn__role">{t.role === 'user' ? 'You' : 'Assistant'}</div>
-                      {t.role === 'assistant' ? (
-                        <MarkdownView value={t.content} />
-                      ) : (
-                        <p className="ai-turn__text">{t.content}</p>
-                      )}
-                      {t.role === 'assistant' && t.stopReason === 'length' ? (
-                        // Inline truncation note. Pairs with the Continue
-                        // button below the follow-up input; we surface it
-                        // here too because the actions row sits behind the
-                        // input and is easy to miss on long answers.
-                        <p className="ai-turn__truncated muted small">
-                          <IcAlertTriangle size={12} />
-                          <span>
-                            Response hit the token limit and was cut off — click{' '}
-                            <strong>Continue</strong> below to resume from where it stopped.
-                          </span>
-                        </p>
-                      ) : null}
-                    </li>
-                  ))}
-                  {busy ? (
-                    <li className="ai-turn ai-turn--assistant ai-turn--busy">
-                      <div className="ai-turn__role">Assistant</div>
-                      <p className="ai-turn__text muted">
-                        <IcRefresh size={14} className="ai-spin" /> Thinking…
+            {turns.length === 0 && !busy ? (
+              <div className="ai-dialog__intro">
+                <p>
+                  Ask the assistant how to approach <strong>{trimForDisplay(task.title, 80)}</strong>. Your task
+                  title{task.body ? ' and notes are' : ' is'} sent to {providerLabel(aiSettings.provider)}.
+                </p>
+                <Button type="button" variant="primary" icon={<IcSparkles size={16} />} onClick={startInitial}>
+                  Ask for recommendations
+                </Button>
+              </div>
+            ) : (
+              <ul className="ai-thread">
+                {turns.map((t) => (
+                  <li key={t.id} className={`ai-turn ai-turn--${t.role}`}>
+                    <div className="ai-turn__role">{t.role === 'user' ? 'You' : 'Assistant'}</div>
+                    {t.role === 'assistant' ? (
+                      <MarkdownView value={t.content} />
+                    ) : (
+                      <p className="ai-turn__text">{t.content}</p>
+                    )}
+                    {t.role === 'assistant' && t.stopReason === 'length' ? (
+                      <p className="ai-turn__truncated muted small">
+                        <IcAlertTriangle size={12} />
+                        <span>
+                          Response hit the token limit and was cut off — click{' '}
+                          <strong>Continue</strong> below to resume from where it stopped.
+                        </span>
                       </p>
-                    </li>
-                  ) : null}
-                </ul>
-              )}
-              {error ? <div className="ai-dialog__error">{error}</div> : null}
-            </div>
-
-            {turns.length > 0 ? (
-              <form className="ai-dialog__followup" onSubmit={submitFollowup}>
-                <AutoResizeTextarea
-                  className="textarea ai-dialog__followup-input"
-                  placeholder="Ask a follow-up — Enter to send, Shift+Enter for a new line"
-                  value={followup}
-                  onChange={setFollowup}
-                  minRows={1}
-                  maxRows={5}
-                  submitMode="enter"
-                  disabled={busy}
-                  onSubmit={() => {
-                    const text = followup.trim();
-                    if (!text || busy) return;
-                    setFollowup('');
-                    void send(text);
-                  }}
-                  ariaLabel="Follow-up question"
-                />
-                <div className="ai-dialog__actions">
-                  {lastWasTruncated ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={continueGeneration}
-                      title="The provider reported it cut the reply off at the token budget — click to resume."
-                    >
-                      Continue
-                    </Button>
-                  ) : null}
-                  {busy ? (
-                    <Button type="button" variant="ghost" onClick={() => abortRef.current?.abort()}>
-                      Stop
-                    </Button>
-                  ) : (
-                    <Button type="submit" variant="primary" disabled={!followup.trim()}>
-                      Send
-                    </Button>
-                  )}
-                  {canSaveToNotes ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => {
-                        if (!lastAssistant) return;
-                        onAppendToBody?.(lastAssistant.content);
-                      }}
-                    >
-                      Save to notes
-                    </Button>
-                  ) : null}
-                </div>
-              </form>
-            ) : null}
+                    ) : null}
+                  </li>
+                ))}
+                {busy ? (
+                  <li className="ai-turn ai-turn--assistant ai-turn--busy">
+                    <div className="ai-turn__role">Assistant</div>
+                    <p className="ai-turn__text muted">
+                      <IcRefresh size={14} className="ai-spin" /> Thinking…
+                    </p>
+                  </li>
+                ) : null}
+              </ul>
+            )}
+            {error ? <div className="ai-dialog__error">{error}</div> : null}
           </>
         )}
-      </div>
-    </div>
+    </AppModal>
   );
 }
 

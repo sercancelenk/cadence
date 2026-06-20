@@ -382,11 +382,11 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
           ) : (
             <span />
           )}
-          <div className="quick-add-dialog__actions">
-            <button type="button" className="btn" onClick={onClose}>
+          <div className="app-modal__actions">
+            <button type="button" className="app-modal__btn-cancel" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="btn btn--primary" disabled={!canSubmit}>
+            <button type="submit" className="app-modal__btn-confirm" disabled={!canSubmit}>
               {isTask ? 'Add task' : 'Add note'}
             </button>
           </div>

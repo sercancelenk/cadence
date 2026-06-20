@@ -10,7 +10,7 @@ import {
   RICH_TEXT_SOFT_CHAR_LIMIT,
 } from '../../lib/richText';
 import { canonicalDocSignature } from '../../lib/richTextBody';
-import { createRichTextExtensions } from '../../lib/richTextEditorExtensions';
+import { createRichTextExtensions, isSafeEditorLinkUrl } from '../../lib/richTextEditorExtensions';
 import {
   attachmentUri,
   parseAttachmentId,
@@ -37,7 +37,9 @@ import {
   resolveRichTextImageLightboxSrc,
 } from '../../lib/richTextImageLightbox';
 import { resolveRichTextContent } from '../../lib/richTextImport';
+import { insertMarkdownPaste, shouldPasteClipboardAsMarkdown } from '../../lib/richTextPaste';
 import { RichTextImageLightbox } from './RichTextImageLightbox';
+import { Tooltip } from './Tooltip';
 
 /** Coalesce parent updates — editor stays instant; persist layer debounces again. */
 const DEFAULT_ON_CHANGE_DEBOUNCE_MS = 120;
@@ -70,6 +72,9 @@ export type RichTextEditorProps = {
   onRequestPreview?: () => void;
   /** Fired when local edits are pending vs flushed to `onChange`. */
   onSaveStateChange?: (state: 'idle' | 'pending' | 'saved') => void;
+  /** Focus the editor once when it becomes editable (e.g. new note in edit mode). */
+  autoFocus?: boolean;
+  onAutoFocusHandled?: () => void;
 };
 
 function contentKey(
@@ -201,6 +206,8 @@ export function RichTextEditor({
   toolbarMountEl = null,
   onRequestPreview,
   onSaveStateChange,
+  autoFocus = false,
+  onAutoFocusHandled,
 }: RichTextEditorProps) {
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
   const [imageLightbox, setImageLightbox] = useState<ImageLightboxState | null>(null);
@@ -230,6 +237,10 @@ export function RichTextEditor({
   onRequestPreviewRef.current = onRequestPreview;
   const onSaveStateChangeRef = useRef(onSaveStateChange);
   onSaveStateChangeRef.current = onSaveStateChange;
+  const onAutoFocusHandledRef = useRef(onAutoFocusHandled);
+  onAutoFocusHandledRef.current = onAutoFocusHandled;
+  const autoFocusRef = useRef(autoFocus);
+  autoFocusRef.current = autoFocus;
   const editableRef = useRef(editable);
   editableRef.current = editable;
   const debounceMsRef = useRef(onChangeDebounceMs);
@@ -270,6 +281,19 @@ export function RichTextEditor({
   const syncBaselineFromEditor = useCallback((ed: Editor) => {
     lastEmittedSig.current = docSignatureFromEditor(ed);
     setCharCount(ed.getText().length);
+  }, []);
+
+  const tryAutoFocus = useCallback((ed: Editor) => {
+    if (!autoFocusRef.current || !editableRef.current) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!autoFocusRef.current || !editableRef.current) return;
+        const focused = ed.chain().focus('start').run();
+        if (focused && ed.view.hasFocus()) {
+          onAutoFocusHandledRef.current?.();
+        }
+      });
+    });
   }, []);
 
   const flushChange = useCallback((ed: Editor) => {
@@ -473,24 +497,37 @@ export function RichTextEditor({
       },
       handlePaste: (_view, event) => {
         if (!editableRef.current) return false;
-        if (!attachmentScopeRef.current) return false;
-        const file = readDataTransferImageFile(event.clipboardData);
-        if (file) {
-          event.preventDefault();
-          void insertImageRef.current(file);
-          return true;
+        const clipboard = event.clipboardData;
+        if (!clipboard) return false;
+
+        if (attachmentScopeRef.current) {
+          const file = readDataTransferImageFile(clipboard);
+          if (file) {
+            event.preventDefault();
+            void insertImageRef.current(file);
+            return true;
+          }
+          const html = clipboard.getData('text/html') ?? '';
+          if (
+            /<img\b/i.test(html) &&
+            (html.includes('file://') || html.includes('webkit-fake-url'))
+          ) {
+            event.preventDefault();
+            showEditorNoticeRef.current(
+              'Could not read the pasted image. Try drag-and-drop, or use Copy Image from the source app.',
+            );
+            return true;
+          }
         }
-        const html = event.clipboardData?.getData('text/html') ?? '';
-        if (
-          /<img\b/i.test(html) &&
-          (html.includes('file://') || html.includes('webkit-fake-url'))
-        ) {
-          event.preventDefault();
-          showEditorNoticeRef.current(
-            'Could not read the pasted image. Try drag-and-drop, or use Copy Image from the source app.',
-          );
-          return true;
+
+        if (shouldPasteClipboardAsMarkdown(clipboard)) {
+          const ed = editorRef.current;
+          if (ed && insertMarkdownPaste(ed, clipboard.getData('text/plain'))) {
+            event.preventDefault();
+            return true;
+          }
         }
+
         return false;
       },
       handleDrop: (_view, event) => {
@@ -528,6 +565,7 @@ export function RichTextEditor({
     onCreate: ({ editor: ed }) => {
       editorRef.current = ed;
       syncBaselineFromEditor(ed);
+      tryAutoFocus(ed);
       void fetchRichTextAttachmentUserId(attachmentUserIdRef.current).then((uid) => {
         attachmentUserIdRef.current = uid;
         void hydrateAndTrack(ed, uid).then(() => syncBaselineFromEditor(ed));
@@ -582,6 +620,11 @@ export function RichTextEditor({
     if (!editor) return;
     editor.setEditable(editable);
   }, [editor, editable]);
+
+  useEffect(() => {
+    if (!autoFocus || !editor || !editable) return;
+    tryAutoFocus(editor);
+  }, [autoFocus, editor, editable, tryAutoFocus]);
 
   const prevEditableRef = useRef(editable);
   useLayoutEffect(() => {
@@ -699,6 +742,7 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
   useToolbarRefresh(editor);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [imageOpen, setImageOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState('');
   const [dateOpen, setDateOpen] = useState(false);
@@ -715,6 +759,7 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
   const openLinkEditor = useCallback(() => {
     const prev = editor.getAttributes('link').href as string | undefined;
     setLinkUrl(prev ?? 'https://');
+    setLinkError(null);
     setLinkOpen(true);
     setImageOpen(false);
     setDateOpen(false);
@@ -722,12 +767,25 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
   }, [editor]);
 
   const applyLink = useCallback(() => {
-    const url = linkUrl.trim();
-    if (!url) {
+    const raw = linkUrl.trim();
+    if (!raw) {
       editor.chain().focus().extendMarkRange('link').unsetLink().run();
-    } else {
-      editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+      setLinkError(null);
+      setLinkOpen(false);
+      return;
     }
+    // Accept a bare domain by assuming https://, then enforce the safe-protocol
+    // allowlist. `setLink` bypasses the extension's isAllowedUri gate, so this
+    // is the only thing stopping a hand-typed `javascript:`/`data:` href from
+    // being persisted as a link mark in note JSON.
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw);
+    const candidate = hasScheme ? raw : `https://${raw}`;
+    if (!isSafeEditorLinkUrl(candidate)) {
+      setLinkError('Only http(s) and mailto links are allowed.');
+      return;
+    }
+    editor.chain().focus().extendMarkRange('link').setLink({ href: candidate }).run();
+    setLinkError(null);
     setLinkOpen(false);
   }, [editor, linkUrl]);
 
@@ -1019,7 +1077,11 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
             value={linkUrl}
             placeholder="https://…"
             aria-label="Link URL"
-            onChange={(e) => setLinkUrl(e.target.value)}
+            aria-invalid={linkError ? true : undefined}
+            onChange={(e) => {
+              setLinkUrl(e.target.value);
+              if (linkError) setLinkError(null);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -1037,6 +1099,11 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
           <button type="button" className="btn btn--sm" onClick={() => setLinkOpen(false)}>
             Cancel
           </button>
+          {linkError ? (
+            <p className="rich-editor__pop-error" role="alert">
+              {linkError}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -1138,19 +1205,20 @@ function ToolbarButton({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      className={`rich-editor__btn${active ? ' rich-editor__btn--active' : ''}`}
-      title={title}
-      aria-label={title}
-      aria-pressed={active ?? false}
-      disabled={disabled}
-      onMouseDown={(e) => {
-        e.preventDefault();
-      }}
-      onClick={onClick}
-    >
-      {children}
-    </button>
+    <Tooltip label={title} placement="bottom">
+      <button
+        type="button"
+        className={`rich-editor__btn${active ? ' rich-editor__btn--active' : ''}`}
+        aria-label={title}
+        aria-pressed={active ?? false}
+        disabled={disabled}
+        onMouseDown={(e) => {
+          e.preventDefault();
+        }}
+        onClick={onClick}
+      >
+        {children}
+      </button>
+    </Tooltip>
   );
 }

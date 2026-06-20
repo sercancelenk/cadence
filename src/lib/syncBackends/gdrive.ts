@@ -199,11 +199,15 @@ export function createGDriveBackend(): SyncBackend | null {
         case 'wrong-password':
           return { kind: 'wrong-password' };
         case 'not-snapshot':
-        case 'corrupt':
-          // The remote has bytes that aren't a Cadence snapshot. We
-          // treat this the same as "no snapshot" for the auto-sync
-          // hook: it's safe to push our local data and overwrite.
+          // The remote bytes were NEVER a Cadence snapshot (e.g. a leftover or
+          // unrelated file). Safe to treat as "no snapshot" and seed our data.
           return { kind: 'no-snapshot' };
+        case 'corrupt':
+          // The remote IS a Cadence snapshot whose ciphertext failed
+          // authentication (tampered / truncated / bit-rot). Treating this as
+          // "no snapshot" would let auto-sync OVERWRITE a real backup. Surface
+          // it as a hard error so the user resolves it explicitly.
+          return { kind: 'corrupt' };
         case 'unsupported-version':
         case 'unsupported-kdf':
           return { kind: 'unsupported-version', version: unwrapped.kind === 'unsupported-version' ? unwrapped.version : undefined };
@@ -239,6 +243,31 @@ export function createGDriveBackend(): SyncBackend | null {
           status: 0,
           message: err instanceof Error ? err.message : 'encryption failed',
         };
+      }
+
+      // `wrapSnapshot` (PBKDF2 + AES-GCM) is the largest window in which another
+      // device can push between our version probe and this upload. Re-probe
+      // immediately before writing to shrink that TOCTOU gap: if the file's
+      // version moved (or a file appeared where we expected none), bail with a
+      // conflict instead of clobbering the newer remote. Drive media uploads do
+      // not honour If-Match reliably, so this re-check is our best optimistic
+      // concurrency guard.
+      const recheck = await findSnapshotFile(token);
+      if (recheck.kind === 'auth-required') return { kind: 'auth-required' };
+      if (recheck.kind === 'network-error') return { kind: 'network-error', message: recheck.message ?? '' };
+      if (recheck.kind === 'http-error')
+        return { kind: 'http-error', status: recheck.status ?? 0, message: recheck.message };
+      const current = recheck.file;
+      if (existing) {
+        // We intended to overwrite a known file. Conflict if it vanished or its
+        // version advanced past what we validated above.
+        if (!current || current.id !== existing.id || current.version !== existing.version) {
+          return { kind: 'conflict', currentEtag: current?.version };
+        }
+      } else if (current) {
+        // We intended to create the first snapshot, but another device created
+        // one in the meantime — do not POST a duplicate; report the conflict.
+        return { kind: 'conflict', currentEtag: current.version };
       }
 
       const uploadResult = existing
@@ -312,11 +341,16 @@ type FileLookupResult =
   | { kind: 'network-error'; message?: string };
 
 async function findSnapshotFile(token: string): Promise<FileLookupResult> {
+  // Fetch up to a handful and pick deterministically (oldest createdTime, id as
+  // tiebreak) so that if two devices ever raced and created duplicate snapshot
+  // files, EVERY device converges on the SAME file for both pull and push
+  // instead of silently splitting the workspace across two snapshots.
   const params = new URLSearchParams({
     spaces: 'appDataFolder',
     q: `name='${SNAPSHOT_NAME}' and trashed=false`,
-    fields: 'files(id,name,version,modifiedTime,size,md5Checksum)',
-    pageSize: '1',
+    fields: 'files(id,name,version,modifiedTime,createdTime,size,md5Checksum)',
+    orderBy: 'createdTime,id',
+    pageSize: '10',
   });
   let resp: Response;
   try {

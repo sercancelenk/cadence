@@ -92,8 +92,28 @@ function writeJsonAtomic(filePath, value) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8');
+  // Durable write: fsync the data to disk BEFORE the rename, then fsync the
+  // directory so the rename itself survives a crash / power loss. Without this,
+  // a renamed-but-unflushed file can vanish on an OS crash, silently losing a
+  // note revision the user believed was saved.
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.writeSync(fd, JSON.stringify(value, null, 2), 0, 'utf8');
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
   fs.renameSync(tmp, filePath);
+  try {
+    const dirFd = fs.openSync(dir, 'r');
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
+  } catch {
+    // Windows disallows fsync on directory fds; the rename is still atomic.
+  }
 }
 
 function emptyIndex(noteId) {

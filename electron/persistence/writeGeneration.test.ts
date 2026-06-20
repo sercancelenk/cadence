@@ -52,6 +52,12 @@ describe('writeGeneration', () => {
     expect(canCommitWriteGeneration(3, 4)).toBe(false);
   });
 
+  it('canCommitWriteGeneration refuses malformed/non-finite expected (no concurrency bypass)', () => {
+    expect(canCommitWriteGeneration(Number.NaN, 5)).toBe(false);
+    expect(canCommitWriteGeneration(Number.POSITIVE_INFINITY, 5)).toBe(false);
+    expect(canCommitWriteGeneration('5' as unknown as number, 5)).toBe(false);
+  });
+
   it('isFutureDataVersion detects version > MAX', () => {
     expect(isFutureDataVersion({ version: 4, teams: [], people: [], items: [], todoGroups: [], todoItems: [] })).toBe(
       true,

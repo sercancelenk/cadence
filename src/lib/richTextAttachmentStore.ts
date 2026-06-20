@@ -266,9 +266,20 @@ export function readDataTransferImageFile(clipboardData: DataTransfer | null): B
   return null;
 }
 
+/**
+ * Cap the base64 payload we will `atob` from clipboard HTML. base64 inflates
+ * bytes by ~4/3, so this bounds the decoded image to roughly 40 MB and prevents
+ * a crafted multi-hundred-MB clipboard data: URL from exhausting renderer
+ * memory before the compression pipeline's own size guard runs.
+ */
+const MAX_DATA_URL_BASE64_LENGTH = 56 * 1024 * 1024;
+
 function dataUrlToBlob(dataUrl: string): Blob {
   const [header, b64] = dataUrl.split(',');
   if (!b64) throw new Error('Invalid data URL.');
+  if (b64.length > MAX_DATA_URL_BASE64_LENGTH) {
+    throw new Error('Pasted image is too large.');
+  }
   const mime = header?.match(/data:([^;]+)/)?.[1] ?? 'image/png';
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);

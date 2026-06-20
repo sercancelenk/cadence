@@ -12,6 +12,8 @@ export type NotesBodyEditorProps = {
   editorReady: boolean;
   bodyEditing: boolean;
   onBodyEditingChange: (editing: boolean) => void;
+  editorAutoFocus?: boolean;
+  onEditorAutoFocusHandled?: () => void;
   onChangeBody: (payload: RichTextPayload) => void;
   attachmentUserId: string;
   todoItems: TodoItem[];
@@ -26,6 +28,8 @@ export function NotesBodyEditor({
   editorReady,
   bodyEditing,
   onBodyEditingChange,
+  editorAutoFocus = false,
+  onEditorAutoFocusHandled,
   onChangeBody,
   attachmentUserId,
   todoItems,
@@ -40,6 +44,8 @@ export function NotesBodyEditor({
         valueFormat={editorBodyFormat}
         editing={bodyEditing}
         onEditingChange={onBodyEditingChange}
+        autoFocusEditor={editorAutoFocus}
+        onEditorAutoFocusHandled={onEditorAutoFocusHandled}
         onChange={onChangeBody}
         editable={editorReady}
         placeholder="Write your note…"

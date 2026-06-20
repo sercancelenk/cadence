@@ -9,6 +9,7 @@ import {
   createNotesLock,
   decryptBodyWithMaster,
   encryptBodyWithMaster,
+  MIN_NOTES_PASSPHRASE_LENGTH,
   unlockMaster,
   unwrapPassphraseFromRecovery,
   wrapPassphraseForRecovery,
@@ -19,6 +20,11 @@ const PASS = 'correct horse battery staple';
 const ACCOUNT = 'account-password-123';
 
 describe('notesCrypto workspace lock', () => {
+  it('rejects a passphrase shorter than the minimum at the crypto boundary', async () => {
+    const tooShort = 'a'.repeat(MIN_NOTES_PASSPHRASE_LENGTH - 1);
+    await expect(createNotesLock(tooShort)).rejects.toThrow(/at least/i);
+  });
+
   it('creates a lock and unlocks with the same passphrase', async () => {
     const { lock, masterKey } = await createNotesLock(PASS);
     expect(lock.saltB64).toBeTruthy();

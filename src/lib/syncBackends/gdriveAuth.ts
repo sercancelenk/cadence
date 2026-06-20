@@ -221,15 +221,32 @@ export async function getValidAccessToken(): Promise<string | null> {
   if (!tokens) return null;
   if (tokens.expiresAt - Date.now() > 60_000) return tokens.accessToken;
   if (!tokens.refreshToken) return null;
-  const refreshed = await refreshAccessToken(tokens.refreshToken);
+  // Coalesce concurrent refreshes. Without this, several in-flight sync calls
+  // (status + pull + push, or rapid retries) each fire their own refresh
+  // exchange. Those race on `saveTokens` and can trip Google's per-client rate
+  // limiter, occasionally invalidating a freshly-issued token. A single shared
+  // promise guarantees exactly one refresh exchange per expiry window.
+  if (!refreshMutex) {
+    const refreshToken = tokens.refreshToken;
+    refreshMutex = refreshAndPersist(refreshToken, tokens).finally(() => {
+      refreshMutex = null;
+    });
+  }
+  return refreshMutex;
+}
+
+let refreshMutex: Promise<string | null> | null = null;
+
+async function refreshAndPersist(refreshToken: string, prev: OAuthTokens): Promise<string | null> {
+  const refreshed = await refreshAccessToken(refreshToken);
   if (!refreshed) return null;
   // Preserve the refresh token + email; Google doesn't re-emit them
   // on a refresh exchange.
   const merged: OAuthTokens = {
     accessToken: refreshed.accessToken,
-    refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
+    refreshToken: refreshed.refreshToken ?? prev.refreshToken,
     expiresAt: refreshed.expiresAt,
-    email: refreshed.email ?? tokens.email,
+    email: refreshed.email ?? prev.email,
   };
   saveTokens(merged);
   return merged.accessToken;
@@ -480,31 +497,56 @@ async function exchangeCodeForTokens(
 async function refreshAccessToken(refreshToken: string): Promise<OAuthTokens | null> {
   const clientId = getClientId();
   if (!clientId) return null;
-  let resp: Response;
-  try {
-    resp = await fetch(TOKEN_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: clientId,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token',
-      }).toString(),
-    });
-  } catch {
-    return null;
+
+  // A transient failure (network blip, 429, 5xx) must NOT be mistaken for a
+  // revoked grant — otherwise a momentary hiccup signs the user out of sync.
+  // Retry those a couple of times with short backoff; fail fast only on a hard
+  // 4xx (e.g. invalid_grant = the refresh token really was revoked).
+  const maxAttempts = 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let resp: Response;
+    try {
+      resp = await fetch(TOKEN_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          refresh_token: refreshToken,
+          grant_type: 'refresh_token',
+        }).toString(),
+      });
+    } catch {
+      // Network-layer failure — transient. Retry unless this was the last try.
+      if (attempt === maxAttempts - 1) return null;
+      await sleepForRefreshRetry(attempt);
+      continue;
+    }
+    if (resp.ok) {
+      const j = (await resp.json()) as {
+        access_token: string;
+        expires_in?: number;
+        refresh_token?: string;
+      };
+      return {
+        accessToken: j.access_token,
+        refreshToken: j.refresh_token,
+        expiresAt: Date.now() + (j.expires_in ?? 3500) * 1000,
+      };
+    }
+    // 429 / 5xx are transient per Google's guidance; retry. Any other 4xx is
+    // deterministic (bad/revoked grant) — stop immediately.
+    const transient = resp.status === 429 || (resp.status >= 500 && resp.status <= 599);
+    if (!transient || attempt === maxAttempts - 1) return null;
+    await sleepForRefreshRetry(attempt);
   }
-  if (!resp.ok) return null;
-  const j = (await resp.json()) as {
-    access_token: string;
-    expires_in?: number;
-    refresh_token?: string;
-  };
-  return {
-    accessToken: j.access_token,
-    refreshToken: j.refresh_token,
-    expiresAt: Date.now() + (j.expires_in ?? 3500) * 1000,
-  };
+  return null;
+}
+
+async function sleepForRefreshRetry(attempt: number): Promise<void> {
+  const baseMs =
+    typeof process !== 'undefined' && process.env && process.env.VITEST ? 0 : 250;
+  const cap = baseMs * Math.pow(2, attempt);
+  await new Promise((r) => setTimeout(r, Math.random() * cap));
 }
 
 /* ------------------------------------------------------------------ */

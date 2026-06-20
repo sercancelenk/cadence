@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import type { RichTextPayload, RichTextBodyFormat } from '../../lib/richText';
 import {
   noteBodyPatchIsNoOp,
@@ -16,6 +16,7 @@ import type { NotesUnlockApi } from '../../providers/NotesUnlockContext';
 import type { Note } from '../../model';
 import type { NoteRevisionTrigger } from '../../lib/noteRevision/types';
 import { registerBeforeFlushHook } from '../../lib/pendingSaveFlush';
+import { deriveStoredTitleFromPlainText } from './noteDisplay';
 
 export type NoteRevisionCapture = (
   prev: Note,
@@ -54,17 +55,28 @@ export function useNotesEditor(
   update: (fn: (d: AppData) => AppData) => void,
   unlock: NotesUnlockApi,
   captureRevision?: NoteRevisionCapture,
+  createNoteEditIntentRef?: MutableRefObject<string | null>,
+  onEncryptError?: (message: string) => void,
 ) {
   const [decrypted, setDecrypted] = useState<
     ({ noteId: string } & RichTextBodyFields) | null
   >(null);
   const [bodyEditing, setBodyEditing] = useState(false);
+  const [editorAutoFocus, setEditorAutoFocus] = useState(false);
+  const lastSelectedIdRef = useRef<string | null>(null);
   const encryptGenByNote = useRef(new Map<string, number>());
   const latestRevisionNoteRef = useRef<Note | null>(null);
   const latestBodyFieldsRef = useRef<({ noteId: string } & RichTextBodyFields) | null>(null);
   const pendingLockedNoteRef = useRef<Note | null>(null);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  // Kept in a ref so the encrypt callbacks below don't need it in their
+  // dependency arrays (which would re-register the flush hook on every render).
+  const onEncryptErrorRef = useRef(onEncryptError);
+  onEncryptErrorRef.current = onEncryptError;
+
+  const ENCRYPT_FAIL_MESSAGE =
+    'Could not encrypt this locked note — your latest changes are NOT saved. Copy them elsewhere and try again.';
 
   const flushPendingLockedBody = useCallback(async () => {
     const pending = latestBodyFieldsRef.current;
@@ -79,7 +91,16 @@ export function useNotesEditor(
     const noteId = note.id;
     const myGen = (encryptGenByNote.current.get(noteId) ?? 0) + 1;
     encryptGenByNote.current.set(noteId, myGen);
-    const cipher = await encryptBodyWithMaster(key, pending.body);
+    let cipher: Note['cipher'];
+    try {
+      cipher = await encryptBodyWithMaster(key, pending.body);
+    } catch (err) {
+      // Leave latestBodyFieldsRef / pendingLockedNoteRef intact so a later flush
+      // retries this body instead of silently dropping the user's edit.
+      console.error('[cadence] locked-note encrypt failed during flush', err);
+      onEncryptErrorRef.current?.(ENCRYPT_FAIL_MESSAGE);
+      return;
+    }
     if (encryptGenByNote.current.get(noteId) !== myGen) return;
     const attachmentRefs = attachmentRefsFromAnyBody(pending.body, pending.bodyFormat);
     const lockedBodySignature = canonicalDocSignature(pending.body, pending.bodyFormat);
@@ -158,12 +179,38 @@ export function useNotesEditor(
   }, [selected?.id]);
 
   useEffect(() => {
-    if (!selected || !editorReady) {
+    if (!selected?.id) {
+      lastSelectedIdRef.current = null;
       setBodyEditing(false);
+      setEditorAutoFocus(false);
       return;
     }
-    setBodyEditing(false);
-  }, [selected?.id, editorReady]);
+
+    const intentId = createNoteEditIntentRef?.current ?? null;
+    const selectionChanged = lastSelectedIdRef.current !== selected.id;
+    lastSelectedIdRef.current = selected.id;
+
+    if (intentId === selected.id) {
+      setBodyEditing(true);
+      setEditorAutoFocus(true);
+      if (createNoteEditIntentRef) createNoteEditIntentRef.current = null;
+      return;
+    }
+
+    if (selectionChanged) {
+      setBodyEditing(false);
+      setEditorAutoFocus(false);
+    }
+  }, [selected?.id, createNoteEditIntentRef]);
+
+  const openBodyEditor = useCallback((withFocus = false) => {
+    setBodyEditing(true);
+    setEditorAutoFocus(withFocus);
+  }, []);
+
+  const clearEditorAutoFocus = useCallback(() => {
+    setEditorAutoFocus(false);
+  }, []);
 
   const rememberRevisionNote = useCallback((next: Note) => {
     latestRevisionNoteRef.current = next;
@@ -175,25 +222,21 @@ export function useNotesEditor(
     return noteSnapshotFromNote(note);
   }, []);
 
-  const onChangeTitle = (next: string) => {
-    if (!selected) return;
-    const prev = selected;
-    const nextNote = { ...selected, title: next };
-    rememberRevisionNote(nextNote);
-    patchNote(selected.id, { title: next });
-    captureRevision?.(prev, nextNote, 'autosave');
-  };
-
   const onChangeBody = (payload: RichTextPayload) => {
     if (!selected) return;
     const fields = richBodyFieldsFromPayload(payload);
-    if (noteBodyPatchIsNoOp(selected, fields)) return;
+    const derivedTitle = deriveStoredTitleFromPlainText(payload.plainText);
+    const titleChanged = (selected.title ?? '') !== derivedTitle;
+    if (noteBodyPatchIsNoOp(selected, fields) && !titleChanged) return;
     latestBodyFieldsRef.current = { noteId: selected.id, ...fields };
     const prev = selected;
     if (!selected.locked) {
-      const nextNote = noteForRevisionSnapshot(selected, fields);
+      const nextNote = noteForRevisionSnapshot(
+        { ...selected, title: derivedTitle },
+        fields,
+      );
       rememberRevisionNote(nextNote);
-      patchNote(selected.id, fields);
+      patchNote(selected.id, { ...fields, title: derivedTitle });
       captureRevision?.(prev, nextNote, 'autosave');
       return;
     }
@@ -203,6 +246,10 @@ export function useNotesEditor(
       return;
     }
     setDecrypted({ noteId: selected.id, ...fields });
+    if (titleChanged) {
+      patchNote(selected.id, { title: derivedTitle });
+      rememberRevisionNote({ ...selected, title: derivedTitle });
+    }
     // NOTE: do NOT publish a revision snapshot with the new plaintext signature
     // yet — the matching ciphertext is still encrypting below. Until it lands,
     // latestRevisionNoteRef must keep the previous (cipher ↔ signature
@@ -213,7 +260,17 @@ export function useNotesEditor(
     const myGen = (encryptGenByNote.current.get(noteId) ?? 0) + 1;
     encryptGenByNote.current.set(noteId, myGen);
     void (async () => {
-      const cipher = await encryptBodyWithMaster(key, fields.body);
+      let cipher: Note['cipher'];
+      try {
+        cipher = await encryptBodyWithMaster(key, fields.body);
+      } catch (err) {
+        // The plaintext is held in `decrypted` and the pending refs still point
+        // at this edit, so a later autosave / flush retries. Tell the user their
+        // change is not yet persisted instead of failing silently.
+        console.error('[cadence] locked-note encrypt failed', err);
+        onEncryptErrorRef.current?.(ENCRYPT_FAIL_MESSAGE);
+        return;
+      }
       if (encryptGenByNote.current.get(noteId) !== myGen) return;
       const attachmentRefs = attachmentRefsFromAnyBody(fields.body, fields.bodyFormat);
       const lockedBodySignature = canonicalDocSignature(fields.body, fields.bodyFormat);
@@ -227,6 +284,7 @@ export function useNotesEditor(
       );
       const nextNote: Note = {
         ...selected,
+        title: derivedTitle,
         body: '',
         locked: true,
         cipher,
@@ -252,11 +310,13 @@ export function useNotesEditor(
     setDecrypted,
     bodyEditing,
     setBodyEditing,
+    openBodyEditor,
+    editorAutoFocus,
+    clearEditorAutoFocus,
     decryptedForSelected,
     editorReady,
     editorBodyFormat,
     editorBody,
-    onChangeTitle,
     onChangeBody,
     hideSelected,
     getRevisionSnapshot,

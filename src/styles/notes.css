@@ -554,6 +554,13 @@
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   min-height: 56px;
+  overflow: visible;
+  position: relative;
+  z-index: 4;
+}
+
+.notes-page__main-header .notes-page__main-actions {
+  margin-left: auto;
 }
 
 .notes-page__title-input {
@@ -585,6 +592,7 @@
   border-radius: 10px;
   background: var(--surface-hover);
   border: 1px solid var(--border);
+  overflow: visible;
 }
 
 .notes-page__editor {
@@ -597,6 +605,15 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* macOS Notes-style: first line reads as the note title inside the editor. */
+.notes-page__editor .rich-editor__prose > :first-child {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  margin-bottom: 0.5em;
 }
 
 /* Notes — per-note version history drawer */
@@ -798,6 +815,11 @@
   z-index: 5;
   background: color-mix(in srgb, var(--panel) 94%, var(--bg));
   box-shadow: 0 1px 0 color-mix(in srgb, var(--accent) 12%, transparent);
+  overflow: visible;
+}
+
+.rich-doc-pane__toolbar-host {
+  overflow: visible;
 }
 
 .rich-doc-pane__header {
@@ -1936,20 +1958,18 @@
   line-height: 1.5;
 }
 
-/* Footer band for NotesDialog (centred-modal style shared with AI dialog). */
+/* Footer band for NotesDialog (Spotify-style modal actions). */
 .notes-dialog__footer {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--tp-divider, var(--border));
+  width: 100%;
 }
 
 .notes-dialog__footer-actions {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
+  align-items: stretch;
+  gap: 12px;
   width: 100%;
 }
 
@@ -2131,13 +2151,43 @@
 
 .notes-page__group-add-note {
   flex-shrink: 0;
-  margin-right: 8px;
+  margin-right: 4px;
   opacity: 0.65;
+}
+
+.notes-page__group-delete {
+  flex-shrink: 0;
+  margin-right: 8px;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--muted);
+  transition:
+    opacity 140ms ease,
+    color 0.12s ease,
+    background 0.12s ease;
 }
 
 .notes-page__group-head:hover .notes-page__group-add-note,
 .notes-page__group-holder--open .notes-page__group-add-note {
   opacity: 1;
+}
+
+.notes-page__group-head:hover .notes-page__group-delete,
+.notes-page__group-head:focus-within .notes-page__group-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.notes-page__group-delete:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+@media (hover: none) {
+  .notes-page__group-delete {
+    opacity: 0.65;
+    pointer-events: auto;
+  }
 }
 
 .notes-page__group-children {
@@ -2173,4 +2223,95 @@
 
 .notes-page__list-row:hover .notes-page__drag-handle--subtle {
   opacity: 0.55;
+}
+
+.notes-page__list-item--bulk-selected,
+.notes-page__list-item--bulk-selected:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* Sidebar note context menu (bulk actions) */
+.notes-context-menu {
+  position: fixed;
+  z-index: 5000;
+  min-width: 196px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+
+.notes-context-menu__heading {
+  padding: 6px 10px 8px;
+  font-weight: 600;
+}
+
+.notes-context-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.notes-context-menu__item:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.notes-context-menu__item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.notes-context-menu__item--danger {
+  color: var(--danger);
+}
+
+.notes-context-menu__item--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.notes-context-menu__sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.notes-context-menu__submenu-wrap {
+  position: relative;
+}
+
+.notes-context-menu__submenu {
+  display: none;
+  position: absolute;
+  left: calc(100% - 4px);
+  top: 0;
+  min-width: 168px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+
+.notes-context-menu__submenu-wrap:hover > .notes-context-menu__submenu,
+.notes-context-menu__submenu-wrap:focus-within > .notes-context-menu__submenu {
+  display: block;
+}
+
+.notes-context-menu__item--submenu span {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
 }

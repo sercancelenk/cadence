@@ -149,6 +149,14 @@ type Api = {
    * (logout, password change) that must not lose unsaved typing.
    */
   flushPendingSave: () => Promise<void>;
+  /**
+   * Synchronously read the freshest in-memory workspace snapshot (the same
+   * source of truth that `update` writes to). Unlike the `data` field this is
+   * not captured by a render closure, so flows that `await runBeforeFlushHooks()`
+   * / `flushPendingSave()` and then need the post-flush state (e.g. additive
+   * merge-import) can read the committed editor buffers instead of stale data.
+   */
+  getLatestSnapshot: () => AppData;
   rememberTeam: (teamId: string) => void;
   addTeam: (name: string) => void;
   updateTeam: (teamId: string, patch: Partial<Pick<Team, 'name' | 'status'>>) => void;
@@ -698,7 +706,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (persistBlockedRef.current) return;
     setSaving(true);
     try {
-      const r = await persistQueueRef.current.enqueue(payload);
+      let r: PersistResult;
+      try {
+        r = await persistQueueRef.current.enqueue(payload);
+      } catch (err) {
+        // The persist queue rejects if the underlying write throws (the real
+        // write path catches internally, but guard defensively so a future
+        // throw surfaces as a save error instead of an unhandled rejection).
+        r = {
+          ok: false,
+          reason: 'persist-exception',
+          error: err instanceof Error ? err.message : 'Unexpected error while saving.',
+        };
+      }
       if (r.ok) {
         setLastSavedAt(Date.now());
         setLastSaveError(null);
@@ -1188,6 +1208,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       dismissDataLossSuspicion,
       currentShape: shapeOfData(d),
       flushPendingSave,
+      getLatestSnapshot: () => snapshotStoreRef.current.getSnapshot() ?? empty,
       rememberTeam: (teamId) => update((x) => setLastTeamIdFn(x, teamId)),
       update,
       addTeam: (name) => update((x) => addTeamFn(x, name)),
@@ -1274,6 +1295,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       clearSaveError: () => actionsBridgeRef.current.clearSaveError(),
       dismissDataLossSuspicion: () => actionsBridgeRef.current.dismissDataLossSuspicion(),
       flushPendingSave: () => actionsBridgeRef.current.flushPendingSave(),
+      getLatestSnapshot: () => actionsBridgeRef.current.getLatestSnapshot(),
       rememberTeam: (teamId: string) => actionsBridgeRef.current.rememberTeam(teamId),
       addTeam: (name: string) => actionsBridgeRef.current.addTeam(name),
       updateTeam: (teamId: string, patch: Parameters<Api['updateTeam']>[1]) =>

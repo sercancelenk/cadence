@@ -38,11 +38,22 @@ export function registerBeforeFlushHook(
 }
 
 export async function runBeforeFlushHooks(): Promise<void> {
+  // Isolate each hook: a single failing producer (e.g. a locked-note encrypt
+  // that throws) must NOT abort the remaining hooks or the downstream AppData
+  // flush. Otherwise one error on quit/sync would block every pending save.
   for (const fn of editorFlushHooks) {
-    await fn();
+    try {
+      await fn();
+    } catch (err) {
+      console.error('[cadence] before-flush (editor) hook failed', err);
+    }
   }
   for (const fn of beforeFlushHooks) {
-    await fn();
+    try {
+      await fn();
+    } catch (err) {
+      console.error('[cadence] before-flush hook failed', err);
+    }
   }
 }
 

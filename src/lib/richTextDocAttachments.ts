@@ -1,5 +1,11 @@
 import type { RichTextDoc } from './richText';
-import { attachmentUri, parseAttachmentId } from './richTextAttachmentUri';
+import { attachmentUri, isValidAttachmentId, parseAttachmentId } from './richTextAttachmentUri';
+
+/** A valid attachment id from the node's `attachmentId` attr, else null. */
+function validAttachmentIdAttr(attrs: Record<string, unknown>): string | null {
+  const raw = typeof attrs.attachmentId === 'string' ? attrs.attachmentId : '';
+  return raw && isValidAttachmentId(raw) ? raw : null;
+}
 
 type ImageNode = RichTextDoc & {
   attrs?: Record<string, unknown>;
@@ -21,10 +27,18 @@ function mapDoc(doc: RichTextDoc, fn: (node: RichTextDoc) => RichTextDoc): RichT
 export function normalizeDocAttachmentsForStorage(doc: RichTextDoc): RichTextDoc {
   return mapDoc(doc, (node) => {
     if (node.type !== 'image' || !node.attrs) return node;
-    const attId =
-      (typeof node.attrs.attachmentId === 'string' && node.attrs.attachmentId) ||
-      parseAttachmentId(String(node.attrs.src ?? ''));
-    if (!attId) return node;
+    const attId = validAttachmentIdAttr(node.attrs) ?? parseAttachmentId(String(node.attrs.src ?? ''));
+    if (!attId) {
+      // No VALID attachment id. If an invalid attachmentId attr is present,
+      // strip it so it can never be persisted as a broken `cadence-attachment://`
+      // pointer or pollute orphan-GC ref collection. Legacy data:/https images
+      // (which legitimately have no attachmentId) are left untouched.
+      if (typeof node.attrs.attachmentId === 'string' && node.attrs.attachmentId) {
+        const { attachmentId: _drop, ...restAttrs } = node.attrs;
+        return { ...node, attrs: restAttrs } as ImageNode;
+      }
+      return node;
+    }
     return {
       ...node,
       attrs: {
@@ -41,9 +55,7 @@ export function collectAttachmentIds(doc: RichTextDoc): string[] {
   const ids = new Set<string>();
   const walk = (node: RichTextDoc) => {
     if (node.type === 'image' && node.attrs) {
-      const id =
-        (typeof node.attrs.attachmentId === 'string' && node.attrs.attachmentId) ||
-        parseAttachmentId(String(node.attrs.src ?? ''));
+      const id = validAttachmentIdAttr(node.attrs) ?? parseAttachmentId(String(node.attrs.src ?? ''));
       if (id) ids.add(id);
     }
     node.content?.forEach(walk);

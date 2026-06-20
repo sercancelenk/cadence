@@ -223,10 +223,12 @@ export async function importPortableBackupFile(
   let attachmentsSkipped = 0;
   let attachmentsEncryptedSkipped = 0;
 
-  const toImport = deps.transformWorkspace ? deps.transformWorkspace(parsed.data) : parsed.data;
-  const r = await deps.importWorkspace(toImport);
-  if (!r.ok) return r;
-
+  // Import attachment sidecars BEFORE replacing the workspace. Attachments are
+  // content-addressed by id and additive (existing blobs are left in place), so
+  // writing them first is harmless even if the workspace import later fails —
+  // whereas committing the workspace first and then hitting a catastrophic
+  // attachment failure would leave a freshly-replaced workspace referencing
+  // images that were never written, with no way back.
   for (const [id, bytes] of bundle.attachments) {
     if (!bytes.length) {
       attachmentsSkipped += 1;
@@ -237,6 +239,10 @@ export async function importPortableBackupFile(
     else if (outcome === 'encrypted') attachmentsEncryptedSkipped += 1;
     else attachmentsSkipped += 1;
   }
+
+  const toImport = deps.transformWorkspace ? deps.transformWorkspace(parsed.data) : parsed.data;
+  const r = await deps.importWorkspace(toImport);
+  if (!r.ok) return r;
 
   revokeAttachmentBlobUrls();
   return {

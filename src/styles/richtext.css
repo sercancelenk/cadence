@@ -17,6 +17,9 @@
   padding: 8px 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
   background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+  overflow: visible;
+  position: relative;
+  z-index: 2;
 }
 
 .rich-editor__group {
@@ -96,6 +99,12 @@
   font-size: 12px;
   color: var(--muted);
   padding: 0 4px;
+}
+.rich-editor__pop-error {
+  flex: 1 1 100%;
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--danger, #d1242f);
 }
 
 .rich-editor__surface {

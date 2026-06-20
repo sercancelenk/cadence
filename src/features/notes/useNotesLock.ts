@@ -306,6 +306,11 @@ export function useNotesLock({
 
   const confirmDelete = () => {
     if (!confirmRemoveId) return;
+    const note = data.notes.find((n) => n.id === confirmRemoveId);
+    if (note?.locked) {
+      setConfirmRemoveId(null);
+      return;
+    }
     const id = confirmRemoveId;
     setConfirmRemoveId(null);
     void (async () => {

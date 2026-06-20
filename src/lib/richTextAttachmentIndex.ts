@@ -35,6 +35,22 @@ function scanBody(
   for (const id of collectAttachmentIds(doc)) sink.add(id);
 }
 
+/**
+ * Format-agnostic scan: prosemirror bodies are scanned structurally, every
+ * other format (markdown / legacy / unknown) is scanned for raw
+ * `cadence-attachment://<id>` URIs. Use this for any place that must account
+ * for ALL references regardless of body format (e.g. orphan GC), so a
+ * markdown-bodied note never has its still-referenced images garbage-collected.
+ */
+function scanAnyBody(
+  body: string | undefined,
+  bodyFormat: string | undefined,
+  sink: Set<string>,
+): void {
+  if (bodyFormat === 'prosemirror') scanBody(body, bodyFormat, sink);
+  else scanMaybeMarkdownBody(body, sink);
+}
+
 /** Attachment ids referenced by a single rich-text body. */
 export function attachmentRefsFromBody(
   body: string | undefined,
@@ -58,11 +74,7 @@ export function attachmentRefsFromAnyBody(
   bodyFormat: string | undefined,
 ): string[] {
   const ids = new Set<string>();
-  if (bodyFormat === 'prosemirror') {
-    scanBody(body, bodyFormat, ids);
-  } else {
-    scanMaybeMarkdownBody(body, ids);
-  }
+  scanAnyBody(body, bodyFormat, ids);
   return [...ids];
 }
 
@@ -73,14 +85,21 @@ export function collectReferencedAttachmentIds(data: AppData): string[] {
   // collections are optional-iterated so a missing array can never throw and
   // abort attachment bookkeeping.
   for (const n of data.notes ?? []) {
-    scanBody(n.body, n.bodyFormat, ids);
+    // Scan EVERY format (prosemirror + markdown/legacy), otherwise a
+    // markdown-bodied note's still-referenced images would look like orphans
+    // and be garbage-collected — silent attachment/data loss.
+    scanAnyBody(n.body, n.bodyFormat, ids);
     if (Array.isArray(n.attachmentRefs)) {
-      for (const id of n.attachmentRefs) ids.add(id);
+      // Validate before trusting: a corrupt/synced ref must not protect a
+      // bogus id (which would skew GC) — mirror the Electron main sanitizer.
+      for (const id of n.attachmentRefs) {
+        if (typeof id === 'string' && isValidAttachmentId(id)) ids.add(id);
+      }
     }
   }
-  for (const t of data.todoItems ?? []) scanBody(t.body, t.bodyFormat, ids);
+  for (const t of data.todoItems ?? []) scanAnyBody(t.body, t.bodyFormat, ids);
   if (data.utilityDocument) {
-    scanBody(data.utilityDocument.body, data.utilityDocument.bodyFormat, ids);
+    scanAnyBody(data.utilityDocument.body, data.utilityDocument.bodyFormat, ids);
   }
   return [...ids];
 }

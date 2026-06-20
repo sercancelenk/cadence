@@ -26,7 +26,8 @@ import { IcAlertTriangle, IcCheck, IcX } from '../icons';
  *   - `aria-live="polite"` on the container so screen readers announce
  *     each toast without interrupting the user's current focus.
  *   - Use this for non-blocking confirmations / errors. For destructive
- *     confirmations that NEED a Yes/No answer, keep `window.confirm` —
+ *     confirmations that NEED a Yes/No answer, use `useConfirm()` from
+ *     ConfirmProvider — it renders the shared Spotify-style modal.
  *     toasts are read-only by design.
  */
 

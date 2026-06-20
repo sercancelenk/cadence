@@ -8,6 +8,7 @@ import {
   IcPlus,
   IcTrash,
 } from '../../components/icons';
+import { useConfirm } from '../../components/ui/ConfirmProvider';
 import type { Note, NoteGroup } from '../../model';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
 import { NotesIconButton } from './NotesIconButton';
@@ -28,7 +29,9 @@ export type NotesSidebarProps = {
   sortMode: NoteSortMode;
   onSortModeChange: (mode: NoteSortMode) => void;
   selectedId: string | null;
-  onSelectNote: (id: string) => void;
+  bulkSelectedIds: ReadonlySet<string>;
+  onNoteClick: (id: string, event: React.MouseEvent) => void;
+  onNoteContextMenu: (id: string, event: React.MouseEvent) => void;
   onCreateNote: (groupId?: string) => void;
   onCreateGroup: (name: string) => void;
   onRenameGroup: (id: string, name: string) => void;
@@ -61,7 +64,9 @@ export function NotesSidebar({
   sortMode,
   onSortModeChange,
   selectedId,
-  onSelectNote,
+  bulkSelectedIds,
+  onNoteClick,
+  onNoteContextMenu,
   onCreateNote,
   onCreateGroup,
   onRenameGroup,
@@ -84,6 +89,7 @@ export function NotesSidebar({
   onDragEnd,
   onCollapseSidebar,
 }: NotesSidebarProps) {
+  const { confirm } = useConfirm();
   const archivedView = viewMode === 'archived';
   const isManual = sortMode === 'manual' && !archivedView;
 
@@ -132,16 +138,30 @@ export function NotesSidebar({
 
   const hasContent = sortedGroups.length > 0 || notes.length > 0;
 
-  const rowProps = {
-    selectedId,
-    onSelectNote,
-    decrypted,
-    isManual,
-    onDragStart: onNoteDragStart,
-    onDragOver: onNoteDragOver,
-    onDrop: onNoteDrop,
-    onDragEnd,
-  };
+  const rowProps = useMemo(
+    () => ({
+      selectedId,
+      onNoteClick,
+      onNoteContextMenu,
+      decrypted,
+      isManual,
+      onDragStart: onNoteDragStart,
+      onDragOver: onNoteDragOver,
+      onDrop: onNoteDrop,
+      onDragEnd,
+    }),
+    [
+      selectedId,
+      onNoteClick,
+      onNoteContextMenu,
+      decrypted,
+      isManual,
+      onNoteDragStart,
+      onNoteDragOver,
+      onNoteDrop,
+      onDragEnd,
+    ],
+  );
 
   return (
     <aside className="notes-page__sidebar">
@@ -357,6 +377,24 @@ export function NotesSidebar({
                         <IcPlus size={14} />
                       </button>
                     ) : null}
+                    <button
+                      type="button"
+                      className="notes-page__group-delete icon-btn"
+                      title={`Delete ${g.name}`}
+                      aria-label={`Delete ${g.name}`}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const accepted = await confirm({
+                          title: `Delete “${g.name}”?`,
+                          description: 'Notes in this list will become ungrouped.',
+                          confirmLabel: 'Delete list',
+                          danger: true,
+                        });
+                        if (accepted) onRemoveGroup(g.id);
+                      }}
+                    >
+                      <IcTrash size={14} />
+                    </button>
                   </div>
                 )}
                 {expanded ? (
@@ -369,6 +407,8 @@ export function NotesSidebar({
                           key={n.id}
                           note={n}
                           nested
+                          bulkSelected={bulkSelectedIds.has(n.id)}
+                          bulkSelectionSize={bulkSelectedIds.size}
                           isDragging={draggingId === n.id}
                           isDropTarget={dropTargetId === n.id}
                           {...rowProps}
@@ -385,6 +425,8 @@ export function NotesSidebar({
             <NotesListRow
               key={n.id}
               note={n}
+              bulkSelected={bulkSelectedIds.has(n.id)}
+              bulkSelectionSize={bulkSelectedIds.size}
               isDragging={draggingId === n.id}
               isDropTarget={dropTargetId === n.id}
               {...rowProps}

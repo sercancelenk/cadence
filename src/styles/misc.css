@@ -6,29 +6,15 @@
    constraints. */
 
 .welcome-tour__backdrop {
-  position: fixed;
-  inset: 0;
   z-index: 1200;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  animation: welcome-tour-fade 200ms ease-out;
+  animation: app-modal-backdrop-in 0.2s ease-out;
 }
 
 .welcome-tour__card {
-  background: var(--bg-elevated);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 28px;
+  padding: var(--modal-padding);
   max-width: 520px;
-  width: 100%;
-  box-shadow: var(--shadow-md);
-  animation: welcome-tour-pop 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  width: min(520px, 100%);
+  animation: app-modal-pop 0.24s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .welcome-tour__progress {
@@ -51,9 +37,9 @@
 
 .welcome-tour__title {
   margin: 0 0 12px;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: clamp(1.25rem, 2.4vw, 1.75rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
   color: var(--text);
 }
 
@@ -91,7 +77,7 @@
 .welcome-tour__actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 16px;
 }
 
 @keyframes welcome-tour-fade {
@@ -578,23 +564,7 @@
 /* ---- Quick-Add dialog ---- */
 
 .quick-add-backdrop {
-  position: fixed;
-  inset: 0;
   z-index: 90;
-  background: rgba(8, 11, 18, 0.55);
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  animation: quickAddFade 140ms ease-out;
-}
-
-@keyframes quickAddFade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 .quick-add-dialog {
@@ -602,51 +572,33 @@
   max-height: calc(100vh - 48px);
   display: flex;
   flex-direction: column;
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow:
-    0 28px 60px -12px rgba(0, 0, 0, 0.6),
-    0 8px 20px -4px rgba(0, 0, 0, 0.4);
   overflow: hidden;
-  animation: quickAddPop 160ms ease-out;
-}
-
-@keyframes quickAddPop {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  padding: 0;
 }
 
 .quick-add-dialog__header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: 12px;
+  padding: 20px var(--modal-padding) 16px;
   border-bottom: 1px solid var(--border);
 }
 
 .quick-add-dialog__icon {
   display: inline-grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
 .quick-add-dialog__title {
   flex: 1;
   margin: 0;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 1.125rem;
+  font-weight: 800;
   color: var(--text);
 }
 

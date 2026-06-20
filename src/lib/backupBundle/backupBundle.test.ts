@@ -44,6 +44,14 @@ describe('backupBundle zipStore', () => {
     missingLocalDv.setUint32(localOffset, 0);
     expect(() => zipStoreUnpack(missingLocal)).toThrow(/local header missing/i);
   });
+
+  it('rejects entries whose payload fails the stored CRC-32 (bit rot / tamper)', () => {
+    const zip = zipStorePack({ 'data.json': new TextEncoder().encode('hello world') });
+    const corrupt = zip.slice();
+    // First entry: local header(30) + name 'data.json'(9) => payload starts at 39.
+    corrupt[39] ^= 0xff;
+    expect(() => zipStoreUnpack(corrupt)).toThrow(/checksum|corrupt/i);
+  });
 });
 
 describe('backupBundle parse', () => {

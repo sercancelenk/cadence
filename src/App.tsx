@@ -7,6 +7,7 @@ import { Layout } from './components/Layout';
 import { TeamLayout } from './components/TeamLayout';
 import { ThemeProvider } from './providers/ThemeContext';
 import { ToastProvider } from './components/ui/Toast';
+import { ConfirmProvider } from './components/ui/ConfirmProvider';
 import { PATH_TEAMS } from './lib/routes';
 import { CommandPalette } from './components/CommandPalette';
 import { NotesUnlockProvider } from './providers/NotesUnlockContext';
@@ -140,6 +141,7 @@ export default function App() {
             (Routes / ProtectedShell) so a toast queued by a route can
             survive a navigation that unmounts that route's tree. */}
         <ToastProvider>
+          <ConfirmProvider>
           {/* FeaturesProvider must wrap AccountProvider — login/register routes
               also consult the feature flags (e.g. to hide "Sign up" if a strict
               shared-device policy is in place). */}
@@ -155,6 +157,7 @@ export default function App() {
               </Suspense>
             </AccountProvider>
           </FeaturesProvider>
+          </ConfirmProvider>
         </ToastProvider>
       </ThemeProvider>
     </HistoryRouter>

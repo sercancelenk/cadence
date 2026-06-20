@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MutableRefObject } from 'react';
 import type { Note } from '../../model';
 import type { NoteSortMode, NoteViewMode } from './notePreferences';
+import {
+  isPendingSelectionComplete,
+  resolveNotesSelectionCorrection,
+} from './notesSelectionUtils';
 
 /**
  * Selection + deep-link handling for the notes two-pane view.
@@ -14,6 +18,7 @@ export function useNotesSelection(
   patchNote: (id: string, patch: Partial<Note>) => void,
   viewMode: NoteViewMode,
   setViewMode: (mode: NoteViewMode) => void,
+  pendingSelectNoteIdRef?: MutableRefObject<string | null>,
 ) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -47,13 +52,34 @@ export function useNotesSelection(
   }, []);
 
   useEffect(() => {
-    if (selectedId && notes.some((n) => n.id === selectedId)) return;
-    if (isNarrowViewport) {
-      if (selectedId && !notes.some((n) => n.id === selectedId)) setSelectedId(null);
+    const pendingSelectId = pendingSelectNoteIdRef?.current ?? null;
+    const correction = resolveNotesSelectionCorrection(
+      selectedId,
+      pendingSelectId,
+      notes,
+      allNotes,
+      isNarrowViewport,
+    );
+
+    if (
+      pendingSelectId &&
+      isPendingSelectionComplete(pendingSelectId, selectedId, notes, allNotes) &&
+      pendingSelectNoteIdRef
+    ) {
+      pendingSelectNoteIdRef.current = null;
+    }
+
+    if (correction.action === 'keep') return;
+    if (correction.action === 'select') {
+      setSelectedId(correction.id);
+      return;
+    }
+    if (correction.action === 'clear') {
+      setSelectedId(null);
       return;
     }
     setSelectedId(notes[0]?.id ?? null);
-  }, [notes, selectedId, isNarrowViewport]);
+  }, [notes, allNotes, selectedId, isNarrowViewport, pendingSelectNoteIdRef]);
 
   useEffect(() => {
     const focusId = searchParams.get('focus');

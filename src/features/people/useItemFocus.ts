@@ -47,6 +47,7 @@ export function useItemFocus(
   useEffect(() => {
     if (!focusedItemId) return;
     let cancelled = false;
+    let scrollTimer = 0;
     const tryScroll = (attempt = 0) => {
       if (cancelled) return;
       const el = document.querySelector<HTMLElement>(`[data-item-id="${focusedItemId}"]`);
@@ -55,7 +56,7 @@ export function useItemFocus(
         return;
       }
       if (attempt < 8) {
-        window.setTimeout(() => tryScroll(attempt + 1), 50 * (attempt + 1));
+        scrollTimer = window.setTimeout(() => tryScroll(attempt + 1), 50 * (attempt + 1));
       }
     };
     const frame = window.requestAnimationFrame(() => tryScroll());
@@ -64,6 +65,7 @@ export function useItemFocus(
       cancelled = true;
       window.cancelAnimationFrame(frame);
       window.clearTimeout(clear);
+      window.clearTimeout(scrollTimer);
     };
   }, [focusedItemId]);
 }

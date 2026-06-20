@@ -40,6 +40,13 @@
   --radius-md: 12px;
   --radius-pill: 999px;
 
+  /* Spotify-style modal surfaces */
+  --modal-backdrop: rgba(0, 0, 0, 0.7);
+  --modal-surface: #282828;
+  --modal-radius: 24px;
+  --modal-padding: 32px;
+  --modal-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.55);
 
@@ -122,6 +129,12 @@
   --plan-delegate: #d97706;
   --plan-eliminate: #9ca3af;
   --plan-unsorted: #a3a3a3;
+
+  --modal-backdrop: rgba(0, 0, 0, 0.65);
+  --modal-surface: #ffffff;
+  --modal-radius: 24px;
+  --modal-padding: 32px;
+  --modal-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
 
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
   --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.1);

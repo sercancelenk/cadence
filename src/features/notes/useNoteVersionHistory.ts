@@ -14,6 +14,7 @@ import {
 import type { NoteRevisionPayload } from '../../lib/noteRevision/types';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
 import { runBeforeFlushHooks } from '../../lib/pendingSaveFlush';
+import { noteDisplayTitle } from './noteDisplay';
 import { displayNoteTitle } from './notePreferences';
 
 export function useNoteVersionHistory(
@@ -197,7 +198,7 @@ export function useNoteVersionHistory(
     previewBody,
     previewFormat,
     previewTitle: displayNoteTitle(previewRevision?.title ?? note?.title),
-    noteTitle: displayNoteTitle(note?.title),
+    noteTitle: note ? noteDisplayTitle(note) : displayNoteTitle(null),
     error,
     busy,
     manualLabel,

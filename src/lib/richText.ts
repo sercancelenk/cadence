@@ -146,6 +146,10 @@ export function parseRichDoc(raw: string | null | undefined): RichTextDoc | null
     if (!parsed || typeof parsed !== 'object') return null;
     const o = parsed as RichTextDoc;
     if (o.type !== 'doc') return null;
+    // Structural guard: `content` (when present) MUST be an array. A malformed
+    // body (e.g. a synced/imported object with `content` as a non-array) would
+    // otherwise crash the recursive walkers (`forEach` on a non-array throws).
+    if (o.content !== undefined && !Array.isArray(o.content)) return null;
     return o;
   } catch {
     return null;

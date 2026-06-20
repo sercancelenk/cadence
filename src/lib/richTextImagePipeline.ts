@@ -4,6 +4,14 @@ export const SCREENSHOT_MAX_DIMENSION = 2560;
 /** Target max bytes after compression (WebP/JPEG). */
 export const SCREENSHOT_MAX_BYTES = 1_500_000;
 
+/**
+ * Hard cap on the RAW input we will decode. `createImageBitmap` allocates the
+ * full uncompressed raster (width*height*4 bytes), so a crafted or accidental
+ * giant image can exhaust renderer memory even when the compressed output would
+ * be tiny. Reject oversized inputs before touching the decoder.
+ */
+export const IMAGE_INPUT_MAX_BYTES = 40 * 1024 * 1024;
+
 export type CompressedImage = {
   blob: Blob;
   width: number;
@@ -29,6 +37,13 @@ export async function compressImageForAttachment(
 ): Promise<CompressedImage> {
   if (!(input instanceof Blob) || input.size === 0) {
     throw new Error('Clipboard image is empty or unreadable. Try copying the screenshot again.');
+  }
+
+  if (input.size > IMAGE_INPUT_MAX_BYTES) {
+    const mb = (IMAGE_INPUT_MAX_BYTES / (1024 * 1024)).toFixed(0);
+    throw new Error(
+      `Image is too large to import (${(input.size / (1024 * 1024)).toFixed(1)} MB). Maximum is ${mb} MB.`,
+    );
   }
 
   const maxDimension = opts?.maxDimension ?? SCREENSHOT_MAX_DIMENSION;

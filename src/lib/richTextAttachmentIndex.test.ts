@@ -114,20 +114,38 @@ describe('collectReferencedAttachmentIds', () => {
     expect(collectReferencedAttachmentIds(data)).toEqual(['note-sidecar-123456789']);
   });
 
-  it('ignores legacy markdown bodies', () => {
+  it('collects attachment refs from legacy markdown bodies (so GC cannot delete them)', () => {
     const data = baseData();
     data.notes = [
       {
         id: 'n1',
         title: 'T',
-        body: '![x](cadence-attachment://should-not-parse)',
+        body: '![x](cadence-attachment://note-legacy-12345678)',
         locked: false,
         sortOrder: 0,
         createdAt: '2020-01-01T00:00:00.000Z',
         updatedAt: '2020-01-01T00:00:00.000Z',
       },
     ];
-    expect(collectReferencedAttachmentIds(data)).toEqual([]);
+    expect(collectReferencedAttachmentIds(data)).toEqual(['note-legacy-12345678']);
+  });
+
+  it('ignores invalid attachmentRefs entries', () => {
+    const data = baseData();
+    data.notes = [
+      {
+        id: 'n1',
+        title: 'T',
+        body: '',
+        locked: false,
+        sortOrder: 0,
+        createdAt: '2020-01-01T00:00:00.000Z',
+        updatedAt: '2020-01-01T00:00:00.000Z',
+        // 'bad' is too short to be a valid attachment id; must not be trusted.
+        attachmentRefs: ['note-sidecar-123456789', 'bad'],
+      },
+    ];
+    expect(collectReferencedAttachmentIds(data)).toEqual(['note-sidecar-123456789']);
   });
 });
 

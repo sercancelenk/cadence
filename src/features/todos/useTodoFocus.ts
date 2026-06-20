@@ -96,6 +96,7 @@ export function useTodoFocus(
   useEffect(() => {
     if (!focusedTaskId) return;
     let cancelled = false;
+    let scrollTimer = 0;
     const tryScroll = (attempt = 0) => {
       if (cancelled) return;
       const el = document.querySelector<HTMLElement>(`[data-todo-id="${focusedTaskId}"]`);
@@ -104,7 +105,7 @@ export function useTodoFocus(
         return;
       }
       if (attempt < 6) {
-        window.setTimeout(() => tryScroll(attempt + 1), 50 * (attempt + 1));
+        scrollTimer = window.setTimeout(() => tryScroll(attempt + 1), 50 * (attempt + 1));
       }
     };
     const frame = window.requestAnimationFrame(() => tryScroll());
@@ -113,6 +114,7 @@ export function useTodoFocus(
       cancelled = true;
       window.cancelAnimationFrame(frame);
       window.clearTimeout(clear);
+      window.clearTimeout(scrollTimer);
     };
   }, [focusedTaskId]);
 

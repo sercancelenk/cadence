@@ -72,6 +72,12 @@ export function describePullOutcomeForLog(
       return { kind: 'success', text: 'Remote matches local — nothing to pull.' };
     case 'no-snapshot':
       return { kind: 'info', text: 'No snapshot on remote yet.' };
+    case 'corrupt':
+      return {
+        kind: 'error',
+        code: 'corrupt',
+        text: 'Remote snapshot is damaged and cannot be opened. Resolve in Settings before syncing.',
+      };
     case 'auth-required':
       return {
         kind: 'error',

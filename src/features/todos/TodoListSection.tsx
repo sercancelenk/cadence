@@ -1,5 +1,6 @@
 import { FormEvent, lazy, Suspense } from 'react';
 import { IcChevronDown, IcGrip, IcPlus, IcStar } from '../../components/icons';
+import { useConfirm } from '../../components/ui/ConfirmProvider';
 import { richTextPayloadToBodyFields } from '../../lib/richTextBody';
 import { PRIORITY_OPTIONS, isTodoOpen } from '../../model';
 import type { Priority, TodoGroup, TodoItem } from '../../model';
@@ -90,6 +91,7 @@ export type TodoListSectionProps = {
 };
 
 export function TodoListSection(props: TodoListSectionProps) {
+  const { confirm } = useConfirm();
   const {
     group: g,
     sectionIndex: idx,
@@ -329,8 +331,14 @@ export function TodoListSection(props: TodoListSectionProps) {
               type="button"
               className="todos-section__menu-item"
               disabled={totalActive === 0}
-              onClick={() => {
-                if (window.confirm(`Mark every open task in “${g.name}” as complete?`)) {
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: `Mark all complete in “${g.name}”?`,
+                    description: 'Every open task in this list will be marked as done.',
+                    confirmLabel: 'Mark all complete',
+                  })
+                ) {
                   actions.markAllCompleteInGroup(g.id);
                 }
               }}
@@ -342,8 +350,15 @@ export function TodoListSection(props: TodoListSectionProps) {
               className="todos-section__menu-item"
               disabled={totalClosed === 0}
               title="Removes all done and cancelled tasks from this list"
-              onClick={() => {
-                if (window.confirm(`Remove all done and cancelled tasks from “${g.name}”? This can't be undone.`)) {
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: `Clear closed tasks in “${g.name}”?`,
+                    description: "All done and cancelled tasks in this list will be removed. This can't be undone.",
+                    confirmLabel: 'Clear closed',
+                    danger: true,
+                  })
+                ) {
                   actions.clearCompletedInGroup(g.id);
                 }
               }}
@@ -358,8 +373,15 @@ export function TodoListSection(props: TodoListSectionProps) {
                 <button
                   type="button"
                   className="todos-section__menu-item todos-section__menu-item--danger"
-                  onClick={() => {
-                    if (window.confirm(`Delete the “${g.name}” list? Its tasks will be moved to another list.`)) {
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: `Delete “${g.name}”?`,
+                        description: 'Its tasks will be moved to another list.',
+                        confirmLabel: 'Delete list',
+                        danger: true,
+                      })
+                    ) {
                       actions.removeTodoGroup(g.id);
                     }
                   }}

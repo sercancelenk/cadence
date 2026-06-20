@@ -1,42 +1,39 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   clearPendingRecoveryCodes,
   readPendingRecoveryCodes,
   stashPendingRecoveryCodes,
 } from './pendingRecoveryCodes';
-import { STORAGE_PREFIX } from './appBranding';
-
-const KEY = `${STORAGE_PREFIX}-pending-recovery-codes`;
 
 describe('pendingRecoveryCodes', () => {
-  beforeEach(() => {
-    sessionStorage.clear();
-  });
-
   afterEach(() => {
-    sessionStorage.clear();
-    vi.restoreAllMocks();
+    clearPendingRecoveryCodes();
   });
 
-  it('round-trips codes through sessionStorage', () => {
+  it('round-trips codes through in-memory storage', () => {
     stashPendingRecoveryCodes(['AAAA-BBBB-CCCC-DDDD', 'EEEE-FFFF-GGGG-HHHH']);
     expect(readPendingRecoveryCodes()).toEqual(['AAAA-BBBB-CCCC-DDDD', 'EEEE-FFFF-GGGG-HHHH']);
     clearPendingRecoveryCodes();
     expect(readPendingRecoveryCodes()).toBeNull();
   });
 
-  it('returns null for malformed stored payloads', () => {
-    sessionStorage.setItem(KEY, JSON.stringify(['ok', 42]));
+  it('returns a defensive copy that cannot mutate the stashed codes', () => {
+    stashPendingRecoveryCodes(['AAAA-BBBB-CCCC-DDDD']);
+    const first = readPendingRecoveryCodes();
+    first?.push('INJECTED');
+    expect(readPendingRecoveryCodes()).toEqual(['AAAA-BBBB-CCCC-DDDD']);
+  });
+
+  it('rejects malformed inputs', () => {
+    stashPendingRecoveryCodes([] as string[]);
     expect(readPendingRecoveryCodes()).toBeNull();
-    sessionStorage.setItem(KEY, 'not-json');
+    stashPendingRecoveryCodes(['ok', 42 as unknown as string]);
     expect(readPendingRecoveryCodes()).toBeNull();
   });
 
-  it('swallows sessionStorage write failures', () => {
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('quota');
-    });
-    expect(() => stashPendingRecoveryCodes(['AAAA-BBBB-CCCC-DDDD'])).not.toThrow();
-    expect(readPendingRecoveryCodes()).toBeNull();
+  it('never persists codes to web storage', () => {
+    stashPendingRecoveryCodes(['AAAA-BBBB-CCCC-DDDD']);
+    const haystack = JSON.stringify({ ...localStorage, ...sessionStorage });
+    expect(haystack).not.toContain('AAAA-BBBB-CCCC-DDDD');
   });
 });

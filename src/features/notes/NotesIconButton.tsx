@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Tooltip } from '../../components/ui/Tooltip';
 
 export type NotesIconButtonProps = {
   children: ReactNode;
@@ -6,7 +7,7 @@ export type NotesIconButtonProps = {
   disabled?: boolean;
   /** Used as `aria-label` for screen readers. */
   label: string;
-  /** Native browser tooltip text. Defaults to `label`. */
+  /** Hover tooltip text. Defaults to `label`. */
   tooltip?: string;
   variant?: 'ghost' | 'primary' | 'danger';
   /** When true, paints the button with the accent fill (e.g. pinned state). */
@@ -28,6 +29,7 @@ export function NotesIconButton({
   pressed,
   ariaExpanded,
 }: NotesIconButtonProps) {
+  const tip = tooltip ?? label;
   const cls = [
     'notes-icon-btn',
     `notes-icon-btn--${variant}`,
@@ -35,18 +37,20 @@ export function NotesIconButton({
   ]
     .filter(Boolean)
     .join(' ');
+
   return (
-    <button
-      type="button"
-      className={cls}
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      aria-pressed={pressed}
-      aria-expanded={ariaExpanded}
-      title={tooltip ?? label}
-    >
-      {children}
-    </button>
+    <Tooltip label={tip} placement="bottom">
+      <button
+        type="button"
+        className={cls}
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        aria-pressed={pressed}
+        aria-expanded={ariaExpanded}
+      >
+        {children}
+      </button>
+    </Tooltip>
   );
 }

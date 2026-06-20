@@ -117,7 +117,9 @@ export function zipStoreUnpack(zip: Uint8Array): Record<string, Uint8Array> {
       throw new Error('ZIP central directory is corrupt.');
     }
     const method = dv.getUint16(ptr + 10, true);
+    const storedCrc = dv.getUint32(ptr + 16, true);
     const compSize = dv.getUint32(ptr + 20, true);
+    const uncompSize = dv.getUint32(ptr + 24, true);
     const nameLen = dv.getUint16(ptr + 28, true);
     const extraLen = dv.getUint16(ptr + 30, true);
     const commentLen = dv.getUint16(ptr + 32, true);
@@ -128,18 +130,36 @@ export function zipStoreUnpack(zip: Uint8Array): Record<string, Uint8Array> {
 
     if (name.endsWith('/')) continue;
 
+    // Reject duplicate entry names: a malformed/malicious archive could
+    // otherwise shadow data.json (or an attachment) with a second entry.
+    if (Object.prototype.hasOwnProperty.call(out, name)) {
+      throw new Error(`ZIP contains a duplicate entry for ${name}.`);
+    }
+
     const lptr = localOffset;
-    if (dv.getUint32(lptr, true) !== SIG_LOCAL) {
+    if (lptr + 30 > len || dv.getUint32(lptr, true) !== SIG_LOCAL) {
       throw new Error(`ZIP local header missing for ${name}.`);
+    }
+    if (method !== 0) {
+      throw new Error(`Unsupported ZIP compression for ${name}. Re-export as a Cadence portable backup.`);
     }
     const localNameLen = dv.getUint16(lptr + 26, true);
     const localExtraLen = dv.getUint16(lptr + 28, true);
     const dataStart = lptr + 30 + localNameLen + localExtraLen;
-    const comp = zip.subarray(dataStart, dataStart + compSize);
-    if (method !== 0) {
-      throw new Error(`Unsupported ZIP compression for ${name}. Re-export as a Cadence portable backup.`);
+    if (dataStart + compSize > len) {
+      throw new Error(`ZIP entry ${name} is truncated.`);
     }
-    out[name] = comp.slice();
+    const comp = zip.subarray(dataStart, dataStart + compSize).slice();
+    // STORED entries are not compressed, so uncompressed size must match and we
+    // can verify integrity directly against the stored CRC-32. This catches
+    // bit-rot / truncated archives before corrupt bytes reach the workspace.
+    if (comp.length !== uncompSize) {
+      throw new Error(`ZIP entry ${name} has an inconsistent size.`);
+    }
+    if (crc32(comp) !== storedCrc) {
+      throw new Error(`ZIP entry ${name} failed its checksum (corrupt backup).`);
+    }
+    out[name] = comp;
   }
   return out;
 }

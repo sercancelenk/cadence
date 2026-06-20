@@ -956,6 +956,96 @@ function writeJsonSafe(filePath, payload) {
   return writeJsonText(filePath, JSON.stringify(payload, null, 2)).ok;
 }
 
+// ---------- Auth throttle (persisted brute-force protection) ------------------
+//
+// PIN unlock and account login are the two password-guessing surfaces. Without
+// a limiter a local attacker — or a compromised/buggy renderer — could fire
+// unlimited guesses at a short PIN. We persist the failure counters to disk so
+// the limiter survives an app restart; otherwise quitting and relaunching would
+// reset the budget and defeat the lockout entirely.
+
+const THROTTLE_FILENAME = 'auth-throttle.json';
+const THROTTLE_FREE_ATTEMPTS = 5; // first N failures carry no delay
+const THROTTLE_BASE_LOCK_MS = 30_000; // 30s once the free budget is spent
+const THROTTLE_MAX_LOCK_MS = 15 * 60_000; // capped at 15 minutes
+const THROTTLE_RESET_MS = 60 * 60_000; // forget a bucket after 1h of calm
+const THROTTLE_MAX_BUCKETS = 256; // bound the file size against email spam
+
+function throttlePath() {
+  return path.join(app.getPath('userData'), THROTTLE_FILENAME);
+}
+
+function readThrottle() {
+  const o = readJsonSafe(throttlePath(), {});
+  return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+}
+
+function writeThrottle(map) {
+  const now = Date.now();
+  // Drop buckets that have fully cooled down so the file does not grow forever.
+  for (const k of Object.keys(map)) {
+    const e = map[k];
+    if (!e || ((e.lockedUntil || 0) <= now && now - (e.lastAttempt || 0) > THROTTLE_RESET_MS)) {
+      delete map[k];
+    }
+  }
+  // Hard cap: if a flood of distinct emails still bloats the map, evict the
+  // least-recently-touched entries (never an actively-locked one if avoidable).
+  const keys = Object.keys(map);
+  if (keys.length > THROTTLE_MAX_BUCKETS) {
+    keys
+      .sort((a, b) => (map[a].lastAttempt || 0) - (map[b].lastAttempt || 0))
+      .slice(0, keys.length - THROTTLE_MAX_BUCKETS)
+      .forEach((k) => {
+        if ((map[k].lockedUntil || 0) <= now) delete map[k];
+      });
+  }
+  writeJsonSafe(throttlePath(), map);
+}
+
+/** @returns {{ allowed: boolean, retryAfterMs: number }} */
+function checkAuthThrottle(bucket) {
+  const e = readThrottle()[bucket];
+  if (!e) return { allowed: true, retryAfterMs: 0 };
+  const now = Date.now();
+  if ((e.lockedUntil || 0) > now) return { allowed: false, retryAfterMs: e.lockedUntil - now };
+  return { allowed: true, retryAfterMs: 0 };
+}
+
+function recordAuthFailure(bucket) {
+  const map = readThrottle();
+  const now = Date.now();
+  let e = map[bucket];
+  if (!e || now - (e.lastAttempt || 0) > THROTTLE_RESET_MS) {
+    e = { fails: 0, lockedUntil: 0, lastAttempt: now };
+  }
+  e.fails += 1;
+  e.lastAttempt = now;
+  if (e.fails > THROTTLE_FREE_ATTEMPTS) {
+    const over = e.fails - THROTTLE_FREE_ATTEMPTS;
+    e.lockedUntil = now + Math.min(THROTTLE_BASE_LOCK_MS * 2 ** (over - 1), THROTTLE_MAX_LOCK_MS);
+  }
+  map[bucket] = e;
+  writeThrottle(map);
+}
+
+function clearAuthFailures(bucket) {
+  const map = readThrottle();
+  if (map[bucket]) {
+    delete map[bucket];
+    writeThrottle(map);
+  }
+}
+
+function authLockoutMessage(retryAfterMs) {
+  const secs = Math.ceil(retryAfterMs / 1000);
+  if (secs >= 60) {
+    const mins = Math.ceil(secs / 60);
+    return `Too many attempts. Try again in about ${mins} minute${mins === 1 ? '' : 's'}.`;
+  }
+  return `Too many attempts. Try again in ${secs} second${secs === 1 ? '' : 's'}.`;
+}
+
 // ---------- Auth helpers -------------------------------------------------------
 
 /**
@@ -1684,6 +1774,31 @@ function normalizeEmail(email) {
 
 // ---------- Window -------------------------------------------------------------
 
+/**
+ * Open a URL in the user's default browser, but ONLY for protocols we trust.
+ * `shell.openExternal` will happily hand off `file:`, custom app schemes, and
+ * other handlers to the OS, which is a privilege-escalation surface if a URL
+ * ever originates from untrusted content. We hard-allow http/https/mailto and
+ * drop everything else.
+ */
+function openExternalSafe(url) {
+  if (typeof url !== 'string' || !url) return false;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'mailto:') {
+    console.warn(LOG_TAG, 'blocked openExternal for disallowed protocol', parsed.protocol);
+    return false;
+  }
+  shell.openExternal(url).catch((err) => {
+    console.warn(LOG_TAG, 'openExternal failed', err);
+  });
+  return true;
+}
+
 function createWindow() {
   // In packaged builds electron-builder bakes the platform-specific icon
   // (`.icns` / `.ico`) into the bundle, so the OS uses it everywhere
@@ -1723,9 +1838,7 @@ function createWindow() {
 
   // Open any target=_blank / external link in the user's default browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) {
-      shell.openExternal(url);
-    }
+    openExternalSafe(url);
     return { action: 'deny' };
   });
 
@@ -1735,9 +1848,7 @@ function createWindow() {
     if (allowed && targetUrl.startsWith(allowed)) return;
     if (targetUrl.startsWith('file://')) return;
     event.preventDefault();
-    if (/^https?:\/\//i.test(targetUrl)) {
-      shell.openExternal(targetUrl);
-    }
+    openExternalSafe(targetUrl);
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
@@ -1874,13 +1985,13 @@ function buildMenu() {
         {
           label: 'Project on GitHub',
           click: () => {
-            shell.openExternal('https://github.com/sercancelenk/cadence');
+            openExternalSafe('https://github.com/sercancelenk/cadence');
           },
         },
         {
           label: 'Report an Issue',
           click: () => {
-            shell.openExternal('https://github.com/sercancelenk/cadence/issues/new');
+            openExternalSafe('https://github.com/sercancelenk/cadence/issues/new');
           },
         },
       ],
@@ -2194,6 +2305,21 @@ function measurePayloadBytes(payload) {
 function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRenderer = true } = {}) {
   const uid = readSessionUserId();
   if (!uid) return { ok: false, reason: 'no-session' };
+
+  // Structural guard: never let a malformed payload (null, an array, a missing
+  // version, or an object with none of the expected collections) overwrite a
+  // healthy data file. A renderer bug that produced garbage here would
+  // otherwise silently wipe the user's workspace. The existing on-disk file is
+  // left untouched and the renderer is told to resync.
+  if (!isValidSnapshotPayload(payload)) {
+    console.warn('[cadence] refusing data:save — payload is not a valid workspace snapshot');
+    return {
+      ok: false,
+      reason: 'invalid-payload',
+      error:
+        'The workspace snapshot was malformed and was not saved. Your existing data on disk is unchanged.',
+    };
+  }
 
   if (measurePayloadBytes(payload) > MAX_SAVE_PAYLOAD_BYTES) {
     return {
@@ -2545,6 +2671,19 @@ ipcMain.handle('data:listSources', () => {
 });
 
 /**
+ * True when `child` resolves to a path strictly inside `parent`. Uses
+ * `path.relative` instead of string `startsWith`, which is unsafe for
+ * containment: `startsWith('/data/cadence')` also matches a sibling like
+ * `/data/cadence-evil/secret.json`. A non-empty relative path that neither
+ * climbs out (`..`) nor jumps to another root (absolute, e.g. Windows drive)
+ * is genuinely contained.
+ */
+function isPathInside(parent, child) {
+  const rel = path.relative(path.resolve(parent), path.resolve(child));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/**
  * Decrypt-and-preview a specific file by absolute path, scoped to userData/.
  * Returns a tiny human-readable peek so the user can decide what to restore.
  */
@@ -2552,7 +2691,7 @@ ipcMain.handle('data:previewSource', (_evt, { filePath } = {}) => {
   if (typeof filePath !== 'string' || !filePath) return { ok: false, error: 'filePath required' };
   const userData = app.getPath('userData');
   const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(path.resolve(userData))) {
+  if (!isPathInside(userData, resolved)) {
     return { ok: false, error: 'Refusing to read outside userData.' };
   }
   const uid = readSessionUserId();
@@ -2579,7 +2718,7 @@ ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
 
   const userData = app.getPath('userData');
   const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(path.resolve(userData))) {
+  if (!isPathInside(userData, resolved)) {
     return { ok: false, error: 'Refusing to read outside userData.' };
   }
   if (!fs.existsSync(resolved)) return { ok: false, error: 'File no longer exists.' };
@@ -2644,7 +2783,7 @@ ipcMain.handle('data:revealInOS', (_evt, { filePath } = {}) => {
   if (typeof filePath !== 'string' || !filePath) return { ok: false, error: 'filePath required' };
   const userData = app.getPath('userData');
   const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(path.resolve(userData))) {
+  if (!isPathInside(userData, resolved)) {
     return { ok: false, error: 'Refusing to reveal paths outside the app data folder.' };
   }
   if (!fs.existsSync(resolved)) return { ok: false, error: 'File no longer exists.' };
@@ -2944,10 +3083,16 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const folder = path.join(pick.filePaths[0], `${APP_SLUG}-backup-${ts}`);
     fs.mkdirSync(folder, { recursive: true });
-    fs.writeFileSync(path.join(folder, 'data.json'), JSON.stringify(payload, null, 2), 'utf8');
+    // Durable (fsync) write so a backup the user just made to a USB stick /
+    // external drive actually survives an unplug or crash. writeJsonText
+    // refuses to leave a half-written file if fsync cannot be confirmed.
+    const dataWrite = writeJsonText(path.join(folder, 'data.json'), JSON.stringify(payload, null, 2));
+    if (!dataWrite.ok) {
+      return { ok: false, error: dataWrite.error || 'Could not write backup durably.' };
+    }
     const attDest = path.join(folder, 'attachments');
     const attachmentCount = exportAttachmentsPortableToDir(uid, attDest);
-    fs.writeFileSync(
+    const manifestWrite = writeJsonText(
       path.join(folder, 'manifest.json'),
       JSON.stringify(
         {
@@ -2960,8 +3105,10 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
         null,
         2,
       ),
-      'utf8',
     );
+    if (!manifestWrite.ok) {
+      return { ok: false, error: manifestWrite.error || 'Could not write backup manifest durably.' };
+    }
     exportNoteHistoryToDir(uid, folder);
     return { ok: true, path: folder };
   } catch (err) {
@@ -3442,8 +3589,15 @@ ipcMain.handle('auth:setPin', (_evt, { pin } = {}) => {
 ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
   const d = readAuth();
   if (!d || typeof d.salt !== 'string' || typeof d.hash !== 'string') return { ok: true };
+  const gate = checkAuthThrottle('pin');
+  if (!gate.allowed) {
+    return { ok: false, lockedOut: true, retryAfterMs: gate.retryAfterMs, error: authLockoutMessage(gate.retryAfterMs) };
+  }
   const safe = normalizePin(pin);
-  if (!safe) return { ok: false };
+  if (!safe) {
+    recordAuthFailure('pin');
+    return { ok: false };
+  }
   try {
     const got = hashWithSalt(safe, d.salt);
     const exp = Buffer.from(d.hash, 'hex');
@@ -3452,6 +3606,7 @@ ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
         '[cadence] auth:verify length mismatch — got', got.length, 'expected', exp.length,
         'salt[0..6]=', d.salt.slice(0, 6), 'authPath=', authPath(),
       );
+      recordAuthFailure('pin');
       return { ok: false };
     }
     const matched = crypto.timingSafeEqual(got, exp);
@@ -3462,8 +3617,11 @@ ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
         'storedHash[0..8]=', d.hash.slice(0, 8),
         'authPath=', authPath(),
       );
+      recordAuthFailure('pin');
+      return { ok: false };
     }
-    return { ok: matched };
+    clearAuthFailures('pin');
+    return { ok: true };
   } catch (err) {
     console.error('[cadence] auth:verify threw', err);
     return { ok: false };
@@ -3734,17 +3892,25 @@ ipcMain.handle('account:register', (_evt, { email, password, migrateLegacy, disp
 ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
   const em = normalizeEmail(email);
   if (!em || typeof password !== 'string') return { ok: false, error: 'Email and password are required.' };
+  const bucket = `acct:${em}`;
+  const gate = checkAuthThrottle(bucket);
+  if (!gate.allowed) {
+    return { ok: false, lockedOut: true, retryAfterMs: gate.retryAfterMs, error: authLockoutMessage(gate.retryAfterMs) };
+  }
   const accounts = readAccounts();
   const u = accounts.users.find((x) => x.email === em);
   if (!u || typeof u.salt !== 'string' || typeof u.hash !== 'string') {
+    recordAuthFailure(bucket);
     return { ok: false, error: 'Incorrect email or password.' };
   }
   try {
     const got = hashWithSalt(password, u.salt);
     const exp = Buffer.from(u.hash, 'hex');
     if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
+      recordAuthFailure(bucket);
       return { ok: false, error: 'Incorrect email or password.' };
     }
+    clearAuthFailures(bucket);
     // Backfill encSalt + encrypt-on-first-save for accounts created before encryption support.
     let mutated = false;
     if (typeof u.encSalt !== 'string' || !u.encSalt) {
@@ -4645,4 +4811,13 @@ app.on('window-all-closed', () => {
 
 process.on('uncaughtException', (err) => {
   console.error('[cadence] uncaught exception', err);
+});
+
+// A rejected promise with no `.catch` would otherwise crash the main process
+// on newer Node/Electron (the default unhandledRejection mode is "throw").
+// The renderer's data lives behind atomic, individually-guarded writes, so a
+// stray rejection (e.g. a background reminder sync) must never take the whole
+// app down. Log it and keep running.
+process.on('unhandledRejection', (reason) => {
+  console.error('[cadence] unhandled promise rejection', reason);
 });

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { IcCheck, IcLock, IcPencil, IcTrash, IcX } from '../components/icons';
 import { Button } from '../components/ui/Button';
+import { useConfirm } from '../components/ui/ConfirmProvider';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 
@@ -37,8 +38,9 @@ function initialsFor(name: string | undefined): string {
 type Tab = 'view' | 'edit' | 'password';
 
 export function ProfilePage() {
+  const { confirm } = useConfirm();
   const { user, changePassword, hasElectronAccounts } = useAccount();
-  const { data, updateUserProfile, flushPendingSave, lastSaveError } = useAppData();
+  const { data, updateUserProfile, flushPendingSave, lastSaveError, setNotesLock } = useAppData();
   const profile = data.profile ?? { displayName: 'Me', favoriteTeamIds: [] };
 
   const [tab, setTab] = useState<Tab>('view');
@@ -60,6 +62,7 @@ export function ProfilePage() {
   const [pwBusy, setPwBusy] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwSuccess, setPwSuccess] = useState(false);
+  const [pwNotesRecoveryCleared, setPwNotesRecoveryCleared] = useState(false);
 
   // Detect "user has typed but not saved yet" so:
   //   1. We can warn them if they try to navigate away.
@@ -171,9 +174,14 @@ export function ProfilePage() {
     window.setTimeout(() => setSavedAt(null), 2200);
   };
 
-  const cancelEdit = () => {
+  const cancelEdit = async () => {
     if (dirty) {
-      const ok = window.confirm('Discard your unsaved profile changes?');
+      const ok = await confirm({
+        title: 'Discard changes?',
+        description: 'Your unsaved profile changes will be lost.',
+        confirmLabel: 'Discard',
+        danger: true,
+      });
       if (!ok) return;
     }
     setDisplayName(profile.displayName);
@@ -189,6 +197,7 @@ export function ProfilePage() {
     e.preventDefault();
     setPwError(null);
     setPwSuccess(false);
+    setPwNotesRecoveryCleared(false);
     if (newPassword !== newPassword2) {
       setPwError('The two new passwords do not match.');
       return;
@@ -199,6 +208,16 @@ export function ProfilePage() {
       if (!r.ok) {
         setPwError(r.error ?? 'Could not change password.');
         return;
+      }
+      // The Notes recovery envelope was wrapped with the OLD account password,
+      // so after a change it can only be opened by the old password — a
+      // confusing UX and a lingering exposure. We cannot re-wrap it (that needs
+      // the plaintext Notes passphrase, only available while unlocked), so drop
+      // it. The user re-enables Notes recovery from the Notes page.
+      if (data.notesLock?.recovery) {
+        const { recovery: _drop, ...lockWithoutRecovery } = data.notesLock;
+        setNotesLock(lockWithoutRecovery);
+        setPwNotesRecoveryCleared(true);
       }
       setPwSuccess(true);
       setOldPassword('');
@@ -465,6 +484,9 @@ export function ProfilePage() {
                 {hasElectronAccounts
                   ? ' Generate new recovery codes in Settings — your previous codes no longer work after a password change.'
                   : ' Generate new recovery codes in Settings if you use them.'}
+                {pwNotesRecoveryCleared
+                  ? ' Notes passphrase recovery was reset because it was tied to your old password — re-enable it on the Notes page.'
+                  : ''}
               </p>
             ) : null}
             <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>

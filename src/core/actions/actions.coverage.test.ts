@@ -411,6 +411,28 @@ describe('profile and AI settings', () => {
     expect(d.aiSettings).toBeUndefined();
   });
 
+  it('updateAISettings preserves extractionGuidance when saving other fields', () => {
+    let d = updateAISettings(emptyData(), { extractionGuidance: 'Only action items' });
+    expect(d.aiSettings?.extractionGuidance).toBe('Only action items');
+    // Saving provider/apiKey from the Settings page must NOT wipe the guidance.
+    d = updateAISettings(d, { provider: 'openai', apiKey: 'key' });
+    expect(d.aiSettings?.extractionGuidance).toBe('Only action items');
+    expect(d.aiSettings?.provider).toBe('openai');
+    // Passing an empty string explicitly clears the guidance.
+    d = updateAISettings(d, { extractionGuidance: '' });
+    expect(d.aiSettings?.extractionGuidance).toBeUndefined();
+    expect(d.aiSettings?.provider).toBe('openai');
+  });
+
+  it('updateAISettings preserves unknown forward-compat fields', () => {
+    const base = {
+      ...emptyData(),
+      aiSettings: { provider: 'openai', futureField: 'keep-me' } as unknown as AISettings,
+    };
+    const d = updateAISettings(base, { apiKey: 'key' });
+    expect((d.aiSettings as Record<string, unknown>).futureField).toBe('keep-me');
+  });
+
   it('toggleFavoriteTeam adds, removes, and prunes stale ids', () => {
     const base = emptyData();
     const teamId = firstTeamId(base);

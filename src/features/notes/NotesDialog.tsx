@@ -1,34 +1,36 @@
 import type { ReactNode } from 'react';
+import { AppModal } from '../../components/ui/AppModal';
 
 export type NotesDialogProps = {
   title: string;
+  description?: ReactNode;
   icon?: ReactNode;
   onClose: () => void;
   footer: ReactNode;
   children: ReactNode;
+  size?: 'sm' | 'md' | 'lg';
 };
 
-/**
- * Local dialog wrapper that uses the SAME centred-modal markup as
- * `AIAssistantDialog` (the `.ai-backdrop` overlay + the `.ai-dialog` panel
- * defined in `app.css`).
- */
-export function NotesDialog({ title, icon, onClose, footer, children }: NotesDialogProps) {
+export function NotesDialog({
+  title,
+  description,
+  icon,
+  onClose,
+  footer,
+  children,
+  size = 'sm',
+}: NotesDialogProps) {
   return (
-    <div className="ai-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="ai-dialog" onClick={(e) => e.stopPropagation()}>
-        <header className="ai-dialog__header">
-          {icon ? <span className="ai-dialog__icon">{icon}</span> : null}
-          <div className="ai-dialog__titlewrap">
-            <h2 className="ai-dialog__title">{title}</h2>
-          </div>
-          <button type="button" className="ai-dialog__close" onClick={onClose} aria-label="Close" title="Close">
-            ✕
-          </button>
-        </header>
-        <div className="ai-dialog__scroll">{children}</div>
-        <div className="notes-dialog__footer">{footer}</div>
-      </div>
-    </div>
+    <AppModal
+      title={title}
+      description={description}
+      icon={icon}
+      onClose={onClose}
+      size={size}
+      showCloseButton
+      footer={footer}
+    >
+      {children}
+    </AppModal>
   );
 }

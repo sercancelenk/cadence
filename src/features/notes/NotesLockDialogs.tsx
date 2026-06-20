@@ -1,4 +1,5 @@
 import { IcLock } from '../../components/icons';
+import { AppModalActions } from '../../components/ui/AppModal';
 import type { Note } from '../../model';
 import type { AppData } from '../../model';
 import { NotesDialog } from './NotesDialog';
@@ -90,9 +91,19 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
           footer={
             <div className="notes-dialog__footer-actions">
               {setupErr ? <p className="text-error notes-dialog__footer-error">{setupErr}</p> : null}
-              <button type="button" className="btn btn--primary" onClick={submitSetup} disabled={busy}>
-                {busy ? 'Saving…' : 'Save passphrase'}
-              </button>
+              <AppModalActions
+                onCancel={() => {
+                  setSetupOpen(false);
+                  setPendingIntent(null);
+                  setSetupPw1('');
+                  setSetupPw2('');
+                  setSetupAccountPw('');
+                  setSetupErr(null);
+                }}
+                onConfirm={() => void submitSetup()}
+                confirmLabel="Save passphrase"
+                busy={busy}
+              />
             </div>
           }
         >
@@ -177,9 +188,17 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
             setUnlockErr(null);
           }}
           footer={
-            <button type="button" className="btn btn--primary" onClick={submitUnlock} disabled={busy}>
-              {busy ? 'Checking…' : unlockDialogButton(pendingIntent)}
-            </button>
+            <AppModalActions
+              onCancel={() => {
+                setUnlockOpen(false);
+                setPendingIntent(null);
+                setUnlockPw('');
+                setUnlockErr(null);
+              }}
+              onConfirm={() => void submitUnlock()}
+              confirmLabel={unlockDialogButton(pendingIntent)}
+              busy={busy}
+            />
           }
         >
           <p>{unlockDialogBody(pendingIntent)}</p>
@@ -228,14 +247,17 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
             setRecoverErr(null);
           }}
           footer={
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={submitRecover}
-              disabled={busy || !recoverPw}
-            >
-              {busy ? 'Recovering…' : 'Recover & unlock'}
-            </button>
+            <AppModalActions
+              onCancel={() => {
+                setRecoverOpen(false);
+                setRecoverPw('');
+                setRecoverErr(null);
+              }}
+              onConfirm={() => void submitRecover()}
+              confirmLabel="Recover & unlock"
+              confirmDisabled={!recoverPw}
+              busy={busy}
+            />
           }
         >
           <p>
@@ -285,14 +307,18 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
             setAddRecoveryErr(null);
           }}
           footer={
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={submitAddRecovery}
-              disabled={busy || !addRecoveryNotesPw || !addRecoveryAccountPw}
-            >
-              {busy ? 'Saving…' : 'Enable recovery'}
-            </button>
+            <AppModalActions
+              onCancel={() => {
+                setAddRecoveryOpen(false);
+                setAddRecoveryNotesPw('');
+                setAddRecoveryAccountPw('');
+                setAddRecoveryErr(null);
+              }}
+              onConfirm={() => void submitAddRecovery()}
+              confirmLabel="Enable recovery"
+              confirmDisabled={!addRecoveryNotesPw || !addRecoveryAccountPw}
+              busy={busy}
+            />
           }
         >
           <p>
@@ -337,14 +363,16 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
             setForceResetInput('');
           }}
           footer={
-            <button
-              type="button"
-              className="btn btn--danger"
-              onClick={forceReset}
-              disabled={forceResetInput !== FORCE_RESET_PHRASE}
-            >
-              Delete locked notes &amp; reset
-            </button>
+            <AppModalActions
+              onCancel={() => {
+                setForceResetOpen(false);
+                setForceResetInput('');
+              }}
+              onConfirm={forceReset}
+              confirmLabel="Delete locked notes & reset"
+              confirmVariant="danger"
+              confirmDisabled={forceResetInput !== FORCE_RESET_PHRASE}
+            />
           }
         >
           <p>
@@ -378,18 +406,18 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
           title="Delete note?"
           onClose={() => setConfirmRemoveId(null)}
           footer={
-            <button type="button" className="btn btn--danger" onClick={confirmDelete}>
-              Delete
-            </button>
+            <AppModalActions
+              onCancel={() => setConfirmRemoveId(null)}
+              onConfirm={confirmDelete}
+              confirmLabel="Delete"
+              confirmVariant="danger"
+            />
           }
         >
           <p>
             {(() => {
               const n = notes.find((x) => x.id === confirmRemoveId);
               if (!n) return 'This note will be removed permanently.';
-              if (n.locked) {
-                return "This note is locked. Deleting it removes the ciphertext — once it is gone you can't recover it even if you remember the passphrase.";
-              }
               return 'This note will be removed permanently. There is no undo.';
             })()}
           </p>
@@ -405,14 +433,16 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
             setDisableErr(null);
           }}
           footer={
-            <button
-              type="button"
-              className="btn btn--danger"
-              onClick={confirmDisableLockAction}
-              disabled={busy}
-            >
-              {busy ? 'Decrypting…' : 'Remove passphrase'}
-            </button>
+            <AppModalActions
+              onCancel={() => {
+                setConfirmDisableLock(false);
+                setDisableErr(null);
+              }}
+              onConfirm={confirmDisableLockAction}
+              confirmLabel="Remove passphrase"
+              confirmVariant="danger"
+              busy={busy}
+            />
           }
         >
           <p>

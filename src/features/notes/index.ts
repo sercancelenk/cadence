@@ -1,6 +1,8 @@
+export { noteDisplayTitle, noteSidebarPreview, deriveStoredTitleFromPlainText } from './noteDisplay';
 export { NoteBacklinks, type NoteBacklinksProps } from './NoteBacklinks';
 export { NotesBodyEditor, type NotesBodyEditorProps } from './NotesBodyEditor';
 export { NotesListRow, type NotesListRowProps } from './NotesListRow';
+export { NotesListContextMenu, type NotesListContextMenuProps } from './NotesListContextMenu';
 export { NotesDetailHeader, type NotesDetailHeaderProps } from './NotesDetailHeader';
 export { NotesDialog, type NotesDialogProps } from './NotesDialog';
 export { NotesIconButton, type NotesIconButtonProps } from './NotesIconButton';
@@ -39,5 +41,7 @@ export { useNotesSidebarDnD } from './useNotesSidebarDnD';
 export { useNotesSelection } from './useNotesSelection';
 export { useNotesSort } from './useNotesSort';
 export { useNotesViewMode } from './useNotesViewMode';
+export { useNotesBulkSelection } from './useNotesBulkSelection';
+export { flatSidebarNoteIds } from './notesSidebarOrder';
 export { useNotesSidebarCollapse } from './useNotesSidebarCollapse';
 export { useSidebarResize } from './useSidebarResize';

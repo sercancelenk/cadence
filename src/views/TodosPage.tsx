@@ -22,6 +22,7 @@ import {
   useTodoPagePreferences,
   type InlineAddDraft,
 } from '../features/todos';
+import { noteDisplayTitle } from '../features/notes/noteDisplay';
 import { appendPlainTextToBodyFields } from '../lib/richTextBody';
 import { isAIConfigured } from '../lib/ai';
 import { useFeatures } from '../lib/features';
@@ -127,7 +128,7 @@ export function TodosPage() {
   const noteTitleById = useMemo(() => {
     const m = new Map<string, string>();
     for (const n of workspace.notes) {
-      if (n?.id) m.set(n.id, (n.title || '').trim() || 'Untitled note');
+      if (n?.id) m.set(n.id, noteDisplayTitle(n));
     }
     return m;
   }, [workspace.notes]);

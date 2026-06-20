@@ -2,6 +2,7 @@ import { FormEvent, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { IcArrowRight, IcPencil, IcPlus, IcSave, IcStar, IcTrash } from '../components/icons';
 import { Button } from '../components/ui/Button';
+import { useConfirm } from '../components/ui/ConfirmProvider';
 import { useAppData } from '../AppDataContext';
 import { sortedTeams } from '../lib/teamSort';
 import { TEAM_STATUS_OPTIONS, teamStatusLabel } from '../lib/teamStatus';
@@ -10,6 +11,7 @@ import type { TeamStatus } from '../model';
 import { teamPeople } from '../model';
 
 export function HomeTeams() {
+  const { confirm } = useConfirm();
   const { data, addTeam, removeTeam, updateTeam, toggleFavoriteTeam } = useAppData();
   const [name, setName] = useState('');
   const [renameId, setRenameId] = useState<string | null>(null);
@@ -154,9 +156,16 @@ export function HomeTeams() {
                       icon={<IcTrash size={16} />}
                       disabled={data.teams.length <= 1}
                       title={data.teams.length <= 1 ? 'You must keep at least one team' : undefined}
-                      onClick={() => {
+                      onClick={async () => {
                         if (data.teams.length <= 1) return;
-                        if (window.confirm(`Delete "${team.name}" and all its people and records? This cannot be undone.`)) {
+                        if (
+                          await confirm({
+                            title: `Delete “${team.name}”?`,
+                            description: 'This team and all its people and records will be removed permanently.',
+                            confirmLabel: 'Delete team',
+                            danger: true,
+                          })
+                        ) {
                           removeTeam(team.id);
                         }
                       }}

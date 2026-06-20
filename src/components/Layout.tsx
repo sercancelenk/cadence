@@ -9,6 +9,7 @@ import { usePersistStatus } from '../AppDataContext';
 import { IcAlertTriangle, IcX } from './icons';
 import { PATH_SETTINGS } from '../lib/routes';
 import { isElectronApp } from '../lib/runtime';
+import { ErrorBoundary } from './ErrorBoundary';
 
 const MOBILE_BREAKPOINT = 700;
 
@@ -85,7 +86,13 @@ export function Layout() {
           />
         ) : null}
         <main className="main main--scroll main--canvas">
-          <Outlet />
+          {/* Per-route boundary: a render crash in one page shows a recoverable
+              error in the content area while keeping the sidebar / top bar
+              usable so the user can navigate away. Keyed on the path so moving
+              to another route automatically clears a previous error. */}
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
       <BackToTopFab />

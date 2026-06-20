@@ -51,6 +51,28 @@ import type { SyncBackend, SyncBackendId, SyncPullOutcome, SyncPushOutcome } fro
 
 const MIN_GAP_MS = 30_000;
 const STARTUP_DELAY_MS = 500;
+const SYNC_LOCK_NAME = 'cadence-sync';
+
+/**
+ * Serialize a sync cycle across ALL tabs/windows of this origin using the Web
+ * Locks API. The in-process `inFlight` ref only guards one instance, so two PWA
+ * tabs of the same workspace could otherwise run `runSyncCycle` concurrently and
+ * race (double push, conflicting record writes). `ifAvailable: true` means if
+ * another tab already holds the lock we simply skip this cycle rather than
+ * queueing (the holder is already doing the work). Falls back to running
+ * directly where the API is unavailable.
+ */
+async function withSyncLock(fn: () => Promise<void>): Promise<void> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks?.request) {
+    await fn();
+    return;
+  }
+  await locks.request(SYNC_LOCK_NAME, { ifAvailable: true }, async (lock) => {
+    if (!lock) return; // another tab holds the lock — let it run this cycle
+    await fn();
+  });
+}
 
 /**
  * `computeLocalEtag` requires Web Crypto; in obscure runtimes (SSR
@@ -167,6 +189,24 @@ function materialContentCount(d: AppData): number {
   return Math.max(0, s.total - s.todoGroups);
 }
 
+/**
+ * Carry forward locally-delivered reminder ids when adopting a remote snapshot.
+ *
+ * `notifiedReminderIds` is an id-less de-dupe set: a reminder whose id is in it
+ * has already fired and must not fire again. A pull does a whole-snapshot
+ * REPLACE, so without this union the local set is discarded and every reminder
+ * this device already delivered (but the remote hadn't yet) would re-fire after
+ * the pull. Unioning is safe and idempotent.
+ */
+function unionNotifiedReminderIds(remote: AppData, local: AppData): AppData {
+  const localIds = local.notifiedReminderIds ?? [];
+  if (localIds.length === 0) return remote;
+  const remoteIds = remote.notifiedReminderIds ?? [];
+  const merged = new Set<string>([...remoteIds, ...localIds]);
+  if (merged.size === remoteIds.length) return remote;
+  return { ...remote, notifiedReminderIds: [...merged] };
+}
+
 export async function runSyncCycle(args: {
   backend: SyncBackend;
   localData: AppData;
@@ -223,7 +263,7 @@ export async function runSyncCycle(args: {
       });
       return 'empty-remote-skipped';
     }
-    applyRemote(remote);
+    applyRemote(unionNotifiedReminderIds(remote, getLocal()));
     return null;
   }
 
@@ -258,17 +298,31 @@ export async function runSyncCycle(args: {
       await maybeSyncAttachments(backend, parsed.data, userId, 'baseline-pulled');
       return 'baseline-pulled';
     }
+    if (pullOutcome.kind === 'corrupt') {
+      // Remote is a Cadence snapshot that failed auth/decrypt. Never seed over
+      // it — that would destroy a (possibly recoverable) backup.
+      publishSyncEvent({
+        kind: 'error',
+        backendId,
+        code: 'corrupt',
+        text: 'Remote snapshot is damaged. Resolve in Settings before syncing.',
+      });
+      return 'corrupt-remote';
+    }
     if (pullOutcome.kind === 'no-snapshot') {
-      const pushOutcome = await backend.push(localData);
+      // Flush so the very first seeded snapshot includes any unsaved editing.
+      await flushLocal();
+      const freshLocal = getLocal();
+      const pushOutcome = await backend.push(freshLocal);
       if (pushOutcome.kind === 'ok') {
-        const fp = await safeFingerprint(localData);
+        const fp = await safeFingerprint(freshLocal);
         backend.setRecord({
           etag: pushOutcome.etag,
           localFingerprint: fp,
           lastSyncedAt: new Date().toISOString(),
         });
         publishSyncEvent({ kind: 'success', backendId, text: 'Seeded remote with current workspace.' });
-        await maybeSyncAttachments(backend, localData, userId, 'baseline-seeded');
+        await maybeSyncAttachments(backend, freshLocal, userId, 'baseline-seeded');
         return 'baseline-seeded';
       }
       publishOutcome(backendId, 'push', pushOutcome);
@@ -278,17 +332,22 @@ export async function runSyncCycle(args: {
     return 'pull-error';
   }
 
-  const currentFingerprint = await safeFingerprint(localData);
+  // Flush editor/debounce buffers BEFORE measuring dirtiness or pushing, so a
+  // half-typed note is included in the pushed snapshot and is not mistakenly
+  // recorded as the "clean" baseline afterwards (which would strand it locally).
+  await flushLocal();
+  const freshLocal = getLocal();
+  const currentFingerprint = await safeFingerprint(freshLocal);
 
   if (currentFingerprint && currentFingerprint !== record.localFingerprint) {
-    const pushOutcome = await backend.push(localData, record.etag);
+    const pushOutcome = await backend.push(freshLocal, record.etag);
     if (pushOutcome.kind === 'ok') {
       backend.setRecord({
         etag: pushOutcome.etag,
         localFingerprint: currentFingerprint,
         lastSyncedAt: new Date().toISOString(),
       });
-      await maybeSyncAttachments(backend, localData, userId, 'pushed');
+      await maybeSyncAttachments(backend, freshLocal, userId, 'pushed');
       return 'pushed';
     }
     publishOutcome(backendId, 'push', pushOutcome);
@@ -325,6 +384,10 @@ export async function runSyncCycle(args: {
       lastSyncedAt: new Date().toISOString(),
     });
     return 'not-modified';
+  }
+  if (pullOutcome.kind === 'corrupt') {
+    publishOutcome(backendId, 'pull', pullOutcome);
+    return 'corrupt-remote';
   }
   publishOutcome(backendId, 'pull', pullOutcome);
   return 'pull-error';
@@ -384,15 +447,17 @@ export function useSyncAutoSync(opts: UseSyncAutoSyncOptions = {}) {
       inFlight.current = true;
       lastAttemptAt.current = now;
       try {
-        await runSyncCycle({
-          backend,
-          localData: dataRef.current,
-          getLocalData: () => dataRef.current,
-          flushLocal,
-          applyRemote: (next) => {
-            if (!cancelled) replaceAll(next);
-          },
-          userId: userIdRef.current,
+        await withSyncLock(async () => {
+          await runSyncCycle({
+            backend,
+            localData: dataRef.current,
+            getLocalData: () => dataRef.current,
+            flushLocal,
+            applyRemote: (next) => {
+              if (!cancelled) replaceAll(next);
+            },
+            userId: userIdRef.current,
+          });
         });
       } finally {
         if (!cancelled) inFlight.current = false;

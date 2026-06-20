@@ -679,3 +679,57 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+
+/* —— Instant tooltips (Electron-friendly; replaces slow native title tips) —— */
+
+.ui-tooltip {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.ui-tooltip__bubble {
+  position: absolute;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 400;
+  pointer-events: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  max-width: min(280px, 90vw);
+  text-align: center;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--modal-shadow, 0 8px 24px rgba(0, 0, 0, 0.28));
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.1s ease,
+    visibility 0.1s ease,
+    transform 0.1s ease;
+}
+
+.ui-tooltip--bottom .ui-tooltip__bubble {
+  top: calc(100% + 8px);
+}
+
+.ui-tooltip--top .ui-tooltip__bubble {
+  bottom: calc(100% + 8px);
+}
+
+.ui-tooltip:hover .ui-tooltip__bubble,
+.ui-tooltip:focus-within .ui-tooltip__bubble {
+  opacity: 1;
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-tooltip__bubble {
+    transition: none;
+  }
+}

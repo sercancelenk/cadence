@@ -5,9 +5,11 @@ import type { ExtractedTask } from '../lib/ai';
 import { useFeatures } from '../lib/features';
 import type { Priority, TodoGroup } from '../model';
 import { PRIORITY_OPTIONS } from '../model';
+import { noteDisplayTitle } from '../features/notes/noteDisplay';
 import { Button } from './ui/Button';
+import { AppModal } from './ui/AppModal';
 import { AutoResizeTextarea } from './ui/AutoResizeTextarea';
-import { IcCheck, IcPlus, IcRefresh, IcSparkles, IcTrash, IcX } from './icons';
+import { IcCheck, IcPlus, IcRefresh, IcSparkles, IcTrash } from './icons';
 
 type Props = {
   open: boolean;
@@ -127,7 +129,9 @@ export function AITaskExtractorDialog({
     // Persist the guidance so the next open remembers it. Empty string clears.
     const trimmedGuidance = guidance.trim();
     if ((aiSettings?.extractionGuidance ?? '') !== trimmedGuidance) {
-      updateAISettings({ extractionGuidance: trimmedGuidance || undefined });
+      // Pass the raw (possibly empty) string so an empty value clears the
+      // remembered guidance; `undefined` would instead preserve the old value.
+      updateAISettings({ extractionGuidance: trimmedGuidance });
     }
     try {
       const tasks = await extractTasksFromNotes({
@@ -200,33 +204,26 @@ export function AITaskExtractorDialog({
   const addedCount = rows.filter((r) => r.added).length;
   const noGroups = groups.length === 0;
 
-  return (
-    <div className="ai-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="ai-dialog ai-dialog--wide" onClick={(e) => e.stopPropagation()}>
-        <header className="ai-dialog__header">
-          <span className="ai-dialog__icon">
-            <IcSparkles size={18} />
-          </span>
-          <div className="ai-dialog__titlewrap">
-            <h2 className="ai-dialog__title">Extract tasks from notes</h2>
-            <p className="ai-dialog__sub">
-              {sourceNoteId
-                ? (() => {
-                    // When opened from a specific note, surface that
-                    // context up-front and explain the link behaviour so
-                    // the user knows what to expect after "Add".
-                    const linkedNote = data.notes.find((n) => n.id === sourceNoteId);
-                    const noteTitle = linkedNote?.title?.trim() || 'Untitled note';
-                    return `Extracting from "${noteTitle}". Every task you add will keep a link back to this note.`;
-                  })()
-                : 'Paste a brain dump, meeting transcript or Slack thread. The assistant turns it into a list of crisp tasks you can drop into any of your lists.'}
-            </p>
-          </div>
-          <button type="button" className="ai-dialog__close" aria-label="Close" title="Close" onClick={onClose}>
-            <IcX size={18} />
-          </button>
-        </header>
+  const subtitle = sourceNoteId
+    ? (() => {
+        const linkedNote = data.notes.find((n) => n.id === sourceNoteId);
+        const noteTitle = linkedNote ? noteDisplayTitle(linkedNote) : 'Untitled note';
+        return `Extracting from "${noteTitle}". Every task you add will keep a link back to this note.`;
+      })()
+    : 'Paste a brain dump, meeting transcript or Slack thread. The assistant turns it into a list of crisp tasks you can drop into any of your lists.';
 
+  return (
+    <AppModal
+      onClose={onClose}
+      title="Extract tasks from notes"
+      description={subtitle}
+      icon={<IcSparkles size={18} />}
+      size="xl"
+      layout="flex"
+      showCloseButton
+      panelClassName="ai-dialog--wide"
+      bodyClassName="ai-dialog__scroll"
+    >
         {!isAIConfigured(aiSettings) ? (
           <div className="ai-dialog__empty">
             <p>You haven't configured an AI provider yet.</p>
@@ -241,7 +238,7 @@ export function AITaskExtractorDialog({
             <p className="muted small">Create a list first; then come back and the extracted tasks will land in it.</p>
           </div>
         ) : (
-          <div className="ai-dialog__scroll">
+          <>
             <label className="field" style={{ marginTop: 0 }}>
               <span>Notes</span>
               <AutoResizeTextarea
@@ -444,10 +441,9 @@ export function AITaskExtractorDialog({
                 Tip: keep ⌘/Ctrl + Enter as a shortcut to fire the extraction without leaving the textarea.
               </p>
             ) : null}
-          </div>
+          </>
         )}
-      </div>
-    </div>
+    </AppModal>
   );
 }
 

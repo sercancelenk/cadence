@@ -119,6 +119,24 @@ describe('runSyncCycle (first-time / no record)', () => {
     unsubscribe();
   });
 
+  it('never seeds over a corrupt remote snapshot', async () => {
+    // A damaged-but-real Cadence snapshot must NOT be overwritten by our seed.
+    const fake = makeFakeBackend(null, { pull: { kind: 'corrupt' } });
+    const { events, unsubscribe } = captureEvents();
+
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: makeData('local'),
+      applyRemote: () => {},
+    });
+
+    expect(action).toBe('corrupt-remote');
+    expect(fake.calls.some((c) => c.method === 'push')).toBe(false);
+    expect(fake.record).toBeNull();
+    expect(events.some((e) => e.kind === 'error' && e.code === 'corrupt')).toBe(true);
+    unsubscribe();
+  });
+
   it('seeds the remote when it has no snapshot yet', async () => {
     const fake = makeFakeBackend(null, {
       pull: { kind: 'no-snapshot' },
@@ -306,17 +324,18 @@ describe('runSyncCycle (steady state — record exists)', () => {
     expect(fake.record?.etag).toBe('rev-1'); // unchanged
   });
 
-  it('skips pull when local fingerprint changes during apply guard', async () => {
+  it('flushes editor buffers before pushing so a pending edit is not stranded', async () => {
+    // record matches `local`, but an uncommitted editor buffer (revealed by
+    // flushLocal) means there ARE local changes. flush-before-push must surface
+    // them as a normal dirty push instead of treating local as clean.
     const local = makeData('local');
     const { computeLocalEtag } = await import('./syncFingerprint');
     const fp = await computeLocalEtag(local);
     let current = local;
     const fake = makeFakeBackend(
       { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
-      { pull: { kind: 'ok', data: makeData('remote'), etag: 'rev-2' } },
+      { push: { kind: 'ok', etag: 'rev-2' } },
     );
-    const applied: AppData[] = [];
-    const { events, unsubscribe } = captureEvents();
 
     const action = await runSyncCycle({
       backend: fake.backend,
@@ -325,6 +344,36 @@ describe('runSyncCycle (steady state — record exists)', () => {
       flushLocal: async () => {
         current = makeData('local-edited');
       },
+      applyRemote: () => {},
+    });
+
+    expect(action).toBe('pushed');
+    expect(fake.record?.etag).toBe('rev-2');
+    expect(fake.calls.some((c) => c.method === 'push')).toBe(true);
+  });
+
+  it('skips pull when local fingerprint changes DURING the network pull', async () => {
+    const local = makeData('local');
+    const { computeLocalEtag } = await import('./syncFingerprint');
+    const fp = await computeLocalEtag(local);
+    let current = local;
+    const fake = makeFakeBackend(
+      { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
+      {
+        // The pull itself is the window during which the user edits locally.
+        pull: () => {
+          current = makeData('local-edited');
+          return { kind: 'ok', data: makeData('remote'), etag: 'rev-2' };
+        },
+      },
+    );
+    const applied: AppData[] = [];
+    const { events, unsubscribe } = captureEvents();
+
+    const action = await runSyncCycle({
+      backend: fake.backend,
+      localData: local,
+      getLocalData: () => current,
       applyRemote: (d) => applied.push(d),
     });
 

@@ -378,7 +378,7 @@ export function WelcomeTour() {
         <div className="welcome-tour__body">{cur.body}</div>
         <div className="welcome-tour__actions">
           {canSkip ? (
-            <button type="button" className="btn btn--ghost" onClick={dismiss}>
+            <button type="button" className="app-modal__btn-cancel" onClick={dismiss}>
               Skip
             </button>
           ) : (
@@ -387,14 +387,19 @@ export function WelcomeTour() {
           {!isLast ? (
             <button
               type="button"
-              className="btn btn--primary"
+              className="app-modal__btn-confirm"
               disabled={!nextAllowed}
               onClick={advance}
             >
               {cur.nextLabel ?? 'Next'}
             </button>
           ) : (
-            <button type="button" className="btn btn--primary" disabled={!nextAllowed} onClick={finish}>
+            <button
+              type="button"
+              className="app-modal__btn-confirm"
+              disabled={!nextAllowed}
+              onClick={finish}
+            >
               Get started
             </button>
           )}

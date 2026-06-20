@@ -1,5 +1,6 @@
 import type { Note } from '../../model';
-import { PLACEHOLDER_TITLE, type NoteSortMode } from './notePreferences';
+import { noteDisplayTitle } from './noteDisplay';
+import { type NoteSortMode } from './notePreferences';
 
 /**
  * Sorted list driving the sidebar. Pinned notes always float to the top
@@ -12,7 +13,7 @@ export function sortNotes(notes: Note[], sortMode: NoteSortMode): Note[] {
   const cmpOpened = (a: Note, b: Note) =>
     (b.lastOpenedAt || b.updatedAt || '').localeCompare(a.lastOpenedAt || a.updatedAt || '');
   const cmpTitle = (a: Note, b: Note) =>
-    (a.title || PLACEHOLDER_TITLE).localeCompare(b.title || PLACEHOLDER_TITLE, undefined, {
+    noteDisplayTitle(a).localeCompare(noteDisplayTitle(b), undefined, {
       sensitivity: 'base',
     });
   // Stable, edit-invariant tie-break for manual order. Using `updatedAt` here

@@ -10,7 +10,11 @@
  */
 export type PendingIntent = 'lock' | 'unlock-selected' | 'disable-locking' | 'view';
 
-/** Minimum Notes passphrase length (workspace-wide lock, separate from account password). */
-export const MIN_NOTES_PASSPHRASE_LENGTH = 6;
+/**
+ * Minimum Notes passphrase length (workspace-wide lock, separate from account
+ * password). Re-exported from the crypto module, which is the single source of
+ * truth and enforces it at the boundary in `createNotesLock`.
+ */
+export { MIN_NOTES_PASSPHRASE_LENGTH } from '../../lib/notesCrypto';
 
 export const FORCE_RESET_PHRASE = 'DELETE LOCKED NOTES';

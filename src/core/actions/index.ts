@@ -389,7 +389,11 @@ export function updateAISettings(
   patch: Partial<AISettings>,
 ): AppData {
   const current: AISettings = data.aiSettings ?? {};
+  // Spread `current` first so forward-compat extras (unknown keys preserved by
+  // parseAISettings via withExtras) and fields this patch does not touch (e.g.
+  // extractionGuidance when saving provider/apiKey) survive the update.
   const next: AISettings = {
+    ...current,
     provider: patch.provider !== undefined ? patch.provider || undefined : current.provider,
     apiKey:
       patch.apiKey !== undefined
@@ -409,8 +413,17 @@ export function updateAISettings(
           ? patch.systemPrompt
           : undefined
         : current.systemPrompt,
+    extractionGuidance:
+      patch.extractionGuidance !== undefined
+        ? patch.extractionGuidance.trim()
+          ? patch.extractionGuidance
+          : undefined
+        : current.extractionGuidance,
   };
-  const isEmpty = !next.provider && !next.apiKey && !next.model && !next.systemPrompt;
+  // Empty when every value (including any preserved forward-compat extra) is blank.
+  const isEmpty = Object.values(next as Record<string, unknown>).every(
+    (v) => v === undefined || v === null || v === '',
+  );
   return { ...data, aiSettings: isEmpty ? undefined : next };
 }
 

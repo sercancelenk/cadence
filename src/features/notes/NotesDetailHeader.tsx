@@ -1,7 +1,8 @@
 import {
-  IcClock,
   IcArchive,
+  IcArchiveRestore,
   IcArrowLeft,
+  IcClock,
   IcEyeOff,
   IcKey,
   IcLock,
@@ -12,8 +13,8 @@ import {
   IcUnlock,
 } from '../../components/icons';
 import type { Note } from '../../model';
+import { Tooltip } from '../../components/ui/Tooltip';
 import { NotesIconButton } from './NotesIconButton';
-import { PLACEHOLDER_TITLE } from './notePreferences';
 import type { PendingIntent } from './noteLockTypes';
 
 export type NotesDetailHeaderProps = {
@@ -24,7 +25,6 @@ export type NotesDetailHeaderProps = {
   sidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   onBack: () => void;
-  onChangeTitle: (title: string) => void;
   onExtractTasks: () => void;
   onTogglePinned: () => void;
   onToggleArchive: () => void;
@@ -43,7 +43,6 @@ export function NotesDetailHeader({
   sidebarCollapsed = false,
   onToggleSidebar,
   onBack,
-  onChangeTitle,
   onExtractTasks,
   onTogglePinned,
   onToggleArchive,
@@ -53,42 +52,43 @@ export function NotesDetailHeader({
   onOpenVersionHistory,
   versionHistoryAvailable = false,
 }: NotesDetailHeaderProps) {
+  const extractBlocked = selected.locked && !editorReady;
+  const deleteBlocked = selected.locked;
+
   return (
     <header className="notes-page__main-header">
       {sidebarCollapsed && onToggleSidebar ? (
         <NotesIconButton
           onClick={onToggleSidebar}
           label="Show notes list"
-          tooltip="Show notes list"
+          tooltip="Show the notes list sidebar"
           ariaExpanded={false}
         >
           <IcMenu size={18} />
         </NotesIconButton>
       ) : null}
-      <button
-        type="button"
-        className="notes-page__back"
-        onClick={onBack}
-        aria-label="Back to notes list"
-        title="Back to notes list"
-      >
-        <IcArrowLeft size={18} />
-        <span>Notes</span>
-      </button>
-      <input
-        className="notes-page__title-input"
-        value={selected.title}
-        onChange={(e) => onChangeTitle(e.target.value)}
-        placeholder={PLACEHOLDER_TITLE}
-        disabled={selected.locked && !editorReady}
-      />
+      <Tooltip label="Back to notes list — clear the open note" placement="bottom">
+        <button
+          type="button"
+          className="notes-page__back"
+          onClick={onBack}
+          aria-label="Back to notes list"
+        >
+          <IcArrowLeft size={18} />
+          <span>Notes</span>
+        </button>
+      </Tooltip>
       <div className="notes-page__main-actions">
         {aiEnabled ? (
           <NotesIconButton
             onClick={onExtractTasks}
-            disabled={selected.locked && !editorReady}
+            disabled={extractBlocked}
             label="Extract tasks from this note"
-            tooltip="Extract tasks from this note"
+            tooltip={
+              extractBlocked
+                ? 'Unlock this note first — AI needs to read the content'
+                : 'Use AI to pull actionable tasks from this note'
+            }
           >
             <IcSparkles size={16} />
           </NotesIconButton>
@@ -100,8 +100,8 @@ export function NotesDetailHeader({
             label="Version history"
             tooltip={
               versionHistoryAvailable
-                ? 'Version history'
-                : 'Version history (Cadence desktop app)'
+                ? 'Browse and restore previous versions of this note'
+                : 'Version history — available in the Cadence desktop app'
             }
           >
             <IcClock size={16} />
@@ -111,7 +111,11 @@ export function NotesDetailHeader({
         <NotesIconButton
           onClick={onTogglePinned}
           label={selected.pinned ? 'Unpin' : 'Pin to top'}
-          tooltip={selected.pinned ? 'Unpin' : 'Pin to top'}
+          tooltip={
+            selected.pinned
+              ? 'Unpin — return this note to normal sort order in its list'
+              : 'Pin to top — keep this note at the top of its list'
+          }
           pressed={!!selected.pinned}
         >
           <IcStar size={16} />
@@ -119,10 +123,14 @@ export function NotesDetailHeader({
 
         <NotesIconButton
           onClick={onToggleArchive}
-          label={selected.archived ? 'Restore to active notes' : 'Archive note'}
-          tooltip={selected.archived ? 'Restore to active notes' : 'Archive note'}
+          label={selected.archived ? 'Unarchive' : 'Archive'}
+          tooltip={
+            selected.archived
+              ? 'Unarchive — restore this note to Active lists'
+              : 'Archive — hide from Active view without deleting'
+          }
         >
-          <IcArchive size={16} />
+          {selected.archived ? <IcArchiveRestore size={16} /> : <IcArchive size={16} />}
         </NotesIconButton>
 
         {!selected.locked ? (
@@ -130,7 +138,7 @@ export function NotesDetailHeader({
             onClick={() => onRequestAction('lock')}
             disabled={busy}
             label="Lock note"
-            tooltip="Lock note"
+            tooltip="Encrypt this note with your Notes passphrase"
           >
             <IcLock size={16} />
           </NotesIconButton>
@@ -139,7 +147,7 @@ export function NotesDetailHeader({
             onClick={onHideSelected}
             disabled={busy}
             label="Hide note"
-            tooltip="Hide content (re-lock view)"
+            tooltip="Hide decrypted content — re-lock the view until you unlock again"
           >
             <IcEyeOff size={16} />
           </NotesIconButton>
@@ -148,7 +156,7 @@ export function NotesDetailHeader({
             onClick={() => onRequestAction('view')}
             disabled={busy}
             label="Unlock to view"
-            tooltip="Unlock to view"
+            tooltip="Enter your Notes passphrase to read and edit this note"
           >
             <IcUnlock size={16} />
           </NotesIconButton>
@@ -159,7 +167,7 @@ export function NotesDetailHeader({
             onClick={() => onRequestAction('unlock-selected')}
             disabled={busy}
             label="Remove lock"
-            tooltip="Remove lock from this note (decrypt permanently)"
+            tooltip="Permanently decrypt this note and remove its lock"
           >
             <IcKey size={16} />
           </NotesIconButton>
@@ -167,8 +175,13 @@ export function NotesDetailHeader({
 
         <NotesIconButton
           onClick={onConfirmRemove}
+          disabled={deleteBlocked}
           label="Delete note"
-          tooltip="Delete note"
+          tooltip={
+            deleteBlocked
+              ? 'Remove the lock before deleting — locked notes cannot be deleted'
+              : 'Delete this note permanently — this cannot be undone'
+          }
           variant="danger"
         >
           <IcTrash size={16} />

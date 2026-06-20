@@ -50,6 +50,7 @@ export type SyncPullOutcome =
   | { kind: 'ok'; data: unknown; etag?: string; remoteUpdatedAt?: string }
   | { kind: 'not-modified' }
   | { kind: 'no-snapshot' }              // backend healthy but no snapshot has been uploaded yet
+  | { kind: 'corrupt' }                  // remote IS a Cadence snapshot but failed auth/decrypt (tampered/truncated) — never overwrite
   | { kind: 'auth-required' }
   | { kind: 'wrong-password' }           // E2E encryption layer rejected the snapshot
   | { kind: 'unsupported-version'; version?: number }

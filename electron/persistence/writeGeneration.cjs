@@ -39,7 +39,12 @@ function readWriteMeta(metaPath, fs) {
  */
 function canCommitWriteGeneration(expected, current) {
   if (expected === null || expected === undefined) return true;
-  if (typeof expected !== 'number' || !Number.isFinite(expected)) return true;
+  // A non-number or non-finite expected generation (NaN/Infinity, a string,
+  // etc.) is malformed input. It must NOT be treated as "no expectation" —
+  // that would let a buggy or hostile caller bypass optimistic concurrency and
+  // clobber a file written by another tab / cloud sync. Refuse it so the caller
+  // resyncs and retries with a real generation.
+  if (typeof expected !== 'number' || !Number.isFinite(expected)) return false;
   return expected === current;
 }
 

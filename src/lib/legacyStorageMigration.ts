@@ -20,24 +20,31 @@ import { STORAGE_PREFIX, STORAGE_PREFIX_LEGACY } from './appBranding';
 
 const MIGRATION_MARKER = `${STORAGE_PREFIX}:legacy-storage-migrated:v1`;
 
+type MigrateOutcome = 'copied' | 'skip' | 'fail';
+
 function migrateOne(
   storage: Storage,
   legacyKey: string,
   newKey: string,
-): boolean {
+): MigrateOutcome {
   try {
-    if (storage.getItem(newKey) !== null) return false;
+    if (storage.getItem(newKey) !== null) return 'skip';
     const v = storage.getItem(legacyKey);
-    if (v === null) return false;
+    if (v === null) return 'skip';
     storage.setItem(newKey, v);
-    return true;
-  } catch {
-    return false;
+    return 'copied';
+  } catch (err) {
+    // A real copy failed (quota, ITP). Report it so the caller does NOT mark
+    // migration complete and we retry this key on the next launch.
+    // eslint-disable-next-line no-console
+    console.warn(`[cadence] failed to migrate legacy storage key "${legacyKey}":`, err);
+    return 'fail';
   }
 }
 
-function migrateAllUnder(storage: Storage): number {
+function migrateAllUnder(storage: Storage): { copied: number; failed: number } {
   let copied = 0;
+  let failed = 0;
   const toMigrate: { legacyKey: string; newKey: string }[] = [];
   try {
     for (let i = 0; i < storage.length; i++) {
@@ -50,13 +57,19 @@ function migrateAllUnder(storage: Storage): number {
         toMigrate.push({ legacyKey: k, newKey });
       }
     }
-  } catch {
-    /* iteration failed (Safari ITP, quota error, etc.) — nothing to do. */
+  } catch (err) {
+    // iteration failed (Safari ITP, quota error, etc.) — treat as a failure so
+    // we don't prematurely mark the migration complete.
+    // eslint-disable-next-line no-console
+    console.warn('[cadence] failed to enumerate legacy storage keys:', err);
+    return { copied: 0, failed: 1 };
   }
   for (const { legacyKey, newKey } of toMigrate) {
-    if (migrateOne(storage, legacyKey, newKey)) copied += 1;
+    const outcome = migrateOne(storage, legacyKey, newKey);
+    if (outcome === 'copied') copied += 1;
+    else if (outcome === 'fail') failed += 1;
   }
-  return copied;
+  return { copied, failed };
 }
 
 export function migrateLegacyStorage(): void {
@@ -67,15 +80,19 @@ export function migrateLegacyStorage(): void {
     return;
   }
   try {
-    const localCopied = migrateAllUnder(window.localStorage);
-    const sessionCopied = migrateAllUnder(window.sessionStorage);
-    if (localCopied || sessionCopied) {
+    const local = migrateAllUnder(window.localStorage);
+    const session = migrateAllUnder(window.sessionStorage);
+    if (local.copied || session.copied) {
       // eslint-disable-next-line no-console
       console.info(
-        `[cadence] migrated ${localCopied} localStorage and ${sessionCopied} sessionStorage keys from the legacy "${STORAGE_PREFIX_LEGACY}" prefix.`,
+        `[cadence] migrated ${local.copied} localStorage and ${session.copied} sessionStorage keys from the legacy "${STORAGE_PREFIX_LEGACY}" prefix.`,
       );
     }
-    window.localStorage.setItem(MIGRATION_MARKER, '1');
+    // Only mark migration complete when nothing failed; otherwise re-run next
+    // launch (idempotent — already-copied keys are skipped).
+    if (local.failed === 0 && session.failed === 0) {
+      window.localStorage.setItem(MIGRATION_MARKER, '1');
+    }
   } catch {
     /* Can't write the marker. Most likely Safari private mode. We'll just
        re-run the migration on the next launch — that's safe because

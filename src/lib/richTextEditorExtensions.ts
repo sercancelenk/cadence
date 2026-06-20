@@ -15,6 +15,23 @@ import { DateChip } from './richTextDateChip';
 
 const IMAGE_MIN_WIDTH = 48;
 
+const SAFE_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+
+/**
+ * Only http(s) and mailto links may be stored/auto-linked/pasted in the editor.
+ * This blocks `javascript:`, `data:`, `vbscript:`, `file:` and similar hostile
+ * hrefs from being persisted in note JSON and rendered as live anchors. Mirrors
+ * the preview-side policy in `richTextPreviewLinks.isSafeRichTextPreviewHref`.
+ */
+export function isSafeEditorLinkUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    return SAFE_LINK_PROTOCOLS.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 function applyImageNodeAttrs(
   img: HTMLImageElement,
   wrapper: HTMLDivElement,
@@ -210,6 +227,14 @@ export function createRichTextExtensions(placeholder = 'Write here…'): Extensi
       openOnClick: false,
       autolink: true,
       linkOnPaste: true,
+      // Reject unsafe protocols (javascript:, data:, vbscript:, file:, …) from
+      // autolink AND from pasted/imported HTML so they can never be stored in
+      // note JSON or rendered as a live href. `isAllowedUri` is the XSS gate for
+      // parsed HTML; `shouldAutoLink` restricts auto-detected links. Programmatic
+      // `setLink` bypasses both, so the toolbar validates separately (see
+      // RichTextEditor.applyLink).
+      shouldAutoLink: isSafeEditorLinkUrl,
+      isAllowedUri: (url, ctx) => ctx.defaultValidate(url) && isSafeEditorLinkUrl(url),
       HTMLAttributes: {
         rel: 'noopener noreferrer',
         target: '_blank',

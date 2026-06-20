@@ -32,6 +32,14 @@ import { NOTES_VERIFIER_PLAINTEXT, NOTES_VERIFIER_PLAINTEXT_LEGACY } from './app
 
 const ITER = 200_000;
 const KEY_LEN = 256;
+
+/**
+ * Minimum Notes passphrase length. Defined here (the crypto boundary) so it is
+ * the single source of truth and cannot be bypassed by a caller that skips the
+ * UI validation — `createNotesLock` enforces it directly. Matches the account
+ * password minimum so neither door is meaningfully weaker than the other.
+ */
+export const MIN_NOTES_PASSPHRASE_LENGTH = 8;
 const ACCEPTED_VERIFIERS: ReadonlyArray<string> = [
   NOTES_VERIFIER_PLAINTEXT,
   NOTES_VERIFIER_PLAINTEXT_LEGACY,
@@ -114,6 +122,11 @@ async function deriveMasterKey(passphrase: string, salt: Uint8Array): Promise<Cr
 export async function createNotesLock(
   passphrase: string,
 ): Promise<{ lock: NotesLock; masterKey: CryptoKey }> {
+  if (typeof passphrase !== 'string' || passphrase.length < MIN_NOTES_PASSPHRASE_LENGTH) {
+    throw new Error(
+      `Notes passphrase must be at least ${MIN_NOTES_PASSPHRASE_LENGTH} characters.`,
+    );
+  }
   const c = getCrypto();
   const salt = c.getRandomValues(new Uint8Array(16));
   const masterKey = await deriveMasterKey(passphrase, salt);

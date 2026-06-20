@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { IcCheck, IcPencil } from '../icons';
 import { RichTextEditor } from './RichTextEditor';
+import { Tooltip } from './Tooltip';
 import type { RichTextPayload } from '../../lib/richText';
 import type { RichTextBodyFormat } from '../../lib/richText';
 import type { RichTextDoc } from '../../lib/richText';
@@ -24,6 +25,9 @@ export type RichTextDocumentPaneProps = {
   /** When false, hide Preview/Edit tabs (read-only surfaces like version history). */
   showModeToggle?: boolean;
   className?: string;
+  /** Focus the editor surface once when entering edit mode (e.g. new note). */
+  autoFocusEditor?: boolean;
+  onEditorAutoFocusHandled?: () => void;
 };
 
 export function RichTextDocumentPane({
@@ -41,6 +45,8 @@ export function RichTextDocumentPane({
   previewHint = 'Use Edit to change this note · Click images to enlarge · Click links to open · ⌘/Ctrl+click to copy',
   showModeToggle = true,
   className = '',
+  autoFocusEditor = false,
+  onEditorAutoFocusHandled,
 }: RichTextDocumentPaneProps) {
   const [saveState, setSaveState] = useState<'idle' | 'pending' | 'saved'>('idle');
   const [toolbarMountEl, setToolbarMountEl] = useState<HTMLElement | null>(null);
@@ -77,31 +83,36 @@ export function RichTextDocumentPane({
       <div className="rich-doc-pane__chrome">
         {showModeToggle ? (
           <div className="rich-doc-pane__mode" role="tablist" aria-label="Document mode">
-            <button
-              type="button"
-              className={`rich-doc-pane__mode-tab${!editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
-              role="tab"
-              aria-selected={!editing}
-              title="Preview"
-              onClick={() => onEditingChange(false)}
+            <Tooltip label="Preview — read-only view of this note" placement="bottom">
+              <button
+                type="button"
+                className={`rich-doc-pane__mode-tab${!editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
+                role="tab"
+                aria-selected={!editing}
+                onClick={() => onEditingChange(false)}
+              >
+                <IcCheck size={14} />
+                <span>Preview</span>
+              </button>
+            </Tooltip>
+            <Tooltip
+              label={editable ? 'Edit — change title and body' : 'Unlock this note to edit'}
+              placement="bottom"
             >
-              <IcCheck size={14} />
-              <span>Preview</span>
-            </button>
-            <button
-              type="button"
-              className={`rich-doc-pane__mode-tab${editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
-              role="tab"
-              aria-selected={editing}
-              title="Edit"
-              disabled={!editable}
-              onClick={() => {
-                if (editable) onEditingChange(true);
-              }}
-            >
-              <IcPencil size={14} />
-              <span>Edit</span>
-            </button>
+              <button
+                type="button"
+                className={`rich-doc-pane__mode-tab${editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
+                role="tab"
+                aria-selected={editing}
+                disabled={!editable}
+                onClick={() => {
+                  if (editable) onEditingChange(true);
+                }}
+              >
+                <IcPencil size={14} />
+                <span>Edit</span>
+              </button>
+            </Tooltip>
             {!editing && previewHint ? (
               <span className="rich-doc-pane__hint muted small">{previewHint}</span>
             ) : null}
@@ -145,6 +156,8 @@ export function RichTextDocumentPane({
           onSaveStateChange={editing ? handleSaveStateChange : undefined}
           attachmentScope={attachmentScope}
           attachmentUserId={attachmentUserId}
+          autoFocus={autoFocusEditor}
+          onAutoFocusHandled={onEditorAutoFocusHandled}
         />
       </div>
     </div>

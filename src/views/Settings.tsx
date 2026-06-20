@@ -6,6 +6,8 @@ import { IcHelpCircle } from '../components/icons';
 import { useAccount } from '../AccountContext';
 import { useSession } from '../AuthContext';
 import { useToast } from '../components/ui/Toast';
+import { useConfirm } from '../components/ui/ConfirmProvider';
+import { AppModal, AppModalActions } from '../components/ui/AppModal';
 import { askAI, AIError, defaultModel } from '../lib/ai';
 import { APP_SLUG } from '../lib/appBranding';
 import { resolveAppProfileLabel } from '../lib/appProfileLabel';
@@ -194,10 +196,11 @@ function RemindersSettingsSection() {
 
 export function Settings() {
   const navigate = useNavigate();
-  const { data, importWorkspace, syncFromDisk, flushPendingSave } = useAppData();
+  const { data, importWorkspace, syncFromDisk, flushPendingSave, getLatestSnapshot } = useAppData();
   const { user } = useAccount();
   const { pinEnabled, refresh: refreshSession, lockSession } = useSession();
   const toast = useToast();
+  const { confirm } = useConfirm();
   const { features, managed, source, setPreset } = useFeatures();
   const [appVersion, setAppVersion] = useState<string>('');
   const [newPin, setNewPin] = useState('');
@@ -288,10 +291,19 @@ export function Settings() {
       return;
     }
     const isZip = file.name.toLowerCase().endsWith('.zip');
-    const prompt = isZip
-      ? 'Import this portable backup? Your current workspace and images on this device will be replaced. Export first if you are unsure.'
-      : 'Import this JSON file? Your workspace will be replaced. JSON does not include images — use a .zip portable backup for pictures.';
-    if (!window.confirm(prompt)) return;
+    const description = isZip
+      ? 'Your current workspace and images on this device will be replaced. Export first if you are unsure.'
+      : 'Your workspace will be replaced. JSON does not include images — use a .zip portable backup for pictures.';
+    if (
+      !(await confirm({
+        title: isZip ? 'Import portable backup?' : 'Import JSON backup?',
+        description,
+        confirmLabel: 'Import',
+        danger: true,
+      }))
+    ) {
+      return;
+    }
 
     setImportBusy(true);
     try {
@@ -347,6 +359,12 @@ export function Settings() {
     setImportBusy(true);
     let mergeSummary: MergeAppendSummary | null = null;
     try {
+      // Flush debounced editor / locked-note buffers into the in-memory
+      // snapshot BEFORE we read the merge base, otherwise unsaved local edits
+      // are excluded from the merge and then lost when the merged result is
+      // imported (replace). `flushPendingSave` runs the before-flush hooks and
+      // commits them synchronously to the snapshot store.
+      await flushPendingSave();
       const r = await importPortableBackupFile(file, {
         userId: user.id,
         importWorkspace: async (next) => {
@@ -355,7 +373,9 @@ export function Settings() {
           return { ok: true as const };
         },
         transformWorkspace: (remote) => {
-          const merged = mergeAppendWorkspace(data, remote);
+          // Read the freshest local snapshot (post-flush) rather than the stale
+          // render closure `data`.
+          const merged = mergeAppendWorkspace(getLatestSnapshot(), remote);
           mergeSummary = merged.summary;
           return merged.data;
         },
@@ -386,9 +406,12 @@ export function Settings() {
       return;
     }
     if (
-      !window.confirm(
-        'Import a full backup folder? This replaces your workspace and attachment files on this device.',
-      )
+      !(await confirm({
+        title: 'Import full backup folder?',
+        description: 'This replaces your workspace and attachment files on this device.',
+        confirmLabel: 'Import',
+        danger: true,
+      }))
     ) {
       return;
     }
@@ -874,6 +897,7 @@ function GDriveClientIdSetup({
 }
 
 function CloudSyncSection() {
+  const { confirm } = useConfirm();
   const { data, replaceAll, flushPendingSave } = useAppData();
 
   const [tokens, setTokens] = useState<OAuthTokens | null>(() => loadStoredTokens());
@@ -951,11 +975,16 @@ function CloudSyncSection() {
 
   const handleDisconnect = async () => {
     if (
-      !window.confirm(
-        'Sign out of Google Drive on this device? Your encrypted snapshot stays on Drive — you can sign back in later to restore it.',
-      )
-    )
+      !(await confirm({
+        title: 'Sign out of Google Drive?',
+        description:
+          'Your encrypted snapshot stays on Drive — you can sign back in later to restore it.',
+        confirmLabel: 'Sign out',
+        danger: true,
+      }))
+    ) {
       return;
+    }
     setBusy(true);
     await signOut();
     disconnectGDrive();
@@ -1335,11 +1364,15 @@ function CloudSyncSection() {
                   type="button"
                   variant="ghost"
                   icon={<IcUpload size={16} />}
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      window.confirm(
-                        'Override the Drive copy with your local snapshot? Other devices will see your version on next sync.',
-                      )
+                      await confirm({
+                        title: 'Override remote snapshot?',
+                        description:
+                          'Your local snapshot will replace the Drive copy. Other devices will see your version on next sync.',
+                        confirmLabel: 'Override remote',
+                        danger: true,
+                      })
                     ) {
                       void runManualSync('push-force');
                     }
@@ -1412,6 +1445,8 @@ function describePullOutcome(
   switch (outcome.kind) {
     case 'auth-required':
       return 'Google session expired. Sign out and back in.';
+    case 'corrupt':
+      return 'The Drive snapshot is damaged and cannot be opened. Push your local workspace to replace it, or restore from a backup.';
     case 'unsupported-version':
       return 'Drive holds a snapshot from a newer Cadence build. Update this device first.';
     case 'mixed-content':
@@ -1509,11 +1544,8 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
       }
     })();
 
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
     return () => {
       off?.();
-      window.removeEventListener('keydown', onKey);
     };
   }, [open, onClose]);
 
@@ -1533,106 +1565,108 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
     }
   };
 
-  return (
-    <div className="updater-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="updater-dialog" onClick={(e) => e.stopPropagation()}>
-        <h3 className="updater-dialog__title">App update</h3>
-
-        {phase.kind === 'checking' && (
-          <p className="muted">Checking GitHub Releases for a newer version…</p>
-        )}
-
-        {phase.kind === 'available' && (
-          <>
-            <p>
-              A newer version
-              {phase.version ? <> (<strong>v{phase.version}</strong>)</> : ''} is available.
-              Downloading now…
-            </p>
-            <div className="progress" style={{ width: '100%' }}>
-              <div className="progress__bar" style={{ width: '6%' }} />
-            </div>
-          </>
-        )}
-
-        {phase.kind === 'downloading' && (
-          <>
-            <p>Downloading the update…</p>
-            <div className="progress" style={{ width: '100%' }}>
-              <div className="progress__bar" style={{ width: `${Math.max(2, Math.round(phase.percent))}%` }} />
-            </div>
-            <p className="muted small" style={{ marginTop: 8 }}>
-              {Math.round(phase.percent)}%
-              {phase.total > 0
-                ? ` · ${(phase.transferred / 1024 / 1024).toFixed(1)} / ${(phase.total / 1024 / 1024).toFixed(1)} MB`
-                : ''}
-            </p>
-          </>
-        )}
-
-        {phase.kind === 'downloaded' && (
-          <>
-            <p>
-              Update{phase.version ? <> <strong>v{phase.version}</strong></> : ''} is ready to install.
-            </p>
-            <p className="muted small">
-              The app will quit, swap in the new version, and relaunch automatically.
-            </p>
-            <div className="updater-dialog__actions">
-              <Button type="button" variant="secondary" onClick={onClose} disabled={installing}>Later</Button>
-              <Button type="button" variant="primary" onClick={installNow} disabled={installing}>
-                {installing ? 'Installing…' : 'Install & restart'}
-              </Button>
-            </div>
-          </>
-        )}
-
-        {phase.kind === 'not-available' && (
-          <>
-            <p>
-              You're on the latest version
-              {phase.version ? <> (<strong>v{phase.version}</strong>)</> : ''}.
-            </p>
-            <div className="updater-dialog__actions">
-              <Button type="button" variant="primary" onClick={onClose}>OK</Button>
-            </div>
-          </>
-        )}
-
-        {phase.kind === 'dev' && (
-          <>
-            <p>Update checks are disabled in development mode.</p>
-            <p className="muted small">
-              Run a packaged build to receive auto-updates from GitHub Releases.
-            </p>
-            <div className="updater-dialog__actions">
-              <Button type="button" variant="primary" onClick={onClose}>OK</Button>
-            </div>
-          </>
-        )}
-
-        {phase.kind === 'unsupported' && (
-          <>
-            <p>Auto-updates are only available in the packaged desktop app.</p>
-            <div className="updater-dialog__actions">
-              <Button type="button" variant="primary" onClick={onClose}>OK</Button>
-            </div>
-          </>
-        )}
-
-        {phase.kind === 'error' && (
-          <>
-            <p>Something went wrong while checking for updates.</p>
-            {phase.message ? (
-              <pre className="pre" style={{ whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto' }}>{phase.message}</pre>
-            ) : null}
-            <div className="updater-dialog__actions">
-              <Button type="button" variant="primary" onClick={onClose}>Close</Button>
-            </div>
-          </>
-        )}
+  const updaterFooter =
+    phase.kind === 'downloaded' ? (
+      <AppModalActions
+        onCancel={onClose}
+        onConfirm={() => void installNow()}
+        cancelLabel="Later"
+        confirmLabel={installing ? 'Installing…' : 'Install & restart'}
+        confirmDisabled={installing}
+        cancelDisabled={installing}
+        busy={installing}
+      />
+    ) : phase.kind === 'not-available' ||
+      phase.kind === 'dev' ||
+      phase.kind === 'unsupported' ||
+      phase.kind === 'error' ? (
+      <div className="app-modal__actions">
+        <button type="button" className="app-modal__btn-confirm" onClick={onClose}>
+          {phase.kind === 'error' ? 'Close' : 'OK'}
+        </button>
       </div>
-    </div>
+    ) : undefined;
+
+  return (
+    <AppModal
+      title="App update"
+      onClose={onClose}
+      size="sm"
+      className="updater-backdrop"
+      footer={updaterFooter}
+    >
+      {phase.kind === 'checking' && (
+        <p className="muted">Checking GitHub Releases for a newer version…</p>
+      )}
+
+      {phase.kind === 'available' && (
+        <>
+          <p>
+            A newer version
+            {phase.version ? <> (<strong>v{phase.version}</strong>)</> : ''} is available.
+            Downloading now…
+          </p>
+          <div className="progress" style={{ width: '100%' }}>
+            <div className="progress__bar" style={{ width: '6%' }} />
+          </div>
+        </>
+      )}
+
+      {phase.kind === 'downloading' && (
+        <>
+          <p>Downloading the update…</p>
+          <div className="progress" style={{ width: '100%' }}>
+            <div className="progress__bar" style={{ width: `${Math.max(2, Math.round(phase.percent))}%` }} />
+          </div>
+          <p className="muted small" style={{ marginTop: 8 }}>
+            {Math.round(phase.percent)}%
+            {phase.total > 0
+              ? ` · ${(phase.transferred / 1024 / 1024).toFixed(1)} / ${(phase.total / 1024 / 1024).toFixed(1)} MB`
+              : ''}
+          </p>
+        </>
+      )}
+
+      {phase.kind === 'downloaded' && (
+        <>
+          <p>
+            Update{phase.version ? <> <strong>v{phase.version}</strong></> : ''} is ready to install.
+          </p>
+          <p className="muted small">
+            The app will quit, swap in the new version, and relaunch automatically.
+          </p>
+        </>
+      )}
+
+      {phase.kind === 'not-available' && (
+        <p>
+          You're on the latest version
+          {phase.version ? <> (<strong>v{phase.version}</strong>)</> : ''}.
+        </p>
+      )}
+
+      {phase.kind === 'dev' && (
+        <>
+          <p>Update checks are disabled in development mode.</p>
+          <p className="muted small">
+            Run a packaged build to receive auto-updates from GitHub Releases.
+          </p>
+        </>
+      )}
+
+      {phase.kind === 'unsupported' && <p>Auto-updates are only available in the packaged desktop app.</p>}
+
+      {phase.kind === 'error' && (
+        <>
+          <p>Something went wrong while checking for updates.</p>
+          {phase.message ? (
+            <pre className="pre" style={{ whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto' }}>
+              {phase.message}
+            </pre>
+          ) : null}
+        </>
+      )}
+    </AppModal>
   );
 }
 
@@ -1642,6 +1676,7 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
  * calls run from the renderer; we never proxy through any of our own servers.
  */
 function AISettingsSection() {
+  const { confirm } = useConfirm();
   const { data, updateAISettings } = useAppData();
   const ai = data.aiSettings;
   const [provider, setProvider] = useState<AIProvider | ''>(ai?.provider ?? '');
@@ -1684,8 +1719,17 @@ function AISettingsSection() {
     setTestStatus({ kind: 'idle' });
   };
 
-  const remove = () => {
-    if (!window.confirm('Remove the stored API key from this device?')) return;
+  const remove = async () => {
+    if (
+      !(await confirm({
+        title: 'Remove API key?',
+        description: 'The stored API key will be removed from this device.',
+        confirmLabel: 'Remove',
+        danger: true,
+      }))
+    ) {
+      return;
+    }
     updateAISettings({ provider: undefined, apiKey: '', model: '', systemPrompt: '' });
     setProvider('');
     setApiKey('');
@@ -1853,7 +1897,7 @@ function AISettingsSection() {
           {testStatus.kind === 'running' ? 'Testing…' : 'Test connection'}
         </Button>
         {ai?.apiKey ? (
-          <Button type="button" variant="ghost" icon={<IcTrash size={16} />} onClick={remove}>
+          <Button type="button" variant="ghost" icon={<IcTrash size={16} />} onClick={() => void remove()}>
             Remove key
           </Button>
         ) : null}
@@ -1917,6 +1961,7 @@ function BackupsRecoverySection({
   onImportFolder: () => void;
   fileInput: ReactNode;
 }) {
+  const { confirm } = useConfirm();
   const { reload, flushPendingSave } = useAppData();
   const platform = backupPlatform();
   const isElectron = platform === 'desktop';
@@ -1951,7 +1996,15 @@ function BackupsRecoverySection({
 
   const restore = async (filePath: string, label: string) => {
     if (busy || importBusy) return;
-    if (!window.confirm(`Restore data from "${label}"?\n\nYour current data will be snapshotted first so you can undo this.`)) {
+    if (
+      !(await confirm({
+        title: `Restore from "${label}"?`,
+        description:
+          'Your current data will be snapshotted first so you can undo this.',
+        confirmLabel: 'Restore',
+        danger: true,
+      }))
+    ) {
       return;
     }
     setBusy(true);
@@ -2342,6 +2395,7 @@ function BackupsRecoverySection({
 // tasks, notes, AI keys, backups or account list.
 
 function StorageCacheSection() {
+  const { confirm } = useConfirm();
   const { data } = useAppData();
   const workspace = useMemo(() => estimateWorkspaceStorage(data), [data]);
   const isElectron =
@@ -2369,9 +2423,13 @@ function StorageCacheSection() {
   const clearCache = async () => {
     if (!isElectron) return;
     if (
-      !window.confirm(
-        'Clear browser-engine caches?\n\n• HTTP cache, code cache, GPU/shader caches\n• Tasks, notes, AI keys, backups and account list are NOT affected.\n\nYou may need to wait a few seconds the next time the app fetches a page or recompiles JS.',
-      )
+      !(await confirm({
+        title: 'Clear cache?',
+        description:
+          'Any temporary browser-engine caches on this device will be removed. Tasks, notes, AI keys, backups, and your account list are not affected. The next page load may take a few seconds longer.',
+        confirmLabel: 'Clear cache',
+        danger: true,
+      }))
     ) {
       return;
     }

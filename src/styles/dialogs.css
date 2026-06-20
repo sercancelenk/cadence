@@ -1,41 +1,321 @@
-/* —— Updater dialog —— */
-.updater-backdrop {
+/* —— Spotify-style modal system (shared by all dialogs) —— */
+
+.app-modal-backdrop,
+.ai-backdrop,
+.updater-backdrop,
+.quick-add-backdrop,
+.welcome-tour__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 200;
-  background: rgba(8, 10, 18, 0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  z-index: 220;
+  background: var(--modal-backdrop);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: grid;
   place-items: center;
-  padding: 20px;
+  padding: 24px;
+  animation: app-modal-backdrop-in 0.18s ease-out;
+}
+
+@keyframes app-modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.app-modal,
+.ai-dialog,
+.updater-dialog,
+.quick-add-dialog,
+.welcome-tour__card {
+  background: var(--modal-surface);
+  color: var(--text);
+  border: none;
+  border-radius: var(--modal-radius);
+  box-shadow: var(--modal-shadow);
+  animation: app-modal-pop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes app-modal-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.app-modal {
+  width: min(480px, 92vw);
+  padding: var(--modal-padding);
+  outline: none;
+}
+
+.app-modal--sm {
+  width: min(440px, 92vw);
+}
+
+.app-modal--md {
+  width: min(560px, 94vw);
+}
+
+.app-modal--lg {
+  width: min(640px, 96vw);
+}
+
+.app-modal--xl {
+  width: min(880px, 96vw);
+}
+
+.app-modal--flex {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  min-height: min(480px, 90vh);
+  max-height: min(720px, 92vh);
+  overflow: hidden;
+}
+
+.app-modal__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.app-modal--flex .app-modal__header {
+  padding: 20px var(--modal-padding) 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.app-modal__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.app-modal__headcopy {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-modal__title {
+  margin: 0;
+  font-size: clamp(1.25rem, 2.4vw, 1.75rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.app-modal__desc {
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.app-modal__desc p {
+  margin: 0;
+}
+
+.app-modal__close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.app-modal__close:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.app-modal__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app-modal__body {
+  margin-top: 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.app-modal__body p {
+  margin: 0 0 12px;
+}
+
+.app-modal__body p:last-child {
+  margin-bottom: 0;
+}
+
+.app-modal--flex .app-modal__body {
+  margin-top: 0;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px var(--modal-padding);
+  color: var(--text);
+  scrollbar-gutter: stable;
+}
+
+.app-modal__footer {
+  margin-top: 28px;
+}
+
+.app-modal--flex .app-modal__footer {
+  margin-top: 0;
+  padding: 16px var(--modal-padding) var(--modal-padding);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.app-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.app-modal__btn-cancel {
+  background: none;
+  border: none;
+  padding: 12px 20px;
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.app-modal__btn-cancel:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.app-modal__btn-cancel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app-modal__btn-cancel:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.app-modal__btn-confirm {
+  min-width: 7.5rem;
+  padding: 12px 28px;
+  border: none;
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+.app-modal__btn-confirm:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.app-modal__btn-confirm:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.app-modal__btn-confirm:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app-modal__btn-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.app-modal__btn-confirm--danger {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.app-modal__btn-confirm--danger:focus-visible {
+  outline-color: var(--danger);
+}
+
+@media (max-width: 520px) {
+  .app-modal,
+  .app-modal--sm,
+  .app-modal--md,
+  .app-modal--lg,
+  .app-modal--xl {
+    width: 100%;
+    padding: 24px 20px;
+  }
+
+  .app-modal--flex .app-modal__header,
+  .app-modal--flex .app-modal__body,
+  .app-modal--flex .app-modal__footer {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .app-modal__actions {
+    width: 100%;
+    justify-content: stretch;
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .app-modal__btn-cancel,
+  .app-modal__btn-confirm {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+/* —— Updater dialog —— */
+.updater-backdrop {
+  z-index: 200;
 }
 
 .updater-dialog {
-  background: var(--bg-elevated);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 22px 22px 18px;
+  padding: var(--modal-padding);
   width: min(440px, 92vw);
-  box-shadow: var(--shadow-md);
-  animation: updater-pop 0.16s ease-out;
-}
-
-@keyframes updater-pop {
-  from { opacity: 0; transform: translateY(6px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .updater-dialog__title {
   margin: 0 0 12px;
-  font-size: 17px;
-  font-weight: 700;
+  font-size: clamp(1.25rem, 2.4vw, 1.75rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
 }
 
 .updater-dialog p {
   margin: 8px 0;
-  line-height: 1.45;
+  line-height: 1.55;
+  color: var(--muted);
 }
 
 .updater-dialog .progress {
@@ -46,47 +326,26 @@
 
 .updater-dialog__actions {
   display: flex;
-  gap: 8px;
+  gap: 16px;
   justify-content: flex-end;
-  margin-top: 16px;
+  margin-top: 28px;
 }
 
 /* —— AI Assistant dialog ——
    Larger than the updater dialog because it shows a scrollable conversation
-   plus a follow-up textarea. Reuses the same backdrop styling pattern. */
+   plus a follow-up textarea. Reuses the shared Spotify-style modal shell. */
 .ai-backdrop {
-  position: fixed;
-  inset: 0;
   z-index: 220;
-  background: rgba(8, 10, 18, 0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  display: grid;
-  place-items: center;
-  padding: 20px;
 }
 
 .ai-dialog {
-  background: var(--bg-elevated);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 14px;
   width: min(640px, 96vw);
-  /* Both bounds matter for the flex layout inside:
-   *   - `min-height` guarantees the dialog never collapses around a
-   *     tiny intro state, which was happening after we added
-   *     `min-height: 0` to the scroll child (parent had no floor to
-   *     stand on, so the flex child shrank to ~0 and dragged the
-   *     dialog down with it).
-   *   - `max-height` caps the dialog at the viewport so long
-   *     conversations scroll internally rather than off-screen. */
   min-height: min(480px, 90vh);
   max-height: min(720px, 92vh);
   display: flex;
   flex-direction: column;
-  box-shadow: var(--shadow-md);
-  animation: updater-pop 0.18s ease-out;
   overflow: hidden;
+  padding: 0;
 }
 
 .ai-dialog--wide {
@@ -98,19 +357,19 @@
 .ai-dialog__header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--tp-divider);
+  gap: 12px;
+  padding: 20px var(--modal-padding) 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 .ai-dialog__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 25%, transparent), rgba(255, 255, 255, 0.05));
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent-soft);
   color: var(--accent);
   flex: 0 0 auto;
 }
@@ -122,15 +381,15 @@
 
 .ai-dialog__title {
   margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  font-size: 1.125rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
 }
 
 .ai-dialog__sub {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: var(--tp-muted);
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -139,15 +398,19 @@
 .ai-dialog__close {
   background: none;
   border: 0;
-  color: var(--tp-muted);
+  color: var(--muted);
   cursor: pointer;
   padding: 6px;
-  border-radius: 6px;
+  border-radius: 50%;
 }
-.ai-dialog__close:hover { color: var(--text); background: var(--tp-input-bg); }
+.ai-dialog__close:hover { color: var(--text); background: var(--surface-hover); }
+.ai-dialog__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .ai-dialog__scroll {
-  padding: 14px 16px;
+  padding: 16px var(--modal-padding);
   overflow-y: auto;
   /* Reserve a stable gutter for the scrollbar so the dialog content
    * doesn't jitter horizontally when scrollbars appear/disappear. */
@@ -544,6 +807,12 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.app-modal__footer .ai-dialog__followup {
+  border-top: none;
+  padding: 0;
+  width: 100%;
 }
 
 .ai-dialog__followup-input {

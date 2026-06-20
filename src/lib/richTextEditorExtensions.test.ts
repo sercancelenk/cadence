@@ -2,7 +2,45 @@ import { Editor } from '@tiptap/core';
 import { generateJSON } from '@tiptap/html';
 import { describe, expect, it } from 'vitest';
 import type { Node as PmNode } from '@tiptap/pm/model';
-import { createRichTextExtensions } from './richTextEditorExtensions';
+import { createRichTextExtensions, isSafeEditorLinkUrl } from './richTextEditorExtensions';
+
+describe('isSafeEditorLinkUrl', () => {
+  it('allows http(s) and mailto links', () => {
+    expect(isSafeEditorLinkUrl('https://example.com')).toBe(true);
+    expect(isSafeEditorLinkUrl('http://example.com/x?y=1')).toBe(true);
+    expect(isSafeEditorLinkUrl('mailto:user@example.com')).toBe(true);
+  });
+
+  it('rejects script and other dangerous protocols', () => {
+    expect(isSafeEditorLinkUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafeEditorLinkUrl('JaVaScRiPt:alert(1)')).toBe(false);
+    expect(isSafeEditorLinkUrl('data:text/html,<script>1</script>')).toBe(false);
+    expect(isSafeEditorLinkUrl('vbscript:msgbox(1)')).toBe(false);
+    expect(isSafeEditorLinkUrl('file:///etc/passwd')).toBe(false);
+    expect(isSafeEditorLinkUrl('')).toBe(false);
+    expect(isSafeEditorLinkUrl(null)).toBe(false);
+    expect(isSafeEditorLinkUrl('not a url')).toBe(false);
+  });
+});
+
+describe('Link sanitization in pasted/imported HTML', () => {
+  it('drops javascript: hrefs but keeps safe links when parsing HTML', () => {
+    const json = generateJSON(
+      '<p><a href="javascript:alert(1)">evil</a> <a href="https://ok.com">good</a></p>',
+      createRichTextExtensions(),
+    );
+    const marks: string[] = [];
+    const walk = (node: { marks?: { type: string; attrs?: Record<string, unknown> }[]; content?: unknown[] }) => {
+      for (const m of node.marks ?? []) {
+        if (m.type === 'link') marks.push(String(m.attrs?.href ?? ''));
+      }
+      for (const c of node.content ?? []) walk(c as typeof node);
+    };
+    walk(json as never);
+    expect(marks).toContain('https://ok.com');
+    expect(marks.some((h) => h.startsWith('javascript:'))).toBe(false);
+  });
+});
 
 describe('createRichTextExtensions', () => {
   it('builds a non-empty extension list with default placeholder', () => {

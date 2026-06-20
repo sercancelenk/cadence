@@ -536,6 +536,20 @@ export function IcArchive(p: IconProps) {
   );
 }
 
+/** Archive box with upward arrow — pair with {@link IcArchive} for unarchive actions. */
+export function IcArchiveRestore(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path d="M3 7h18v3H3V7Z" strokeWidth={sw} strokeLinejoin="round" />
+      <path d="M5 10v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9" strokeWidth={sw} strokeLinejoin="round" />
+      <path d="M8 3h8l1 4H7l1-4Z" strokeWidth={sw} strokeLinejoin="round" />
+      <path d="M12 13V7" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 10l3-3 3 3" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function IcGrip(p: IconProps) {
   const { s, cn, sw, rest } = split(p);
   return (

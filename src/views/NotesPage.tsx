@@ -1,20 +1,25 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useConfirm } from '../components/ui/ConfirmProvider';
+import { useToast } from '../components/ui/Toast';
 import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { useAccount } from '../AccountContext';
 import {
   NotesBodyEditor,
   NotesDetailHeader,
+  NotesListContextMenu,
   NotesLockDialogs,
   NotesLockedView,
   NotesSidebar,
   NotesVersionHistoryPanel,
   filterNotesForView,
+  flatSidebarNoteIds,
   notePlainText,
   prefetchRichTextEditor,
   useNoteGroupExpand,
   useNoteRevisionCapture,
   useNoteVersionHistory,
+  useNotesBulkSelection,
   useNotesEditor,
   useNotesLock,
   useNotesSelection,
@@ -24,9 +29,12 @@ import {
   useNotesViewMode,
   useSidebarResize,
 } from '../features/notes';
+import { moveNoteToGroup } from '../core/actions';
 import { isAIConfigured } from '../lib/ai';
 import { useFeatures } from '../lib/features';
 import { useNotesUnlock } from '../lib/NotesUnlockContext';
+import { purgeNoteRevisionHistory } from '../lib/noteRevision/noteRevisionStore';
+import { runBeforeFlushHooks } from '../lib/pendingSaveFlush';
 import type { AppData } from '../model';
 
 const AITaskExtractorDialog = lazy(() =>
@@ -71,6 +79,11 @@ export function NotesPage() {
   const [extractorContext, setExtractorContext] = useState<{ noteId: string; notes: string } | null>(
     null,
   );
+  const [listContextMenu, setListContextMenu] = useState<{
+    x: number;
+    y: number;
+    noteIds: string[];
+  } | null>(null);
 
   const { viewMode, setViewMode } = useNotesViewMode(user?.id ?? '');
   const { isExpanded, toggleExpanded, expandGroup } = useNoteGroupExpand(user?.id ?? '');
@@ -91,7 +104,12 @@ export function NotesPage() {
     prefetchRichTextEditor();
   }, []);
 
+  const pendingSelectNoteIdRef = useRef<string | null>(null);
+  const createNoteEditIntentRef = useRef<string | null>(null);
+
   const { sortMode, setSortMode, notes } = useNotesSort(visibleNotes, user?.id);
+  const orderedNoteIds = useMemo(() => flatSidebarNoteIds(groups, notes), [groups, notes]);
+  const bulkSelection = useNotesBulkSelection(orderedNoteIds);
   const { selectedId, setSelectedId, selected } = useNotesSelection(
     notes,
     notesWorkspace.notes,
@@ -101,8 +119,10 @@ export function NotesPage() {
     patchNote,
     viewMode,
     setViewMode,
+    pendingSelectNoteIdRef,
   );
 
+  const toast = useToast();
   const revisionCaptureRef = useRef<ReturnType<typeof useNoteRevisionCapture> | null>(null);
   const editorState = useNotesEditor(
     selected,
@@ -110,6 +130,8 @@ export function NotesPage() {
     update,
     unlock,
     (...args) => revisionCaptureRef.current?.captureAfterSave(...args),
+    createNoteEditIntentRef,
+    (message) => toast.showError('Locked note not saved', message),
   );
   const revisionCapture = useNoteRevisionCapture(selected, editorState.getRevisionSnapshot);
   revisionCaptureRef.current = revisionCapture;
@@ -120,11 +142,12 @@ export function NotesPage() {
     setDecrypted,
     bodyEditing,
     setBodyEditing,
+    editorAutoFocus,
+    clearEditorAutoFocus,
     decryptedForSelected,
     editorReady,
     editorBodyFormat,
     editorBody,
-    onChangeTitle,
     onChangeBody,
     hideSelected,
   } = editorState;
@@ -165,13 +188,114 @@ export function NotesPage() {
 
   const dnd = useNotesSidebarDnD(sortMode, notes, update);
 
+  // Once the new note lands in workspace data, force selection and expand its list.
+  useEffect(() => {
+    const pendingId = pendingSelectNoteIdRef.current;
+    if (!pendingId) return;
+    const note = notesWorkspace.notes.find((n) => n.id === pendingId);
+    if (!note) return;
+    if (note.groupId) expandGroup(note.groupId);
+    if (selectedId !== pendingId) setSelectedId(pendingId);
+  }, [notesWorkspace.notes, selectedId, setSelectedId, expandGroup]);
+
   const onCreate = (groupId?: string) => {
     const id = addNote(groupId);
     setViewMode('active');
-    setSelectedId(id);
     setDecrypted(null);
+    bulkSelection.clearBulk();
+    setListContextMenu(null);
+    pendingSelectNoteIdRef.current = id;
+    createNoteEditIntentRef.current = id;
+    setSelectedId(id);
     if (groupId) expandGroup(groupId);
   };
+
+  const selectPrimaryNote = useCallback(
+    (id: string) => {
+      pendingSelectNoteIdRef.current = null;
+      createNoteEditIntentRef.current = null;
+      setBodyEditing(false);
+      setSelectedId(id);
+    },
+    [setBodyEditing, setSelectedId],
+  );
+
+  const onNoteClick = (id: string, event: React.MouseEvent) => {
+    bulkSelection.handleNoteClick(
+      id,
+      { shiftKey: event.shiftKey, metaKey: event.metaKey || event.ctrlKey },
+      selectedId,
+      selectPrimaryNote,
+    );
+  };
+
+  const onNoteContextMenu = (id: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    const noteIds = bulkSelection.prepareContextMenu(id);
+    selectPrimaryNote(id);
+    setListContextMenu({ x: event.clientX, y: event.clientY, noteIds });
+  };
+
+  const onBulkPin = useCallback(
+    (noteIds: string[]) => {
+      for (const noteId of noteIds) patchNote(noteId, { pinned: true });
+    },
+    [patchNote],
+  );
+
+  const onBulkUnpin = useCallback(
+    (noteIds: string[]) => {
+      for (const noteId of noteIds) patchNote(noteId, { pinned: false });
+    },
+    [patchNote],
+  );
+
+  const onBulkMoveToGroup = useCallback(
+    (noteIds: string[], groupId: string | undefined) => {
+      update((d) => noteIds.reduce((acc, noteId) => moveNoteToGroup(acc, noteId, groupId), d));
+      if (groupId) expandGroup(groupId);
+    },
+    [update, expandGroup],
+  );
+
+  const { confirm } = useConfirm();
+
+  const onBulkDelete = useCallback(
+    async (noteIds: string[]) => {
+      const lockedIds = noteIds.filter((id) => notesWorkspace.notes.find((n) => n.id === id)?.locked);
+      if (lockedIds.length > 0) {
+        toast.showInfo(
+          lockedIds.length === 1 ? 'Note is locked' : `${lockedIds.length} notes are locked`,
+          'Remove the lock before deleting locked notes.',
+        );
+        return;
+      }
+      const deletableIds = noteIds;
+      const title = deletableIds.length === 1 ? 'Delete this note?' : `Delete ${deletableIds.length} notes?`;
+      const description = "This can't be undone.";
+      if (!(await confirm({ title, description, confirmLabel: 'Delete', danger: true }))) return;
+      try {
+        await runBeforeFlushHooks();
+      } catch {
+        /* best effort */
+      }
+      for (const noteId of deletableIds) {
+        void purgeNoteRevisionHistory(noteId);
+        removeNote(noteId);
+      }
+      if (selectedId && deletableIds.includes(selectedId)) {
+        setSelectedId(null);
+      }
+      bulkSelection.clearBulk();
+    },
+    [bulkSelection, confirm, notesWorkspace.notes, removeNote, selectedId, setSelectedId, toast],
+  );
+
+  useEffect(() => {
+    bulkSelection.clearBulk();
+    setListContextMenu(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]);
 
   const onCreateGroup = (name: string) => {
     const id = addNoteGroup(name);
@@ -224,7 +348,9 @@ export function NotesPage() {
         sortMode={sortMode}
         onSortModeChange={setSortMode}
         selectedId={selectedId}
-        onSelectNote={setSelectedId}
+        bulkSelectedIds={bulkSelection.bulkIds}
+        onNoteClick={onNoteClick}
+        onNoteContextMenu={onNoteContextMenu}
         onCreateNote={onCreate}
         onCreateGroup={onCreateGroup}
         onRenameGroup={onRenameGroup}
@@ -290,8 +416,11 @@ export function NotesPage() {
               aiEnabled={aiEnabled}
               sidebarCollapsed={sidebarCollapsed}
               onToggleSidebar={toggleSidebar}
-              onBack={() => setSelectedId(null)}
-              onChangeTitle={onChangeTitle}
+              onBack={() => {
+                pendingSelectNoteIdRef.current = null;
+                createNoteEditIntentRef.current = null;
+                setSelectedId(null);
+              }}
               onExtractTasks={() =>
                 setExtractorContext({
                   noteId: selected.id,
@@ -302,7 +431,10 @@ export function NotesPage() {
               onToggleArchive={onToggleArchive}
               onRequestAction={lock.requestAction}
               onHideSelected={hideSelected}
-              onConfirmRemove={() => lock.setConfirmRemoveId(selected.id)}
+              onConfirmRemove={() => {
+                if (selected.locked) return;
+                lock.setConfirmRemoveId(selected.id);
+              }}
               onOpenVersionHistory={() => versionHistory.setOpen(true)}
               versionHistoryAvailable={versionHistory.available}
             />
@@ -317,6 +449,8 @@ export function NotesPage() {
                 editorReady={editorReady}
                 bodyEditing={bodyEditing}
                 onBodyEditingChange={setBodyEditing}
+                editorAutoFocus={editorAutoFocus}
+                onEditorAutoFocusHandled={clearEditorAutoFocus}
                 onChangeBody={onChangeBody}
                 attachmentUserId={user?.id ?? 'anonymous'}
                 todoItems={notesWorkspace.todoItems}
@@ -329,6 +463,21 @@ export function NotesPage() {
           </>
         )}
       </section>
+
+      {listContextMenu ? (
+        <NotesListContextMenu
+          x={listContextMenu.x}
+          y={listContextMenu.y}
+          noteIds={listContextMenu.noteIds}
+          notes={notesWorkspace.notes}
+          groups={groups}
+          onClose={() => setListContextMenu(null)}
+          onPin={onBulkPin}
+          onUnpin={onBulkUnpin}
+          onMoveToGroup={onBulkMoveToGroup}
+          onDelete={onBulkDelete}
+        />
+      ) : null}
 
       {extractorContext ? (
         <Suspense fallback={null}>

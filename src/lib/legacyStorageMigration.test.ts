@@ -40,6 +40,7 @@ describe('migrateLegacyStorage', () => {
       sessionStorage: session,
     });
     vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -93,6 +94,39 @@ describe('migrateLegacyStorage', () => {
     expect(console.info).toHaveBeenCalledWith(
       expect.stringContaining('migrated 1 localStorage'),
     );
+  });
+
+  it('does not mark migration complete when a key copy fails, so it retries next launch', () => {
+    let failNext = true;
+    const flakyLocal: Storage = {
+      get length() {
+        return local.length;
+      },
+      clear: () => local.clear(),
+      getItem: (key: string) => local.getItem(key),
+      key: (index: number) => local.key(index),
+      removeItem: (key: string) => local.removeItem(key),
+      setItem(key: string, value: string) {
+        // Fail only the legacy-key copy (quota/ITP), not the marker write.
+        if (failNext && key.startsWith(`${STORAGE_PREFIX}-`)) {
+          failNext = false;
+          throw new Error('quota exceeded');
+        }
+        local.setItem(key, value);
+      },
+    };
+    vi.stubGlobal('window', { localStorage: flakyLocal, sessionStorage: session });
+    local.setItem(`${STORAGE_PREFIX_LEGACY}-theme`, 'dark');
+
+    migrateLegacyStorage();
+
+    // First attempt failed -> marker not set.
+    expect(local.getItem(MIGRATION_MARKER)).toBeNull();
+
+    // Second launch retries and succeeds (idempotent copy), then sets marker.
+    migrateLegacyStorage();
+    expect(local.getItem(`${STORAGE_PREFIX}-theme`)).toBe('dark');
+    expect(local.getItem(MIGRATION_MARKER)).toBe('1');
   });
 
   it('no-ops when window is undefined', () => {
