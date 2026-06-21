@@ -19,6 +19,7 @@ import { collectFutureReminderSlots } from '../lib/reminderDelivery/collectRemin
 import { collectPwaDeliveredSlotKeys } from '../lib/reminderDelivery/pwaReminderCatchUp';
 import { cancelPendingReminderSlots } from '../lib/reminderDelivery/cancelReminderSlots';
 import { mergeReminderEventIntoAppData } from '../lib/reminderDelivery/mergeReminderEvent';
+import { createAppDataSelectionMemo } from './appDataSelectionMemo';
 import { postReminderSyncToServiceWorker } from '../lib/reminderDelivery/pwaReminderSync';
 import { uuid } from '../lib/uuid';
 import {
@@ -1391,26 +1392,22 @@ export function useAppDataSelector<T>(
   const store = useContext(SnapshotStoreCtx);
   if (!store) throw new Error('useAppDataSelector outside provider');
 
-  const selectorRef = useRef(selector);
-  selectorRef.current = selector;
-  const isEqualRef = useRef(isEqual);
-  isEqualRef.current = isEqual;
-  const cachedRef = useRef<{ snap: AppData | null; value: T } | null>(null);
-  const emptyRef = useRef(normalizeData(null));
+  const emptyRef = useRef<AppData | null>(null);
+  if (emptyRef.current === null) emptyRef.current = normalizeData(null);
+
+  // Rebuilt whenever the `selector`/`isEqual` identity changes (so closure
+  // params like a route `teamId` stay correct). See createAppDataSelectionMemo
+  // for why the same-snapshot short-circuit is required to avoid an infinite
+  // render loop with object-returning selectors.
+  const getSelection = useMemo(
+    () => createAppDataSelectionMemo(selector, isEqual),
+    [selector, isEqual],
+  );
 
   return useSyncExternalStore(
     store.subscribe,
-    () => {
-      const snap = store.getSnapshot() ?? emptyRef.current;
-      const next = selectorRef.current(snap);
-      const cached = cachedRef.current;
-      if (cached && cached.snap === snap && isEqualRef.current(cached.value, next)) {
-        return cached.value;
-      }
-      cachedRef.current = { snap, value: next };
-      return next;
-    },
-    () => selectorRef.current(emptyRef.current),
+    () => getSelection(store.getSnapshot() ?? emptyRef.current!),
+    () => getSelection(emptyRef.current!),
   );
 }
 
