@@ -1,7 +1,33 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createRequire } from 'node:module';
+import Module, { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+
+// CI installs the `electron` npm package but skips its binary download
+// (ELECTRON_SKIP_BINARY_DOWNLOAD=1), so `require('electron')` throws at module
+// load. The reminder engine transitively pulls in the platform adapters
+// (`adapters/index.cjs` eagerly loads macOS + Linux), each of which requires
+// electron at the top level. Seed the module cache with a minimal, inert stub
+// so the engine under test loads in a plain Node/vitest context. This never
+// runs in production (real Electron resolves the module first).
+const electronPath = require.resolve('electron');
+if (!require.cache[electronPath]) {
+  const stub = new Module(electronPath);
+  stub.filename = electronPath;
+  stub.loaded = true;
+  stub.exports = {
+    Notification: class {
+      show() {}
+      close() {}
+      static isSupported() {
+        return false;
+      }
+    },
+    app: { getPath: () => '/tmp' },
+  };
+  require.cache[electronPath] = stub;
+}
+
 const { initReminderSync, syncRemindersFromAppData, stopReminderSync } = require('./index.cjs');
 
 const PAST = '2020-01-01T00:00:00.000Z';
