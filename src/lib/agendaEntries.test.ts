@@ -57,6 +57,197 @@ describe('collectAgendaEntries', () => {
     expect(entries[0].kind).toBe('todo');
   });
 
+  it('includes a reminder-only todo (no due date) as a reminder entry', () => {
+    const data = minimalData({
+      todoGroups: [inboxGroup()],
+      todoItems: [
+        testTodo({
+          id: 't-rem',
+          groupId: 'g1',
+          title: 'Ping me weekly',
+          status: 'todo',
+          remindAt: '2030-06-15T09:00:00.000Z',
+          remindRepeat: 'weekly',
+        }),
+      ],
+    });
+    const entries = collectAgendaEntries(data);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ kind: 'todo', key: 't-rem-r', scheduleKind: 'reminder' });
+    expect(entries[0].when.toISOString()).toBe('2030-06-15T09:00:00.000Z');
+  });
+
+  it('shows reminder and due separately when both differ on a todo', () => {
+    const data = minimalData({
+      todoGroups: [inboxGroup()],
+      todoItems: [
+        testTodo({
+          id: 't-both',
+          groupId: 'g1',
+          title: 'Sprint task',
+          status: 'todo',
+          remindAt: '2030-06-15T09:00:00.000Z',
+          dueAt: '2030-06-18T17:00:00.000Z',
+          remindRepeat: 'weekly',
+        }),
+      ],
+    });
+    const entries = collectAgendaEntries(data);
+    expect(entries.map((e) => e.key)).toEqual(['t-both-r', 't-both']);
+    expect(entries.map((e) => (e.kind === 'todo' ? e.scheduleKind : null))).toEqual([
+      'reminder',
+      'due',
+    ]);
+  });
+
+  it('dedupes a todo whose reminder and due timestamps match (keeps reminder)', () => {
+    const data = minimalData({
+      todoGroups: [inboxGroup()],
+      todoItems: [
+        testTodo({
+          id: 't-eq',
+          groupId: 'g1',
+          title: 'Mirrored schedule',
+          status: 'todo',
+          remindAt: '2030-06-15T09:00:00.000Z',
+          dueAt: '2030-06-15T09:00:00.000Z',
+        }),
+      ],
+    });
+    const entries = collectAgendaEntries(data);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ key: 't-eq-r', scheduleKind: 'reminder' });
+  });
+
+  it('keeps the due entry when a recurring reminder sharing its timestamp is projected forward', () => {
+    const now = new Date(2030, 5, 15, 12, 0, 0);
+    const shared = new Date(2030, 5, 10, 9, 0, 0).toISOString();
+    const data = minimalData({
+      todoGroups: [inboxGroup()],
+      todoItems: [
+        testTodo({
+          id: 't-proj',
+          groupId: 'g1',
+          title: 'Daily with due',
+          status: 'todo',
+          remindAt: shared,
+          dueAt: shared,
+          remindRepeat: 'daily',
+        }),
+      ],
+    });
+    const entries = collectAgendaEntries(data, { now });
+    // Reminder rolls forward to today; the original due date keeps its own row
+    // instead of being swallowed by the stale-timestamp string comparison.
+    expect(entries.map((e) => e.key).sort()).toEqual(['t-proj', 't-proj-r']);
+    const due = entries.find((e) => e.key === 't-proj');
+    expect(due?.when.toISOString()).toBe(shared);
+    const reminder = entries.find((e) => e.key === 't-proj-r');
+    expect(reminder?.when.toISOString()).toBe(new Date(2030, 5, 15, 9, 0, 0).toISOString());
+  });
+
+  it('surfaces a weekly todo reminder occurrence inside the agenda week strip', () => {
+    const ref = new Date('2030-06-15T08:00:00.000Z');
+    const nextOccurrence = new Date(ref);
+    nextOccurrence.setDate(nextOccurrence.getDate() + 3);
+    nextOccurrence.setHours(9, 0, 0, 0);
+    const data = minimalData({
+      todoGroups: [inboxGroup()],
+      todoItems: [
+        testTodo({
+          id: 't-week',
+          groupId: 'g1',
+          title: 'Weekly review',
+          status: 'todo',
+          remindAt: nextOccurrence.toISOString(),
+          remindRepeat: 'weekly',
+        }),
+      ],
+    });
+    const strip = buildAgendaWeekStrip(collectAgendaEntries(data), ref);
+    const bucket = strip.find((b) => b.entries.some((e) => e.key === 't-week-r'));
+    expect(bucket).toBeDefined();
+  });
+
+  it('projects a past recurring todo reminder forward to its next occurrence', () => {
+    const now = new Date(2030, 5, 15, 12, 0, 0);
+    const data = minimalData({
+      todoGroups: [inboxGroup()],
+      todoItems: [
+        testTodo({
+          id: 't-daily',
+          groupId: 'g1',
+          title: 'Daily standup',
+          status: 'todo',
+          remindAt: new Date(2030, 5, 10, 9, 0, 0).toISOString(),
+          remindRepeat: 'daily',
+        }),
+      ],
+    });
+    const entries = collectAgendaEntries(data, { now });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].when.toISOString()).toBe(new Date(2030, 5, 15, 9, 0, 0).toISOString());
+  });
+
+  it('does NOT project a one-time reminder (stays at the stored time, can be overdue)', () => {
+    const now = new Date(2030, 5, 15, 12, 0, 0);
+    const stored = new Date(2030, 5, 10, 9, 0, 0).toISOString();
+    const data = minimalData({
+      todoGroups: [inboxGroup()],
+      todoItems: [
+        testTodo({ id: 't-once', groupId: 'g1', title: 'One-time', status: 'todo', remindAt: stored }),
+      ],
+    });
+    const entries = collectAgendaEntries(data, { now });
+    expect(entries[0].when.toISOString()).toBe(stored);
+  });
+
+  it('surfaces a projected recurring reminder on the Today bucket of the week strip', () => {
+    const now = new Date(2030, 5, 15, 12, 0, 0);
+    const data = minimalData({
+      todoGroups: [inboxGroup()],
+      todoItems: [
+        testTodo({
+          id: 't-week',
+          groupId: 'g1',
+          title: 'Long-drifted weekly',
+          status: 'todo',
+          remindAt: new Date(2030, 5, 1, 9, 0, 0).toISOString(),
+          remindRepeat: 'weekly',
+        }),
+      ],
+    });
+    const strip = buildAgendaWeekStrip(collectAgendaEntries(data, { now }), now);
+    expect(strip[0].label).toBe('Today');
+    expect(strip[0].entries.some((e) => e.key === 't-week-r')).toBe(true);
+  });
+
+  it('projects recurring team-item reminders too', () => {
+    const now = new Date(2030, 5, 15, 12, 0, 0);
+    const data = minimalData({
+      teams: [{ id: 'team1', name: 'Team', createdAt: '2020-01-01T00:00:00.000Z', status: 'active' }],
+      people: [{ id: 'p1', teamId: 'team1', name: 'Alex', createdAt: '2020-01-01T00:00:00.000Z' }],
+      items: [
+        {
+          id: 'i1',
+          personId: 'p1',
+          kind: 'task',
+          title: 'Recurring follow up',
+          body: '',
+          remindAt: new Date(2030, 5, 8, 9, 0, 0).toISOString(),
+          remindRepeat: 'daily',
+          done: false,
+          createdAt: '2020-01-01T00:00:00.000Z',
+          updatedAt: '2020-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    const entries = collectAgendaEntries(data, { now });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].key).toBe('i1-r');
+    expect(entries[0].when.toISOString()).toBe(new Date(2030, 5, 15, 9, 0, 0).toISOString());
+  });
+
   it('filters overdue open items', () => {
     const data = minimalData({
       todoGroups: [inboxGroup()],
@@ -507,6 +698,7 @@ describe('agendaEntryTitle', () => {
         kind: 'todo',
         key: 't1',
         when,
+        scheduleKind: 'due',
         todo: { id: 't1', groupId: 'g1', title: 'Ship', status: 'todo' } as never,
       }),
     ).toBe('Ship');
@@ -515,6 +707,7 @@ describe('agendaEntryTitle', () => {
         kind: 'todo',
         key: 't2',
         when,
+        scheduleKind: 'due',
         todo: { id: 't2', groupId: 'g1', title: '', status: 'todo' } as never,
       }),
     ).toBe('(untitled)');

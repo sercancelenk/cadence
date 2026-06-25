@@ -164,30 +164,35 @@ export function PlanningTaskCard({
 }: PlanningTaskCardProps) {
   const terminal = item.status === 'done' || item.status === 'cancelled';
   const checked = item.status === 'done';
+  const cardRef = useRef<HTMLElement | null>(null);
 
   return (
     <article
+      ref={cardRef}
       className={`planning-card${dragging ? ' planning-card--dragging' : ''}${focused ? ' planning-card--focus' : ''}${
         terminal ? ' planning-card--terminal' : ''
       }${item.status === 'in_progress' ? ' planning-card--wip' : ''}`}
+      // The whole card is the drag surface — the tiny grip alone was easy to
+      // miss, and grabbing the title (an <a>) used to start a native link drag
+      // that the quadrant drop handler couldn't classify. Mirrors NotesListRow.
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', item.id);
+        e.dataTransfer.effectAllowed = 'move';
+        const card = cardRef.current;
+        if (card) {
+          try {
+            e.dataTransfer.setDragImage(card, 24, 16);
+          } catch {
+            /* setDragImage is best-effort */
+          }
+        }
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
     >
       <div className="planning-card__head">
-        <span
-          className="planning-card__handle"
-          draggable
-          aria-hidden
-          title="Drag to move quadrant"
-          onDragStart={(e) => {
-            e.dataTransfer.setData('text/plain', item.id);
-            e.dataTransfer.effectAllowed = 'move';
-            const card = e.currentTarget.closest('.planning-card');
-            if (card instanceof HTMLElement) {
-              e.dataTransfer.setDragImage(card, 24, 16);
-            }
-            onDragStart();
-          }}
-          onDragEnd={onDragEnd}
-        >
+        <span className="planning-card__handle" aria-hidden title="Drag to move quadrant">
           <IcGrip size={14} />
         </span>
         <button
@@ -205,6 +210,9 @@ export function PlanningTaskCard({
           to={`${PATH_TODOS}?focus=${encodeURIComponent(item.id)}`}
           className="planning-card__title-link"
           title={`Open "${item.title}" in to-dos`}
+          // Anchors are natively draggable; without this, grabbing the title
+          // starts a link drag instead of the card drag and the drop is lost.
+          draggable={false}
         >
           {item.title}
         </Link>

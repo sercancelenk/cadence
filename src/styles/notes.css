@@ -2194,6 +2194,13 @@
   list-style: none;
   margin: 0;
   padding: 0;
+  /* Subtle, theme-aware tint + left rail so an expanded list's notes read
+   * clearly as "children of this list" — distinct from the list header and
+   * from ungrouped notes. `--text` adapts the tint to dark/light themes
+   * (white in dark, near-black in light); the rail tracks the accent.
+   * Using an inset shadow for the rail avoids any horizontal layout shift. */
+  background: color-mix(in srgb, var(--text) 3.5%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 .notes-page__group-empty {

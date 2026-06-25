@@ -172,7 +172,9 @@ interface CadenceApi {
   ) => Promise<{ ok: boolean; error?: string; backgroundMode?: boolean; launchAtLogin?: boolean; hideToTrayOnClose?: boolean }>;
       syncReminders?: (data: unknown) => Promise<{ ok: boolean }>;
       cancelReminderSlots?: (itemId: string) => Promise<{ ok: boolean; error?: string }>;
-      onReminderEvent?: (cb: (event: { type: string; data?: unknown; slotKey?: string }) => void) => () => void;
+      onReminderEvent?: (
+        cb: (event: { type: string; data?: unknown; slotKey?: string; writeGeneration?: number }) => void,
+      ) => () => void;
       onDeepLink?: (cb: (event: { path: string }) => void) => () => void;
       userDataPath: () => Promise<string>;
       attachmentWrite?: (payload: {

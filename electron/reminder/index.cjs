@@ -41,6 +41,7 @@ let syncInFlight = Promise.resolve();
  *   getSessionUserId: () => string | null;
  *   notifyRenderer: (payload: unknown) => void;
  *   emitDeepLink?: (url: string) => void;
+ *   showNotification?: (slot: ReminderSlot, onClick?: () => void) => boolean;
  * } | null} */
 let deps = null;
 
@@ -135,8 +136,21 @@ async function reconcileDeliveredNotifications(appData, userId) {
 
   const uid = userId || deps?.getSessionUserId?.() || '';
   if (data !== appData && uid && deps?.writeUserData) {
-    deps.writeUserData(uid, data);
-    deps.notifyRenderer?.({ type: 'delivered-sync', data });
+    const write = deps.writeUserData(uid, data);
+    // Mirror onFireSlot: if the disk write failed (e.g. write-conflict) the
+    // computed snapshot never landed, so pushing it to the renderer would leak
+    // unpersisted state into memory AND hand back no generation — leaving the
+    // renderer free to re-collide on its next save. Bail without notifying.
+    if (!write?.ok) return data;
+    // Forward the new on-disk write generation so the renderer can adopt it.
+    // Without this the renderer keeps a stale generation and its next user edit
+    // collides with this main-initiated write, dead-locking saves behind a
+    // phantom write-conflict until the app is restarted.
+    deps.notifyRenderer?.({
+      type: 'delivered-sync',
+      data,
+      writeGeneration: typeof write.writeGeneration === 'number' ? write.writeGeneration : undefined,
+    });
   }
   return data;
 }
@@ -148,6 +162,8 @@ async function onFireSlot(slot) {
   const uid = deps?.getSessionUserId?.();
   /** @type {Record<string, unknown> | null} */
   let nextData = null;
+  /** @type {number | undefined} */
+  let nextGeneration;
 
   if (uid && deps?.readUserData && deps?.writeUserData) {
     const current = deps.readUserData(uid);
@@ -155,13 +171,15 @@ async function onFireSlot(slot) {
       nextData = applySlotFired(current, slot);
       const write = deps.writeUserData(uid, nextData);
       if (!write.ok) return false;
+      if (typeof write.writeGeneration === 'number') nextGeneration = write.writeGeneration;
     }
   }
 
   const onClick = () => {
     emitDeepLink?.(deepLinkUrlForSlot(slot));
   };
-  const shown = showImmediateNotification(slot, onClick);
+  const show = deps?.showNotification || showImmediateNotification;
+  const shown = show(slot, onClick);
   if (!shown) {
     console.warn(
       '[cadence] reminder fired but notification could not be shown — enable notifications for Electron/Cadence in System Settings',
@@ -170,7 +188,15 @@ async function onFireSlot(slot) {
   }
 
   if (nextData) {
-    deps.notifyRenderer?.({ type: 'fired', slotKey: slot.slotKey, data: nextData });
+    // Carry the new on-disk generation so the renderer adopts it instead of
+    // colliding with this main-initiated write on its next save (see
+    // reconcileDeliveredNotifications for the full rationale).
+    deps.notifyRenderer?.({
+      type: 'fired',
+      slotKey: slot.slotKey,
+      data: nextData,
+      writeGeneration: nextGeneration,
+    });
     await refreshSchedulers(nextData);
   }
   return true;

@@ -88,7 +88,11 @@ function HomeTodayRow({ entry }: { entry: AgendaEntry }) {
         ]
           .filter(Boolean)
           .join(' · ')
-      : [`To-do${entry.groupName ? ` · ${entry.groupName}` : ''}`, formatShort(entry.when.toISOString())].join(' · ');
+      : [
+          `To-do${entry.groupName ? ` · ${entry.groupName}` : ''}`,
+          agendaScheduleKindLabel(entry.scheduleKind),
+          formatShort(entry.when.toISOString()),
+        ].join(' · ');
 
   return (
     <Link className="home-today-row" to={href}>

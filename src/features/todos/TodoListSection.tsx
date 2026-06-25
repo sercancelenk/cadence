@@ -399,6 +399,7 @@ export function TodoListSection(props: TodoListSectionProps) {
           {isAdding && !archivedView ? (
             <form
               className="todos-add-inline todos-add-inline--multi"
+              aria-label="New task"
               onSubmit={(e: FormEvent) => {
                 e.preventDefault();
                 const title = draft.title.trim();
@@ -422,6 +423,21 @@ export function TodoListSection(props: TodoListSectionProps) {
                 onAddingOpenChange(false);
               }}
             >
+              <div className="todos-add-inline__header">
+                <span className="todos-add-inline__heading">New task</span>
+                <div className="todos-add-inline__actions todos-add-inline__actions--top">
+                  <button
+                    type="button"
+                    className="todos-add-inline__cancel"
+                    onClick={() => onAddingOpenChange(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="todos-add-inline__submit">
+                    Add task
+                  </button>
+                </div>
+              </div>
               <div className="todos-add-inline__body" role="region" aria-label="New task">
                 <input
                   className="todos-row__title-input todos-add-inline__title"
@@ -445,12 +461,12 @@ export function TodoListSection(props: TodoListSectionProps) {
                   />
                 </Suspense>
               </div>
-              <div className="todos-add-inline__actions">
+              <div className="todos-add-inline__actions todos-add-inline__actions--bottom">
                 <button type="button" className="todos-add-inline__cancel" onClick={() => onAddingOpenChange(false)}>
                   Cancel
                 </button>
                 <button type="submit" className="todos-add-inline__submit">
-                  Add
+                  Add task
                 </button>
               </div>
             </form>

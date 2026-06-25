@@ -14,6 +14,7 @@ import { STORAGE_PREFIX } from '../lib/appBranding';
 import { registerFlushPendingSave, runBeforeFlushHooks, unregisterFlushPendingSave } from '../lib/pendingSaveFlush';
 import { revokeAttachmentBlobUrls } from '../lib/richTextAttachmentStore';
 import { isReminderSlotNotified, reminderNotifyKey } from '../lib/reminderNotify';
+import { advanceReminderOnce } from '../lib/reminderRecurrence';
 import { supportsPwaOsSchedule } from '../lib/reminderDelivery/capabilities';
 import { collectFutureReminderSlots } from '../lib/reminderDelivery/collectReminderSlots';
 import { collectPwaDeliveredSlotKeys } from '../lib/reminderDelivery/pwaReminderCatchUp';
@@ -652,6 +653,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         error: evt?.error ?? 'Main process reported a save error.',
         at: Date.now(),
       });
+    });
+    return () => {
+      if (typeof off === 'function') off();
+    };
+  }, []);
+
+  // Reminders that fire/deliver in the main process write the data file there
+  // (which bumps the on-disk write generation) and then push the fresh snapshot
+  // back to us via `onReminderEvent`. We must adopt that new generation here,
+  // otherwise our `writeGenerationRef` stays stale and the user's very next edit
+  // is rejected as a phantom `write-conflict` — which permanently blocks saving
+  // (`persistBlockedRef`) until the app is restarted. This is the root cause of
+  // the intermittent "can't save my to-do until I relaunch" reports.
+  useEffect(() => {
+    const off = window.cadence?.onReminderEvent?.((evt) => {
+      if (!evt || (evt.type !== 'fired' && evt.type !== 'delivered-sync')) return;
+      if (typeof evt.writeGeneration === 'number' && Number.isFinite(evt.writeGeneration)) {
+        writeGenerationRef.current = evt.writeGeneration;
+      }
     });
     return () => {
       if (typeof off === 'function') off();
@@ -1431,23 +1451,13 @@ export function usePersistStatus() {
 }
 
 /**
- * Returns the next reminder timestamp for a recurring reminder.
- * - 'daily'   → +1 day
- * - 'weekly'  → +7 days
- * - 'monthly' → +1 month (clamping day-of-month overflow handled by Date)
- *
- * If the original timestamp is in the past by more than one full cycle,
- * we still only advance by a single cycle so the user can catch up on
- * missed runs incrementally instead of all at once.
+ * Returns the next reminder timestamp for a recurring reminder, advancing by a
+ * single cycle so the user can catch up on missed runs incrementally instead of
+ * all at once. Delegates to the shared {@link advanceReminderOnce} so the
+ * renderer firing path, the agenda projection and the Electron engine all agree
+ * on the recurrence math.
  */
-function advanceReminder(iso: string, repeat: 'daily' | 'weekly' | 'monthly'): string | null {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  if (repeat === 'daily') d.setDate(d.getDate() + 1);
-  else if (repeat === 'weekly') d.setDate(d.getDate() + 7);
-  else d.setMonth(d.getMonth() + 1);
-  return d.toISOString();
-}
+const advanceReminder = advanceReminderOnce;
 
 async function fireReminderNotification(title: string, body: string): Promise<boolean> {
   if (window.cadence?.showNotification) {

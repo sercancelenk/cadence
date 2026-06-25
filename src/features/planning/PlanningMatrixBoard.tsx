@@ -34,10 +34,15 @@ export function PlanningMatrixBoard({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
   const byQuadrant = useMemo(() => groupPlanningItemsByQuadrant(hubItems), [hubItems]);
+  const hubIds = useMemo(() => new Set(hubItems.map((i) => i.id)), [hubItems]);
 
   const handleDrop = (quadrant: PlanningQuadrant, itemId: string) => {
-    onMoveToQuadrant(itemId, quadrant);
     setDraggingId(null);
+    // Ignore payloads that aren't one of our hub cards (e.g. a stray
+    // text/plain drag from elsewhere on the page) so a misfired drop can
+    // never mutate an unrelated todo.
+    if (!hubIds.has(itemId)) return;
+    onMoveToQuadrant(itemId, quadrant);
   };
 
   return (

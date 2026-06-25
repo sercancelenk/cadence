@@ -9,9 +9,10 @@ test('register → add todo → reload persists', async ({ page }) => {
   await page.goto(route('/todos'));
   await completeOnboarding(page);
 
-  await page.getByRole('button', { name: /add task/i }).first().click();
-  await page.getByPlaceholder('Task title').fill(todoTitle);
-  await page.getByRole('button', { name: /^add$/i }).click();
+  await page.getByRole('button', { name: /add task to/i }).first().click();
+  const addForm = page.getByRole('form', { name: 'New task' });
+  await addForm.getByPlaceholder('Task title').fill(todoTitle);
+  await addForm.getByRole('button', { name: /^add task$/i }).first().click();
 
   await expect(page.getByText(todoTitle)).toBeVisible();
 

@@ -1,4 +1,12 @@
-import { isTodoOpen, isTodoItemArchived, type AppData, type Item, type TodoItem } from '../model';
+import {
+  isTodoOpen,
+  isTodoItemArchived,
+  type AppData,
+  type Item,
+  type ReminderRepeat,
+  type TodoItem,
+} from '../model';
+import { nextReminderOccurrence } from './reminderRecurrence';
 import { PATH_AGENDA, PATH_TODOS } from './routes';
 import { teamPerson } from './teamPaths';
 
@@ -15,7 +23,14 @@ export type AgendaEntry =
       teamName?: string;
       personName?: string;
     }
-  | { kind: 'todo'; key: string; when: Date; todo: TodoItem; groupName?: string };
+  | {
+      kind: 'todo';
+      key: string;
+      when: Date;
+      scheduleKind: AgendaItemScheduleKind;
+      todo: TodoItem;
+      groupName?: string;
+    };
 
 export type AgendaDayBucket = {
   key: string;
@@ -27,7 +42,26 @@ export type AgendaDayBucket = {
 
 export type CollectAgendaEntriesOptions = {
   showCompleted?: boolean;
+  /** Reference "now" used to project recurring reminders. Defaults to current time. */
+  now?: Date;
 };
+
+/**
+ * Resolve the agenda timestamp for a reminder. Recurring reminders are
+ * projected to their next occurrence (≥ start of today) so daily / weekly /
+ * monthly reminders surface on the right day even if the stored `remindAt` has
+ * drifted into the past. One-time reminders keep their stored timestamp (and
+ * can therefore still appear as overdue).
+ */
+function reminderWhen(
+  remindAt: string,
+  repeat: ReminderRepeat | undefined,
+  now: Date,
+): Date | null {
+  const iso = repeat ? nextReminderOccurrence(remindAt, repeat, now) ?? remindAt : remindAt;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 
 export function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -42,7 +76,7 @@ export function dayKey(d: Date): string {
 /** Unified agenda rows from team items (remind/due) and personal to-dos (due). */
 export function collectAgendaEntries(
   data: AppData,
-  { showCompleted = false }: CollectAgendaEntriesOptions = {},
+  { showCompleted = false, now = new Date() }: CollectAgendaEntriesOptions = {},
 ): AgendaEntry[] {
   const out: AgendaEntry[] = [];
 
@@ -50,9 +84,11 @@ export function collectAgendaEntries(
     if (it.done && !showCompleted) continue;
     const person = data.people.find((p) => p.id === it.personId);
     const team = person ? data.teams.find((t) => t.id === person.teamId) : undefined;
+    let reminderWhenMs: number | null = null;
     if (it.remindAt) {
-      const d = new Date(it.remindAt);
-      if (!Number.isNaN(d.getTime())) {
+      const d = reminderWhen(it.remindAt, it.remindRepeat, now);
+      if (d) {
+        reminderWhenMs = d.getTime();
         out.push({
           kind: 'item',
           key: `${it.id}-r`,
@@ -65,9 +101,13 @@ export function collectAgendaEntries(
         });
       }
     }
-    if (it.dueAt && it.dueAt !== it.remindAt) {
+    if (it.dueAt) {
       const d = new Date(it.dueAt);
-      if (!Number.isNaN(d.getTime())) {
+      // Dedupe against the reminder's *resolved* moment, not the raw `remindAt`:
+      // a recurring reminder is projected forward, so a due date that merely
+      // equals the stored `remindAt` is still a distinct (earlier) occurrence
+      // and must keep its own row instead of vanishing from its due day.
+      if (!Number.isNaN(d.getTime()) && d.getTime() !== reminderWhenMs) {
         out.push({
           kind: 'item',
           key: `${it.id}-d`,
@@ -86,11 +126,44 @@ export function collectAgendaEntries(
     if (isTodoItemArchived(t)) continue;
     if (t.status === 'cancelled') continue;
     if (!isTodoOpen(t.status) && !showCompleted) continue;
-    if (!t.dueAt) continue;
-    const d = new Date(t.dueAt);
-    if (Number.isNaN(d.getTime())) continue;
     const group = data.todoGroups.find((g) => g.id === t.groupId);
-    out.push({ kind: 'todo', key: t.id, when: d, todo: t, groupName: group?.name });
+    const groupName = group?.name;
+    // Reminders count as agenda entries just like team-item reminders do —
+    // this is what surfaces a recurring (e.g. weekly) todo reminder whose
+    // next occurrence lives in the upcoming week even when the due date is
+    // absent or further out. Mirrors the team-item branch above.
+    let reminderWhenMs: number | null = null;
+    if (t.remindAt) {
+      const d = reminderWhen(t.remindAt, t.remindRepeat, now);
+      if (d) {
+        reminderWhenMs = d.getTime();
+        out.push({
+          kind: 'todo',
+          key: `${t.id}-r`,
+          when: d,
+          scheduleKind: 'reminder',
+          todo: t,
+          groupName,
+        });
+      }
+    }
+    // Due entry keeps the bare todo id as its key (back-compat with existing
+    // consumers/tests). Dedupe against the reminder's *resolved* moment so a
+    // recurring reminder projected into the future can't swallow a distinct due
+    // date (see the team-item branch above for the full rationale).
+    if (t.dueAt) {
+      const d = new Date(t.dueAt);
+      if (!Number.isNaN(d.getTime()) && d.getTime() !== reminderWhenMs) {
+        out.push({
+          kind: 'todo',
+          key: t.id,
+          when: d,
+          scheduleKind: 'due',
+          todo: t,
+          groupName,
+        });
+      }
+    }
   }
 
   return out.sort((a, b) => a.when.getTime() - b.when.getTime());

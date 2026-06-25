@@ -142,7 +142,8 @@ function EntryList({
                   {overdue ? <span className="pill pill--danger">overdue</span> : null}
                 </div>
                 <div className="muted small">
-                  To-do {groupName ? `· ${groupName}` : ''} · {formatShort(e.when.toISOString())}
+                  To-do {groupName ? `· ${groupName}` : ''} · {agendaScheduleKindLabel(e.scheduleKind)} ·{' '}
+                  {formatShort(e.when.toISOString())}
                 </div>
               </div>
               <div className="row">
