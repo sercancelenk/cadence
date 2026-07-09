@@ -1,5 +1,6 @@
 import type { AppData } from '../../core/model';
 import { isReminderSlotNotified, reminderNotifyKey } from '../reminderNotify';
+import { teamPersonWorkspacePath, withItemFocus } from '../teamPaths';
 import type { ReminderSlot } from './types';
 
 function isTodoOpen(status: string | undefined): boolean {
@@ -44,7 +45,7 @@ export function collectFutureReminderSlots(appData: AppData, nowMs = Date.now())
     const kindTitle = it.kind === 'task' ? 'Task reminder' : 'Reminder';
     const deepLinkPath =
       person && person.teamId
-        ? `/teams/${person.teamId}/people/${person.id}?focus=${encodeURIComponent(it.id)}`
+        ? withItemFocus(teamPersonWorkspacePath(person.teamId, person), it.id)
         : null;
     out.push({
       slotKey: reminderNotifyKey(it.id, it.remindAt),

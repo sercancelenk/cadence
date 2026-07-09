@@ -338,7 +338,14 @@ export function NotesSidebar({
                       className="btn btn--danger btn--small btn--icon"
                       title="Delete list"
                       aria-label="Delete list"
-                      onClick={() => {
+                      onClick={async () => {
+                        const accepted = await confirm({
+                          title: `Delete “${g.name}”?`,
+                          description: 'Notes in this list will become ungrouped.',
+                          confirmLabel: 'Delete list',
+                          danger: true,
+                        });
+                        if (!accepted) return;
                         onRemoveGroup(g.id);
                         setRenamingId(null);
                       }}
@@ -398,9 +405,11 @@ export function NotesSidebar({
                   </div>
                 )}
                 {expanded ? (
-                  <ul className="notes-page__group-children">
+                  <ul className="notes-page__group-children" aria-label={`Notes in ${g.name}`}>
                     {groupNotes.length === 0 ? (
-                      <li className="notes-page__group-empty muted small">Drop notes here or use + to add</li>
+                      <li className="notes-page__group-empty muted small">
+                        Drop notes here or use + to add
+                      </li>
                     ) : (
                       groupNotes.map((n) => (
                         <NotesListRow

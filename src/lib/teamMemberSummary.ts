@@ -1,7 +1,15 @@
 import type { AppData, Item, Person } from '../model';
-import { getLeaderPerson, getSelfPerson, isLeaderPerson, isSelfPerson, teamPeople } from '../model';
+import {
+  getLeaderPerson,
+  getSelfPerson,
+  getSkipLevelPerson,
+  isLeaderPerson,
+  isSelfPerson,
+  isSkipLevelPerson,
+  teamPeople,
+} from '../model';
 
-export type TeamMemberRole = 'self' | 'leader' | 'member';
+export type TeamMemberRole = 'self' | 'leader' | 'skipLevel' | 'member';
 
 export interface TeamMemberSummary {
   person: Person;
@@ -51,14 +59,21 @@ function accumulate(acc: MemberAccumulator, item: Item, now: number): void {
 function roleOf(person: Person): TeamMemberRole {
   if (isSelfPerson(person)) return 'self';
   if (isLeaderPerson(person)) return 'leader';
+  if (isSkipLevelPerson(person)) return 'skipLevel';
   return 'member';
 }
 
+const PINNED_ROLE_ORDER: Record<TeamMemberRole, number> = {
+  self: 0,
+  leader: 1,
+  skipLevel: 2,
+  member: 3,
+};
+
 /**
- * Builds a per-member roster for the team overview: Me first, the leader
- * second, then the remaining members alphabetically by name. Stats are
- * computed in a single pass over `data.items` (no N×M filtering) so the
- * overview stays cheap for large teams.
+ * Builds a per-member roster for the team overview: Me, leader, skip-level,
+ * then remaining members alphabetically. Stats are computed in a single pass
+ * over `data.items` (no N×M filtering) so the overview stays cheap for large teams.
  *
  * `now` is injectable to keep the reminder window deterministic in tests.
  */
@@ -69,11 +84,13 @@ export function summarizeTeamMembers(
 ): TeamMemberSummary[] {
   const self = getSelfPerson(data, teamId);
   const leader = getLeaderPerson(data, teamId);
+  const skipLevel = getSkipLevelPerson(data, teamId);
   const members = [...teamPeople(data, teamId)].sort((a, b) => a.name.localeCompare(b.name));
 
   const ordered: Person[] = [];
   if (self) ordered.push(self);
   if (leader) ordered.push(leader);
+  if (skipLevel) ordered.push(skipLevel);
   ordered.push(...members);
 
   const personIds = new Set(ordered.map((p) => p.id));
@@ -130,9 +147,8 @@ function memberComparator(sort: MemberSort): (a: TeamMemberSummary, b: TeamMembe
 
 /**
  * Filters by a case-insensitive name/title query and sorts the *member*
- * portion by the chosen key. The special "Me" and "Leader" rows always
- * stay pinned at the top (in that order) regardless of sort, so the user's
- * own workspace and their manager are never buried.
+ * portion by the chosen key. Synthetic rows (Me / leader / skip-level) stay
+ * pinned at the top in a fixed order regardless of sort.
  */
 export function arrangeMemberSummaries(
   summaries: TeamMemberSummary[],
@@ -147,8 +163,9 @@ export function arrangeMemberSummaries(
       )
     : summaries;
 
-  const pinned = filtered.filter((s) => s.role === 'self' || s.role === 'leader');
-  pinned.sort((a, b) => (a.role === 'self' ? 0 : 1) - (b.role === 'self' ? 0 : 1));
+  const pinned = filtered
+    .filter((s) => s.role !== 'member')
+    .sort((a, b) => PINNED_ROLE_ORDER[a.role] - PINNED_ROLE_ORDER[b.role]);
   const members = filtered.filter((s) => s.role === 'member').sort(memberComparator(sort));
   return [...pinned, ...members];
 }

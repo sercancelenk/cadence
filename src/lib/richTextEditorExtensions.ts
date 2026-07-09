@@ -11,6 +11,7 @@ import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import type { Extensions } from '@tiptap/core';
+import { RichTextCodeBlock } from './richTextCodeBlock';
 import { DateChip } from './richTextDateChip';
 
 const IMAGE_MIN_WIDTH = 48;
@@ -213,9 +214,11 @@ export function createRichTextExtensions(placeholder = 'Write here…'): Extensi
   return [
     StarterKit.configure({
       heading: { levels: [1, 2, 3] },
-      codeBlock: {},
+      // Replaced by RichTextCodeBlock (lowlight + Mermaid chrome).
+      codeBlock: false,
       blockquote: {},
     }),
+    RichTextCodeBlock,
     Underline,
     Highlight.configure({
       multicolor: false,

@@ -1234,7 +1234,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       update,
       addTeam: (name) => update((x) => addTeamFn(x, name)),
       updateTeam: (teamId, patch) => update((x) => updateTeamFn(x, teamId, patch)),
-      removeTeam: (teamId) => update((x) => removeTeamFn(x, teamId)),
+      removeTeam: (teamId) =>
+        update((x) => {
+          const personIds = new Set(x.people.filter((p) => p.teamId === teamId).map((p) => p.id));
+          for (const it of x.items) {
+            if (personIds.has(it.personId)) cancelPendingReminderSlots(it.id);
+          }
+          return removeTeamFn(x, teamId);
+        }),
       addPerson: (teamId, name, title) => update((x) => addPersonFn(x, teamId, name, title)),
       updatePerson: (id, patch) => update((x) => updatePersonFn(x, id, patch)),
       removePerson: (id) =>

@@ -51,7 +51,11 @@ export type Features = {
      * @deprecated
      */
     lan: boolean;
-    /** Cloud sync via Google Drive appdata folder. */
+    /**
+     * Cloud sync via Google Drive. Product-disabled: always forced off in
+     * `resolveFeatures` so UI/runtime cannot re-enable it. Flag retained for
+     * policy.json / preset schema compatibility.
+     */
     cloud: boolean;
   };
   /** BYO-key AI assistant (calls OpenAI / Anthropic directly from renderer). */
@@ -71,7 +75,8 @@ export type PresetName = 'personal' | 'work-standard' | 'work-strict';
  */
 export const PRESETS: Record<PresetName, Features> = {
   personal: {
-    sync: { lan: true, cloud: true },
+    // Cloud sync is product-disabled; keep lan false for schema parity.
+    sync: { lan: false, cloud: false },
     ai: true,
     dataExport: true,
     updateCheck: true,
@@ -101,17 +106,17 @@ export const PRESET_LABELS: Record<PresetName, { title: string; description: str
   personal: {
     title: 'Personal',
     description:
-      "Sync your data across devices (LAN or Google Drive), use AI assistance, and export backups. Best for your own laptop & phone.",
+      'Use AI assistance and export backups. Your workspace stays on this device — move data between devices with encrypted backup files.',
   },
   'work-standard': {
     title: 'Work — Standard',
     description:
-      'Disable LAN and Cloud sync so your company data stays on this device. Keeps AI assistance and backup export available. Best for most company laptops.',
+      'Keep company data on this device. AI assistance and backup export stay available. Best for most company laptops.',
   },
   'work-strict': {
     title: 'Work — Strict',
     description:
-      'Lock down all data-out paths: no sync, no AI providers, no exports. App updates still work so security patches arrive. Best for regulated industries.',
+      'Lock down all data-out paths: no AI providers, no exports. App updates still work so security patches arrive. Best for regulated industries.',
   },
 };
 
@@ -223,6 +228,15 @@ export function parsePolicy(raw: unknown): PolicyPayload | null {
  * code path leans on the compile-time literal `IS_ENTERPRISE_BUILD` so
  * Vite can DCE the unlocked branches in the enterprise bundle.
  */
+/** Cloud sync is retired from the product; never expose it as enabled. */
+function withCloudSyncDisabled(features: Features): Features {
+  if (!features.sync.cloud && !features.sync.lan) return features;
+  return {
+    ...features,
+    sync: { lan: false, cloud: false },
+  };
+}
+
 export function resolveFeatures(
   policy: PolicyPayload | null,
   userPreset: PresetName | null,
@@ -234,8 +248,9 @@ export function resolveFeatures(
     // Lockdown base: work-strict. A policy file MAY still loosen individual
     // flags — that's the whole point of supporting both the build flavor
     // and a sidecar policy. (Tightening is also allowed, but redundant.)
+    // Cloud sync remains product-disabled regardless of policy.
     const base = PRESETS['work-strict'];
-    const merged: Features = {
+    const merged = withCloudSyncDisabled({
       sync: {
         lan: policy?.features?.sync?.lan ?? base.sync.lan,
         cloud: policy?.features?.sync?.cloud ?? base.sync.cloud,
@@ -243,7 +258,7 @@ export function resolveFeatures(
       ai: policy?.features?.ai ?? base.ai,
       dataExport: policy?.features?.dataExport ?? base.dataExport,
       updateCheck: policy?.features?.updateCheck ?? base.updateCheck,
-    };
+    });
     return {
       features: merged,
       managed: true,
@@ -258,7 +273,7 @@ export function resolveFeatures(
   if (policy) {
     const basePreset: PresetName = policy.preset ?? 'work-standard';
     const base = PRESETS[basePreset];
-    const merged: Features = {
+    const merged = withCloudSyncDisabled({
       sync: {
         lan: policy.features?.sync?.lan ?? base.sync.lan,
         cloud: policy.features?.sync?.cloud ?? base.sync.cloud,
@@ -266,7 +281,7 @@ export function resolveFeatures(
       ai: policy.features?.ai ?? base.ai,
       dataExport: policy.features?.dataExport ?? base.dataExport,
       updateCheck: policy.features?.updateCheck ?? base.updateCheck,
-    };
+    });
     return {
       features: merged,
       managed: true,
@@ -280,13 +295,13 @@ export function resolveFeatures(
   }
   if (userPreset) {
     return {
-      features: PRESETS[userPreset],
+      features: withCloudSyncDisabled(PRESETS[userPreset]),
       managed: false,
       source: { kind: 'user-preset', preset: userPreset },
     };
   }
   return {
-    features: PRESETS.personal,
+    features: withCloudSyncDisabled(PRESETS.personal),
     managed: false,
     source: { kind: 'default' },
   };

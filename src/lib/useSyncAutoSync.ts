@@ -177,7 +177,8 @@ async function maybeSyncAttachments(
  *
  * Built on `shapeOfData` so the "default scaffold doesn't count" conventions
  * live in ONE place: `shapeOfData.total` already subtracts the auto-seeded
- * "My first team" and excludes the `__self__` / `__leader__` people. We then
+ * "My first team" and excludes the `__self__` / `__leader__` / `__skiplevel__`
+ * people. We then
  * subtract `todoGroups` because `normalizeData` always seeds a default group,
  * so its presence is not a signal of actual user data. Deriving from
  * `shapeOfData` (rather than re-summing here) means the empty-remote guard

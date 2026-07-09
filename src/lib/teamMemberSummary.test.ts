@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AppData, Item, Person } from '../model';
-import { leaderPersonIdForTeam, selfPersonIdForTeam } from '../model';
+import { leaderPersonIdForTeam, selfPersonIdForTeam, skipLevelPersonIdForTeam } from '../model';
 import {
   arrangeMemberSummaries,
   summarizeTeamMembers,
@@ -36,6 +36,10 @@ function leaderPerson(): Person {
   return person(leaderPersonIdForTeam(TEAM), 'My leader');
 }
 
+function skipLevelPerson(): Person {
+  return person(skipLevelPersonIdForTeam(TEAM), 'Skip-level leader');
+}
+
 function item(id: string, personId: string, extra: Partial<Item> = {}): Item {
   return {
     id,
@@ -51,13 +55,20 @@ function item(id: string, personId: string, extra: Partial<Item> = {}): Item {
 }
 
 describe('summarizeTeamMembers', () => {
-  it('orders Me first, leader second, then members alphabetically', () => {
+  it('orders Me, leader, skip-level, then members alphabetically', () => {
     const data = minimalData({
-      people: [person('p2', 'Zoe'), leaderPerson(), person('p1', 'Adam'), selfPerson()],
+      people: [
+        person('p2', 'Zoe'),
+        leaderPerson(),
+        skipLevelPerson(),
+        person('p1', 'Adam'),
+        selfPerson(),
+      ],
     });
     expect(summarizeTeamMembers(data, TEAM, NOW).map((s) => s.role + ':' + s.person.name)).toEqual([
       'self:Me',
       'leader:My leader',
+      'skipLevel:Skip-level leader',
       'member:Adam',
       'member:Zoe',
     ]);
@@ -152,9 +163,10 @@ function summary(role: TeamMemberSummary['role'], name: string, extra: Partial<T
 }
 
 describe('arrangeMemberSummaries', () => {
-  it('keeps Me first and leader second regardless of sort', () => {
+  it('keeps Me, leader, and skip-level pinned regardless of sort', () => {
     const list = [
       summary('member', 'Zoe', { openTasks: 9 }),
+      summary('skipLevel', 'VP', { openTasks: 2 }),
       summary('leader', 'Boss', { openTasks: 1 }),
       summary('member', 'Adam', { openTasks: 5 }),
       summary('self', 'Me', { openTasks: 0 }),
@@ -162,6 +174,7 @@ describe('arrangeMemberSummaries', () => {
     expect(arrangeMemberSummaries(list, { sort: 'tasks' }).map((s) => s.person.name)).toEqual([
       'Me',
       'Boss',
+      'VP',
       'Zoe',
       'Adam',
     ]);

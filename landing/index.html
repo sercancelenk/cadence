@@ -7,17 +7,17 @@
 
     <meta
       name="description"
-      content="Cadence is a local-first workspace for people, tasks, notes and agenda. AES-256-GCM encrypted on your device. Sync your way — over your own Wi-Fi, or end-to-end encrypted to your own Google Drive. AI assistance is BYO-key, off by default. Free and open source."
+      content="Cadence is a local-first workspace for people, tasks, notes and agenda. AES-256-GCM encrypted on your device. Move data between devices with encrypted backup files — no cloud account required. AI assistance is BYO-key, off by default. Free and open source."
     />
     <meta name="theme-color" content="#0c0f15" />
     <meta name="color-scheme" content="dark" />
 
     <!-- Open Graph + Twitter card so a paste into Slack/iMessage/Twitter
          renders a real preview instead of a bare URL. -->
-    <meta property="og:title" content="Cadence — local-first workspace with sync your way" />
+    <meta property="og:title" content="Cadence — local-first workspace, encrypted on your device" />
     <meta
       property="og:description"
-      content="People, tasks, notes, agenda. Encrypted at rest. Sync over your own Wi-Fi or end-to-end-encrypted to your own Google Drive. AI when you want it, off when you don't."
+      content="People, tasks, notes, agenda. Encrypted at rest. Move between devices with encrypted backups. AI when you want it, off when you don't."
     />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="./icon-512.png" />
@@ -67,7 +67,7 @@
       <nav class="topnav__links">
         <a href="#features">Features</a>
         <a href="#ai">AI</a>
-        <a href="#sync">Sync</a>
+        <a href="#backup">Backup</a>
         <a href="#privacy">Privacy</a>
         <a href="#download">Download</a>
         <a
@@ -97,11 +97,11 @@
 
             <p class="lede">
               People, tasks, notes and agenda — all in one calm interface.
-              <strong>Encrypted on your device</strong> with AES-256-GCM,
-              kept in step across your phone and laptop over
-              <strong>your own Wi-Fi</strong> — no cloud account, no
-              SaaS we forgot to renew. Bring your own AI key when you
-              want help; turn it off when you don't.
+              <strong>Encrypted on your device</strong> with AES-256-GCM.
+              No cloud account, no SaaS we forgot to renew. Move data between
+              devices with an <strong>encrypted backup file</strong> when you
+              need to. Bring your own AI key when you want help; turn it off
+              when you don't.
             </p>
 
             <div class="cta-row">
@@ -121,9 +121,9 @@
 
             <ul class="hero__bullets" aria-label="Highlights">
               <li><span aria-hidden>●</span> macOS desktop · iOS / Android PWA</li>
-              <li><span aria-hidden>●</span> Cross-device sync over your own Wi-Fi</li>
+              <li><span aria-hidden>●</span> Encrypted backups to move between devices</li>
               <li><span aria-hidden>●</span> Auto-snapshots + boot integrity checks</li>
-              <li><span aria-hidden>●</span> Planning hub + activity report</li>
+              <li><span aria-hidden>●</span> Teams, planning hub + activity report</li>
               <li><span aria-hidden>●</span> Free and open source</li>
             </ul>
           </div>
@@ -153,7 +153,7 @@
                 <polyline points="21 3 21 9 15 9" />
               </svg>
             </div>
-            <h3>100% local-first, syncs without a cloud</h3>
+            <h3>100% local-first — no cloud account</h3>
             <p>
               Every keystroke is written to your machine, not to a server.
               Atomic <code>fsync</code>'ed writes, 50 rolling auto-snapshots,
@@ -161,8 +161,8 @@
               counts, <em>Reveal in Finder</em>, restore confirmation). If a
               boot loads meaningfully less than your last save, an amber banner
               tells you before you panic. When you want two devices to share a
-              workspace, move an <strong>encrypted backup file</strong> across
-              and merge it in — your bytes stay between your phone and your laptop.
+              workspace, export an <strong>encrypted backup file</strong> and
+              merge it in — your bytes stay between your phone and your laptop.
             </p>
           </article>
 
@@ -173,14 +173,13 @@
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
             </div>
-            <h3>Encrypted on disk, encrypted on the wire</h3>
+            <h3>Encrypted at rest on your device</h3>
             <p>
               The desktop data file is wrapped in <strong>AES-256-GCM</strong>
               with a key derived from your account password via
               <code>scrypt</code>. Notes get an additional opt-in passphrase
-              lockbox. Cloud sync wraps each snapshot in
-              <strong>AES-256-GCM</strong> before it leaves your device — bytes
-              are encrypted whether they're sitting still or in motion.
+              lockbox. Portable backups use the same on-device encryption —
+              nothing leaves your machine unless you export it.
             </p>
           </article>
 
@@ -254,26 +253,26 @@
         <div class="feature feature--reverse">
           <div class="feature__copy">
             <div class="feature__eyebrow">Notes</div>
-            <h3>A Markdown notebook with a real lockbox.</h3>
+            <h3>A rich notebook with lockbox, code and diagrams.</h3>
             <p>
-              Two-pane macOS-Notes-style view with a resizable sidebar.
-              Reading defaults to <strong>Preview</strong>; one click flips
-              into <strong>Write</strong> mode with a full formatting
-              toolbar (Bold, Italic, Headings, Lists, Code, Code-block,
-              Link, Divider — with <kbd>⌘B</kbd> / <kbd>⌘I</kbd> /
-              <kbd>⌘K</kbd> shortcuts).
+              Two-pane macOS-Notes-style view with a resizable sidebar and
+              clear folder → note hierarchy. Reading defaults to
+              <strong>Preview</strong>; one click flips into
+              <strong>Edit</strong> with a full formatting toolbar
+              (Bold, Italic, Headings, Lists, Tables, Links —
+              with <kbd>⌘B</kbd> / <kbd>⌘I</kbd> / <kbd>⌘K</kbd> shortcuts).
             </p>
             <p>
-              Lock individual notes with a workspace passphrase. Notes are
-              encrypted with a non-extractable <code>CryptoKey</code> derived
-              via PBKDF2-SHA-256 (200k iterations) → AES-256-GCM. Strict
-              per-view unlock: every time you open a locked note Cadence
-              asks for the passphrase, even within the same session.
+              Code blocks are syntax-highlighted by language (Notion-style
+              picker). Set the language to <strong>Mermaid</strong> for
+              live flowchart / sequence diagrams — only the source text is
+              stored, never rendered SVG. Lock individual notes with a
+              workspace passphrase (PBKDF2 → AES-256-GCM).
             </p>
             <ul class="checklist">
               <li>Five sort modes + drag-reorder inside the pinned tier</li>
               <li>Active · Archived segment — shelve without deleting</li>
-              <li>Pin, soft-delete, restore</li>
+              <li>Syntax-highlighted code · Mermaid diagrams</li>
               <li>Search indexes note bodies, not just titles</li>
             </ul>
           </div>
@@ -290,8 +289,8 @@
               Group tasks by project; each group has its own priority
               (P0 / P1 / P2 / P3). Drag items between groups and order them
               within each. Every task can carry optional
-              <strong>Markdown details</strong> (same Write / Preview editor
-              and formatting toolbar as Notes) — use <em>Add details</em> when
+              <strong>Markdown details</strong> (same rich editor as Notes —
+              including syntax-highlighted code and Mermaid) — use <em>Add details</em> when
               you create a task, or the 📝 toggle on any row. Set recurring
               reminders (daily / weekly / monthly) that fire as desktop
               notifications even when the window is in the background.
@@ -348,15 +347,36 @@
 
         <div class="feature feature--reverse">
           <div class="feature__copy">
+            <div class="feature__eyebrow">Teams</div>
+            <h3>People workspaces for Me, leader and skip-level.</h3>
+            <p>
+              Every team scaffolds three durable workspaces automatically:
+              <strong>Me</strong>, <strong>My leader</strong>, and
+              <strong>Skip-level leader</strong> — plus the roster of people
+              you add. Each person gets tasks, goals, documents, feedback,
+              a scratchpad and a 1:1 mode with schedule reminders.
+            </p>
+            <ul class="checklist">
+              <li>Deep links land on the right person with item focus</li>
+              <li>Schedule popover for due / remind / repeat</li>
+              <li>Activity report and agenda pull from the same items</li>
+            </ul>
+          </div>
+          <figure class="feature__media">
+            <img src="./screenshots/home.png" alt="Cadence teams and people workspaces" loading="lazy" />
+          </figure>
+        </div>
+
+        <div class="feature">
+          <div class="feature__copy">
             <div class="feature__eyebrow">Settings</div>
-            <h3>Security, backup, sync and integrations — grouped clearly.</h3>
+            <h3>Security, backup and integrations — grouped clearly.</h3>
             <p>
               Everything about your workspace lives on your device. Settings
               are organised into <strong>Account &amp; security</strong> (optional
               recovery codes),
               <strong>Data &amp; backup</strong> (portable ZIP on every platform,
               full folders on desktop, 50 rolling snapshots),
-              <strong>Sync</strong> (offline transfer + Google Drive),
               <strong>Integrations</strong> (AI and reminders) and
               <strong>About</strong> (in-app user guide).
             </p>
@@ -365,11 +385,11 @@
               <li>Portable ZIP — workspace + images across devices</li>
               <li>One-click backup &amp; recovery with snapshot counts</li>
               <li>Workspace storage breakdown on desktop</li>
-              <li>Offline backup transfer (additive merge) · optional cloud sync</li>
+              <li>Encrypted backup export / additive merge — no cloud account</li>
             </ul>
           </div>
           <figure class="feature__media">
-            <img src="./screenshots/settings.png" alt="Cadence Settings with account security, backup, sync and recovery codes" loading="lazy" />
+            <img src="./screenshots/settings.png" alt="Cadence Settings with account security, backup and recovery codes" loading="lazy" />
           </figure>
         </div>
 
@@ -472,48 +492,45 @@
         </div>
       </section>
 
-      <!-- ─── SYNC ─────────────────────────────────────────────────────── -->
-      <section id="sync" class="sync" aria-labelledby="sync-h">
+      <!-- ─── BACKUP / DEVICE TRANSFER ──────────────────────────────── -->
+      <section id="backup" class="sync" aria-labelledby="backup-h">
         <div class="sync__inner">
           <p class="kicker">
             <span class="kicker__dot kicker__dot--slate" aria-hidden></span>
-            Two ways to stay in step · End-to-end encrypted · Your keys
+            Encrypted backups · Additive merge · No cloud account
           </p>
-          <h2 id="sync-h" class="section__title">
-            Sync your way. The keys never leave your devices.
+          <h2 id="backup-h" class="section__title">
+            Move data between devices — without a sync service.
           </h2>
           <p class="section__sub">
-            Most apps force a single sync model — Cadence gives you two.
-            Move an <strong>encrypted backup file</strong> between your own
-            devices when you want zero-cloud privacy, or back up to
-            <strong>your own Google Drive</strong> with end-to-end encryption
-            when you need always-on, off-network access. Either way, your keys
-            never leave your devices, and we never see your data.
+            Cadence keeps your workspace on this device. When you want the
+            same data on a phone or another laptop, export an
+            <strong>encrypted portable backup</strong>, carry it however you
+            already trust (AirDrop, Files, USB), and merge it in. No Google
+            account, no LAN pairing, no Cadence server in the middle.
           </p>
 
-          <!-- Two-way pick: an offline file transfer (with additive merge)
-               vs. cloud sync. Cloud sync gets its own card row underneath. -->
-          <div class="sync-options" aria-label="Sync options at a glance">
+          <div class="sync-options" aria-label="Backup options at a glance">
             <article class="sync-option">
-              <h3>Offline transfer</h3>
-              <p class="sync-option__lede">A file you move · Zero cloud</p>
+              <h3>Portable ZIP</h3>
+              <p class="sync-option__lede">Workspace + images · All platforms</p>
               <ul class="sync-option__list">
-                <li>Export an encrypted backup, carry it across</li>
-                <li>Additive merge never overwrites local data</li>
-                <li>No network link between devices</li>
+                <li>One file you can AirDrop or copy to USB</li>
+                <li>Includes note attachments when present</li>
+                <li>Works in the desktop app and the PWA</li>
               </ul>
-              <p class="sync-option__hint">Best for: privacy-first, air-gapped</p>
+              <p class="sync-option__hint">Best for: day-to-day device moves</p>
             </article>
 
             <article class="sync-option">
-              <h3>Cloud sync (Google Drive)</h3>
-              <p class="sync-option__lede">Off-network · End-to-end encrypted</p>
+              <h3>Full backup folder</h3>
+              <p class="sync-option__lede">Desktop · Includes note history</p>
               <ul class="sync-option__list">
-                <li>AES-256-GCM encrypted client-side before upload</li>
-                <li>Hidden <code>appdata</code> folder in <em>your</em> Drive</li>
-                <li>Optimistic concurrency · token refresh built-in</li>
+                <li>Version history alongside attachments</li>
+                <li>Same recovery UI as rolling snapshots</li>
+                <li>Ideal for archival / machine migration</li>
               </ul>
-              <p class="sync-option__hint">Best for: always-on, multiple devices</p>
+              <p class="sync-option__hint">Best for: desktop restore &amp; archives</p>
             </article>
           </div>
 
@@ -532,7 +549,7 @@
                 attachments — wrapped with the same on-device encryption
                 as your data file. Move it however you already trust:
                 AirDrop, Files, a USB stick. Nothing ever touches a
-                network, a server, or the public internet.
+                Cadence server.
               </p>
               <p class="sync-card__hint">Portable ZIP · workspace + images</p>
             </article>
@@ -573,169 +590,23 @@
               </p>
               <p class="sync-card__hint">Idempotent · config-safe</p>
             </article>
-          </div>
 
-          <!-- ─── CLOUD SYNC (GDRIVE) ────────────────────────────────── -->
-          <div class="sync-cloud" id="cloud-sync">
-            <p class="kicker">
-              <span class="kicker__dot kicker__dot--amber" aria-hidden></span>
-              Cloud sync · End-to-end encrypted · Your Drive, your keys
-            </p>
-            <h2 class="section__title">When you want it always on, everywhere.</h2>
-            <p class="section__sub">
-              Google Drive sync gives you the convenience of cloud backup
-              without the privacy trade. Cadence wraps every snapshot
-              with AES-256-GCM (key derived via PBKDF2-SHA-256, 200k
-              iterations) <em>before</em> it leaves your device. Google
-              stores opaque ciphertext in a hidden folder visible only
-              to Cadence. We don't run a server. We don't see a byte.
-            </p>
-
-            <div class="sync-grid">
-              <article class="sync-card">
-                <div class="sync-card__icon" aria-hidden>
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="3" y="11" width="18" height="11" rx="2" />
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                  </svg>
-                </div>
-                <h3>Encrypted before upload</h3>
-                <p>
-                  Your sync passphrase derives a 256-bit AES key locally
-                  via PBKDF2-SHA-256 (200,000 iterations). The snapshot
-                  is encrypted with AES-256-GCM, optionally gzip-
-                  compressed, and uploaded as a versioned binary blob.
-                  Drive stores ciphertext. Without your passphrase,
-                  nobody can decrypt it — not Google, not us, not a
-                  device that gains access to your Drive.
-                </p>
-                <p class="sync-card__hint">AES-256-GCM · PBKDF2 200k · gzip</p>
-              </article>
-
-              <article class="sync-card">
-                <div class="sync-card__icon" aria-hidden>
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                  </svg>
-                </div>
-                <h3>Hidden appdata folder</h3>
-                <p>
-                  Cadence uses Drive's <code>appDataFolder</code> scope
-                  — a per-app hidden folder invisible in your Drive UI,
-                  inaccessible to other apps. No clutter, no accidental
-                  share, no quota surprise (counts against your own
-                  Drive). Uninstalling Cadence doesn't lose the backup.
-                </p>
-                <p class="sync-card__hint">drive.appdata scope only · OAuth PKCE</p>
-              </article>
-
-              <article class="sync-card">
-                <div class="sync-card__icon" aria-hidden>
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 12a9 9 0 0 0-15-6.7L3 8" />
-                    <path d="M3 4v4h4" />
-                    <path d="M3 12a9 9 0 0 0 15 6.7l3-2.7" />
-                    <path d="M21 20v-4h-4" />
-                  </svg>
-                </div>
-                <h3>Background auto-sync, smart conflict UX</h3>
-                <p>
-                  On launch, on focus, when the network comes back —
-                  Cadence quietly checks Drive's <code>version</code>
-                  field and reconciles. A real conflict surfaces an
-                  inline <em>Pull first / Override remote</em> resolver
-                  so you decide; auto-sync never makes a destructive
-                  choice for you. Built-in retry + exponential backoff
-                  rides through transient 5xx / rate-limit responses.
-                </p>
-                <p class="sync-card__hint">Optimistic concurrency · Retry+backoff</p>
-              </article>
-
-              <article class="sync-card">
-                <div class="sync-card__icon" aria-hidden>
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <path d="M12 8v4l3 2" />
-                  </svg>
-                </div>
-                <h3>Silent token refresh</h3>
-                <p>
-                  Once signed in, Cadence handles Google's token
-                  expiry transparently — your access token gets
-                  rotated in the background using the refresh token,
-                  with the user's email displayed so you always know
-                  which Drive account holds the backup. Sign out
-                  revokes server-side and clears local state.
-                </p>
-                <p class="sync-card__hint">Refresh tokens · One-tap sign-out</p>
-              </article>
-            </div>
-
-            <!-- ─── Setup how-to: dispel the "do I need to fork?" doubt ── -->
-            <div class="sync-howto" aria-label="How to enable Cloud sync">
-              <h3 class="sync-howto__title">Five minutes, in-app, no rebuild.</h3>
-              <p class="sync-howto__lede">
-                Cadence does not run a hosted Google project for you, so
-                you connect <em>your own</em> Google Cloud project once
-                — it stays under your account and keeps your data
-                isolated from every other Cadence user. After that
-                first connect, it's transparent.
+            <article class="sync-card">
+              <div class="sync-card__icon" aria-hidden>
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 8v4l3 2" />
+                </svg>
+              </div>
+              <h3>50 rolling snapshots on this device</h3>
+              <p>
+                Separately from portable exports, every save keeps a local
+                snapshot (launch / pre-save / pre-restore, …). Restore from
+                <strong>Settings → Data &amp; backup</strong> with per-snapshot
+                counts — no network required.
               </p>
-              <ol class="sync-howto__steps">
-                <li>
-                  <span class="sync-howto__num">1</span>
-                  <div>
-                    <strong>Create a free Google Cloud project</strong>
-                    and enable the Drive API. Cadence asks for the
-                    <code>drive.appdata</code> scope only — a hidden
-                    per-app folder, not your real Drive.
-                  </div>
-                </li>
-                <li>
-                  <span class="sync-howto__num">2</span>
-                  <div>
-                    <strong>Create an OAuth Web client ID</strong> in
-                    that project. Copy the value that ends with
-                    <code>.apps.googleusercontent.com</code>.
-                  </div>
-                </li>
-                <li>
-                  <span class="sync-howto__num">3</span>
-                  <div>
-                    <strong>Open Cadence → Settings → Cloud sync</strong>,
-                    paste the client ID, click <em>Save</em>. The card
-                    flips to "Sign in with Google" — sign in with the
-                    Google account that holds the project.
-                  </div>
-                </li>
-                <li>
-                  <span class="sync-howto__num">4</span>
-                  <div>
-                    <strong>Pick a sync passphrase</strong> (8+ chars).
-                    This is what derives the AES key. Cadence never
-                    sees it, Google never sees it. Write it down — it's
-                    the only way to decrypt your backup, which is
-                    exactly the point of end-to-end encryption.
-                  </div>
-                </li>
-                <li>
-                  <span class="sync-howto__num">5</span>
-                  <div>
-                    <strong>Repeat steps 3–4 on every other device</strong>
-                    you want to sync (mobile PWA, second laptop). Same
-                    client ID, same Google account, same passphrase.
-                    Background auto-sync handles the rest.
-                  </div>
-                </li>
-              </ol>
-              <p class="sync-howto__hint">
-                Everything happens inside the app. No <code>.env</code>,
-                no rebuild, no command-line — the client ID is stored
-                in <code>localStorage</code> and used at runtime. If you
-                ever want to revoke it, expand the same card and click
-                <em>Clear saved ID</em>.
-              </p>
-            </div>
+              <p class="sync-card__hint">Local only · bounded disk use</p>
+            </article>
           </div>
         </div>
       </section>
@@ -829,14 +700,14 @@
           </div>
 
           <div class="privacy-card">
-            <h3>Cloud sync (off by default)</h3>
+            <h3>Device transfer via encrypted backup</h3>
             <p>
-              Settings → Cloud sync connects <em>your</em> Google Drive and
-              uploads only AES-256-GCM ciphertext (key derived from a sync
-              passphrase you choose) with an optimistic-concurrency conflict
-              guard. Prefer no cloud? Export an encrypted backup and merge it
-              in on the other device. See the <a href="#sync">Sync section</a>
-              above for the full story.
+              There is no cloud sync service in Cadence. To move data between
+              devices, export an encrypted portable ZIP from
+              <strong>Settings → Data &amp; backup</strong> and merge it on the
+              other device. Merge is additive and idempotent — it never
+              overwrites or deletes what you already have. See the
+              <a href="#backup">Backup section</a> above for the full story.
             </p>
           </div>
 
@@ -922,7 +793,7 @@
           A workspace that respects your time, your data, and your evening.
         </h2>
         <p class="closing__sub">
-          Local-first storage · Cloud-free sync · Optional AI · Free and open source.
+          Local-first storage · Encrypted backups · Optional AI · Free and open source.
         </p>
         <div class="cta-row cta-row--center">
           <a class="btn btn--primary btn--lg" href="./app/">Open the web app →</a>
@@ -952,10 +823,10 @@
           <a href="https://github.com/sercancelenk/cadence/issues" rel="noopener noreferrer" target="_blank">Issues</a>
         </nav>
         <p class="footer__meta">
-          Built with Electron, React, Vite. Sync rides Node TLS &amp; the
-          Web Crypto API. Plays well with Anthropic, OpenAI and Google
+          Built with Electron, React, Vite. Encryption uses the Web Crypto
+          API on every platform. Plays well with Anthropic, OpenAI and Google
           Gemini. <span>Made for people who like their data on their own
-          machine — and their own Wi-Fi.</span>
+          machine — moved only when they choose, via encrypted backup.</span>
         </p>
       </div>
     </footer>

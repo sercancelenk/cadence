@@ -12,9 +12,8 @@ import { PATH_TEAMS } from './lib/routes';
 import { CommandPalette } from './components/CommandPalette';
 import { NotesUnlockProvider } from './providers/NotesUnlockContext';
 import { WelcomeTour } from './components/WelcomeTour';
-import { useSyncAutoSync } from './lib/useSyncAutoSync';
 import { useAppDeepLink } from './hooks/useAppDeepLink';
-import { FeaturesProvider, useFeatures } from './lib/features';
+import { FeaturesProvider } from './lib/features';
 import './app.css';
 
 // Each route lives in its own JS chunk. The Markdown editor and `react-markdown`
@@ -57,6 +56,9 @@ const PeoplePage = lazy(() => import('./views/People').then((m) => ({ default: m
 const PersonRoute = lazy(() => import('./views/People').then((m) => ({ default: m.PersonRoute })));
 const TeamMePage = lazy(() => import('./views/People').then((m) => ({ default: m.TeamMePage })));
 const TeamLeaderPage = lazy(() => import('./views/People').then((m) => ({ default: m.TeamLeaderPage })));
+const TeamSkipLevelPage = lazy(() =>
+  import('./views/People').then((m) => ({ default: m.TeamSkipLevelPage })),
+);
 
 /**
  * Pick the router and its basename based on where this bundle is being
@@ -181,13 +183,6 @@ function AppRoutes() {
   useElectronReminderBridge();
   usePwaReminderBridge();
   useReminderWatcher();
-  // Keep this device's workspace in sync with the active cloud backend (if
-  // configured). No-op when the user hasn't connected one, so safe to mount
-  // unconditionally — BUT when policy disables cloud sync we don't even want
-  // to start the polling timer. Saves battery on shared/work devices and
-  // avoids any debug-log noise that might hint at a hidden code path.
-  const { features } = useFeatures();
-  useSyncAutoSync({ enabled: features.sync.cloud });
   return (
     <>
       <CommandPalette />
@@ -221,6 +216,7 @@ function AppRoutes() {
               <Route index element={<TeamDashboard />} />
               <Route path="me" element={<TeamMePage />} />
               <Route path="leader" element={<TeamLeaderPage />} />
+              <Route path="skip-level" element={<TeamSkipLevelPage />} />
               <Route path="people" element={<PeoplePage />} />
               <Route path="people/:personId" element={<PersonRoute />} />
             </Route>

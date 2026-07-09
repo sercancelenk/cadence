@@ -9,7 +9,7 @@ import {
 import { PATH_AGENDA, PATH_TEAMS, PATH_TODOS } from '../../lib/routes';
 import { sortedTeams } from '../../lib/teamSort';
 import { teamBase, teamPeople } from '../../lib/teamPaths';
-import { isTodoOpen, type Team } from '../../model';
+import { isSyntheticPerson, isTodoOpen, teamMemberCount, type Team } from '../../model';
 
 export type HomeStat = {
   id: string;
@@ -41,7 +41,7 @@ export function useHomeDashboard() {
 
     const openTodos = data.todoItems.filter((t) => isTodoOpen(t.status) && t.archived !== true).length;
 
-    const peopleCount = data.people.filter((p) => !p.id.startsWith('__')).length;
+    const peopleCount = data.people.filter((p) => !isSyntheticPerson(p)).length;
 
     const agendaEntries = collectAgendaEntries(data);
     const overdueEntries = filterOverdueAgendaEntries(agendaEntries);
@@ -97,7 +97,7 @@ export function useHomeDashboard() {
 
     let continueTarget: HomeContinueTarget | null = null;
     if (continueTeam) {
-      const memberCount = data.people.filter((p) => p.teamId === continueTeam.id).length;
+      const memberCount = teamMemberCount(data, continueTeam.id);
       const openTasks = data.items.filter(
         (it) =>
           !it.done &&
@@ -108,10 +108,7 @@ export function useHomeDashboard() {
     }
 
     const peopleCountByTeamId = new Map(
-      teamsSorted.map((team) => [
-        team.id,
-        data.people.filter((p) => p.teamId === team.id).length,
-      ]),
+      teamsSorted.map((team) => [team.id, teamMemberCount(data, team.id)]),
     );
 
     return {

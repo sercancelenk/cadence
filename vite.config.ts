@@ -113,6 +113,22 @@ export default defineConfig({
           if (id.includes('@tiptap/') || id.includes('/prosemirror-')) {
             return 'vendor-richtext';
           }
+          // Mermaid is dynamically imported on first diagram preview — keep it
+          // out of vendor-misc so Notes/Todos editor mounts stay lean.
+          if (
+            id.includes('/mermaid/') ||
+            id.includes('mermaid/dist') ||
+            id.includes('/@mermaid-js/') ||
+            id.includes('/cytoscape') ||
+            id.includes('/katex/') ||
+            id.includes('/dagre') ||
+            id.includes('/roughjs')
+          ) {
+            return 'vendor-mermaid';
+          }
+          if (id.includes('highlight.js') || id.includes('/lowlight/')) {
+            return 'vendor-richtext';
+          }
           if (id.includes('@codemirror') || id.includes('/codemirror/') || id.includes('/lezer-')) {
             return 'vendor-codemirror';
           }

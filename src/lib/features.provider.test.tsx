@@ -82,8 +82,8 @@ describe('FeaturesProvider', () => {
     expect(screen.getByTestId('has-preset').textContent).toBe('true');
   });
 
-  it('useFeatures falls back outside the provider', () => {
+  it('useFeatures falls back outside the provider with cloud sync off', () => {
     render(<Probe />);
-    expect(screen.getByTestId('cloud').textContent).toBe('true');
+    expect(screen.getByTestId('cloud').textContent).toBe('false');
   });
 });

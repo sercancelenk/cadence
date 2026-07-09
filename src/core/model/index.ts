@@ -459,6 +459,11 @@ export function leaderPersonIdForTeam(teamId: string): string {
   return `__leader__${teamId}`;
 }
 
+/** Skip-level / upper manager workspace (one per team). */
+export function skipLevelPersonIdForTeam(teamId: string): string {
+  return `__skiplevel__${teamId}`;
+}
+
 export function isSelfPerson(p: Pick<Person, 'isSelf' | 'id'>): boolean {
   if (p.isSelf) return true;
   return p.id.startsWith('__self__');
@@ -466,6 +471,15 @@ export function isSelfPerson(p: Pick<Person, 'isSelf' | 'id'>): boolean {
 
 export function isLeaderPerson(p: Pick<Person, 'id'>): boolean {
   return p.id.startsWith('__leader__');
+}
+
+export function isSkipLevelPerson(p: Pick<Person, 'id'>): boolean {
+  return p.id.startsWith('__skiplevel__');
+}
+
+/** Me, My leader, and Skip-level — auto-scaffolded, not deletable roster rows. */
+export function isSyntheticPerson(p: Pick<Person, 'isSelf' | 'id'>): boolean {
+  return isSelfPerson(p) || isLeaderPerson(p) || isSkipLevelPerson(p);
 }
 
 export function getSelfPerson(data: Pick<AppData, 'people'>, teamId: string): Person | undefined {
@@ -476,9 +490,18 @@ export function getLeaderPerson(data: Pick<AppData, 'people'>, teamId: string): 
   return data.people.find((p) => p.teamId === teamId && isLeaderPerson(p));
 }
 
-/** Team members excluding the special "Me" and "My leader" rows. */
+export function getSkipLevelPerson(data: Pick<AppData, 'people'>, teamId: string): Person | undefined {
+  return data.people.find((p) => p.teamId === teamId && isSkipLevelPerson(p));
+}
+
+/** Team members excluding Me / My leader / Skip-level scaffold rows. */
 export function teamPeople(data: Pick<AppData, 'people'>, teamId: string): Person[] {
-  return data.people.filter((p) => p.teamId === teamId && !isSelfPerson(p) && !isLeaderPerson(p));
+  return data.people.filter((p) => p.teamId === teamId && !isSyntheticPerson(p));
+}
+
+/** Count of real roster members (excludes synthetic Me / leader / skip-level). */
+export function teamMemberCount(data: Pick<AppData, 'people'>, teamId: string): number {
+  return teamPeople(data, teamId).length;
 }
 
 export function emptyData(): AppData {
@@ -486,6 +509,7 @@ export function emptyData(): AppData {
   const teamId = uuid();
   const selfId = selfPersonIdForTeam(teamId);
   const leaderId = leaderPersonIdForTeam(teamId);
+  const skipLevelId = skipLevelPersonIdForTeam(teamId);
   return {
     version: DATA_VERSION,
     teams: [{ id: teamId, name: 'My first team', createdAt: t, status: 'active' }],
@@ -502,6 +526,13 @@ export function emptyData(): AppData {
         id: leaderId,
         teamId,
         name: 'My leader',
+        scratchpad: '',
+        createdAt: t,
+      },
+      {
+        id: skipLevelId,
+        teamId,
+        name: 'Skip-level leader',
         scratchpad: '',
         createdAt: t,
       },
@@ -833,17 +864,19 @@ function migrateV1ToV2(o: Record<string, unknown>): AppData {
   const notified = Array.isArray(o.notifiedReminderIds) ? o.notifiedReminderIds : [];
 
   return ensureProfile(
-    ensureTeamsHaveLeader(
-      ensureTeamsHaveSelf({
-        version: DATA_VERSION,
-        teams: [{ id: teamId, name: 'Default team', createdAt: t, status: 'active' }],
-        people,
-        items,
-        notifiedReminderIds: [...notified].filter((x): x is string => typeof x === 'string'),
-        lastTeamId: teamId,
-        ...defaultNoteBundle(),
-        ...defaultTodoBundle(),
-      }),
+    ensureTeamsHaveSkipLevel(
+      ensureTeamsHaveLeader(
+        ensureTeamsHaveSelf({
+          version: DATA_VERSION,
+          teams: [{ id: teamId, name: 'Default team', createdAt: t, status: 'active' }],
+          people,
+          items,
+          notifiedReminderIds: [...notified].filter((x): x is string => typeof x === 'string'),
+          lastTeamId: teamId,
+          ...defaultNoteBundle(),
+          ...defaultTodoBundle(),
+        }),
+      ),
     ),
   );
 }
@@ -899,6 +932,31 @@ function ensureTeamsHaveLeader(data: AppData): AppData {
         id: lid,
         teamId: team.id,
         name: 'My leader',
+        scratchpad: '',
+        createdAt: t,
+      });
+    }
+  }
+
+  if (additions.length) {
+    people = [...people, ...additions];
+  }
+
+  return { ...data, teams, people };
+}
+
+function ensureTeamsHaveSkipLevel(data: AppData): AppData {
+  const t = nowIso();
+  let { teams, people } = data;
+  const additions: Person[] = [];
+
+  for (const team of teams) {
+    const sid = skipLevelPersonIdForTeam(team.id);
+    if (!people.some((p) => p.id === sid)) {
+      additions.push({
+        id: sid,
+        teamId: team.id,
+        name: 'Skip-level leader',
         scratchpad: '',
         createdAt: t,
       });
@@ -1066,6 +1124,7 @@ export function normalizeData(raw: unknown): AppData {
 
   data = ensureTeamsHaveSelf(data);
   data = ensureTeamsHaveLeader(data);
+  data = ensureTeamsHaveSkipLevel(data);
   data = ensureProfile(data);
 
   return patchDataToV3(data);
@@ -1104,10 +1163,10 @@ export type DataShape = {
 export function shapeOfData(d: AppData | null | undefined): DataShape {
   if (!d) return { teams: 0, people: 0, items: 0, todoGroups: 0, todoItems: 0, notes: 0, total: 0 };
   const teams = d.teams.length;
-  // Self / leader auto-people don't count — they're an empty-workspace
-  // convenience scaffold, not actual user content. We strip them so the
-  // shape matches what a user would call "my data".
-  const people = d.people.filter((p) => p.id.indexOf('__self__') !== 0 && p.id.indexOf('__leader__') !== 0).length;
+  // Synthetic auto-people (Me / leader / skip-level) don't count — they're an
+  // empty-workspace convenience scaffold, not actual user content. We strip
+  // them so the shape matches what a user would call "my data".
+  const people = d.people.filter((p) => !isSyntheticPerson(p)).length;
   const items = d.items.length;
   const todoGroups = d.todoGroups.length;
   const todoItems = d.todoItems.length;

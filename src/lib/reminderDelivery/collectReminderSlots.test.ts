@@ -390,6 +390,61 @@ describe('collectFutureReminderSlots — filtering and slot shape', () => {
     ]);
   });
 
+  it('uses canonical Me / leader / skip-level paths for synthetic people', () => {
+    const data = baseData({
+      people: [
+        {
+          id: '__self__team-1',
+          teamId: 'team-1',
+          name: 'Me',
+          isSelf: true,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: '__leader__team-1',
+          teamId: 'team-1',
+          name: 'My leader',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: '__skiplevel__team-1',
+          teamId: 'team-1',
+          name: 'Skip-level leader',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      items: [
+        {
+          id: 'i-me',
+          personId: '__self__team-1',
+          kind: 'task',
+          title: 'My task',
+          body: '',
+          remindAt: FUTURE_REMIND,
+          done: false,
+          createdAt: '2026-05-31T12:00:00.000Z',
+          updatedAt: '2026-05-31T12:00:00.000Z',
+        },
+        {
+          id: 'i-leader',
+          personId: '__leader__team-1',
+          kind: 'task',
+          title: 'Leader task',
+          body: '',
+          remindAt: FUTURE_REMIND_LATER,
+          done: false,
+          createdAt: '2026-05-31T12:00:00.000Z',
+          updatedAt: '2026-05-31T12:00:00.000Z',
+        },
+      ],
+    });
+    const slots = collectFutureReminderSlots(data, NOW);
+    expect(slots.map((s) => s.deepLinkPath)).toEqual([
+      '/teams/team-1/me?focus=i-me',
+      '/teams/team-1/leader?focus=i-leader',
+    ]);
+  });
+
   it('skips done, past, and notified team items', () => {
     const data = baseData({
       notifiedReminderIds: [reminderNotifyKey('i-notified', FUTURE_REMIND)],

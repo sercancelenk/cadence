@@ -2,45 +2,67 @@ import { useEffect, useState } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
 import type { Item } from '../../core/model';
 
-function stripFocusParam(
+export type WorkspaceTab = 'workspace' | 'timeline' | 'meeting';
+
+function stripDeepLinkParams(
   locationSearch: string,
   locationPathname: string,
   navigate: NavigateFunction,
 ) {
   const params = new URLSearchParams(locationSearch);
   params.delete('focus');
+  params.delete('tab');
   const next = params.toString();
   navigate({ pathname: locationPathname, search: next ? `?${next}` : '' }, { replace: true });
 }
 
-/** Deep-link handler for `/teams/:teamId/people/:personId?focus=<itemId>`. */
+function parseWorkspaceTab(raw: string | null): WorkspaceTab | null {
+  if (raw === 'workspace' || raw === 'timeline' || raw === 'meeting') return raw;
+  return null;
+}
+
+/**
+ * Deep-link handler for person workspaces:
+ *   `?focus=<itemId>` → expand item on Workspace tab
+ *   `?tab=meeting|timeline|workspace` → open that tab (used by dashboard shortcuts)
+ */
 export function useItemFocus(
   locationSearch: string,
   locationPathname: string,
   navigate: NavigateFunction,
   items: Item[],
   setOpenId: (id: string | null) => void,
-  setTab: (tab: 'workspace' | 'timeline' | 'meeting') => void,
+  setTab: (tab: WorkspaceTab) => void,
 ) {
   const [focusedItemId, setFocusedItemId] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(locationSearch);
     const focusId = params.get('focus');
-    if (!focusId) return;
+    const tabParam = parseWorkspaceTab(params.get('tab'));
 
-    const target = items.find((i) => i.id === focusId);
-    if (target) {
-      setOpenId(focusId);
-      setTab('workspace');
-      setFocusedItemId(focusId);
-      stripFocusParam(locationSearch, locationPathname, navigate);
+    if (!focusId && !tabParam) return;
+
+    if (focusId) {
+      const target = items.find((i) => i.id === focusId);
+      if (target) {
+        setOpenId(focusId);
+        setTab(tabParam ?? 'workspace');
+        setFocusedItemId(focusId);
+        stripDeepLinkParams(locationSearch, locationPathname, navigate);
+        return;
+      }
+      // Wait until workspace items are loaded before dropping an unknown focus id.
+      if (items.length > 0) {
+        if (tabParam) setTab(tabParam);
+        stripDeepLinkParams(locationSearch, locationPathname, navigate);
+      }
       return;
     }
 
-    // Wait until workspace items are loaded before dropping an unknown focus id.
-    if (items.length > 0) {
-      stripFocusParam(locationSearch, locationPathname, navigate);
+    if (tabParam) {
+      setTab(tabParam);
+      stripDeepLinkParams(locationSearch, locationPathname, navigate);
     }
   }, [locationSearch, locationPathname, navigate, items, setOpenId, setTab]);
 

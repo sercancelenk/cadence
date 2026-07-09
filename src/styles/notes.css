@@ -2072,20 +2072,28 @@
   padding: 0 12px 10px;
 }
 
-/* Expandable list holders in the sidebar scroll area */
+/* Expandable list holders — folder rows sit above indented children */
 .notes-page__group-holder {
   border-bottom: 1px solid var(--border);
+  --notes-tree-indent: 18px;
+  --notes-tree-rail: 14px;
 }
 
 .notes-page__group-holder--drop-target {
   background: var(--accent-soft);
+  outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -2px;
 }
 
 .notes-page__group-head {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-elevated, var(--panel));
 }
 
 .notes-page__group-toggle {
@@ -2093,14 +2101,15 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px 10px 14px;
+  gap: 7px;
+  padding: 9px 10px 9px 10px;
   border: none;
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 13px;
-  font-weight: 650;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   text-align: left;
   cursor: pointer;
   transition: background 0.12s ease;
@@ -2112,6 +2121,9 @@
 
 .notes-page__group-chev {
   display: inline-flex;
+  flex-shrink: 0;
+  width: 16px;
+  justify-content: center;
   color: var(--muted);
   transition: transform 0.16s ease;
 }
@@ -2123,7 +2135,7 @@
 .notes-page__group-folder {
   flex-shrink: 0;
   color: var(--accent);
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
 .notes-page__group-name {
@@ -2136,28 +2148,29 @@
 
 .notes-page__group-count {
   flex-shrink: 0;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
-  background: var(--surface-pressed, var(--surface-hover));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .notes-page__group-add-note {
   flex-shrink: 0;
-  margin-right: 4px;
-  opacity: 0.65;
+  margin-right: 2px;
+  opacity: 0.55;
 }
 
 .notes-page__group-delete {
   flex-shrink: 0;
-  margin-right: 8px;
+  margin-right: 6px;
   opacity: 0;
   pointer-events: none;
   color: var(--muted);
@@ -2190,22 +2203,43 @@
   }
 }
 
+/* Nested notes: clear tree indent + vertical rail (Linear / Finder-like) */
 .notes-page__group-children {
   list-style: none;
   margin: 0;
-  padding: 0;
-  /* Subtle, theme-aware tint + left rail so an expanded list's notes read
-   * clearly as "children of this list" — distinct from the list header and
-   * from ungrouped notes. `--text` adapts the tint to dark/light themes
-   * (white in dark, near-black in light); the rail tracks the accent.
-   * Using an inset shadow for the rail avoids any horizontal layout shift. */
-  background: color-mix(in srgb, var(--text) 3.5%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 32%, transparent);
+  padding: 2px 0 6px 0;
+  position: relative;
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
+}
+
+.notes-page__group-children::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 6px;
+  left: var(--notes-tree-rail);
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 85%, var(--accent));
+  pointer-events: none;
 }
 
 .notes-page__group-empty {
-  padding: 10px 16px 12px 36px;
-  border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+  position: relative;
+  margin-left: calc(var(--notes-tree-rail) + 8px);
+  padding: 8px 14px 10px 12px;
+  border-top: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notes-page__group-empty::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  width: 8px;
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 85%, var(--accent));
 }
 
 .notes-page__group-rename {
@@ -2216,12 +2250,52 @@
   padding: 8px 12px;
 }
 
+.notes-page__list-row--nested {
+  position: relative;
+  margin-left: calc(var(--notes-tree-rail) + 8px);
+  padding-left: var(--notes-tree-indent);
+}
+
+.notes-page__list-row--nested::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: var(--notes-tree-indent);
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 85%, var(--accent));
+  pointer-events: none;
+}
+
 .notes-page__list-row--nested .notes-page__list-item {
-  padding-left: 36px;
+  padding: 9px 14px 9px 22px;
+  border-bottom-color: color-mix(in srgb, var(--border) 55%, transparent);
+  gap: 2px;
+}
+
+.notes-page__list-row--nested .notes-page__list-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.notes-page__list-row--nested .notes-page__list-preview {
+  font-size: 12px;
+  opacity: 0.92;
 }
 
 .notes-page__list-row--nested .notes-page__drag-handle {
-  left: 20px;
+  left: 4px;
+}
+
+.notes-page__list-row--nested.notes-page__list-row--drop-target::after {
+  left: 4px;
+  right: 8px;
+}
+
+/* Ungrouped notes stay flush; slightly denser than before for hierarchy contrast */
+.notes-page__list > .notes-page__list-row > .notes-page__list-item {
+  padding-top: 11px;
+  padding-bottom: 11px;
 }
 
 .notes-page__drag-handle--subtle {

@@ -12,8 +12,11 @@ import {
   appDataToPersistJson,
   getLeaderPerson,
   getSelfPerson,
+  getSkipLevelPerson,
   isLeaderPerson,
   isSelfPerson,
+  isSkipLevelPerson,
+  isSyntheticPerson,
   isTodoOpen,
   isTodoItemArchived,
   isNoteArchived,
@@ -22,6 +25,7 @@ import {
   nowIso,
   priorityRank,
   selfPersonIdForTeam,
+  skipLevelPersonIdForTeam,
   shapeOfData,
   teamPeople,
   todoStatusRank,
@@ -44,7 +48,7 @@ import {
  *      releases or the boot-time integrity check would either miss real
  *      data-loss events or fire false positives on every other launch.
  *      In particular:
- *        - the auto-seeded `__self__` / `__leader__` people must NOT be
+ *        - the auto-seeded `__self__` / `__leader__` / `__skiplevel__` people must NOT be
  *          counted (they exist in fresh empty workspaces too)
  *        - archived todo groups MUST be counted (the user's data isn't
  *          gone just because they archived a list — only its visibility)
@@ -282,10 +286,10 @@ describe('shapeOfData — last-known-good fingerprint', () => {
     });
   });
 
-  it('excludes auto-seeded __self__ / __leader__ people from total', () => {
+  it('excludes auto-seeded __self__ / __leader__ / __skiplevel__ people from total', () => {
     // A freshly-seeded workspace has exactly:
     //   - 1 team ("My first team") → subtracted by the -1 in total
-    //   - 2 people (__self__, __leader__) → filtered out entirely
+    //   - 3 people (__self__, __leader__, __skiplevel__) → filtered out entirely
     //   - 1 default "General" todoGroup (from defaultTodoBundle)
     // The integrity banner's shrink check uses a 50%/min-3 threshold,
     // so a freshly-seeded total of 1 is well below the alarm floor and
@@ -799,13 +803,15 @@ describe('model helpers', () => {
     expect(isNoteArchived({ archived: false })).toBe(false);
   });
 
-  it('self/leader helpers resolve seeded people for a team', () => {
+  it('self/leader/skip-level helpers resolve seeded people for a team', () => {
     const d = emptyData();
     const teamId = d.teams[0]!.id;
     const self = getSelfPerson(d, teamId);
     const leader = getLeaderPerson(d, teamId);
+    const skipLevel = getSkipLevelPerson(d, teamId);
     expect(self && isSelfPerson(self)).toBe(true);
     expect(leader && isLeaderPerson(leader)).toBe(true);
+    expect(skipLevel && isSkipLevelPerson(skipLevel)).toBe(true);
     expect(teamPeople(d, teamId)).toEqual([]);
   });
 });
@@ -915,17 +921,22 @@ describe('model constants and helpers — exact shapes', () => {
     expect(isTodoOpen('cancelled')).toBe(false);
   });
 
-  it('team-scoped self/leader id helpers round-trip', () => {
+  it('team-scoped self/leader/skip-level id helpers round-trip', () => {
     expect(selfPersonIdForTeam('team-a')).toBe('__self__team-a');
     expect(leaderPersonIdForTeam('team-a')).toBe('__leader__team-a');
+    expect(skipLevelPersonIdForTeam('team-a')).toBe('__skiplevel__team-a');
   });
 
-  it('isSelfPerson and isLeaderPerson detect ids without flags', () => {
+  it('isSelfPerson / isLeaderPerson / isSkipLevelPerson detect ids without flags', () => {
     expect(isSelfPerson({ id: '__self__x', isSelf: false })).toBe(true);
     expect(isSelfPerson({ id: 'p1', isSelf: true })).toBe(true);
     expect(isSelfPerson({ id: 'p1', isSelf: false })).toBe(false);
     expect(isLeaderPerson({ id: '__leader__x' })).toBe(true);
     expect(isLeaderPerson({ id: 'p1' })).toBe(false);
+    expect(isSkipLevelPerson({ id: '__skiplevel__x' })).toBe(true);
+    expect(isSkipLevelPerson({ id: 'p1' })).toBe(false);
+    expect(isSyntheticPerson({ id: '__skiplevel__x' })).toBe(true);
+    expect(isSyntheticPerson({ id: 'p1' })).toBe(false);
   });
 
   it('nowIso returns a parseable ISO timestamp', () => {
@@ -956,6 +967,12 @@ describe('emptyData — seeded workspace shape', () => {
           id: leaderPersonIdForTeam(teamId),
           teamId,
           name: 'My leader',
+          scratchpad: '',
+        }),
+        expect.objectContaining({
+          id: skipLevelPersonIdForTeam(teamId),
+          teamId,
+          name: 'Skip-level leader',
           scratchpad: '',
         }),
       ]),
@@ -1736,6 +1753,7 @@ describe('normalizeData — exhaustive parse/load/migration', () => {
     });
     expect(getSelfPerson(norm, 't1')?.id).toBe(selfPersonIdForTeam('t1'));
     expect(getLeaderPerson(norm, 't2')?.id).toBe(leaderPersonIdForTeam('t2'));
+    expect(getSkipLevelPerson(norm, 't1')?.id).toBe(skipLevelPersonIdForTeam('t1'));
   });
 
   it('shapeOfData counts user people and computes total for a populated workspace', () => {

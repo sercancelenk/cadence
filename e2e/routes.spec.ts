@@ -74,7 +74,13 @@ test('every menu / route mounts without a runtime crash', async ({ page }) => {
   }
 
   // Team-scoped routes, including the one that crashed: "Manage members".
-  const teamRoutes = [teamPath, `${teamPath}/me`, `${teamPath}/leader`, `${teamPath}/people`];
+  const teamRoutes = [
+    teamPath,
+    `${teamPath}/me`,
+    `${teamPath}/leader`,
+    `${teamPath}/skip-level`,
+    `${teamPath}/people`,
+  ];
   for (const path of teamRoutes) {
     await page.goto(route(path));
     await completeOnboarding(page);

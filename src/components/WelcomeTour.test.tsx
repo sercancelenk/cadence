@@ -26,14 +26,9 @@ vi.mock('../AccountContext', () => ({
   useAccount: () => ({ user: { id: 'u1', email: 'a@b.com', displayName: 'A' } }),
 }));
 
-// Mobile companion surface: the tour skips the sync / next-steps cards, so the
+// Mobile companion surface: the tour skips the next-steps cards, so the
 // array is short. That is exactly where shrinking it mid-flow overran `step`.
 vi.mock('../lib/runtime', () => ({ useMobileWeb: () => true }));
-
-vi.mock('../lib/syncBackends/gdriveAuth', () => ({
-  loadStoredTokens: () => null,
-  isClientConfigured: () => true,
-}));
 
 vi.mock('../lib/pendingRecoveryCodes', () => ({
   readPendingRecoveryCodes: () => recoveryStore.codes,
@@ -58,7 +53,7 @@ vi.mock('../lib/features', async () => {
       return {
         managed: false,
         loading: false,
-        features: { sync: { cloud: true }, ai: true },
+        features: { sync: { cloud: false }, ai: true },
         hasUserPreset: preset !== null,
         setPreset: (p: string) => setPreset(p),
       };

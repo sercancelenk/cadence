@@ -6,11 +6,10 @@
  * again on this device.
  *
  * Why this exists:
- *   The app is genuinely complex (teams, todos, notes, cloud sync,
- *   AI assistant). Without a tour, new users land on an
- *   empty workspace and bounce. Three short cards in a row are enough
- *   to set expectations and point at the two features that need any
- *   setup (cloud sync, AI key) without being annoying.
+ *   The app is genuinely complex (teams, todos, notes, AI assistant).
+ *   Without a tour, new users land on an empty workspace and bounce.
+ *   Three short cards in a row are enough to set expectations and point
+ *   at optional setup (AI key, backups) without being annoying.
  *
  * Hard constraints:
  *   - Must NOT block first-paint. It mounts after `AppData.ready` and
@@ -19,10 +18,6 @@
  *     injects a mandatory "save your codes" step before the rest can be
  *     skipped. If the tour is suppressed (returning device) but codes
  *     are still pending, only the recovery step is shown.
- *   - Must survive a fresh install on a paired phone. Pairing the
- *     phone already counts as "I'm a returning user" — we suppress
- *     the tour if the user has any LAN/Drive sync state on this
- *     device.
  *   - Must be theme-aware. Reuses existing `.btn`, `.card`, and
  *     `.surface` tokens (no inline colours).
  */
@@ -32,7 +27,6 @@ import { Link } from 'react-router-dom';
 import { useAccount } from '../AccountContext';
 import { RecoveryCodesPanel } from './RecoveryCodesPanel';
 import { useMobileWeb } from '../lib/runtime';
-import { loadStoredTokens, isClientConfigured } from '../lib/syncBackends/gdriveAuth';
 import {
   clearPendingRecoveryCodes,
   readPendingRecoveryCodes,
@@ -64,24 +58,12 @@ function markCompleted(accountId: string): void {
   }
 }
 
-/**
- * Are there any signals that this device has already been used as a
- * Cadence install? If yes, we don't show the tour — the user is
- * returning, not new.
- */
-function looksLikeReturningDevice(): boolean {
-  // Drive sync tokens persisted = device signed into Drive before.
-  if (loadStoredTokens()) return true;
-  return false;
-}
-
 export function WelcomeTour() {
   const { user } = useAccount();
   const { managed, hasUserPreset, setPreset, features } = useFeatures();
   // On the phone companion surface we show a deliberately shorter tour:
   // the mandatory recovery step (if any) plus a single "what is this"
-  // card. The sync/next-steps deep-dives belong on the desktop host
-  // where setup actually happens.
+  // card. Deeper setup belongs on the desktop host.
   const mobileWeb = useMobileWeb();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
@@ -104,7 +86,6 @@ export function WelcomeTour() {
   // and signs back in).
   const shouldShowTour = useMemo(() => {
     if (!user) return false;
-    if (looksLikeReturningDevice()) return false;
     // If the user already picked an "App profile" preset on this device
     // (e.g. they completed an earlier tour and just signed up under a
     // new account) we still want to show the welcome cards, but the
@@ -265,40 +246,6 @@ export function WelcomeTour() {
     ),
   });
 
-  // Sync overview only makes sense when at least one sync backend is
-  // available under the current policy/preset. Otherwise we'd be teasing
-  // the user about a feature they can't actually use. On the phone
-  // companion surface we skip it entirely — pairing happens on the host.
-  if (!mobileWeb && features.sync.cloud) {
-    steps.push({
-      title: 'Sync across devices, on your terms',
-      body: (
-        <>
-          <p>
-            Keep multiple devices in sync — optional, and entirely under your control.
-          </p>
-          <ul className="welcome-tour__bullets">
-            <li>
-              <strong>Cloud sync (Google Drive)</strong>{' '}
-              {isClientConfigured() ? (
-                <>— end-to-end encrypted, stored in your own Drive&apos;s hidden app folder.</>
-              ) : (
-                <>
-                  — available when your administrator configures a Google OAuth client ID. See
-                  Settings for current status.
-                </>
-              )}
-            </li>
-            <li>
-              <strong>Encrypted backup file</strong> — export a portable ZIP and move it to another
-              device (AirDrop, Files, USB), then merge it in. Fully offline, no cloud.
-            </li>
-          </ul>
-        </>
-      ),
-    });
-  }
-
   if (!mobileWeb) {
   steps.push({
     title: 'A couple of next steps (all optional)',
@@ -306,12 +253,10 @@ export function WelcomeTour() {
       <>
         <p>You can start using Cadence right now without configuring anything. When you&apos;re ready:</p>
         <ul className="welcome-tour__bullets">
-          {features.sync.cloud ? (
-            <li>
-              Open <Link to="/settings">Settings → Sync</Link> to sign in to a cloud backend, or use
-              Settings → Data &amp; backup to move data between devices with an encrypted file.
-            </li>
-          ) : null}
+          <li>
+            Use <Link to="/settings">Settings → Data &amp; backup</Link> to export or merge an
+            encrypted backup when you want to move data between devices.
+          </li>
           {features.ai ? (
             <li>
               Add an AI provider key in Settings → AI assistant if you want intelligent note &amp;
@@ -323,7 +268,7 @@ export function WelcomeTour() {
             enabled on this device.
           </li>
           <li>
-            Read the <Link to="/guide">user guide</Link> for backups, recovery codes, and sync.
+            Read the <Link to="/guide">user guide</Link> for backups and recovery codes.
           </li>
         </ul>
       </>

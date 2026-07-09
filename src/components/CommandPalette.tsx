@@ -18,7 +18,7 @@ import {
   PATH_UTILITIES_STRUCTURED,
 } from '../lib/routes';
 import { plainTextFromBodyFields } from '../lib/richTextBody';
-import { teamBase, teamPeople, teamPerson } from '../lib/teamPaths';
+import { teamBase, teamPeople, teamPersonWorkspacePath } from '../lib/teamPaths';
 import type { Item, Note, Person, Team, TodoItem } from '../model';
 import { isNoteArchived, isTodoItemArchived } from '../model';
 import {
@@ -379,7 +379,7 @@ function buildCommands(
       // the offsite") and expect to find the person row from that.
       searchText: [p.title, p.scratchpad, p.agenda].filter(Boolean).join(' '),
       icon: <IcUser size={16} />,
-      run: () => navigate(teamPerson(p.teamId, p.id)),
+      run: () => navigate(teamPersonWorkspacePath(p.teamId, p)),
     });
   }
 
@@ -395,7 +395,7 @@ function buildCommands(
       hint: `${kindLabel(it.kind)} · ${team.name} · ${person.name}`,
       searchText: it.body,
       icon: <IcListTodo size={16} />,
-      run: () => navigate(teamPerson(team.id, person.id)),
+      run: () => navigate(teamPersonWorkspacePath(team.id, person)),
     });
   }
 

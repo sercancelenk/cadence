@@ -321,6 +321,21 @@ describe('actions mutation — deterministic reducers', () => {
       const next = updateItem(d, itemId, { done: true });
       expect(next.notifiedReminderIds).toEqual([]);
     });
+
+    it('clears slot notify keys when marking done so undo can re-fire', () => {
+      const base = freshData();
+      const personId = selfId(base);
+      const remindAt = '2030-06-01T10:00:00.000Z';
+      let d = addItem(base, personId, 'task', { title: 'Remind me', remindAt });
+      const itemId = latestItem(d).id;
+      const key = reminderNotifyKey(itemId, remindAt);
+      d = { ...d, notifiedReminderIds: [key, 'unrelated'] };
+      const done = updateItem(d, itemId, { done: true });
+      expect(done.notifiedReminderIds).toEqual(['unrelated']);
+      const undone = updateItem(done, itemId, { done: false });
+      expect(undone.notifiedReminderIds).toEqual(['unrelated']);
+      expect(undone.items.find((i) => i.id === itemId)?.remindAt).toBe(remindAt);
+    });
   });
 
   describe('removeTeam', () => {

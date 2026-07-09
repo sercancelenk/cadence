@@ -7,15 +7,21 @@ import { PATH_TEAMS } from '../lib/routes';
 import { distinctCategoriesForTeam, SUGGESTED_CATEGORIES } from '../lib/categories';
 import { formatShort, isPast } from '../lib/datetime';
 import { kindLabel } from '../lib/labels';
-import { teamLeader, teamMe, teamPeople as teamPeoplePath, teamPerson } from '../lib/teamPaths';
+import {
+  teamPeople as teamPeoplePath,
+  teamPersonWorkspacePath,
+  withItemFocus,
+  withWorkspaceTab,
+} from '../lib/teamPaths';
 import {
   arrangeMemberSummaries,
   MEMBER_SORT_OPTIONS,
   summarizeTeamMembers,
   type MemberSort,
+  type TeamMemberRole,
 } from '../lib/teamMemberSummary';
 import type { Item, ItemKind, Person } from '../model';
-import { getSelfPerson, isLeaderPerson, isSelfPerson } from '../model';
+import { getSelfPerson, isLeaderPerson, isSelfPerson, isSkipLevelPerson, teamMemberCount } from '../model';
 
 /** Show the search/sort controls only once a roster is big enough to warrant them. */
 const MEMBER_CONTROLS_THRESHOLD = 6;
@@ -119,7 +125,7 @@ export function TeamDashboard() {
           <DashSpark d="M0 20 L24 8 L48 22 L72 14 L96 24 L120 16" />
         </article>
         <article className="dash-stat dash-stat--rose">
-          <div className="dash-stat__value">{allInTeam.length}</div>
+          <div className="dash-stat__value">{teamMemberCount(data, teamId)}</div>
           <div className="dash-stat__label">Team members</div>
           <DashSpark d="M0 26 L22 20 L44 28 L66 12 L88 18 L110 10 L120 14" />
         </article>
@@ -167,43 +173,56 @@ export function TeamDashboard() {
         ) : (
           <div className="tiles">
             {arrangedMembers.map((m) => {
-              const to = personLink(data, teamId, m.person.id);
+              const workspace = personLink(data, teamId, m.person.id);
+              const meeting = withWorkspaceTab(workspace, 'meeting');
               return (
-                <Link
-                  key={m.person.id}
-                  to={to}
-                  className="tile tile__link member-tile"
-                  title={`Open ${m.person.name}'s workspace`}
-                >
-                  <div className="row row--between" style={{ alignItems: 'flex-start' }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div className="tile__name">
-                        {m.person.name}
-                        {m.role === 'self' ? <span className="pill" style={{ marginLeft: 6 }}>You</span> : null}
-                        {m.role === 'leader' ? <span className="pill" style={{ marginLeft: 6 }}>Leader</span> : null}
+                <div key={m.person.id} className="tile member-tile">
+                  <Link
+                    to={workspace}
+                    className="tile__link"
+                    title={`Open ${m.person.name}'s workspace`}
+                  >
+                    <div className="row row--between" style={{ alignItems: 'flex-start' }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="tile__name">
+                          {m.person.name}
+                          {m.role === 'self' ? <span className="pill" style={{ marginLeft: 6 }}>You</span> : null}
+                          {m.role === 'leader' ? <span className="pill" style={{ marginLeft: 6 }}>Leader</span> : null}
+                          {m.role === 'skipLevel' ? (
+                            <span className="pill" style={{ marginLeft: 6 }}>Skip-level</span>
+                          ) : null}
+                        </div>
+                        <div className="muted small">{m.person.title || roleHint(m.role)}</div>
                       </div>
-                      <div className="muted small">{m.person.title || roleHint(m.role)}</div>
-                    </div>
-                    <span className="btn btn--primary btn--icon" aria-hidden>
-                      <span className="btn__icon">
-                        <IcArrowRight size={17} />
+                      <span className="btn btn--primary btn--icon" aria-hidden>
+                        <span className="btn__icon">
+                          <IcArrowRight size={17} />
+                        </span>
                       </span>
-                    </span>
+                    </div>
+                    <div className="member-tile__stats muted small">
+                      <span>{m.openTasks} open {m.openTasks === 1 ? 'task' : 'tasks'}</span>
+                      {m.overdueTasks > 0 ? (
+                        <span className="pill pill--danger">{m.overdueTasks} overdue</span>
+                      ) : null}
+                      <span>·</span>
+                      <span>{m.openGoals} {m.openGoals === 1 ? 'goal' : 'goals'}</span>
+                      <span>·</span>
+                      <span>{m.upcomingReminders} reminder{m.upcomingReminders === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="muted small">
+                      {m.lastActivityAt ? `Last activity ${formatShort(m.lastActivityAt)}` : 'No activity yet'}
+                    </div>
+                  </Link>
+                  <div className="member-tile__actions row" style={{ marginTop: 8 }}>
+                    <Link className="btn btn--ghost btn--small" to={meeting}>
+                      1:1
+                    </Link>
+                    <Link className="btn btn--ghost btn--small" to={workspace}>
+                      Workspace
+                    </Link>
                   </div>
-                  <div className="member-tile__stats muted small">
-                    <span>{m.openTasks} open {m.openTasks === 1 ? 'task' : 'tasks'}</span>
-                    {m.overdueTasks > 0 ? (
-                      <span className="pill pill--danger">{m.overdueTasks} overdue</span>
-                    ) : null}
-                    <span>·</span>
-                    <span>{m.openGoals} {m.openGoals === 1 ? 'goal' : 'goals'}</span>
-                    <span>·</span>
-                    <span>{m.upcomingReminders} reminder{m.upcomingReminders === 1 ? '' : 's'}</span>
-                  </div>
-                  <div className="muted small">
-                    {m.lastActivityAt ? `Last activity ${formatShort(m.lastActivityAt)}` : 'No activity yet'}
-                  </div>
-                </Link>
+                </div>
               );
             })}
           </div>
@@ -254,6 +273,7 @@ export function TeamDashboard() {
                 {p.name}
                 {isSelfPerson(p) ? ' (you)' : ''}
                 {isLeaderPerson(p) ? ' (leader)' : ''}
+                {isSkipLevelPerson(p) ? ' (skip-level)' : ''}
               </option>
             ))}
           </select>
@@ -289,9 +309,9 @@ export function TeamDashboard() {
                   <div className="row">
                     <Link
                       className="btn btn--primary btn--icon"
-                      to={personLink(data, teamId, it.personId)}
-                      title="Open person workspace"
-                      aria-label="Open person workspace"
+                      to={itemLink(data, teamId, it)}
+                      title="Open item"
+                      aria-label="Open item"
                     >
                       <span className="btn__icon">
                         <IcArrowRight size={17} />
@@ -339,7 +359,7 @@ export function TeamDashboard() {
         ) : (
           <ul className="list">
             {reminders.map((it) => {
-              const to = personLink(data, teamId, it.personId);
+              const to = itemLink(data, teamId, it);
               return (
                 <li key={it.id} className="list__row">
                   <div>
@@ -351,7 +371,7 @@ export function TeamDashboard() {
                       {it.category ? ` · ${it.category}` : ''}
                     </div>
                   </div>
-                  <Link className="btn btn--ghost btn--icon" to={to} title="Open person workspace" aria-label="Open person workspace">
+                  <Link className="btn btn--ghost btn--icon" to={to} title="Open item" aria-label="Open item">
                     <span className="btn__icon">
                       <IcArrowRight size={17} />
                     </span>
@@ -366,9 +386,10 @@ export function TeamDashboard() {
   );
 }
 
-function roleHint(role: 'self' | 'leader' | 'member'): string {
+function roleHint(role: TeamMemberRole): string {
   if (role === 'self') return 'Your personal workspace';
   if (role === 'leader') return 'Your manager';
+  if (role === 'skipLevel') return 'Your skip-level leader';
   return 'Open workspace';
 }
 
@@ -378,10 +399,12 @@ function personName(data: { people: { id: string; name: string }[] }, id: string
 
 function personLink(data: { people: Person[] }, teamId: string, personId: string): string {
   const p = data.people.find((x) => x.id === personId);
-  if (!p) return teamMe(teamId);
-  if (isSelfPerson(p)) return teamMe(teamId);
-  if (isLeaderPerson(p)) return teamLeader(teamId);
-  return teamPerson(teamId, personId);
+  if (!p) return teamPersonWorkspacePath(teamId, { id: `__self__${teamId}`, isSelf: true });
+  return teamPersonWorkspacePath(teamId, p);
+}
+
+function itemLink(data: { people: Person[] }, teamId: string, item: Item): string {
+  return withItemFocus(personLink(data, teamId, item.personId), item.id);
 }
 
 function compareDue(a: Item, b: Item) {

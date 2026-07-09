@@ -1,6 +1,29 @@
-import { FormEvent, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  FormEvent,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { IcArrowRight, IcCheck, IcPencil, IcPlus, IcSave, IcSparkles, IcTrash, IcUndo, IcX } from '../components/icons';
+import {
+  IcArrowRight,
+  IcCalendar,
+  IcCheck,
+  IcChevronDown,
+  IcClock,
+  IcPencil,
+  IcPlus,
+  IcSave,
+  IcSparkles,
+  IcTrash,
+  IcUndo,
+  IcX,
+} from '../components/icons';
 // Lazy-loaded: only fetched the first time the user clicks "Ask AI" on a note.
 const AIAssistantDialog = lazy(() =>
   import('../components/AIAssistantDialog').then((m) => ({ default: m.AIAssistantDialog })),
@@ -8,26 +31,29 @@ const AIAssistantDialog = lazy(() =>
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { Button } from '../components/ui/Button';
 import { MarkdownEditor, MarkdownView } from '../components/ui/MarkdownEditor';
+import { SchedulePopover } from '../components/ui/SchedulePopover';
 import { isAIConfigured } from '../lib/ai';
 import { useFeatures } from '../lib/features';
 import { useAppData, useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { distinctCategoriesForTeam, SUGGESTED_CATEGORIES } from '../lib/categories';
+import { schedulePatchToItemPatch } from '../features/people/schedulePatch';
 import { useItemFocus } from '../features/people/useItemFocus';
-import { cancelPendingReminderSlots } from '../lib/reminderDelivery/cancelReminderSlots';
-import { fromLocalDatetimeValue, formatShort, isPast, toLocalDatetimeValue } from '../lib/datetime';
+import { fromLocalDatetimeValue, formatDateShort, formatShort, formatTimeOnly, isPast, toLocalDatetimeValue } from '../lib/datetime';
 import { kindLabel } from '../lib/labels';
-import { teamLeader, teamMe, teamPeople as teamPeoplePath } from '../lib/teamPaths';
+import { isSafeRichTextPreviewHref } from '../lib/richTextPreviewLinks';
+import { teamLeader, teamMe, teamPeople as teamPeoplePath, teamSkipLevel } from '../lib/teamPaths';
 import { PATH_TEAMS } from '../lib/routes';
 import { SYNC_BEFORE_APPLY } from '../lib/syncApplyGuard';
-import type { FeedbackKind, GoalStatus, Item, ItemKind, Person, ReminderRepeat } from '../model';
+import type { FeedbackKind, GoalStatus, Item, ItemKind, Person } from '../model';
 import {
   FEEDBACK_KIND_OPTIONS,
   GOAL_STATUS_OPTIONS,
-  REMIND_REPEAT_OPTIONS,
   getLeaderPerson,
   getSelfPerson,
+  getSkipLevelPerson,
   isLeaderPerson,
   isSelfPerson,
+  isSkipLevelPerson,
   teamPeople,
 } from '../model';
 
@@ -41,6 +67,27 @@ function feedbackLabel(fk?: FeedbackKind): string {
 
 function feedbackTone(fk?: FeedbackKind): string {
   return FEEDBACK_KIND_OPTIONS.find((o) => o.value === fk)?.tone ?? 'info';
+}
+
+function personInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+  return `${parts[0]!.slice(0, 1)}${parts[parts.length - 1]!.slice(0, 1)}`.toUpperCase();
+}
+
+function personRoleBadge(isSelf: boolean, isLeader: boolean, isSkipLevel: boolean): string | null {
+  if (isSelf) return 'You';
+  if (isLeader) return 'Leader';
+  if (isSkipLevel) return 'Skip-level';
+  return null;
+}
+
+function workspaceSubtitle(isSelf: boolean, isLeader: boolean, isSkipLevel: boolean): string {
+  if (isSkipLevel) return 'Skip-level follow-ups and career themes';
+  if (isLeader) return 'Manager relationship — goals, feedback, talking points';
+  if (isSelf) return 'Your workspace in this team';
+  return 'Follow-ups, goals and 1:1 notes';
 }
 
 /**
@@ -108,6 +155,15 @@ export function TeamLeaderPage() {
   return <PersonWorkspace personId={leader.id} />;
 }
 
+export function TeamSkipLevelPage() {
+  const { teamId } = useParams();
+  const { data } = useAppData();
+  const skipLevel = teamId ? getSkipLevelPerson(data, teamId) : undefined;
+  if (!teamId) return <Navigate to={PATH_TEAMS} replace />;
+  if (!skipLevel) return <Navigate to={PATH_TEAMS} replace />;
+  return <PersonWorkspace personId={skipLevel.id} />;
+}
+
 export function People() {
   const { teamId } = useParams();
   const { addPerson, removePerson } = useAppDataActions();
@@ -170,6 +226,23 @@ export function People() {
       </section>
 
       <section className="card">
+        <h2 className="card__title">Skip-level leader</h2>
+        <p className="muted small">
+          Your manager&apos;s manager (or another senior stakeholder). Use this for skip-level 1:1s, career themes and upward visibility — separate from your direct leader.
+        </p>
+        <Link
+          className="btn btn--primary btn--icon"
+          to={teamSkipLevel(resolvedTeamId)}
+          title="Open Skip-level leader workspace"
+          aria-label="Open Skip-level leader workspace"
+        >
+          <span className="btn__icon">
+            <IcArrowRight size={17} />
+          </span>
+        </Link>
+      </section>
+
+      <section className="card">
         <h2 className="card__title">Add person</h2>
         <form
           className="row"
@@ -220,12 +293,22 @@ export function People() {
 
 export function PersonRoute() {
   const { personId, teamId } = useParams();
+  const location = useLocation();
   const { data } = useAppData();
   if (!teamId || !personId) return <Navigate to={PATH_TEAMS} replace />;
   const p = data.people.find((x) => x.id === personId);
   if (!p || p.teamId !== teamId) return <Navigate to={teamPeoplePath(teamId)} replace />;
-  if (isSelfPerson(p)) return <Navigate to={teamMe(teamId)} replace />;
-  if (isLeaderPerson(p)) return <Navigate to={teamLeader(teamId)} replace />;
+  // Preserve ?focus= / ?tab= so reminder and agenda deep links survive the redirect.
+  const search = location.search;
+  if (isSelfPerson(p)) {
+    return <Navigate to={{ pathname: teamMe(teamId), search }} replace />;
+  }
+  if (isLeaderPerson(p)) {
+    return <Navigate to={{ pathname: teamLeader(teamId), search }} replace />;
+  }
+  if (isSkipLevelPerson(p)) {
+    return <Navigate to={{ pathname: teamSkipLevel(teamId), search }} replace />;
+  }
   return <PersonWorkspace personId={personId} />;
 }
 
@@ -355,24 +438,54 @@ export function PersonWorkspace({ personId }: { personId: string }) {
 
   const isSelf = isSelfPerson(person);
   const isLeader = isLeaderPerson(person);
+  const isSkipLevel = isSkipLevelPerson(person);
+  const roleBadge = personRoleBadge(isSelf, isLeader, isSkipLevel);
+  const openTasks = items.filter((i) => i.kind === 'task' && !i.done).length;
+  const openGoals = items.filter((i) => i.kind === 'goal' && !i.done).length;
+  const overdueCount = items.filter(
+    (i) => (i.kind === 'task' || i.kind === 'goal') && !i.done && !!i.dueAt && isPast(i.dueAt),
+  ).length;
+  const displayTitle = title.trim() || person.title?.trim() || '';
 
   return (
     <div className="page page--wide">
       <header className="page-head">
-        <div className="row row--between">
-          <div>
-            <h1>{person.name}</h1>
-            <p className="muted">
-              {isLeader
-                ? 'Your relationship with your manager: expectations, goals, talking points and initiative tracking — all in one place.'
-                : isSelf
-                  ? 'Your personal leadership space for this team: tasks, notes, goals and links. Use optional categories to separate initiatives.'
-                  : 'Keep every follow-up about this person in one place.'}
-            </p>
+        <div className="person-workspace__head">
+          <div className="person-workspace__identity">
+            <div className="person-workspace__avatar" aria-hidden>
+              {personInitials(person.name)}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div className="person-workspace__title-row">
+                <h1>{person.name}</h1>
+                {roleBadge ? <span className="pill">{roleBadge}</span> : null}
+              </div>
+              <p className="person-workspace__role">
+                {displayTitle || workspaceSubtitle(isSelf, isLeader, isSkipLevel)}
+              </p>
+              <div className="person-workspace__stats" aria-label="Workspace summary">
+                <span className="person-workspace__stat">
+                  {openTasks} open {openTasks === 1 ? 'task' : 'tasks'}
+                </span>
+                <span className="person-workspace__stat">
+                  {openGoals} {openGoals === 1 ? 'goal' : 'goals'}
+                </span>
+                {overdueCount > 0 ? (
+                  <span className="person-workspace__stat person-workspace__stat--warn">
+                    {overdueCount} overdue
+                  </span>
+                ) : null}
+              </div>
+            </div>
           </div>
-          <Link className="btn btn--ghost" to={teamPeoplePath(teamId)}>
-            Team members
-          </Link>
+          <div className="person-workspace__head-actions">
+            <Button type="button" variant="secondary" size="sm" onClick={() => setTab('meeting')}>
+              1:1 Mode
+            </Button>
+            <Link className="btn btn--ghost btn--small" to={teamPeoplePath(teamId)}>
+              Members
+            </Link>
+          </div>
         </div>
         <nav className="tabs" role="tablist" aria-label="Person workspace tabs">
           <button
@@ -424,6 +537,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
           updatePerson={updatePerson}
           isSelf={isSelf}
           isLeader={isLeader}
+          isSkipLevel={isSkipLevel}
           items={items}
           categoryHints={categoryHints}
           teamId={teamId}
@@ -451,6 +565,7 @@ function PersonWorkspaceTabContent(props: {
   updatePerson: ReturnType<typeof useAppData>['updatePerson'];
   isSelf: boolean;
   isLeader: boolean;
+  isSkipLevel: boolean;
   items: Item[];
   categoryHints: string[];
   teamId: string;
@@ -473,6 +588,7 @@ function PersonWorkspaceTabContent(props: {
     updatePerson,
     isSelf,
     isLeader,
+    isSkipLevel,
     items,
     categoryHints,
     teamId,
@@ -484,61 +600,148 @@ function PersonWorkspaceTabContent(props: {
     toggleItemDone,
     removeItem,
   } = props;
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [scratchOpen, setScratchOpen] = useState(() => !!(person.scratchpad ?? '').trim());
+  const scratchpadDirty = scratchpad !== (person.scratchpad ?? '');
+
+  useEffect(() => {
+    setProfileOpen(false);
+    setScratchOpen(!!(person.scratchpad ?? '').trim());
+  }, [person.id]);
+
   return (
     <>
       <section className="card">
-        <h2 className="card__title">Profile</h2>
-        <form
-          className="row"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!person) return;
-            updatePerson(person.id, {
-              name: name.trim() || person.name,
-              title,
-              scratchpad,
-            });
-          }}
-        >
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
-          <input
-            className="input input--grow"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Role / note"
-          />
-          <Button type="submit" variant="primary" icon={<IcSave size={18} />}>
-            Save
-          </Button>
-        </form>
-        {isSelf ? (
-          <p className="muted small" style={{ marginTop: 8 }}>
-            You can rename the &quot;Me&quot; label for this team.
-          </p>
-        ) : isLeader ? (
-          <p className="muted small" style={{ marginTop: 8 }}>
-            You can replace &quot;My leader&quot; with your manager&apos;s real name; entries stay attached to the same workspace.
-          </p>
-        ) : null}
-      </section>
-
-      <section className="card">
-        <h2 className="card__title">Scratchpad</h2>
-        <p className="muted small">
-          Free-form notes (markdown): 1:1 drafts, stream-of-thought, talking points. Saved alongside the profile.
-        </p>
-        <MarkdownEditor
-          value={scratchpad}
-          onChange={setScratchpad}
-          onBlur={() => person && scratchpad !== (person.scratchpad ?? '') && updatePerson(person.id, { scratchpad })}
-          placeholder="Write here…"
-          rows={10}
-        />
-        <div className="row" style={{ marginTop: 10 }}>
-          <Button type="button" variant="secondary" icon={<IcSave size={17} />} onClick={() => person && updatePerson(person.id, { scratchpad })}>
-            Save note
+        <div className="person-card__head">
+          <h2 className="card__title">Profile</h2>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            icon={<IcPencil size={15} />}
+            onClick={() => setProfileOpen((v) => !v)}
+          >
+            {profileOpen ? 'Done' : 'Edit'}
           </Button>
         </div>
+        {profileOpen ? (
+          <>
+            <form
+              className="row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const fd = new FormData(e.currentTarget);
+                const nextName = String(fd.get('name') ?? '').trim() || person.name;
+                const nextTitle = String(fd.get('title') ?? '');
+                setName(nextName);
+                setTitle(nextTitle);
+                updatePerson(person.id, {
+                  name: nextName,
+                  title: nextTitle,
+                  scratchpad,
+                });
+                setProfileOpen(false);
+              }}
+            >
+              {/*
+                Uncontrolled while the edit form is open so Save always reflects
+                the fields the user typed (FormData), not a stale React buffer.
+                Remount via key when opening so defaultValue tracks the latest person.
+              */}
+              <input
+                key={`name-${person.id}-${profileOpen}`}
+                className="input"
+                name="name"
+                defaultValue={name}
+                placeholder="Name"
+                aria-label="Name"
+                onChange={(e) => setName(e.target.value)}
+              />
+              <input
+                key={`title-${person.id}-${profileOpen}`}
+                className="input input--grow"
+                name="title"
+                defaultValue={title}
+                placeholder="Role / title"
+                aria-label="Role / title"
+                onChange={(e) => setTitle(e.target.value)}
+              />
+              <Button type="submit" variant="primary" size="sm" icon={<IcSave size={16} />}>
+                Save
+              </Button>
+            </form>
+            {isSelf || isLeader || isSkipLevel ? (
+              <p className="muted small person-card__hint" style={{ marginTop: 8 }}>
+                {isSelf
+                  ? 'Rename the Me label for this team if you like.'
+                  : isLeader
+                    ? 'Replace "My leader" with your manager\'s real name — entries stay on this workspace.'
+                    : 'Replace "Skip-level leader" with their real name — entries stay on this workspace.'}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <p className="muted small" style={{ margin: 0 }}>
+            {person.title?.trim()
+              ? person.title
+              : isSelf || isLeader || isSkipLevel
+                ? 'Tap Edit to set a display name or role.'
+                : 'No role set — tap Edit to add one.'}
+          </p>
+        )}
+      </section>
+
+      <section className="card person-scratchpad">
+        <div className="person-card__head">
+          <h2 className="card__title">
+            Scratchpad{' '}
+            {scratchpad.trim() ? <span className="pill">notes</span> : null}
+          </h2>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            iconRight={<IcChevronDown size={14} />}
+            onClick={() => setScratchOpen((v) => !v)}
+            aria-expanded={scratchOpen}
+          >
+            {scratchOpen ? 'Collapse' : 'Expand'}
+          </Button>
+        </div>
+        {!scratchOpen ? (
+          <p className="muted small" style={{ margin: 0 }}>
+            {scratchpad.trim()
+              ? scratchpad.trim().split('\n')[0]!.slice(0, 120) +
+                (scratchpad.trim().length > 120 ? '…' : '')
+              : 'Quick notes and talking points — expands when you need them.'}
+          </p>
+        ) : (
+          <>
+            <p className="muted small person-card__hint">Autosaves as you type.</p>
+            <MarkdownEditor
+              value={scratchpad}
+              onChange={setScratchpad}
+              onBlur={() =>
+                person && scratchpad !== (person.scratchpad ?? '') && updatePerson(person.id, { scratchpad })
+              }
+              placeholder="Talking points, drafts, reminders…"
+              rows={6}
+            />
+            {scratchpadDirty ? (
+              <div className="row" style={{ marginTop: 8 }}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  icon={<IcSave size={15} />}
+                  onClick={() => updatePerson(person.id, { scratchpad })}
+                >
+                  Save now
+                </Button>
+              </div>
+            ) : null}
+          </>
+        )}
       </section>
 
       <KindSection
@@ -610,6 +813,88 @@ function PersonWorkspaceTabContent(props: {
   );
 }
 
+function ItemScheduleField({
+  item,
+  label,
+  onUpdate,
+  compact = false,
+}: {
+  item: Item;
+  label?: string;
+  onUpdate: (
+    id: string,
+    patch: Partial<Pick<Item, 'dueAt' | 'remindAt' | 'remindRepeat'>>,
+  ) => void;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const overdue = !!item.dueAt && isPast(item.dueAt) && !item.done;
+  const reminderArmed = !!item.remindAt && !item.done;
+
+  const trigger = (
+    <div className={`people-item-sched${compact ? ' people-item-sched--compact' : ''}`}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`people-item-sched__trigger${item.dueAt ? ' people-item-sched__trigger--set' : ''}${
+          overdue ? ' people-item-sched__trigger--warn' : ''
+        }${reminderArmed ? ' people-item-sched__trigger--reminder' : ''}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={
+          item.dueAt
+            ? `Scheduled for ${formatDateShort(item.dueAt)} ${formatTimeOnly(item.dueAt)}${
+                reminderArmed ? ' · reminder set' : ''
+              } — click to change`
+            : 'Schedule a due date and optional desktop reminder'
+        }
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="people-item-sched__ic" aria-hidden>
+          <IcCalendar size={14} />
+        </span>
+        {item.dueAt ? (
+          <>
+            <span>
+              {formatDateShort(item.dueAt)}
+              {formatTimeOnly(item.dueAt) ? ` · ${formatTimeOnly(item.dueAt)}` : ''}
+            </span>
+            {reminderArmed ? (
+              <span className="people-item-sched__ic people-item-sched__ic--muted" aria-hidden title="Reminder set">
+                <IcClock size={13} />
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span>{compact ? 'Date' : 'Schedule'}</span>
+        )}
+      </button>
+      {open ? (
+        <SchedulePopover
+          anchorRef={triggerRef}
+          itemId={item.id}
+          dueAt={item.dueAt}
+          remindAt={item.remindAt}
+          remindRepeat={item.remindRepeat}
+          onPatch={(patch) => onUpdate(item.id, schedulePatchToItemPatch(patch))}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </div>
+  );
+
+  if (compact) return trigger;
+
+  return (
+    <div className="field">
+      <span>{label ?? 'Due date & reminder'}</span>
+      {trigger}
+      <span className="muted small">Due dates appear on Agenda. Reminders fire a desktop notification.</span>
+    </div>
+  );
+}
+
 function KindSection({
   title,
   kind,
@@ -676,165 +961,208 @@ function KindSection({
   const aiEnabled = appFeatures.ai && isAIConfigured(data.aiSettings);
   const listId = `cat-${teamId}-${kind}`;
   const submittingRef = useRef(false);
-  const [reminderEditorOpen, setReminderEditorOpen] = useState<Set<string>>(() => new Set());
+  const [composerOpen, setComposerOpen] = useState(false);
+  const titleInputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!composerOpen) return;
+    const id = window.requestAnimationFrame(() => titleInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(id);
+  }, [composerOpen]);
+
+  const resetDraft = () => {
+    setDraftTitle('');
+    setDraftUrl('');
+    setDraftCategory('');
+    setDraftStartAt('');
+    setDraftDueAt('');
+    setDraftGoalStatus('planned');
+    setDraftFeedbackKind('coaching');
+  };
+
+  const submitComposer = (e: FormEvent) => {
+    e.preventDefault();
+    if (submittingRef.current) return;
+    if (!draftTitle.trim() && kind !== 'document') return;
+    if (kind === 'document' && !draftTitle.trim() && !draftUrl.trim()) return;
+    submittingRef.current = true;
+    try {
+      if (kind === 'document') {
+        onAdd({ title: draftTitle.trim() || 'Document', url: draftUrl.trim(), category: draftCategory.trim() || undefined });
+      } else if (kind === 'goal') {
+        onAdd({
+          title: draftTitle.trim(),
+          category: draftCategory.trim() || undefined,
+          startAt: draftStartAt ? fromLocalDatetimeValue(draftStartAt) : undefined,
+          dueAt: draftDueAt ? fromLocalDatetimeValue(draftDueAt) : undefined,
+          goalStatus: draftGoalStatus,
+        });
+      } else if (kind === 'feedback') {
+        onAdd({
+          title: draftTitle.trim(),
+          category: draftCategory.trim() || undefined,
+          feedbackKind: draftFeedbackKind,
+        });
+      } else {
+        onAdd({ title: draftTitle.trim(), category: draftCategory.trim() || undefined });
+      }
+      resetDraft();
+      setComposerOpen(false);
+    } finally {
+      submittingRef.current = false;
+    }
+  };
 
   return (
     <section className="card">
-      <div className="row row--between">
+      <div className="person-card__head">
         <h2 className="card__title">
           {title} <span className="pill">{list.length}</span>
         </h2>
+        <Button
+          type="button"
+          variant={composerOpen ? 'ghost' : 'secondary'}
+          size="sm"
+          icon={composerOpen ? <IcX size={15} /> : <IcPlus size={15} />}
+          onClick={() => {
+            if (composerOpen) {
+              setComposerOpen(false);
+              resetDraft();
+            } else {
+              setComposerOpen(true);
+            }
+          }}
+        >
+          {composerOpen ? 'Cancel' : 'Add'}
+        </Button>
       </div>
 
-      <form
-        className={kind === 'goal' ? 'kind-form kind-form--goal' : 'row'}
-        style={{ marginBottom: 12, flexDirection: kind === 'goal' ? 'column' : undefined, alignItems: 'stretch' }}
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (submittingRef.current) return;
-          if (!draftTitle.trim() && kind !== 'document') return;
-          if (kind === 'document' && !draftTitle.trim() && !draftUrl.trim()) return;
-          submittingRef.current = true;
-          try {
-            if (kind === 'document') {
-              onAdd({ title: draftTitle.trim() || 'Document', url: draftUrl.trim(), category: draftCategory.trim() || undefined });
-            } else if (kind === 'goal') {
-              onAdd({
-                title: draftTitle.trim(),
-                category: draftCategory.trim() || undefined,
-                startAt: draftStartAt ? fromLocalDatetimeValue(draftStartAt) : undefined,
-                dueAt: draftDueAt ? fromLocalDatetimeValue(draftDueAt) : undefined,
-                goalStatus: draftGoalStatus,
-              });
-            } else if (kind === 'feedback') {
-              onAdd({
-                title: draftTitle.trim(),
-                category: draftCategory.trim() || undefined,
-                feedbackKind: draftFeedbackKind,
-              });
-            } else {
-              onAdd({ title: draftTitle.trim(), category: draftCategory.trim() || undefined });
-            }
-            setDraftTitle('');
-            setDraftUrl('');
-            setDraftCategory('');
-            setDraftStartAt('');
-            setDraftDueAt('');
-            setDraftGoalStatus('planned');
-            setDraftFeedbackKind('coaching');
-          } finally {
-            submittingRef.current = false;
-          }
-        }}
-      >
-        {kind === 'goal' ? (
-          <label className="field" style={{ marginTop: 0 }}>
-            <span>Goal (long form)</span>
-            <textarea
-              className="textarea textarea--goal-title"
-              rows={4}
-              placeholder="Describe your goal in detail…"
+      {composerOpen ? (
+        <form
+          className={`person-kind__composer${kind === 'goal' ? ' kind-form kind-form--goal' : ''}`}
+          onSubmit={submitComposer}
+        >
+          {kind === 'goal' ? (
+            <label className="field" style={{ marginTop: 0 }}>
+              <span>Goal</span>
+              <textarea
+                ref={titleInputRef as RefObject<HTMLTextAreaElement>}
+                className="textarea textarea--goal-title"
+                rows={3}
+                placeholder="Describe the goal…"
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+              />
+            </label>
+          ) : kind === 'task' ? (
+            <label className="field" style={{ marginTop: 0 }}>
+              <span>Task</span>
+              <AutoResizeTextarea
+                className="textarea textarea--task-title"
+                minRows={2}
+                maxRows={8}
+                placeholder="What needs to be done?"
+                value={draftTitle}
+                onChange={setDraftTitle}
+                ariaLabel="Task title"
+                autoFocus
+              />
+            </label>
+          ) : (
+            <input
+              ref={titleInputRef as RefObject<HTMLInputElement>}
+              className="input input--grow"
+              placeholder={kind === 'document' ? 'Title (optional)' : 'Title'}
               value={draftTitle}
               onChange={(e) => setDraftTitle(e.target.value)}
             />
-          </label>
-        ) : kind === 'task' ? (
-          <label className="field" style={{ marginTop: 0 }}>
-            <span>Task</span>
-            <AutoResizeTextarea
-              className="textarea textarea--task-title"
-              minRows={3}
-              maxRows={10}
-              placeholder="What needs to be done? Use multiple lines if helpful."
-              value={draftTitle}
-              onChange={setDraftTitle}
-              ariaLabel="Task title"
+          )}
+          <div className="row" style={{ flexWrap: 'wrap', marginTop: 8 }}>
+            <input
+              className="input"
+              style={{ minWidth: 130 }}
+              placeholder="Category"
+              value={draftCategory}
+              onChange={(e) => setDraftCategory(e.target.value)}
+              list={listId}
             />
-          </label>
-        ) : (
-          <input
-            className="input input--grow"
-            placeholder={kind === 'document' ? 'Title (optional)' : 'Title'}
-            value={draftTitle}
-            onChange={(e) => setDraftTitle(e.target.value)}
-          />
-        )}
-        <div className="row" style={{ flexWrap: 'wrap', marginTop: kind === 'goal' ? 8 : 0 }}>
-          <input
-            className="input"
-            style={{ minWidth: 130 }}
-            placeholder="Category (optional)"
-            value={draftCategory}
-            onChange={(e) => setDraftCategory(e.target.value)}
-            list={listId}
-          />
-          <datalist id={listId}>
-            {categoryHints.map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
-          {kind === 'goal' ? (
-            <>
-              <label className="field" style={{ minWidth: 200 }}>
-                <span className="small">Start</span>
-                <input type="datetime-local" className="input" value={draftStartAt} onChange={(e) => setDraftStartAt(e.target.value)} />
-              </label>
-              <label className="field" style={{ minWidth: 200 }}>
-                <span className="small">Deadline</span>
-                <input type="datetime-local" className="input" value={draftDueAt} onChange={(e) => setDraftDueAt(e.target.value)} />
-              </label>
-              <label className="field" style={{ minWidth: 160 }}>
-                <span className="small">Status</span>
-                <select className="select" value={draftGoalStatus} onChange={(e) => setDraftGoalStatus(e.target.value as GoalStatus)}>
-                  {GOAL_STATUS_OPTIONS.map((o) => (
+            <datalist id={listId}>
+              {categoryHints.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+            {kind === 'goal' ? (
+              <>
+                <label className="field" style={{ minWidth: 180, marginTop: 0 }}>
+                  <span className="small">Start</span>
+                  <input type="datetime-local" className="input" value={draftStartAt} onChange={(e) => setDraftStartAt(e.target.value)} />
+                </label>
+                <label className="field" style={{ minWidth: 180, marginTop: 0 }}>
+                  <span className="small">Deadline</span>
+                  <input type="datetime-local" className="input" value={draftDueAt} onChange={(e) => setDraftDueAt(e.target.value)} />
+                </label>
+                <label className="field" style={{ minWidth: 140, marginTop: 0 }}>
+                  <span className="small">Status</span>
+                  <select className="select" value={draftGoalStatus} onChange={(e) => setDraftGoalStatus(e.target.value as GoalStatus)}>
+                    {GOAL_STATUS_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            ) : null}
+            {kind === 'feedback' ? (
+              <label className="field" style={{ minWidth: 140, marginTop: 0 }}>
+                <span className="small">Type</span>
+                <select
+                  className="select"
+                  value={draftFeedbackKind}
+                  onChange={(e) => setDraftFeedbackKind(e.target.value as FeedbackKind)}
+                >
+                  {FEEDBACK_KIND_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>
                   ))}
                 </select>
               </label>
-            </>
-          ) : null}
-          {kind === 'feedback' ? (
-            <label className="field" style={{ minWidth: 160 }}>
-              <span className="small">Type</span>
-              <select
-                className="select"
-                value={draftFeedbackKind}
-                onChange={(e) => setDraftFeedbackKind(e.target.value as FeedbackKind)}
-              >
-                {FEEDBACK_KIND_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {kind === 'document' ? (
-            <input className="input input--grow" placeholder="https://…" value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)} />
-          ) : null}
-          <Button type="submit" variant="primary" icon={<IcPlus size={18} />}>
-            Add
-          </Button>
-        </div>
-      </form>
+            ) : null}
+            {kind === 'document' ? (
+              <input className="input input--grow" placeholder="https://…" value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)} />
+            ) : null}
+            <Button type="submit" variant="primary" size="sm" icon={<IcPlus size={16} />}>
+              Add
+            </Button>
+          </div>
+        </form>
+      ) : null}
 
       {list.length === 0 ? (
-        <p className="muted">No items yet.</p>
+        <div className="person-kind__empty">
+          <p className="muted" style={{ margin: 0 }}>
+            No {title.toLowerCase()} yet.
+          </p>
+          {!composerOpen ? (
+            <Button type="button" variant="ghost" size="sm" icon={<IcPlus size={15} />} onClick={() => setComposerOpen(true)}>
+              Add first
+            </Button>
+          ) : null}
+        </div>
       ) : (
         <ul className="list">
           {list.map((it) => (
-            <li key={it.id} className="list__block" data-item-id={it.id}>
-              <div className="row row--between">
-                <div>
+            <li key={it.id} className="list__block person-item" data-item-id={it.id}>
+              <div className="person-item__main">
+                <div className="person-item__body">
                   <div className={`list__title${kind === 'goal' ? ' list__title--multiline' : ''}`}>
-                    {it.kind === 'document' && it.url ? (
+                    {it.kind === 'document' && it.url && isSafeRichTextPreviewHref(it.url) ? (
                       <a href={it.url} target="_blank" rel="noreferrer">
                         {it.title || it.url}
                       </a>
                     ) : (
-                      it.title
+                      it.title || it.url || ''
                     )}{' '}
                     {it.done ? <span className="pill pill--ok">done</span> : null}
                     {it.kind === 'goal' ? <span className="pill">{goalStatusLabel(it.goalStatus)}</span> : null}
@@ -844,20 +1172,26 @@ function KindSection({
                       </span>
                     ) : null}
                   </div>
-                  <div className="muted small">
-                    {kindLabel(it.kind)}
-                    {it.category ? ` · ${it.category}` : ''}
-                    {it.kind === 'goal' && it.startAt ? ` · start ${formatShort(it.startAt)}` : ''}
-                    {it.dueAt ? ` · due ${formatShort(it.dueAt)}` : ''}
-                    {it.dueAt && isPast(it.dueAt) && !it.done ? ' · overdue' : ''}
-                    {it.remindAt ? ` · reminder ${formatShort(it.remindAt)}` : ''}
+                  <div className="person-item__meta">
+                    <span className="person-item__meta-text">
+                      {it.category ? it.category : kindLabel(it.kind)}
+                      {it.kind === 'goal' && it.startAt ? ` · start ${formatShort(it.startAt)}` : ''}
+                      {it.dueAt ? ` · due ${formatShort(it.dueAt)}` : ''}
+                      {it.remindAt ? ` · reminder ${formatShort(it.remindAt)}` : ''}
+                    </span>
+                    {it.dueAt && isPast(it.dueAt) && !it.done ? (
+                      <span className="person-item__overdue">overdue</span>
+                    ) : null}
+                    {(it.kind === 'task' || it.kind === 'goal') && openId !== it.id ? (
+                      <ItemScheduleField item={it} onUpdate={onUpdate} compact />
+                    ) : null}
                   </div>
                 </div>
-                <div className="row">
+                <div className="person-item__actions">
                   <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
+                    size="icon"
                     icon={openId === it.id ? <IcX size={16} /> : <IcPencil size={16} />}
                     onClick={() => setOpenId(openId === it.id ? null : it.id)}
                   >
@@ -866,10 +1200,10 @@ function KindSection({
                   {aiEnabled && (it.kind === 'task' || it.kind === 'goal') ? (
                     <Button
                       type="button"
-                      variant="secondary"
-                      size="sm"
+                      variant="ghost"
+                      size="icon"
                       icon={<IcSparkles size={16} />}
-                      title="Ask AI for recommendations"
+                      title="Ask AI"
                       onClick={() => setAiTarget(it)}
                     >
                       Ask AI
@@ -878,15 +1212,21 @@ function KindSection({
                   {it.kind === 'task' || it.kind === 'goal' ? (
                     <Button
                       type="button"
-                      variant="secondary"
-                      size="sm"
+                      variant="ghost"
+                      size="icon"
                       icon={it.done ? <IcUndo size={16} /> : <IcCheck size={16} />}
                       onClick={() => onToggle(it.id)}
                     >
                       {it.done ? 'Reopen' : 'Done'}
                     </Button>
                   ) : null}
-                  <Button type="button" variant="danger" size="sm" icon={<IcTrash size={16} />} onClick={() => onRemove(it.id)}>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="icon"
+                    icon={<IcTrash size={16} />}
+                    onClick={() => onRemove(it.id)}
+                  >
                     Delete
                   </Button>
                 </div>
@@ -999,7 +1339,7 @@ function KindSection({
                   <div className="field">
                     <span>Content (markdown)</span>
                     <ItemBodyField
-                      key={`b-${it.id}`}
+                      key={`b-${it.id}-${it.updatedAt}`}
                       initial={it.body}
                       onCommit={(v) => onUpdate(it.id, { body: v })}
                     />
@@ -1021,101 +1361,11 @@ function KindSection({
                     </label>
                   ) : null}
                   {it.kind === 'task' || it.kind === 'goal' ? (
-                    <label className="field">
-                      <span>{it.kind === 'goal' ? 'Deadline' : 'Due'}</span>
-                      <input
-                        type="datetime-local"
-                        className="input"
-                        defaultValue={toLocalDatetimeValue(it.dueAt)}
-                        key={`d-${it.id}-${it.updatedAt}`}
-                        onChange={(e) => {
-                          const next = fromLocalDatetimeValue(e.target.value);
-                          if (next === it.dueAt) return;
-                          onUpdate(it.id, { dueAt: next });
-                        }}
-                      />
-                      <span className="muted small">Shown on Agenda only — does not notify.</span>
-                    </label>
-                  ) : null}
-                  {it.kind === 'task' || it.kind === 'goal' ? (
-                    it.remindAt || reminderEditorOpen.has(it.id) ? (
-                      <>
-                      <label className="field">
-                        <span className="row row--between" style={{ alignItems: 'center' }}>
-                          <span>Reminder (desktop notification)</span>
-                          {it.remindAt ? (
-                            <button
-                              type="button"
-                              className="btn btn--ghost btn--small"
-                              onClick={() => {
-                                cancelPendingReminderSlots(it.id);
-                                onUpdate(it.id, { remindAt: undefined, remindRepeat: undefined });
-                                setReminderEditorOpen((prev) => {
-                                  const next = new Set(prev);
-                                  next.delete(it.id);
-                                  return next;
-                                });
-                              }}
-                            >
-                              Clear reminder
-                            </button>
-                          ) : null}
-                        </span>
-                        <input
-                          type="datetime-local"
-                          className="input"
-                          defaultValue={toLocalDatetimeValue(it.remindAt)}
-                          key={`r-${it.id}-${it.updatedAt}`}
-                          onChange={(e) => {
-                            const next = fromLocalDatetimeValue(e.target.value);
-                            if (next === it.remindAt) return;
-                            if (!next) {
-                              cancelPendingReminderSlots(it.id);
-                              onUpdate(it.id, { remindAt: undefined, remindRepeat: undefined });
-                              return;
-                            }
-                            onUpdate(it.id, { remindAt: next });
-                          }}
-                        />
-                        <span className="muted small">Fires a desktop notification at this time.</span>
-                      </label>
-                      <label className="field">
-                        <span>Repeat</span>
-                        <select
-                          className="select"
-                          defaultValue={it.remindRepeat ?? ''}
-                          key={`rr-${it.id}-${it.updatedAt}-${it.remindRepeat ?? ''}`}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            onUpdate(it.id, { remindRepeat: (v ? (v as ReminderRepeat) : undefined) });
-                          }}
-                        >
-                          {REMIND_REPEAT_OPTIONS.map((o) => (
-                            <option key={o.value || 'none'} value={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      </>
-                    ) : (
-                      <div className="field">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() =>
-                            setReminderEditorOpen((prev) => {
-                              const next = new Set(prev);
-                              next.add(it.id);
-                              return next;
-                            })
-                          }
-                        >
-                          Add desktop reminder
-                        </Button>
-                      </div>
-                    )
+                    <ItemScheduleField
+                      item={it}
+                      label={it.kind === 'goal' ? 'Deadline & reminder' : 'Due date & reminder'}
+                      onUpdate={onUpdate}
+                    />
                   ) : null}
                 </div>
               ) : it.body ? (
@@ -1224,9 +1474,13 @@ function PersonTimeline({ items }: { items: Item[] }) {
                   ) : null}
                   {it.kind === 'document' && it.url ? (
                     <div className="timeline__body">
-                      <a href={it.url} target="_blank" rel="noreferrer">
-                        {it.url}
-                      </a>
+                      {isSafeRichTextPreviewHref(it.url) ? (
+                        <a href={it.url} target="_blank" rel="noreferrer">
+                          {it.url}
+                        </a>
+                      ) : (
+                        <span>{it.url}</span>
+                      )}
                     </div>
                   ) : null}
                 </article>

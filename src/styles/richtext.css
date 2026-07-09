@@ -163,6 +163,236 @@
   padding: 0;
   background: transparent;
 }
+
+/* —— Notion-style code block (language chrome + lowlight) —— */
+.rich-editor-codeblock {
+  margin: 0.65em 0;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, var(--accent));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 72%, var(--panel));
+  overflow: hidden;
+}
+.rich-editor-codeblock.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.rich-editor-codeblock__chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--panel) 70%, var(--bg));
+}
+.rich-editor-codeblock__lang {
+  display: inline-flex;
+  min-width: 0;
+}
+.rich-editor-codeblock__lang-select {
+  appearance: none;
+  max-width: 160px;
+  padding: 3px 22px 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")
+      right 6px center / 12px no-repeat,
+    color-mix(in srgb, var(--surface-hover, var(--panel)) 80%, transparent);
+  color: var(--text-muted, var(--muted));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+.rich-editor-codeblock__lang-select:hover:not(:disabled),
+.rich-editor-codeblock__lang-select:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--text);
+  outline: none;
+}
+.rich-editor-codeblock__lang-select:disabled {
+  opacity: 0.85;
+  cursor: default;
+}
+.rich-editor-codeblock__modes {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.rich-editor-codeblock__mode {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 3px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.rich-editor-codeblock__mode.is-active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
+}
+.rich-editor-codeblock__badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.rich-editor-codeblock__pre {
+  margin: 0 !important;
+  padding: 12px 14px !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.rich-editor-codeblock__pre code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: inherit;
+  padding: 0 !important;
+  background: transparent !important;
+  color: var(--text);
+  white-space: pre;
+  display: block;
+}
+.rich-editor-codeblock__mermaid {
+  padding: 14px 16px;
+  overflow-x: auto;
+  min-height: 48px;
+}
+.rich-editor-codeblock__mermaid-svg {
+  display: flex;
+  justify-content: center;
+}
+.rich-editor-codeblock__mermaid-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+.rich-editor-codeblock__mermaid-status {
+  margin: 0;
+}
+.rich-editor-codeblock__mermaid-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger, #c44) 14%, transparent);
+  color: var(--danger, #c44);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+.rich-editor-codeblock .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* highlight.js token colors (theme-aware, Notion-like) */
+.rich-editor__surface .tiptap .hljs-comment,
+.rich-editor__surface .tiptap .hljs-quote {
+  color: color-mix(in srgb, var(--muted) 88%, var(--text));
+  font-style: italic;
+}
+.rich-editor__surface .tiptap .hljs-keyword,
+.rich-editor__surface .tiptap .hljs-selector-tag,
+.rich-editor__surface .tiptap .hljs-addition {
+  color: #c792ea;
+}
+.rich-editor__surface .tiptap .hljs-number,
+.rich-editor__surface .tiptap .hljs-string,
+.rich-editor__surface .tiptap .hljs-meta .hljs-meta-string,
+.rich-editor__surface .tiptap .hljs-literal,
+.rich-editor__surface .tiptap .hljs-doctag,
+.rich-editor__surface .tiptap .hljs-regexp {
+  color: #c3e88d;
+}
+.rich-editor__surface .tiptap .hljs-title,
+.rich-editor__surface .tiptap .hljs-section,
+.rich-editor__surface .tiptap .hljs-name,
+.rich-editor__surface .tiptap .hljs-selector-id,
+.rich-editor__surface .tiptap .hljs-selector-class {
+  color: #82aaff;
+}
+.rich-editor__surface .tiptap .hljs-attribute,
+.rich-editor__surface .tiptap .hljs-attr,
+.rich-editor__surface .tiptap .hljs-variable,
+.rich-editor__surface .tiptap .hljs-template-variable,
+.rich-editor__surface .tiptap .hljs-class .hljs-title,
+.rich-editor__surface .tiptap .hljs-type {
+  color: #ffcb6b;
+}
+.rich-editor__surface .tiptap .hljs-symbol,
+.rich-editor__surface .tiptap .hljs-bullet,
+.rich-editor__surface .tiptap .hljs-link,
+.rich-editor__surface .tiptap .hljs-meta,
+.rich-editor__surface .tiptap .hljs-selector-attr,
+.rich-editor__surface .tiptap .hljs-selector-pseudo {
+  color: #89ddff;
+}
+.rich-editor__surface .tiptap .hljs-built_in,
+.rich-editor__surface .tiptap .hljs-deletion {
+  color: #f07178;
+}
+.rich-editor__surface .tiptap .hljs-emphasis { font-style: italic; }
+.rich-editor__surface .tiptap .hljs-strong { font-weight: 700; }
+
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-keyword,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-selector-tag,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-addition {
+  color: #7c3aed;
+}
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-number,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-string,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-meta .hljs-meta-string,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-literal,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-doctag,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-regexp {
+  color: #0d9488;
+}
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-title,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-section,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-name,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-selector-id,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-selector-class {
+  color: #2563eb;
+}
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-attribute,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-attr,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-variable,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-template-variable,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-class .hljs-title,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-type {
+  color: #b45309;
+}
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-symbol,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-bullet,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-link,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-meta,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-selector-attr,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-selector-pseudo {
+  color: #0891b2;
+}
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-built_in,
+:root[data-theme='light'] .rich-editor__surface .tiptap .hljs-deletion {
+  color: #dc2626;
+}
+:root[data-theme='light'] .rich-editor-codeblock {
+  background: color-mix(in srgb, var(--panel) 40%, #f4f6f8);
+}
 .rich-editor__surface .tiptap hr {
   border: 0;
   border-top: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);

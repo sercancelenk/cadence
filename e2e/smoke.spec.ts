@@ -32,14 +32,29 @@ test('register → team profile title survives reload', async ({ page }) => {
   const teamHref = await page.getByRole('link', { name: /my first team/i }).first().getAttribute('href');
   const teamPath = (teamHref ?? '').replace(/^#/, '');
   await page.goto(route(`${teamPath}/me`));
+  await expect(page.getByRole('heading', { name: 'Profile' })).toBeVisible({ timeout: 15_000 });
 
-  await page.getByPlaceholder('Role / note').fill(titleLine);
-  await page.getByRole('button', { name: /^save$/i }).click();
+  const profileCard = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Profile' }) });
+  await profileCard.getByRole('button', { name: /^edit$/i }).click();
+
+  const profileForm = page.locator('form.row').filter({ has: page.getByPlaceholder('Role / title') });
+  const roleInput = profileForm.getByPlaceholder('Role / title');
+  await roleInput.click();
+  await roleInput.pressSequentially(titleLine, { delay: 20 });
+  await expect(roleInput).toHaveValue(titleLine);
+  await profileForm.getByRole('button', { name: /^save$/i }).click();
+
+  // Collapsed summary reads `person.title` from AppData — proves the write landed in memory.
+  await expect(profileForm).toBeHidden({ timeout: 5_000 });
+  await expect(profileCard).toContainText(titleLine);
+  // AppData debounces disk writes (~400ms); give it a beat before reload.
   await page.waitForTimeout(1200);
 
   await page.reload();
   await completeOnboarding(page);
-  await expect(page.getByPlaceholder('Role / note')).toHaveValue(titleLine, { timeout: 15_000 });
+  await expect(
+    page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Profile' }) }),
+  ).toContainText(titleLine, { timeout: 15_000 });
 });
 
 test('register → team scratchpad survives reload', async ({ page }) => {
@@ -53,15 +68,23 @@ test('register → team scratchpad survives reload', async ({ page }) => {
   const teamHref = await page.getByRole('link', { name: /my first team/i }).first().getAttribute('href');
   const teamPath = (teamHref ?? '').replace(/^#/, '');
   await page.goto(route(`${teamPath}/me`));
+  await expect(page.getByRole('heading', { name: 'Scratchpad' })).toBeVisible({ timeout: 15_000 });
 
-  const scratchpad = page.locator('.md-editor__textarea').first();
+  const scratchCard = page.locator('.person-scratchpad');
+  await scratchCard.getByRole('button', { name: /^expand$/i }).click();
+
+  const scratchpad = scratchCard.locator('.md-editor__textarea').first();
   await expect(scratchpad).toBeVisible({ timeout: 15_000 });
-  await scratchpad.fill(scratchLine);
+  await scratchpad.click();
+  await scratchpad.pressSequentially(scratchLine, { delay: 15 });
   await expect(scratchpad).toHaveValue(scratchLine);
-  await page.getByRole('button', { name: /save note/i }).click();
-  await page.waitForTimeout(1200);
+
+  // PersonWorkspace autosaves dirty scratchpad after 800ms; wait past that + AppData debounce.
+  await page.waitForTimeout(2000);
 
   await page.reload();
   await completeOnboarding(page);
-  await expect(page.locator('.md-editor__textarea').first()).toHaveValue(scratchLine, { timeout: 15_000 });
+  await expect(page.locator('.person-scratchpad .md-editor__textarea').first()).toHaveValue(scratchLine, {
+    timeout: 15_000,
+  });
 });

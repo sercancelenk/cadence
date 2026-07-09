@@ -47,6 +47,7 @@ function breadcrumbFromPath(data: AppData, pathname: string): string {
   if (pathname === base) return `${tn} · Overview`;
   if (pathname.startsWith(`${base}/me`)) return `${tn} · Me`;
   if (pathname.startsWith(`${base}/leader`)) return `${tn} · My leader`;
+  if (pathname.startsWith(`${base}/skip-level`)) return `${tn} · Skip-level`;
   if (pathname.startsWith(`${base}/people/`)) {
     const rest = pathname.slice(`${base}/people/`.length);
     if (rest && !rest.includes('/')) {

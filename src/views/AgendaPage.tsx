@@ -4,6 +4,7 @@ import { useAppData } from '../AppDataContext';
 import { Button } from '../components/ui/Button';
 import { IcCheck, IcUndo } from '../components/icons';
 import {
+  agendaEntryHref,
   buildAgendaWeekStrip,
   collectAgendaEntries,
   filterOverdueAgendaEntries,
@@ -12,7 +13,6 @@ import {
 } from '../lib/agendaEntries';
 import { formatShort, isPast } from '../lib/datetime';
 import { kindLabel } from '../lib/labels';
-import { teamPerson } from '../lib/teamPaths';
 import { isTodoOpen } from '../model';
 
 /**
@@ -108,7 +108,7 @@ function EntryList({
                 </div>
                 <div className="row">
                   {teamId ? (
-                    <Link className="btn btn--ghost btn--sm" to={teamPerson(teamId, item.personId)}>
+                    <Link className="btn btn--ghost btn--sm" to={agendaEntryHref(e)}>
                       Open
                     </Link>
                   ) : null}

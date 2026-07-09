@@ -35,16 +35,16 @@ describe('PRESETS shape', () => {
     }
   });
 
-  it("personal has every feature on", () => {
+  it('personal keeps AI/export/updates on and sync off', () => {
     expect(PRESETS.personal).toEqual({
-      sync: { lan: true, cloud: true },
+      sync: { lan: false, cloud: false },
       ai: true,
       dataExport: true,
       updateCheck: true,
     });
   });
 
-  it("work-standard disables sync only", () => {
+  it('work-standard matches personal sync-off defaults with AI/export on', () => {
     expect(PRESETS['work-standard']).toEqual({
       sync: { lan: false, cloud: false },
       ai: true,
@@ -212,16 +212,16 @@ describe('resolveFeatures precedence', () => {
     expect(r.features.dataExport).toBe(false);
   });
 
-  it('granular sync.lan/cloud overrides are independent', () => {
+  it('product-disables cloud/LAN sync even when policy tries to re-enable them', () => {
     const r = resolveFeatures(
       {
         path: '/x',
         preset: 'work-standard',
-        features: { sync: { lan: true } }, // re-enable LAN only
+        features: { sync: { lan: true, cloud: true } },
       },
       null,
     );
-    expect(r.features.sync.lan).toBe(true);
+    expect(r.features.sync.lan).toBe(false);
     expect(r.features.sync.cloud).toBe(false);
   });
 
@@ -290,7 +290,7 @@ describe('resolveFeatures — enterprise build flavor', () => {
     expect(r.features.dataExport).toBe(false);
   });
 
-  it('enterprise merge uses policy preset cloud override independently of lan', () => {
+  it('enterprise build keeps cloud sync off even when policy requests it', () => {
     const r = resolveFeatures(
       {
         path: '/x',
@@ -300,7 +300,7 @@ describe('resolveFeatures — enterprise build flavor', () => {
       { enterpriseBuild: true },
     );
     expect(r.features).toEqual({
-      sync: { lan: false, cloud: true },
+      sync: { lan: false, cloud: false },
       ai: false,
       dataExport: false,
       updateCheck: true,

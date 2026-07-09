@@ -36,10 +36,16 @@ describe('resolveAppProfileLabel', () => {
     expect(r.preset).toBe('custom');
   });
 
-  it('labels work-standard preset directly when unmanaged', () => {
-    const r = resolveAppProfileLabel(PRESETS['work-standard'], false);
+  it('labels work-standard via user-preset source when features match personal', () => {
+    // personal and work-standard share the same flags now that sync is off;
+    // the explicit user-preset source keeps the chosen label.
+    const r = resolveAppProfileLabel(PRESETS['work-standard'], false, {
+      kind: 'user-preset',
+      preset: 'work-standard',
+    });
     expect(r.label).toBe('Work — Standard');
     expect(r.badgeLabel).toBe('Work — Standard');
+    expect(r.preset).toBe('work-standard');
   });
 
   it('labels managed deployments using a user-preset source title', () => {

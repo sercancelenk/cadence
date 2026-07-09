@@ -493,7 +493,7 @@ describe('agendaEntryHref', () => {
       ],
     });
     const entry = collectAgendaEntries(data)[0];
-    expect(agendaEntryHref(entry)).toBe('/teams/team1/people/p1');
+    expect(agendaEntryHref(entry)).toBe('/teams/team1/people/p1?focus=i1');
   });
 
   it('falls back to agenda when team context is missing', () => {

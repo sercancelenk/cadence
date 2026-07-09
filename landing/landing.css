@@ -751,9 +751,9 @@ section {
 }
 
 /* ────────────────────────────────────────────────────────────────────────
- *  SYNC — feature parity with .ai, slate-blue accent.
- *  Mirrors the AI section's structure so the two flagship features
- *  (BYO-key AI + cloud-free sync) read as equal-weight pillars.
+ *  BACKUP (#backup) — feature parity with .ai, slate-blue accent.
+ *  Mirrors the AI section's structure so BYO-key AI and encrypted
+ *  device transfer read as equal-weight pillars.
  * ──────────────────────────────────────────────────────────────────── */
 
 .sync {
@@ -1019,7 +1019,7 @@ section {
 }
 
 /* ------------------------------------------------------------------ */
-/* Sync options (two-way picker at the top of #sync)                   */
+/* Backup options (portable ZIP vs full folder at the top of #backup) */
 /* ------------------------------------------------------------------ */
 
 .sync-options {
@@ -1084,113 +1084,5 @@ section {
   .sync-options {
     grid-template-columns: 1fr;
     margin-bottom: 40px;
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* Cloud sync sub-section inside #sync                                 */
-/* ------------------------------------------------------------------ */
-
-.sync-cloud {
-  margin-top: 72px;
-  padding-top: 56px;
-  border-top: 1px solid var(--border);
-}
-
-.sync-cloud .section__title {
-  margin-top: 14px;
-}
-
-@media (max-width: 820px) {
-  .sync-cloud {
-    margin-top: 48px;
-    padding-top: 36px;
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* Cloud sync how-to (numbered setup steps)                            */
-/* ------------------------------------------------------------------ */
-
-.sync-howto {
-  margin-top: 56px;
-  padding: 28px;
-  border-radius: 14px;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 196, 110, 0.06) 0%,
-    rgba(255, 196, 110, 0.02) 100%
-  );
-  border: 1px solid var(--border);
-}
-
-.sync-howto__title {
-  margin: 0;
-  font-size: 22px;
-  letter-spacing: -0.015em;
-  color: var(--text);
-}
-
-.sync-howto__lede {
-  margin: 10px 0 22px;
-  color: var(--muted);
-  line-height: 1.6;
-  max-width: 720px;
-}
-
-.sync-howto__steps {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 18px;
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 14px;
-}
-
-.sync-howto__steps li {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 16px;
-  line-height: 1.55;
-}
-
-.sync-howto__steps li div {
-  color: var(--text);
-}
-
-.sync-howto__num {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: var(--accent-soft, rgba(255, 196, 110, 0.18));
-  color: var(--accent, #ffd28a);
-  font-weight: 700;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-
-.sync-howto__hint {
-  margin: 0;
-  font-size: 13.5px;
-  color: var(--muted);
-  line-height: 1.55;
-  max-width: 720px;
-}
-
-@media (max-width: 820px) {
-  .sync-howto {
-    margin-top: 36px;
-    padding: 20px;
-  }
-  .sync-howto__title {
-    font-size: 19px;
   }
 }

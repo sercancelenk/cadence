@@ -9,7 +9,7 @@ export function UserGuidePage() {
       <header className="page-head guide-page__head">
         <h1>User guide</h1>
         <p className="muted">
-          Daily workflow, backups, recovery codes, and sync — everything stays on your device unless you choose otherwise.
+          Daily workflow, backups, and recovery codes — everything stays on your device unless you export a backup.
         </p>
       </header>
       <article className="guide-page__body markdown-body">

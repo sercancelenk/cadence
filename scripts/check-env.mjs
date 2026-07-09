@@ -82,30 +82,6 @@ section('.gitignore safety (no env leaks)');
   }
 }
 
-// --------------------------------------------------------------- Required envs
-
-section('Cloud Sync configuration');
-{
-  const clientId = process.env.VITE_GOOGLE_OAUTH_CLIENT_ID || readDotEnvValue('VITE_GOOGLE_OAUTH_CLIENT_ID');
-  if (!clientId) {
-    warn(
-      'VITE_GOOGLE_OAUTH_CLIENT_ID is not set. Google Drive sync will appear as "Setup required" in the deployed app. ' +
-        'Set it in .env.local (or your CI secrets) to enable Drive sync.',
-    );
-  } else if (clientId === 'ci-placeholder.apps.googleusercontent.com') {
-    warn(
-      'VITE_GOOGLE_OAUTH_CLIENT_ID is the CI placeholder — Drive sign-in will fail at Google with invalid_client. ' +
-        'Set a real value before publishing.',
-    );
-  } else if (!clientId.endsWith('.apps.googleusercontent.com')) {
-    fail(
-      `VITE_GOOGLE_OAUTH_CLIENT_ID="${clientId}" does not look like a Google OAuth client ID (should end with .apps.googleusercontent.com).`,
-    );
-  } else {
-    ok(`VITE_GOOGLE_OAUTH_CLIENT_ID looks valid (${redact(clientId)})`);
-  }
-}
-
 // --------------------------------------------------------------- Optional but recommended
 
 section('Optional');
@@ -149,7 +125,3 @@ function readDotEnvValue(key) {
   return '';
 }
 
-function redact(s) {
-  if (s.length <= 16) return s;
-  return s.slice(0, 6) + '…' + s.slice(-22);
-}

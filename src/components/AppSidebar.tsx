@@ -18,7 +18,13 @@ import { useAppDataSelector } from '../AppDataContext';
 import { brandIconUrl } from '../lib/appBranding';
 import { useMobileWeb } from '../lib/runtime';
 import { PATH_HOME, PATH_PLANNING, PATH_TEAMS, PATH_UTILITIES_DOCUMENT, PATH_UTILITIES_STRUCTURED } from '../lib/routes';
-import { teamLeader, teamMe, teamPeople as teamPeopleRoute, teamBase } from '../lib/teamPaths';
+import {
+  teamLeader,
+  teamMe,
+  teamPeople as teamPeopleRoute,
+  teamBase,
+  teamSkipLevel,
+} from '../lib/teamPaths';
 import { AppSidebarFooter } from './AppSidebarFooter';
 
 const linkCls = ({ isActive }: { isActive: boolean }) => `app-sidebar__link${isActive ? ' app-sidebar__link--active' : ''}`;
@@ -229,6 +235,12 @@ export function AppSidebar({ collapsed }: Props) {
                 <IcTarget size={18} />
               </span>
               {!collapsed ? <span>My leader</span> : null}
+            </NavLink>
+            <NavLink to={teamSkipLevel(teamId)} className={linkCls} title="Skip-level leader">
+              <span className="app-sidebar__ic">
+                <IcChartBar size={18} />
+              </span>
+              {!collapsed ? <span>Skip-level</span> : null}
             </NavLink>
             <NavLink to={teamPeopleRoute(teamId)} className={linkCls} title="Team members">
               <span className="app-sidebar__ic">

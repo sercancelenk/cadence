@@ -21,13 +21,20 @@ import type {
   UtilityDocument,
   UtilityStructuredText,
 } from '../model';
-import { isLeaderPerson, isSelfPerson, nowIso, selfPersonIdForTeam, leaderPersonIdForTeam } from '../model';
+import {
+  isSyntheticPerson,
+  nowIso,
+  selfPersonIdForTeam,
+  leaderPersonIdForTeam,
+  skipLevelPersonIdForTeam,
+} from '../model';
 
 export function addTeam(data: AppData, name: string): AppData {
   const t = nowIso();
   const teamId = uuid();
   const selfId = selfPersonIdForTeam(teamId);
   const leaderId = leaderPersonIdForTeam(teamId);
+  const skipLevelId = skipLevelPersonIdForTeam(teamId);
   const team: Team = { id: teamId, name: name.trim() || 'New team', createdAt: t, status: 'active' };
   const self: Person = {
     id: selfId,
@@ -44,10 +51,17 @@ export function addTeam(data: AppData, name: string): AppData {
     scratchpad: '',
     createdAt: t,
   };
+  const skipLevel: Person = {
+    id: skipLevelId,
+    teamId,
+    name: 'Skip-level leader',
+    scratchpad: '',
+    createdAt: t,
+  };
   return {
     ...data,
     teams: [...data.teams, team],
-    people: [...data.people, self, leader],
+    people: [...data.people, self, leader, skipLevel],
     lastTeamId: teamId,
   };
 }
@@ -120,7 +134,7 @@ export function updatePerson(
     ...data,
     people: data.people.map((p) => {
       if (p.id !== id) return p;
-      if (isSelfPerson(p) || isLeaderPerson(p)) {
+      if (isSyntheticPerson(p)) {
         return {
           ...p,
           name: patch.name?.trim() ? patch.name.trim() : p.name,
@@ -142,7 +156,7 @@ export function updatePerson(
 
 export function removePerson(data: AppData, id: string): AppData {
   const p = data.people.find((x) => x.id === id);
-  if (!p || isSelfPerson(p) || isLeaderPerson(p)) return data;
+  if (!p || isSyntheticPerson(p)) return data;
   return {
     ...data,
     people: data.people.filter((x) => x.id !== id),
@@ -332,8 +346,11 @@ export function updateItem(
   let notified = clearedNotify
     ? clearReminderNotifyKeys(data.notifiedReminderIds, id)
     : data.notifiedReminderIds;
+  // Marking done must clear slot keys (`id\u0001iso`), not only a bare id —
+  // otherwise undo keeps the same remindAt but `isReminderSlotNotified` stays
+  // true and the reminder never fires again.
   const markedDoneId = data.items.find((it) => it.id === id && patch.done === true && !it.done)?.id;
-  if (markedDoneId) notified = notified.filter((x) => x !== markedDoneId);
+  if (markedDoneId) notified = clearReminderNotifyKeys(notified, markedDoneId);
   return {
     ...data,
     items,

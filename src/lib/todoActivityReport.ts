@@ -3,7 +3,7 @@ import { isTodoItemArchived, isTodoOpen } from '../model';
 import { isPlanningHubItem } from './planningMatrix';
 import { calendarStartOfDay, formatCalendarRangeLabel } from './calendarGrid';
 import { PATH_TODOS } from './routes';
-import { teamPerson } from './teamPaths';
+import { teamPersonWorkspacePath, withItemFocus } from './teamPaths';
 
 export type ActivityPeriodPreset =
   | 'today'
@@ -290,7 +290,7 @@ export function collectActivityRecords(
       contextLabel: team ? `${team.name} · ${person?.name ?? 'Member'}` : person?.name ?? 'Team',
       teamId: person?.teamId,
       navPath: person
-        ? `${teamPerson(person.teamId, item.personId)}?focus=${encodeURIComponent(item.id)}`
+        ? withItemFocus(teamPersonWorkspacePath(person.teamId, person), item.id)
         : undefined,
     });
   }

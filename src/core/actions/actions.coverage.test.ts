@@ -5,8 +5,10 @@ import {
   getSelfPerson,
   isLeaderPerson,
   isSelfPerson,
+  isSkipLevelPerson,
   leaderPersonIdForTeam,
   selfPersonIdForTeam,
+  skipLevelPersonIdForTeam,
   type AppData,
   type AISettings,
   type ItemKind,
@@ -72,7 +74,7 @@ function selfId(d: AppData, teamId?: string): string {
 }
 
 describe('teams', () => {
-  it('addTeam creates team, self, leader, and selects it', () => {
+  it('addTeam creates team, self, leader, skip-level, and selects it', () => {
     const base = emptyData();
     const next = addTeam(base, '  Sales  ');
     expect(next.teams).toHaveLength(2);
@@ -81,10 +83,13 @@ describe('teams', () => {
     expect(next.lastTeamId).toBe(team!.id);
     const self = next.people.find((p) => p.teamId === team!.id && isSelfPerson(p));
     const leader = next.people.find((p) => p.teamId === team!.id && isLeaderPerson(p));
+    const skipLevel = next.people.find((p) => p.teamId === team!.id && isSkipLevelPerson(p));
     expect(self?.name).toBe('Me');
     expect(leader?.name).toBe('My leader');
+    expect(skipLevel?.name).toBe('Skip-level leader');
     expect(self?.id).toBe(selfPersonIdForTeam(team!.id));
     expect(leader?.id).toBe(leaderPersonIdForTeam(team!.id));
+    expect(skipLevel?.id).toBe(skipLevelPersonIdForTeam(team!.id));
   });
 
   it('addTeam uses default name when blank', () => {
@@ -176,11 +181,12 @@ describe('people', () => {
     expect(updated?.scratchpad).toBe('notes');
   });
 
-  it('removePerson refuses self and leader', () => {
+  it('removePerson refuses self, leader, and skip-level', () => {
     const base = emptyData();
     const teamId = firstTeamId(base);
     expect(removePerson(base, selfPersonIdForTeam(teamId))).toBe(base);
     expect(removePerson(base, leaderPersonIdForTeam(teamId))).toBe(base);
+    expect(removePerson(base, skipLevelPersonIdForTeam(teamId))).toBe(base);
   });
 
   it('setLastTeamId no-ops for unknown team', () => {

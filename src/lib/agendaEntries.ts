@@ -8,7 +8,7 @@ import {
 } from '../model';
 import { nextReminderOccurrence } from './reminderRecurrence';
 import { PATH_AGENDA, PATH_TODOS } from './routes';
-import { teamPerson } from './teamPaths';
+import { teamPersonWorkspacePath, withItemFocus } from './teamPaths';
 
 export type AgendaItemScheduleKind = 'reminder' | 'due';
 
@@ -227,7 +227,10 @@ export function agendaEntryHref(entry: AgendaEntry): string {
     return `${PATH_TODOS}?focus=${encodeURIComponent(entry.todo.id)}`;
   }
   if (entry.teamId) {
-    return teamPerson(entry.teamId, entry.item.personId);
+    return withItemFocus(
+      teamPersonWorkspacePath(entry.teamId, { id: entry.item.personId }),
+      entry.item.id,
+    );
   }
   return PATH_AGENDA;
 }

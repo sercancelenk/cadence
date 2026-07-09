@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppData } from '../AppDataContext';
 import type { AppData, Person, Team, TodoItem, TodoStatus } from '../model';
-import { isLeaderPerson, isSelfPerson, TODO_STATUS_OPTIONS } from '../model';
+import { isSyntheticPerson, TODO_STATUS_OPTIONS } from '../model';
 import { PATH_ANALYTICS_ACTIVITY } from '../lib/routes';
 
 type Range = 'day' | 'week' | 'month' | 'year';
@@ -212,7 +212,7 @@ function personStats(data: AppData, records: TaskRecord[]): PersonStats[] {
   const teamById = new Map<string, Team>(data.teams.map((t) => [t.id, t]));
   const records$ = records.filter((r) => !!r.personId);
   return data.people
-    .filter((p) => !isSelfPerson(p) && !isLeaderPerson(p))
+    .filter((p) => !isSyntheticPerson(p))
     .map((p) => {
       const own = records$.filter((r) => r.personId === p.id);
       const completed = own.filter((r) => r.done).length;

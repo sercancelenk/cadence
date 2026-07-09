@@ -15,20 +15,34 @@ export type AppProfileLabel = {
   preset: PresetName | 'custom';
 };
 
+function featuresEqual(a: Features, b: Features): boolean {
+  return (
+    a.sync.lan === b.sync.lan &&
+    a.sync.cloud === b.sync.cloud &&
+    a.ai === b.ai &&
+    a.dataExport === b.dataExport &&
+    a.updateCheck === b.updateCheck
+  );
+}
+
 function matchPreset(features: Features): PresetName | 'custom' {
   for (const name of ['personal', 'work-standard', 'work-strict'] as PresetName[]) {
-    const p = PRESETS[name];
-    if (
-      p.sync.lan === features.sync.lan &&
-      p.sync.cloud === features.sync.cloud &&
-      p.ai === features.ai &&
-      p.dataExport === features.dataExport &&
-      p.updateCheck === features.updateCheck
-    ) {
-      return name;
-    }
+    if (featuresEqual(PRESETS[name], features)) return name;
   }
   return 'custom';
+}
+
+/**
+ * When multiple presets share identical flags (personal ≈ work-standard after
+ * cloud sync retirement), prefer the user's explicitly chosen preset name.
+ */
+function resolvePresetName(features: Features, source?: FeaturesSource): PresetName | 'custom' {
+  const matched = matchPreset(features);
+  if (matched === 'custom') return 'custom';
+  if (source?.kind === 'user-preset' && featuresEqual(PRESETS[source.preset], features)) {
+    return source.preset;
+  }
+  return matched;
 }
 
 function basePresetTitle(source: FeaturesSource | undefined): string | null {
@@ -47,7 +61,7 @@ export function resolveAppProfileLabel(
   managed: boolean,
   source?: FeaturesSource,
 ): AppProfileLabel {
-  const preset = matchPreset(features);
+  const preset = resolvePresetName(features, source);
 
   if (managed) {
     const base = basePresetTitle(source) ?? (preset !== 'custom' ? PRESET_LABELS[preset].title : null);

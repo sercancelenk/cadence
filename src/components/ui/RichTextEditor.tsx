@@ -10,6 +10,7 @@ import {
   RICH_TEXT_SOFT_CHAR_LIMIT,
 } from '../../lib/richText';
 import { canonicalDocSignature } from '../../lib/richTextBody';
+import { applyCodeBlockLanguage } from '../../lib/richTextCodeBlock';
 import { createRichTextExtensions, isSafeEditorLinkUrl } from '../../lib/richTextEditorExtensions';
 import {
   attachmentUri,
@@ -969,10 +970,35 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
       <ToolbarGroup label="Insert">
         <ToolbarButton
           title="Code block"
-          active={editor.isActive('codeBlock')}
-          onClick={() => run(() => editor.chain().focus().toggleCodeBlock().run())}
+          active={editor.isActive('codeBlock') && !editor.isActive('codeBlock', { language: 'mermaid' })}
+          onClick={() =>
+            run(() => {
+              if (editor.isActive('codeBlock', { language: 'mermaid' })) {
+                return applyCodeBlockLanguage(editor, 'javascript');
+              }
+              if (editor.isActive('codeBlock')) {
+                // Second click on Code while already in a non-mermaid block exits.
+                return editor.chain().focus().toggleCodeBlock().run();
+              }
+              return applyCodeBlockLanguage(editor, 'javascript');
+            })
+          }
         >
           {'{ }'}
+        </ToolbarButton>
+        <ToolbarButton
+          title="Mermaid diagram"
+          active={editor.isActive('codeBlock', { language: 'mermaid' })}
+          onClick={() =>
+            run(() => {
+              if (editor.isActive('codeBlock', { language: 'mermaid' })) {
+                return editor.chain().focus().toggleCodeBlock().run();
+              }
+              return applyCodeBlockLanguage(editor, 'mermaid');
+            })
+          }
+        >
+          ◇
         </ToolbarButton>
         <ToolbarButton
           title="Horizontal divider"
