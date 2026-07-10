@@ -2,7 +2,9 @@
 # when you want a new signed/notarized build. Steps:
 #   1. Release CI gate (typecheck + unit tests + web build + E2E smoke).
 #      Skips only coverage (duplicate test run) and PWA (not shipped in desktop).
-#   2. Auto-bump version to 0.3.<run_number> (per-workflow counter).
+#   2. Compute CalVer version YYYY.M.<run_number> (see scripts/compute-version.mjs)
+#      and guard it against the latest published release so a lower/equal
+#      version can never freeze auto-updates (scripts/validate-release-config.mjs).
 #   3. macOS + Windows in parallel: package, sign, publish to GitHub Release.
 
 name: Release
@@ -41,8 +43,8 @@ jobs:
       - name: Publish hedefini repo sahibiyle eşle
         run: node scripts/patch-publish.mjs "${{ github.repository_owner }}"
 
-      - name: Otomatik sürüm numarası
-        run: npm pkg set version=0.3.${{ github.run_number }}
+      - name: Otomatik sürüm numarası (CalVer YYYY.M.<run_number>)
+        run: node scripts/compute-version.mjs "${{ github.run_number }}"
 
       # Skip `npm ci` when node_modules for this exact lockfile is cached.
       # The cached tree includes the extracted Electron binary (in
@@ -62,11 +64,12 @@ jobs:
 
       - name: Validate release config and helper
         run: |
-          node scripts/validate-release-config.mjs
+          node scripts/validate-release-config.mjs --check-version
           npm run build:reminder-helper
           node scripts/validate-release-config.mjs --check-helper
         env:
           CADENCE_UNIVERSAL_HELPER: '1'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Derle ve GitHub Release oluştur (macOS)
         run: npm run build:web && npx electron-builder --publish always
@@ -100,8 +103,8 @@ jobs:
       - name: Publish hedefini repo sahibiyle eşle
         run: node scripts/patch-publish.mjs "${{ github.repository_owner }}"
 
-      - name: Otomatik sürüm numarası
-        run: npm pkg set version=0.3.${{ github.run_number }}
+      - name: Otomatik sürüm numarası (CalVer YYYY.M.<run_number>)
+        run: node scripts/compute-version.mjs "${{ github.run_number }}"
 
       # Skip `npm ci` when node_modules for this exact lockfile is cached.
       # The cached tree includes the extracted Electron binary (in
@@ -126,9 +129,11 @@ jobs:
 
       - name: Validate release config and helper
         run: |
-          node scripts/validate-release-config.mjs
+          node scripts/validate-release-config.mjs --check-version
           npm run build:reminder-helper-win
           node scripts/validate-release-config.mjs --check-helper
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Derle ve GitHub Release oluştur (Windows)
         run: npm run build:web && npx electron-builder --win --publish always

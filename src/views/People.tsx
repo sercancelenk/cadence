@@ -11,7 +11,6 @@ import {
 } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
-  IcArrowRight,
   IcCalendar,
   IcCheck,
   IcChevronDown,
@@ -171,13 +170,19 @@ export function People() {
     if (!teamId) return null;
     const team = d.teams.find((t) => t.id === teamId);
     if (!team) return null;
-    return { team, members: teamPeople(d, teamId), self: getSelfPerson(d, teamId) };
+    return {
+      team,
+      members: teamPeople(d, teamId),
+      self: getSelfPerson(d, teamId),
+      leader: getLeaderPerson(d, teamId),
+      skipLevel: getSkipLevelPerson(d, teamId),
+    };
   });
   const [name, setName] = useState('');
   const [title, setTitle] = useState('');
 
   if (!teamBundle) return <Navigate to={PATH_TEAMS} replace />;
-  const { team, members, self } = teamBundle;
+  const { team, members, self, leader, skipLevel } = teamBundle;
   const resolvedTeamId = team.id;
 
   if (!self) return <Navigate to={PATH_TEAMS} replace />;
@@ -190,56 +195,70 @@ export function People() {
       </header>
 
       <section className="card">
-        <h2 className="card__title">Me</h2>
-        <p className="muted small">Your personal workspace in this team. A separate &quot;Me&quot; record is created automatically for every team.</p>
-        {self ? (
-          <Link
-            className="btn btn--primary btn--icon"
-            to={teamMe(resolvedTeamId)}
-            title="Open Me workspace"
-            aria-label="Open Me workspace"
-          >
-            <span className="btn__icon">
-              <IcArrowRight size={17} />
-            </span>
-          </Link>
-        ) : (
-          <p className="muted">The Me record could not be found (data repair required).</p>
-        )}
-      </section>
-
-      <section className="card">
-        <h2 className="card__title">My leader</h2>
+        <h2 className="card__title">Team members</h2>
         <p className="muted small">
-          A dedicated space for your manager: goals, feedback, talking points and notes. Keep it separate from team members and tag entries with categories.
+          Your personal &quot;Me&quot; space, your leader and skip-level leader, plus everyone you added. Open a card to
+          jump into that person&apos;s workspace.
         </p>
-        <Link
-          className="btn btn--primary btn--icon"
-          to={teamLeader(resolvedTeamId)}
-          title="Open My leader workspace"
-          aria-label="Open My leader workspace"
-        >
-          <span className="btn__icon">
-            <IcArrowRight size={17} />
-          </span>
-        </Link>
-      </section>
+        <div className="tiles" style={{ marginTop: 12 }}>
+          <div className="tile member-tile">
+            <Link className="tile__link" to={teamMe(resolvedTeamId)} title="Open Me workspace">
+              <div className="tile__name">
+                {self.name}
+                <span className="pill" style={{ marginLeft: 6 }}>You</span>
+              </div>
+              <div className="muted small">{self.title || 'Your personal workspace'}</div>
+            </Link>
+          </div>
 
-      <section className="card">
-        <h2 className="card__title">Skip-level leader</h2>
-        <p className="muted small">
-          Your manager&apos;s manager (or another senior stakeholder). Use this for skip-level 1:1s, career themes and upward visibility — separate from your direct leader.
-        </p>
-        <Link
-          className="btn btn--primary btn--icon"
-          to={teamSkipLevel(resolvedTeamId)}
-          title="Open Skip-level leader workspace"
-          aria-label="Open Skip-level leader workspace"
-        >
-          <span className="btn__icon">
-            <IcArrowRight size={17} />
-          </span>
-        </Link>
+          {leader ? (
+            <div className="tile member-tile">
+              <Link className="tile__link" to={teamLeader(resolvedTeamId)} title="Open My leader workspace">
+                <div className="tile__name">
+                  {leader.name}
+                  <span className="pill" style={{ marginLeft: 6 }}>Leader</span>
+                </div>
+                <div className="muted small">{leader.title || 'Your manager'}</div>
+              </Link>
+            </div>
+          ) : null}
+
+          {skipLevel ? (
+            <div className="tile member-tile">
+              <Link className="tile__link" to={teamSkipLevel(resolvedTeamId)} title="Open Skip-level leader workspace">
+                <div className="tile__name">
+                  {skipLevel.name}
+                  <span className="pill" style={{ marginLeft: 6 }}>Skip-level</span>
+                </div>
+                <div className="muted small">{skipLevel.title || 'Your skip-level leader'}</div>
+              </Link>
+            </div>
+          ) : null}
+
+          {members.map((p) => (
+            <div key={p.id} className="tile member-tile">
+              <Link
+                to={`${teamPeoplePath(resolvedTeamId)}/${p.id}`}
+                className="tile__link"
+                title={`Open ${p.name}'s workspace`}
+              >
+                <div className="tile__name">{p.name}</div>
+                <div className="muted small">{p.title || 'Open workspace'}</div>
+              </Link>
+              <div className="member-tile__actions row" style={{ marginTop: 8 }}>
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  icon={<IcTrash size={16} />}
+                  onClick={() => removePerson(p.id)}
+                >
+                  Remove
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="card">
@@ -265,27 +284,6 @@ export function People() {
             Add
           </Button>
         </form>
-      </section>
-
-      <section className="card">
-        <h2 className="card__title">People</h2>
-        {members.length === 0 ? (
-          <p className="muted">No team members yet.</p>
-        ) : (
-          <div className="tiles">
-            {members.map((p) => (
-              <div key={p.id} className="tile">
-                <Link to={`${teamPeoplePath(resolvedTeamId)}/${p.id}`} className="tile__link">
-                  <div className="tile__name">{p.name}</div>
-                  {p.title ? <div className="muted small">{p.title}</div> : <div className="muted small">Open workspace</div>}
-                </Link>
-                <Button type="button" variant="danger" size="sm" icon={<IcTrash size={16} />} onClick={() => removePerson(p.id)}>
-                  Remove
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
       </section>
     </div>
   );

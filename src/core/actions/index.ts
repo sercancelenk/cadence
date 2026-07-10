@@ -20,6 +20,8 @@ import type {
   UserProfile,
   UtilityDocument,
   UtilityStructuredText,
+  UtilityStructuredTab,
+  StructuredTextMode,
 } from '../model';
 import {
   isSyntheticPerson,
@@ -27,6 +29,7 @@ import {
   selfPersonIdForTeam,
   leaderPersonIdForTeam,
   skipLevelPersonIdForTeam,
+  DEFAULT_STRUCTURED_CONTENT,
 } from '../model';
 
 export function addTeam(data: AppData, name: string): AppData {
@@ -1173,8 +1176,8 @@ export function patchUtilityDocument(
   };
 }
 
-/** Default editor seed — must match `UtilitiesStructuredPage` DEFAULT_JSON. */
-const DEFAULT_UTILITY_STRUCTURED_CONTENT = '{\n}\n';
+/** Default editor seed — shared with the multi-tab model. */
+const DEFAULT_UTILITY_STRUCTURED_CONTENT = DEFAULT_STRUCTURED_CONTENT;
 
 export function patchUtilityStructuredText(
   data: AppData,
@@ -1198,4 +1201,112 @@ export function patchUtilityStructuredText(
       updatedAt: nowIso(),
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// JSON / YAML multi-tab editor (Postman-style). Each tab owns an isolated
+// buffer; these reducers are pure and never mutate a non-target tab.
+// ---------------------------------------------------------------------------
+
+/** Pick the next free "Untitled N" label so new tabs don't collide. */
+function nextUntitledTitle(tabs: UtilityStructuredTab[]): string {
+  let n = tabs.length + 1;
+  const taken = new Set(tabs.map((t) => t.title));
+  while (taken.has(`Untitled ${n}`)) n += 1;
+  return `Untitled ${n}`;
+}
+
+function createStructuredTab(id: string, title: string): UtilityStructuredTab {
+  return {
+    id,
+    title,
+    content: DEFAULT_UTILITY_STRUCTURED_CONTENT,
+    language: 'json',
+    mode: 'edit',
+    updatedAt: nowIso(),
+  };
+}
+
+/**
+ * Append a new empty tab and make it active. `id` is supplied by the caller
+ * so the updater stays pure (React StrictMode may run it twice).
+ */
+export function addStructuredTab(data: AppData, id: string): AppData {
+  const tabs = data.utilityStructuredTabs ?? [];
+  const tab = createStructuredTab(id, nextUntitledTitle(tabs));
+  return {
+    ...data,
+    utilityStructuredTabs: [...tabs, tab],
+    activeStructuredTabId: tab.id,
+  };
+}
+
+/**
+ * Close a tab. Guarantees at least one tab always remains: closing the last
+ * tab replaces it with a fresh empty one instead of leaving the editor blank.
+ * When the active tab is closed, focus falls back to the nearest neighbour.
+ */
+export function closeStructuredTab(data: AppData, id: string): AppData {
+  const tabs = data.utilityStructuredTabs ?? [];
+  const idx = tabs.findIndex((t) => t.id === id);
+  if (idx === -1) return data;
+
+  const remaining = tabs.filter((t) => t.id !== id);
+  if (remaining.length === 0) {
+    const fresh = createStructuredTab(uuid(), 'Untitled 1');
+    return {
+      ...data,
+      utilityStructuredTabs: [fresh],
+      activeStructuredTabId: fresh.id,
+    };
+  }
+
+  let activeStructuredTabId = data.activeStructuredTabId;
+  if (activeStructuredTabId === id) {
+    const neighbour = remaining[Math.min(idx, remaining.length - 1)];
+    activeStructuredTabId = neighbour.id;
+  }
+  return { ...data, utilityStructuredTabs: remaining, activeStructuredTabId };
+}
+
+export function renameStructuredTab(data: AppData, id: string, title: string): AppData {
+  const tabs = data.utilityStructuredTabs ?? [];
+  const trimmed = title.trim();
+  if (!trimmed) return data;
+  let changed = false;
+  const next = tabs.map((t) => {
+    if (t.id !== id || t.title === trimmed) return t;
+    changed = true;
+    return { ...t, title: trimmed, updatedAt: nowIso() };
+  });
+  if (!changed) return data;
+  return { ...data, utilityStructuredTabs: next };
+}
+
+export function setActiveStructuredTab(data: AppData, id: string): AppData {
+  if (data.activeStructuredTabId === id) return data;
+  const tabs = data.utilityStructuredTabs ?? [];
+  if (!tabs.some((t) => t.id === id)) return data;
+  return { ...data, activeStructuredTabId: id };
+}
+
+export function patchStructuredTab(
+  data: AppData,
+  id: string,
+  patch: Partial<
+    Pick<UtilityStructuredTab, 'content' | 'diffContentLeft' | 'diffContent' | 'language' | 'mode'>
+  >,
+): AppData {
+  const tabs = data.utilityStructuredTabs ?? [];
+  let changed = false;
+  const next = tabs.map((t) => {
+    if (t.id !== id) return t;
+    const language: 'json' | 'yaml' =
+      patch.language === 'yaml' ? 'yaml' : patch.language === 'json' ? 'json' : t.language;
+    const mode: StructuredTextMode = patch.mode === 'diff' ? 'diff' : patch.mode === 'edit' ? 'edit' : t.mode;
+    changed = true;
+    return { ...t, ...patch, language, mode, updatedAt: nowIso() };
+  });
+  if (!changed) return data;
+  return { ...data, utilityStructuredTabs: next };
 }

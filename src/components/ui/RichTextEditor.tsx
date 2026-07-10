@@ -40,6 +40,7 @@ import {
 import { resolveRichTextContent } from '../../lib/richTextImport';
 import { insertMarkdownPaste, shouldPasteClipboardAsMarkdown } from '../../lib/richTextPaste';
 import { RichTextImageLightbox } from './RichTextImageLightbox';
+import { RichTextFindController } from './RichTextFindController';
 import { Tooltip } from './Tooltip';
 
 /** Coalesce parent updates — editor stays instant; persist layer debounces again. */
@@ -264,6 +265,13 @@ export function RichTextEditor({
 
   const [charCount, setCharCount] = useState(0);
 
+  // In-editor find & replace (⌘F). `findOpenRef` mirrors the state so the
+  // (stable) ProseMirror keydown handler can read/toggle it without stale
+  // closures.
+  const [findOpen, setFindOpen] = useState(false);
+  const findOpenRef = useRef(false);
+  findOpenRef.current = findOpen;
+
   const formatArg: RichTextBodyFormat | undefined =
     valueFormat === 'auto' ? undefined : valueFormat;
 
@@ -484,6 +492,16 @@ export function RichTextEditor({
         spellcheck: 'true',
       },
       handleKeyDown: (_view, event) => {
+        if ((event.metaKey || event.ctrlKey) && (event.key === 'f' || event.key === 'F')) {
+          event.preventDefault();
+          setFindOpen(true);
+          return true;
+        }
+        if (event.key === 'Escape' && findOpenRef.current) {
+          event.preventDefault();
+          setFindOpen(false);
+          return true;
+        }
         if (event.key === 'Escape' && imageLightboxOpenRef.current) {
           event.preventDefault();
           closeImageLightboxRef.current();
@@ -705,6 +723,13 @@ export function RichTextEditor({
             </>
           )}
         </div>
+      ) : null}
+      {findOpen && editor ? (
+        <RichTextFindController
+          editor={editor}
+          editable={editable}
+          onClose={() => setFindOpen(false)}
+        />
       ) : null}
       <EditorContent editor={editor} className="rich-editor__surface" />
       {imageLightbox ? (

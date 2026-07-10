@@ -10,6 +10,7 @@ import { useConfirm } from '../components/ui/ConfirmProvider';
 import { AppModal, AppModalActions } from '../components/ui/AppModal';
 import { askAI, AIError, defaultModel } from '../lib/ai';
 import { APP_SLUG } from '../lib/appBranding';
+import { formatAppVersion } from '../lib/appVersionLabel';
 import { resolveAppProfileLabel } from '../lib/appProfileLabel';
 import type { AIProvider } from '../model';
 import { AI_PROVIDER_OPTIONS, appDataToPersistJson, compactAppDataForPersist, normalizeData } from '../model';
@@ -578,10 +579,27 @@ export function Settings() {
           source={source}
           setPreset={setPreset}
         />
-        <CollapsibleCard id="version" title="Application version" defaultOpen={false} badge={appVersion || '—'}>
-          <p>
-            Installed version: <strong>{appVersion || '—'}</strong> · Data schema: v{data.version}
-          </p>
+        <CollapsibleCard
+          id="version"
+          title="Application version"
+          defaultOpen={false}
+          badge={formatAppVersion(appVersion).label}
+        >
+          {(() => {
+            const v = formatAppVersion(appVersion);
+            return (
+              <>
+                <p>
+                  Installed release: <strong>{v.label}</strong>
+                </p>
+                <p className="muted small">
+                  {v.build !== null ? <>Build {v.build} · </> : null}
+                  {v.raw ? <>Version {v.raw} · </> : null}
+                  Data schema v{data.version}
+                </p>
+              </>
+            );
+          })()}
         </CollapsibleCard>
         <CollapsibleCard id="user-guide" title="User guide" defaultOpen={false}>
           <p className="muted">
@@ -656,7 +674,7 @@ function SettingsGroup({
 }
 
 type UpdaterPhase =
-  | { kind: 'checking' }
+  | { kind: 'checking'; attempt?: number }
   | { kind: 'available'; version?: string }
   | { kind: 'downloading'; percent: number; transferred: number; total: number }
   | { kind: 'downloaded'; version?: string }
@@ -665,11 +683,17 @@ type UpdaterPhase =
   | { kind: 'unsupported' }
   | { kind: 'error'; message?: string };
 
+/** How many times the initial check auto-retries before showing an error. */
+const UPDATE_CHECK_MAX_ATTEMPTS = 3;
+
 function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { flushPendingSave } = useAppData();
   const [phase, setPhase] = useState<UpdaterPhase>({ kind: 'checking' });
   const [installing, setInstalling] = useState(false);
   const toast = useToast();
+  // Set by the effect while the dialog is open; lets the "Try again" button
+  // restart the whole check (with a fresh retry budget) from render scope.
+  const restartRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -678,18 +702,66 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
       setPhase({ kind: 'unsupported' });
       return;
     }
-    setPhase({ kind: 'checking' });
-    setInstalling(false);
+
+    let attempt = 0;
+    // Once the flow reaches a real result (available/downloading/…), a later
+    // error is a genuine download error — surface it instead of retrying.
+    let progressed = false;
+    let handled = false;
+    let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const failOrRetry = (message?: string) => {
+      if (disposed || handled) return;
+      handled = true;
+      if (!progressed && attempt < UPDATE_CHECK_MAX_ATTEMPTS - 1) {
+        attempt += 1;
+        setPhase({ kind: 'checking', attempt });
+        retryTimer = setTimeout(() => {
+          handled = false;
+          start();
+        }, 1200 * attempt);
+      } else {
+        setPhase({ kind: 'error', message });
+      }
+    };
+
+    const start = () => {
+      if (disposed) return;
+      handled = false;
+      setPhase(attempt > 0 ? { kind: 'checking', attempt } : { kind: 'checking' });
+      setInstalling(false);
+      void (async () => {
+        try {
+          const r = await api.checkForUpdates?.();
+          if (r && !r.ok) {
+            if (r.reason === 'dev') {
+              handled = true;
+              setPhase({ kind: 'dev' });
+            } else {
+              failOrRetry(r.error || 'Update check failed.');
+            }
+          }
+        } catch (err) {
+          failOrRetry(err instanceof Error ? err.message : String(err));
+        }
+      })();
+    };
 
     const off = api.onUpdaterEvent((e) => {
+      if (disposed) return;
       switch (e.status) {
         case 'checking':
-          setPhase({ kind: 'checking' });
+          // Preserve any retry-attempt label already set by `start`.
           break;
         case 'available':
+          progressed = true;
+          handled = true;
           setPhase({ kind: 'available', version: e.version });
           break;
         case 'downloading':
+          progressed = true;
+          handled = true;
           setPhase({
             kind: 'downloading',
             percent: e.percent,
@@ -698,29 +770,39 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
           });
           break;
         case 'downloaded':
+          progressed = true;
+          handled = true;
           setPhase({ kind: 'downloaded', version: e.version });
           break;
         case 'not-available':
+          progressed = true;
+          handled = true;
           setPhase({ kind: 'not-available', version: e.version });
           break;
         case 'error':
-          setPhase({ kind: 'error', message: e.message });
+          if (progressed) setPhase({ kind: 'error', message: e.message });
+          else failOrRetry(e.message);
           break;
       }
     });
 
-    void (async () => {
-      const r = await api.checkForUpdates?.();
-      if (r && !r.ok) {
-        if (r.reason === 'dev') setPhase({ kind: 'dev' });
-        else setPhase({ kind: 'error', message: r.error || 'Update check failed.' });
-      }
-    })();
+    restartRef.current = () => {
+      if (retryTimer) clearTimeout(retryTimer);
+      attempt = 0;
+      progressed = false;
+      handled = false;
+      start();
+    };
+
+    start();
 
     return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      restartRef.current = null;
       off?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -749,13 +831,19 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
         cancelDisabled={installing}
         busy={installing}
       />
+    ) : phase.kind === 'error' ? (
+      <AppModalActions
+        onCancel={onClose}
+        onConfirm={() => restartRef.current?.()}
+        cancelLabel="Close"
+        confirmLabel="Try again"
+      />
     ) : phase.kind === 'not-available' ||
       phase.kind === 'dev' ||
-      phase.kind === 'unsupported' ||
-      phase.kind === 'error' ? (
+      phase.kind === 'unsupported' ? (
       <div className="app-modal__actions">
         <button type="button" className="app-modal__btn-confirm" onClick={onClose}>
-          {phase.kind === 'error' ? 'Close' : 'OK'}
+          OK
         </button>
       </div>
     ) : undefined;
@@ -769,15 +857,19 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
       footer={updaterFooter}
     >
       {phase.kind === 'checking' && (
-        <p className="muted">Checking GitHub Releases for a newer version…</p>
+        <p className="muted">
+          {phase.attempt
+            ? `Connection hiccup — retrying… (attempt ${phase.attempt + 1} of ${UPDATE_CHECK_MAX_ATTEMPTS})`
+            : 'Checking GitHub Releases for a newer version…'}
+        </p>
       )}
 
       {phase.kind === 'available' && (
         <>
           <p>
             A newer version
-            {phase.version ? <> (<strong>v{phase.version}</strong>)</> : ''} is available.
-            Downloading now…
+            {phase.version ? <> (<strong>{formatAppVersion(phase.version).label}</strong>)</> : ''} is
+            available. Downloading now…
           </p>
           <div className="progress" style={{ width: '100%' }}>
             <div className="progress__bar" style={{ width: '6%' }} />
@@ -803,7 +895,8 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
       {phase.kind === 'downloaded' && (
         <>
           <p>
-            Update{phase.version ? <> <strong>v{phase.version}</strong></> : ''} is ready to install.
+            Update{phase.version ? <> <strong>{formatAppVersion(phase.version).label}</strong></> : ''} is
+            ready to install.
           </p>
           <p className="muted small">
             The app will quit, swap in the new version, and relaunch automatically.
@@ -814,7 +907,7 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
       {phase.kind === 'not-available' && (
         <p>
           You're on the latest version
-          {phase.version ? <> (<strong>v{phase.version}</strong>)</> : ''}.
+          {phase.version ? <> (<strong>{formatAppVersion(phase.version).label}</strong>)</> : ''}.
         </p>
       )}
 
@@ -831,11 +924,23 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
       {phase.kind === 'error' && (
         <>
-          <p>Something went wrong while checking for updates.</p>
+          <p>We couldn't reach the update server.</p>
+          <p className="muted small">
+            Please check your internet connection and try again. Your app keeps working normally in
+            the meantime, and it will check again automatically the next time you open it.
+          </p>
           {phase.message ? (
-            <pre className="pre" style={{ whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto' }}>
-              {phase.message}
-            </pre>
+            <details style={{ marginTop: 8 }}>
+              <summary className="muted small" style={{ cursor: 'pointer' }}>
+                Technical details
+              </summary>
+              <pre
+                className="pre"
+                style={{ whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto', marginTop: 6 }}
+              >
+                {phase.message}
+              </pre>
+            </details>
           ) : null}
         </>
       )}

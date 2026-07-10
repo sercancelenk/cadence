@@ -13,6 +13,7 @@ import TableHeader from '@tiptap/extension-table-header';
 import type { Extensions } from '@tiptap/core';
 import { RichTextCodeBlock } from './richTextCodeBlock';
 import { DateChip } from './richTextDateChip';
+import { RichTextSearchExtension } from './richTextSearch';
 
 const IMAGE_MIN_WIDTH = 48;
 
@@ -262,6 +263,9 @@ export function createRichTextExtensions(placeholder = 'Write here…'): Extensi
     TaskList,
     TaskItem.configure({ nested: true }),
     DateChip,
+    // In-editor find & replace (⌘F). Inert until a query is set; adds no
+    // nodes/marks so it's safe in the shared markdown-import extension list too.
+    RichTextSearchExtension,
     Placeholder.configure({ placeholder }),
   ];
 }

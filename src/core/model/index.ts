@@ -424,8 +424,21 @@ export interface AppData {
    * a free-form workspace for drafts, paste buffers, etc.
    */
   utilityDocument?: UtilityDocument;
-  /** Utilities → JSON / YAML scratch buffer (synced in workspace JSON). */
+  /**
+   * Utilities → JSON / YAML scratch buffer (legacy single-buffer).
+   *
+   * Superseded by `utilityStructuredTabs`. Kept on the model so that:
+   *   1. upgrading users don't lose their existing buffer (it is migrated
+   *      into the first tab on load — see `parseAppData`), and
+   *   2. a downgrade to an older build that still reads this field finds
+   *      the last-migrated content instead of nothing (expand→migrate,
+   *      destructive contract deferred). We never delete it here.
+   */
   utilityStructuredText?: UtilityStructuredText;
+  /** Utilities → JSON / YAML multi-document tabs (Postman-style). */
+  utilityStructuredTabs?: UtilityStructuredTab[];
+  /** Id of the currently active JSON / YAML tab. */
+  activeStructuredTabId?: string;
 }
 
 /** Persisted rich-text scratch pad under Utilities. */
@@ -444,6 +457,29 @@ export interface UtilityStructuredText {
   /** Diff right pane (After). */
   diffContent?: string;
   language: 'json' | 'yaml';
+  updatedAt: string;
+}
+
+export type StructuredTextMode = 'edit' | 'diff';
+
+/**
+ * A single JSON / YAML editor tab. Every tab owns a fully isolated state
+ * (its own content, diff panes, language and edit/diff mode) so switching
+ * tabs never mutates another tab's buffer.
+ */
+export interface UtilityStructuredTab {
+  id: string;
+  /** User-facing tab label (e.g. "Untitled 1"). Renamed via double-click. */
+  title: string;
+  /** Edit-mode buffer. */
+  content: string;
+  /** Diff left pane (Before). Independent from `content` after first Diff open. */
+  diffContentLeft?: string;
+  /** Diff right pane (After). */
+  diffContent?: string;
+  language: 'json' | 'yaml';
+  /** Which pane is shown for this tab. Persisted per-tab. */
+  mode: StructuredTextMode;
   updatedAt: string;
 }
 
@@ -1085,6 +1121,9 @@ export function normalizeData(raw: unknown): AppData {
   let notesLock = parseNotesLock(o.notesLock);
   const utilityDocument = parseUtilityDocument(o.utilityDocument);
   const utilityStructuredText = parseUtilityStructuredText(o.utilityStructuredText);
+  const utilityStructuredTabs = parseUtilityStructuredTabs(o.utilityStructuredTabs);
+  const activeStructuredTabId =
+    typeof o.activeStructuredTabId === 'string' ? o.activeStructuredTabId : undefined;
 
   // Defensive: orphan notesLock cleanup. The lock object can survive on
   // disk after the user clears the notes passphrase if the corresponding
@@ -1119,6 +1158,8 @@ export function normalizeData(raw: unknown): AppData {
     notesLock,
     utilityDocument,
     utilityStructuredText,
+    utilityStructuredTabs,
+    activeStructuredTabId,
     profile: parseProfile(o.profile),
   });
 
@@ -1126,6 +1167,7 @@ export function normalizeData(raw: unknown): AppData {
   data = ensureTeamsHaveLeader(data);
   data = ensureTeamsHaveSkipLevel(data);
   data = ensureProfile(data);
+  data = ensureStructuredTabs(data);
 
   return patchDataToV3(data);
 }
@@ -1285,6 +1327,78 @@ function parseUtilityStructuredText(raw: unknown): UtilityStructuredText | undef
     language: o.language === 'yaml' ? 'yaml' : 'json',
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
   });
+}
+
+/** Shared default seed for a freshly-created JSON / YAML tab. */
+export const DEFAULT_STRUCTURED_CONTENT = '{\n}\n';
+
+function parseUtilityStructuredTab(raw: unknown, index: number): UtilityStructuredTab | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  // A tab is only meaningful with a string content buffer; anything else is
+  // corrupt and dropped defensively rather than crashing the whole load.
+  if (typeof o.content !== 'string') return undefined;
+  const title =
+    typeof o.title === 'string' && o.title.trim() ? o.title : `Untitled ${index + 1}`;
+  return withExtras<UtilityStructuredTab>(o, {
+    id: typeof o.id === 'string' && o.id ? o.id : uuid(),
+    title,
+    content: o.content,
+    diffContentLeft: typeof o.diffContentLeft === 'string' ? o.diffContentLeft : undefined,
+    diffContent: typeof o.diffContent === 'string' ? o.diffContent : undefined,
+    language: o.language === 'yaml' ? 'yaml' : 'json',
+    mode: o.mode === 'diff' ? 'diff' : 'edit',
+    updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
+  });
+}
+
+function parseUtilityStructuredTabs(raw: unknown): UtilityStructuredTab[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const tabs = raw
+    .map((r, i) => parseUtilityStructuredTab(r, i))
+    .filter((t): t is UtilityStructuredTab => Boolean(t));
+  return tabs.length > 0 ? tabs : undefined;
+}
+
+/**
+ * Guarantee the multi-tab JSON / YAML editor has at least one tab and a
+ * valid active id, migrating the legacy single-buffer field on first upgrade.
+ *
+ * Data-safety contract (0% loss):
+ *   - If tabs already exist, they win; we only repair a dangling active id.
+ *   - Otherwise the legacy `utilityStructuredText` (if any) is migrated into
+ *     tab #1 verbatim — no content, diff panes or language are dropped.
+ *   - The legacy field itself is intentionally NOT deleted here so a
+ *     downgrade still finds the user's data (destructive contract deferred).
+ *   - A brand-new workspace (no tabs, no legacy) is left untouched; the
+ *     editor page seeds its first tab lazily on open.
+ */
+function ensureStructuredTabs(data: AppData): AppData {
+  const tabs = data.utilityStructuredTabs;
+  if (tabs && tabs.length > 0) {
+    const activeOk = tabs.some((t) => t.id === data.activeStructuredTabId);
+    if (activeOk) return data;
+    return { ...data, activeStructuredTabId: tabs[0].id };
+  }
+
+  const legacy = data.utilityStructuredText;
+  if (!legacy) return data;
+
+  const migrated: UtilityStructuredTab = {
+    id: uuid(),
+    title: 'Untitled 1',
+    content: legacy.content,
+    diffContentLeft: legacy.diffContentLeft,
+    diffContent: legacy.diffContent,
+    language: legacy.language,
+    mode: 'edit',
+    updatedAt: legacy.updatedAt || nowIso(),
+  };
+  return {
+    ...data,
+    utilityStructuredTabs: [migrated],
+    activeStructuredTabId: migrated.id,
+  };
 }
 
 function parseNotesLock(raw: unknown): NotesLock | undefined {

@@ -29,6 +29,11 @@ import {
   patchNote,
   patchUtilityDocument,
   patchUtilityStructuredText,
+  addStructuredTab,
+  closeStructuredTab,
+  renameStructuredTab,
+  setActiveStructuredTab,
+  patchStructuredTab,
   removeItem,
   removeNote,
   removePerson,
@@ -830,5 +835,68 @@ describe('notes and utilities', () => {
     const d = patchUtilityStructuredText(base, { diffContent: '{"a":1}\n' });
     expect(d.utilityStructuredText?.content).toBe('{\n}\n');
     expect(d.utilityStructuredText?.diffContent).toBe('{"a":1}\n');
+  });
+});
+
+describe('structured text tabs', () => {
+  it('addStructuredTab appends an isolated tab and activates it with a unique title', () => {
+    const base = emptyData();
+    const d1 = addStructuredTab(base, 'a');
+    expect(d1.utilityStructuredTabs).toHaveLength(1);
+    expect(d1.utilityStructuredTabs![0]!.title).toBe('Untitled 1');
+    expect(d1.activeStructuredTabId).toBe('a');
+
+    const d2 = addStructuredTab(d1, 'b');
+    expect(d2.utilityStructuredTabs).toHaveLength(2);
+    expect(d2.activeStructuredTabId).toBe('b');
+    expect(new Set(d2.utilityStructuredTabs!.map((t) => t.title)).size).toBe(2);
+  });
+
+  it('patchStructuredTab mutates only the target tab (isolation)', () => {
+    let d = addStructuredTab(emptyData(), 'a');
+    d = addStructuredTab(d, 'b');
+    d = patchStructuredTab(d, 'a', { content: '{"a":1}', language: 'yaml' });
+    const a = d.utilityStructuredTabs!.find((t) => t.id === 'a')!;
+    const b = d.utilityStructuredTabs!.find((t) => t.id === 'b')!;
+    expect(a.content).toBe('{"a":1}');
+    expect(a.language).toBe('yaml');
+    // Sibling untouched.
+    expect(b.content).toBe('{\n}\n');
+    expect(b.language).toBe('json');
+  });
+
+  it('setActiveStructuredTab only switches to existing tabs', () => {
+    let d = addStructuredTab(emptyData(), 'a');
+    d = addStructuredTab(d, 'b');
+    d = setActiveStructuredTab(d, 'a');
+    expect(d.activeStructuredTabId).toBe('a');
+    const unchanged = setActiveStructuredTab(d, 'missing');
+    expect(unchanged.activeStructuredTabId).toBe('a');
+  });
+
+  it('renameStructuredTab trims and ignores empty titles', () => {
+    let d = addStructuredTab(emptyData(), 'a');
+    d = renameStructuredTab(d, 'a', '  Payload  ');
+    expect(d.utilityStructuredTabs![0]!.title).toBe('Payload');
+    const unchanged = renameStructuredTab(d, 'a', '   ');
+    expect(unchanged.utilityStructuredTabs![0]!.title).toBe('Payload');
+  });
+
+  it('closeStructuredTab removes tab and moves focus to a neighbour', () => {
+    let d = addStructuredTab(emptyData(), 'a');
+    d = addStructuredTab(d, 'b');
+    d = addStructuredTab(d, 'c');
+    d = setActiveStructuredTab(d, 'b');
+    d = closeStructuredTab(d, 'b');
+    expect(d.utilityStructuredTabs!.map((t) => t.id)).toEqual(['a', 'c']);
+    // Neighbour at the same index ('c') becomes active.
+    expect(d.activeStructuredTabId).toBe('c');
+  });
+
+  it('closeStructuredTab never leaves the editor empty', () => {
+    const d = closeStructuredTab(addStructuredTab(emptyData(), 'a'), 'a');
+    expect(d.utilityStructuredTabs).toHaveLength(1);
+    expect(d.activeStructuredTabId).toBe(d.utilityStructuredTabs![0]!.id);
+    expect(d.utilityStructuredTabs![0]!.id).not.toBe('a');
   });
 });

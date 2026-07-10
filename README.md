@@ -727,12 +727,18 @@ The packaged desktop app checks GitHub Releases on launch via [`electron-updater
 You can also force an interactive check from *Settings → Auto updates → Check for updates*. A dialog walks you through the full flow:
 
 - *Checking…* spinner.
-- If you're current: *"You're on the latest version (vX.Y.Z)."* with an OK button.
+- If you're current: *"You're on the latest version (July 2026)."* with an OK button.
 - If a newer release exists: progress bar with percent and MB transferred.
 - When the download finishes: an *Install & restart* button — clicking it runs `quitAndInstall` so the app closes, swaps in the new binary, and relaunches without you having to manually quit. *Later* defers the install until next launch.
-- Errors are surfaced inline with the message from `electron-updater`.
+- On a network error the check **auto-retries a few times** with backoff, then shows a friendly *"We couldn't reach the update server"* message (technical details are tucked behind a disclosure) with a **Try again** button. The app keeps working normally and re-checks on the next launch.
 
 You can also trigger the same check from the menu bar via *Cadence → Check for Updates…*. Development builds (`npm run dev`) short-circuit the check and the dialog shows a "disabled in development mode" notice.
+
+### Versioning
+
+Releases use **CalVer**: the build carries a `YYYY.M.<build>` version (e.g. `2026.7.72`) where the year is the semver major, the month (1–12) is the minor, and the CI run number is the patch. This is still valid, strictly-increasing semver, so `electron-updater`'s comparison stays trivially correct — every new release is greater than any previous one (including the legacy `0.3.x` line, since `2026 > 0`), meaning clients on older versions always see it as an upgrade.
+
+In the UI you just see the friendly label — **"July 2026"** — with the exact build string available in the tooltip and under *Settings → Application version*. The version is produced in CI by [`scripts/compute-version.mjs`](scripts/compute-version.mjs) and formatted for display by [`src/lib/appVersionLabel.ts`](src/lib/appVersionLabel.ts). Before publishing, [`scripts/validate-release-config.mjs --check-version`](scripts/validate-release-config.mjs) checks the new version against the latest published release and **aborts the release** if it isn't strictly greater — a guard that makes it impossible to ship a build that would freeze auto-updates for existing users. If GitHub can't be reached the guard retries and then fails open (never blocking a legitimate release for a transient network blip).
 
 The PWA "updates" itself silently via the service worker — the next time the device is online and you reopen the app, the new build is fetched and applied on the following navigation. Bumping `CACHE_VERSION` in `public/sw.js` invalidates every old cache.
 
@@ -910,7 +916,7 @@ tab and pick the workflow you want; CI runs first as a gate inside it.
 |---|---|---|
 | [`ci.yml`](.github/workflows/ci.yml) | reusable (`workflow_call`) + manual (`Run workflow`) | `npm run typecheck` + `npm test` + `npm run build:web`. Invoked as the green-light gate by Release & Pages; you can also fire it on demand to sanity-check a branch. |
 | [`pages.yml`](.github/workflows/pages.yml) | manual (`Run workflow`) | Calls CI → `npm run build:pwa` → publishes to GitHub Pages. |
-| [`release.yml`](.github/workflows/release.yml) | manual (`Run workflow`) | Calls CI → bumps version to `0.2.<run_number>` → `electron-builder --publish always` → signs + notarizes the `.app` → uploads DMG/ZIP/`latest-mac.yml` to a new GitHub Release. |
+| [`release.yml`](.github/workflows/release.yml) | manual (`Run workflow`) | Calls CI → computes a CalVer version `YYYY.M.<run_number>` and guards it against the latest release (updater-safety) → `electron-builder --publish always` → signs + notarizes the `.app` → uploads DMG/ZIP/`latest-mac.yml` to a new GitHub Release. |
 
 ### Cutting a desktop release
 

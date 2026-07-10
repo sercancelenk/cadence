@@ -182,23 +182,16 @@ export function TeamDashboard() {
                     className="tile__link"
                     title={`Open ${m.person.name}'s workspace`}
                   >
-                    <div className="row row--between" style={{ alignItems: 'flex-start' }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div className="tile__name">
-                          {m.person.name}
-                          {m.role === 'self' ? <span className="pill" style={{ marginLeft: 6 }}>You</span> : null}
-                          {m.role === 'leader' ? <span className="pill" style={{ marginLeft: 6 }}>Leader</span> : null}
-                          {m.role === 'skipLevel' ? (
-                            <span className="pill" style={{ marginLeft: 6 }}>Skip-level</span>
-                          ) : null}
-                        </div>
-                        <div className="muted small">{m.person.title || roleHint(m.role)}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="tile__name">
+                        {m.person.name}
+                        {m.role === 'self' ? <span className="pill" style={{ marginLeft: 6 }}>You</span> : null}
+                        {m.role === 'leader' ? <span className="pill" style={{ marginLeft: 6 }}>Leader</span> : null}
+                        {m.role === 'skipLevel' ? (
+                          <span className="pill" style={{ marginLeft: 6 }}>Skip-level</span>
+                        ) : null}
                       </div>
-                      <span className="btn btn--primary btn--icon" aria-hidden>
-                        <span className="btn__icon">
-                          <IcArrowRight size={17} />
-                        </span>
-                      </span>
+                      <div className="muted small">{m.person.title || roleHint(m.role)}</div>
                     </div>
                     <div className="member-tile__stats muted small">
                       <span>{m.openTasks} open {m.openTasks === 1 ? 'task' : 'tasks'}</span>

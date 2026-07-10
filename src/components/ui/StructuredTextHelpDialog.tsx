@@ -37,7 +37,10 @@ export function StructuredTextHelpDialog({ onClose }: StructuredTextHelpDialogPr
           Edit mode
         </h3>
         <ul>
-          <li>One document buffer for drafting, formatting, and converting.</li>
+          <li>
+            Open multiple documents as tabs — <strong>＋</strong> adds a tab, double-click a tab to
+            rename it, and each tab keeps its own content, language, and mode.
+          </li>
           <li>
             Toggle <strong>JSON</strong> / <strong>YAML</strong> or use <strong>Convert</strong>{' '}
             to transform the whole document.

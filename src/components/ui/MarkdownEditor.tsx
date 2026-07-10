@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { IcCheck, IcChevronDown, IcPencil } from '../icons';
 import { SYNC_BEFORE_APPLY } from '../../lib/syncApplyGuard';
+import { FindReplaceBar } from './FindReplaceBar';
+import {
+  findTextMatches,
+  matchIndexAtOrAfter,
+  replaceAllText,
+  replaceRange,
+} from '../../lib/textFindReplace';
 
 type Props = {
   value: string;
@@ -69,6 +76,79 @@ export function MarkdownEditor({
   const [headingOpen, setHeadingOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const isEmpty = !value.trim();
+
+  // ── In-editor find & replace (⌘F) over the raw textarea value ──────────
+  const [findOpen, setFindOpen] = useState(false);
+  const [find, setFind] = useState('');
+  const [replace, setReplace] = useState('');
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  /** Caret to re-anchor on after a replace mutates `value` (async re-render). */
+  const desiredCaretRef = useRef<number | null>(null);
+
+  const matches = useMemo(
+    () => findTextMatches(value, find, caseSensitive),
+    [value, find, caseSensitive],
+  );
+
+  // A new query starts navigation over from scratch.
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [find, caseSensitive]);
+
+  // After a replace changes `value`, land on the next match at/after the edit.
+  useEffect(() => {
+    if (desiredCaretRef.current == null) return;
+    const caret = desiredCaretRef.current;
+    desiredCaretRef.current = null;
+    const idx = matchIndexAtOrAfter(matches, caret);
+    setActiveIndex(idx);
+    if (idx >= 0) {
+      const m = matches[idx]!;
+      textareaRef.current?.setSelectionRange(m.start, m.end);
+    }
+  }, [matches]);
+
+  const selectMatch = useCallback(
+    (i: number) => {
+      const m = matches[i];
+      if (!m) return;
+      // Set the selection without stealing focus from the find input, so the
+      // match is highlighted (inactive selection) and Enter keeps navigating.
+      textareaRef.current?.setSelectionRange(m.start, m.end);
+    },
+    [matches],
+  );
+
+  const gotoNext = useCallback(() => {
+    if (matches.length === 0) return;
+    const next = activeIndex < 0 ? 0 : (activeIndex + 1) % matches.length;
+    setActiveIndex(next);
+    selectMatch(next);
+  }, [matches, activeIndex, selectMatch]);
+
+  const gotoPrev = useCallback(() => {
+    if (matches.length === 0) return;
+    const prev = activeIndex <= 0 ? matches.length - 1 : activeIndex - 1;
+    setActiveIndex(prev);
+    selectMatch(prev);
+  }, [matches, activeIndex, selectMatch]);
+
+  const replaceOne = useCallback(() => {
+    if (matches.length === 0) return;
+    const i = activeIndex >= 0 ? activeIndex : 0;
+    const m = matches[i];
+    if (!m) return;
+    desiredCaretRef.current = m.start + replace.length;
+    onChange(replaceRange(value, m.start, m.end, replace));
+  }, [matches, activeIndex, replace, value, onChange]);
+
+  const replaceEverything = useCallback(() => {
+    if (matches.length === 0) return;
+    setActiveIndex(-1);
+    onChange(replaceAllText(value, find, replace, caseSensitive));
+  }, [matches, value, find, replace, caseSensitive, onChange]);
 
   useEffect(() => {
     if (!onBlur) return;
@@ -183,8 +263,30 @@ export function MarkdownEditor({
     queueSelection(ta, innerStart, innerEnd);
   }, [onChange, value]);
 
+  const findActive = findOpen && (mode === 'edit' || !tabs);
+
   return (
     <div className="md-editor" data-mode={mode}>
+      {findActive ? (
+        <FindReplaceBar
+          find={find}
+          replace={replace}
+          caseSensitive={caseSensitive}
+          replaceOpen={replaceOpen}
+          canReplace
+          matchCount={matches.length}
+          currentIndex={activeIndex >= 0 ? activeIndex + 1 : 0}
+          onFindChange={setFind}
+          onReplaceChange={setReplace}
+          onToggleCase={() => setCaseSensitive((v) => !v)}
+          onToggleReplace={() => setReplaceOpen((v) => !v)}
+          onNext={gotoNext}
+          onPrev={gotoPrev}
+          onReplaceOne={replaceOne}
+          onReplaceAll={replaceEverything}
+          onClose={() => setFindOpen(false)}
+        />
+      ) : null}
       {tabs ? (
         <div className="md-editor__tabs" role="tablist" aria-label="Editor mode">
           <button
@@ -333,9 +435,18 @@ export function MarkdownEditor({
             // Quick keyboard shortcuts for the most-used actions. We deliberately
             // only intercept the toolbar ones — everything else (Tab, native
             // text-editing chords) keeps the browser default.
+            if (e.key === 'Escape' && findOpen) {
+              e.preventDefault();
+              setFindOpen(false);
+              return;
+            }
             const mod = e.metaKey || e.ctrlKey;
             if (!mod) return;
-            if (e.key === 'b' || e.key === 'B') {
+            if (e.key === 'f' || e.key === 'F') {
+              e.preventDefault();
+              e.stopPropagation();
+              setFindOpen(true);
+            } else if (e.key === 'b' || e.key === 'B') {
               e.preventDefault();
               applyAction({ kind: 'wrap', before: '**', after: '**', placeholder: 'bold text' });
             } else if (e.key === 'i' || e.key === 'I') {

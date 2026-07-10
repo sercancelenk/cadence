@@ -11,6 +11,10 @@ import { minimatch } from 'minimatch';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const checkHelper = process.argv.includes('--check-helper');
+const checkVersion = process.argv.includes('--check-version');
+
+/** How many times to retry the "latest release" lookup on a transient error. */
+const RELEASE_LOOKUP_RETRIES = 3;
 
 let failed = false;
 const fail = (msg) => {
@@ -155,6 +159,108 @@ if (checkHelper && process.platform === 'win32') {
     fail('Windows helper missing — run npm run build:reminder-helper-win');
   } else {
     ok('Windows helper exe present');
+  }
+}
+
+/**
+ * Compare two dot-separated numeric versions (e.g. "2026.7.72" vs "0.3.71").
+ * Both the CalVer and the legacy lines are plain numeric triples, so a simple
+ * field-by-field numeric comparison is exact — no semver dependency needed.
+ * @returns {number} >0 if a>b, <0 if a<b, 0 if equal.
+ */
+function compareVersions(a, b) {
+  const pa = String(a).replace(/^v/i, '').split(/[-+]/)[0].split('.').map(Number);
+  const pb = String(b).replace(/^v/i, '').split(/[-+]/)[0].split('.').map(Number);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i += 1) {
+    const na = pa[i] ?? 0;
+    const nb = pb[i] ?? 0;
+    if (Number.isNaN(na) || Number.isNaN(nb)) return NaN;
+    if (na !== nb) return na - nb;
+  }
+  return 0;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Look up the latest *published* (non-draft, non-prerelease) release tag.
+ * @returns {Promise<{ outcome: 'found'; tag: string } | { outcome: 'none' } | { outcome: 'inconclusive'; reason: string }>}
+ *   - 'found'        the newest release tag was retrieved
+ *   - 'none'         the repo has no releases yet (first release) — 404
+ *   - 'inconclusive' we could not determine it (network/rate-limit) — fail-open
+ */
+async function fetchLatestReleaseTag(owner, repo, token) {
+  const url = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'cadence-release-guard',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let lastReason = 'unknown';
+  for (let attempt = 1; attempt <= RELEASE_LOOKUP_RETRIES; attempt += 1) {
+    try {
+      const res = await fetch(url, { headers });
+      if (res.status === 404) return { outcome: 'none' };
+      if (res.ok) {
+        const body = await res.json();
+        const tag = typeof body?.tag_name === 'string' ? body.tag_name : null;
+        if (tag) return { outcome: 'found', tag };
+        lastReason = 'response had no tag_name';
+      } else if (res.status >= 500 || res.status === 403 || res.status === 429) {
+        // Transient (server error) or rate-limited — worth retrying.
+        lastReason = `HTTP ${res.status}`;
+      } else {
+        // Definite client error (401/422/…): retrying won't help.
+        return { outcome: 'inconclusive', reason: `HTTP ${res.status}` };
+      }
+    } catch (err) {
+      lastReason = err instanceof Error ? err.message : String(err);
+    }
+    if (attempt < RELEASE_LOOKUP_RETRIES) {
+      const backoff = 1000 * attempt;
+      console.log(`  … retrying release lookup (${attempt}/${RELEASE_LOOKUP_RETRIES - 1}) after ${lastReason}`);
+      await sleep(backoff);
+    }
+  }
+  return { outcome: 'inconclusive', reason: lastReason };
+}
+
+if (checkVersion) {
+  const newVersion = pkg.version;
+  if (!expectedRepo) {
+    // Can't determine the feed repo → can't compare. Fail-open with a warning.
+    console.warn('⚠ version guard: could not resolve repository owner/repo — skipping (fail-open)');
+  } else if (!/^\d+\.\d+\.\d+$/.test(String(newVersion))) {
+    // A malformed version WOULD break the updater — this is a hard failure.
+    fail(`version guard: package.json version "${newVersion}" is not a numeric semver triple`);
+  } else {
+    const result = await fetchLatestReleaseTag(expectedRepo.owner, expectedRepo.repo, process.env.GH_TOKEN);
+    if (result.outcome === 'none') {
+      ok(`version guard: no previous release found — ${newVersion} is the first (nothing to compare)`);
+    } else if (result.outcome === 'inconclusive') {
+      // Never block a legitimate release because we couldn't reach GitHub.
+      console.warn(
+        `⚠ version guard: could not verify against the latest release (${result.reason}) — proceeding (fail-open)`,
+      );
+    } else {
+      const cmp = compareVersions(newVersion, result.tag);
+      if (Number.isNaN(cmp)) {
+        console.warn(
+          `⚠ version guard: could not compare "${newVersion}" with "${result.tag}" — proceeding (fail-open)`,
+        );
+      } else if (cmp > 0) {
+        ok(`version guard: ${newVersion} > ${result.tag} (latest release) — updater-safe`);
+      } else {
+        // Definite regression: shipping this would freeze auto-updates for
+        // everyone already on the newer/equal version. Block hard.
+        fail(
+          `version guard: new version "${newVersion}" is not greater than the latest release "${result.tag}" — ` +
+            'this would break auto-updates for current users. Release aborted.',
+        );
+      }
+    }
   }
 }
 

@@ -956,7 +956,7 @@
 
 .utilities-structured-page.page {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
   padding-top: 16px;
   padding-bottom: 16px;
@@ -970,7 +970,7 @@
   overflow: visible;
   min-height: calc(100dvh - 72px);
   flex: 1 1 auto;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .utilities-doc-page .rich-doc-pane {
@@ -1265,6 +1265,136 @@
 
 .structured-text-diff-pane__host .cm-line {
   padding: 0 4px 0 2px;
+}
+
+/* ---- JSON / YAML multi-tab bar (Postman-style) ---- */
+.structured-tabbar {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+}
+
+.structured-tabbar__list {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
+  min-width: 0;
+}
+
+.structured-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  max-width: 220px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.structured-tab:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text);
+}
+
+.structured-tab--active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--text);
+}
+
+.structured-tab__badge {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 5px;
+}
+
+.structured-tab__badge--json {
+  color: #15803d;
+  background: color-mix(in srgb, #22c55e 18%, transparent);
+}
+
+.structured-tab__badge--yaml {
+  color: #c2410c;
+  background: color-mix(in srgb, #f97316 20%, transparent);
+}
+
+.structured-tab__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.structured-tab__rename {
+  flex: 1 1 auto;
+  min-width: 60px;
+  max-width: 140px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 6px;
+  padding: 1px 5px;
+}
+
+.structured-tab__close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.structured-tab__close:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+}
+
+.structured-tabbar__add {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.structured-tabbar__add:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text);
+  background: var(--accent-soft);
 }
 
 .structured-text-workspace {

@@ -37,6 +37,11 @@ import {
   patchNote as patchNoteFn,
   patchUtilityDocument as patchUtilityDocumentFn,
   patchUtilityStructuredText as patchUtilityStructuredTextFn,
+  addStructuredTab as addStructuredTabFn,
+  closeStructuredTab as closeStructuredTabFn,
+  renameStructuredTab as renameStructuredTabFn,
+  setActiveStructuredTab as setActiveStructuredTabFn,
+  patchStructuredTab as patchStructuredTabFn,
   removeNote as removeNoteFn,
   removeNoteGroup as removeNoteGroupFn,
   reorderTodoGroup as reorderTodoGroupFn,
@@ -81,6 +86,7 @@ import type {
   UserProfile,
   UtilityDocument,
   UtilityStructuredText,
+  UtilityStructuredTab,
 } from '../core/model';
 import { isUnsupportedDataVersionError, normalizeData, appDataToPersistJson, compactAppDataForPersist, shapeOfData } from '../core/model';
 import { parseSaveDataResult } from '../lib/appDataSave';
@@ -277,6 +283,17 @@ type Api = {
   patchUtilityStructuredText: (
     patch: Partial<
       Pick<UtilityStructuredText, 'content' | 'diffContentLeft' | 'diffContent' | 'language'>
+    >,
+  ) => void;
+  /** Create a new empty JSON / YAML tab and activate it; returns its id. */
+  addStructuredTab: () => string;
+  closeStructuredTab: (id: string) => void;
+  renameStructuredTab: (id: string, title: string) => void;
+  setActiveStructuredTab: (id: string) => void;
+  patchStructuredTab: (
+    id: string,
+    patch: Partial<
+      Pick<UtilityStructuredTab, 'content' | 'diffContentLeft' | 'diffContent' | 'language' | 'mode'>
     >,
   ) => void;
 };
@@ -1313,6 +1330,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setNotesLock: (lock) => update((x) => setNotesLockFn(x, lock)),
       patchUtilityDocument: (patch) => update((x) => patchUtilityDocumentFn(x, patch)),
       patchUtilityStructuredText: (patch) => update((x) => patchUtilityStructuredTextFn(x, patch)),
+      addStructuredTab: () => {
+        const id = uuid();
+        update((x) => addStructuredTabFn(x, id));
+        return id;
+      },
+      closeStructuredTab: (id) => update((x) => closeStructuredTabFn(x, id)),
+      renameStructuredTab: (id, title) => update((x) => renameStructuredTabFn(x, id, title)),
+      setActiveStructuredTab: (id) => update((x) => setActiveStructuredTabFn(x, id)),
+      patchStructuredTab: (id, patch) => update((x) => patchStructuredTabFn(x, id, patch)),
     };
   }, [data, ready, update, replaceAll, reload, importWorkspace, syncFromDisk, lastSaveError, lastSavedAt, saving, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
 
@@ -1393,6 +1419,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         actionsBridgeRef.current.patchUtilityDocument(patch),
       patchUtilityStructuredText: (patch: Parameters<Api['patchUtilityStructuredText']>[0]) =>
         actionsBridgeRef.current.patchUtilityStructuredText(patch),
+      addStructuredTab: () => actionsBridgeRef.current.addStructuredTab(),
+      closeStructuredTab: (id: string) => actionsBridgeRef.current.closeStructuredTab(id),
+      renameStructuredTab: (id: string, title: string) =>
+        actionsBridgeRef.current.renameStructuredTab(id, title),
+      setActiveStructuredTab: (id: string) => actionsBridgeRef.current.setActiveStructuredTab(id),
+      patchStructuredTab: (id: string, patch: Parameters<Api['patchStructuredTab']>[1]) =>
+        actionsBridgeRef.current.patchStructuredTab(id, patch),
     }),
     [],
   );

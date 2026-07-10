@@ -749,6 +749,59 @@ describe('normalizeData — load edge cases', () => {
     expect(norm.utilityStructuredText?.language).toBe('json');
   });
 
+  it('migrates a legacy single-buffer into the first tab without data loss', () => {
+    const norm = normalizeData({
+      version: 3,
+      utilityStructuredText: {
+        content: '{"a":1}',
+        diffContentLeft: '{"a":0}',
+        diffContent: '{"a":2}',
+        language: 'yaml',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    expect(norm.utilityStructuredTabs).toHaveLength(1);
+    const tab = norm.utilityStructuredTabs![0]!;
+    expect(tab.content).toBe('{"a":1}');
+    expect(tab.diffContentLeft).toBe('{"a":0}');
+    expect(tab.diffContent).toBe('{"a":2}');
+    expect(tab.language).toBe('yaml');
+    expect(tab.mode).toBe('edit');
+    expect(norm.activeStructuredTabId).toBe(tab.id);
+    // Legacy field is intentionally retained (downgrade safety).
+    expect(norm.utilityStructuredText?.content).toBe('{"a":1}');
+  });
+
+  it('keeps existing tabs and repairs a dangling active tab id', () => {
+    const norm = normalizeData({
+      version: 3,
+      utilityStructuredTabs: [
+        { id: 'tab-1', title: 'One', content: '{}', language: 'json', mode: 'edit', updatedAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'tab-2', title: 'Two', content: '[]', language: 'yaml', mode: 'diff', updatedAt: '2026-01-01T00:00:00.000Z' },
+      ],
+      activeStructuredTabId: 'gone',
+    });
+    expect(norm.utilityStructuredTabs).toHaveLength(2);
+    expect(norm.activeStructuredTabId).toBe('tab-1');
+  });
+
+  it('drops corrupt tabs defensively and leaves a brand-new workspace tab-less', () => {
+    const norm = normalizeData({
+      version: 3,
+      utilityStructuredTabs: [
+        { id: 'ok', title: 'OK', content: '{}', language: 'json', mode: 'edit', updatedAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'bad', title: 'Bad' },
+        null,
+      ],
+    });
+    expect(norm.utilityStructuredTabs).toHaveLength(1);
+    expect(norm.utilityStructuredTabs![0]!.id).toBe('ok');
+
+    const fresh = normalizeData({ version: 3 });
+    expect(fresh.utilityStructuredTabs).toBeUndefined();
+    expect(fresh.activeStructuredTabId).toBeUndefined();
+  });
+
   it('creates a fallback team when people lack a valid teamId and the first team has no id', () => {
     const norm = normalizeData({
       version: 3,
@@ -2017,6 +2070,7 @@ describe('normalizeData — forward-compatible unknown-field passthrough', () =>
       'version', 'teams', 'people', 'items', 'notifiedReminderIds', 'lastTeamId',
       'profile', 'todoGroups', 'todoItems', 'aiSettings', 'notes', 'noteGroups',
       'notesLock', 'utilityDocument', 'utilityStructuredText',
+      'utilityStructuredTabs', 'activeStructuredTabId',
     ]);
     for (const key of Object.keys(norm)) {
       expect(allowed.has(key)).toBe(true);
