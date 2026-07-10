@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { completeOnboarding, registerSmokeUser, route } from './helpers';
+import {
+  completeOnboarding,
+  fillControlledInput,
+  fillControlledTextarea,
+  registerSmokeUser,
+  route,
+} from './helpers';
 
 test('register → add todo → reload persists', async ({ page }) => {
   const todoTitle = `Smoke todo ${Date.now()}`;
@@ -39,8 +45,9 @@ test('register → team profile title survives reload', async ({ page }) => {
 
   const profileForm = page.locator('form.row').filter({ has: page.getByPlaceholder('Role / title') });
   const roleInput = profileForm.getByPlaceholder('Role / title');
-  await roleInput.click();
-  await roleInput.pressSequentially(titleLine, { delay: 20 });
+  // Set the value deterministically. pressSequentially races the controlled
+  // React round-trip and intermittently drops characters under CI load.
+  await fillControlledInput(roleInput, titleLine);
   await expect(roleInput).toHaveValue(titleLine);
   await profileForm.getByRole('button', { name: /^save$/i }).click();
 
@@ -75,8 +82,9 @@ test('register → team scratchpad survives reload', async ({ page }) => {
 
   const scratchpad = scratchCard.locator('.md-editor__textarea').first();
   await expect(scratchpad).toBeVisible({ timeout: 15_000 });
-  await scratchpad.click();
-  await scratchpad.pressSequentially(scratchLine, { delay: 15 });
+  // Set the value deterministically. pressSequentially races the controlled
+  // React round-trip and intermittently drops characters under CI load.
+  await fillControlledTextarea(page, scratchpad, scratchLine);
   await expect(scratchpad).toHaveValue(scratchLine);
 
   // PersonWorkspace autosaves dirty scratchpad after 800ms; wait past that + AppData debounce.
