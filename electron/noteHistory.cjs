@@ -192,11 +192,21 @@ function collectAttachmentIdsFromDocNode(node, out) {
 
 function collectAttachmentIdsFromBody(body, bodyFormat) {
   const ids = new Set();
-  if (bodyFormat !== 'prosemirror' || !body || typeof body !== 'string' || !body.trim()) return ids;
-  try {
-    collectAttachmentIdsFromDocNode(JSON.parse(body), ids);
-  } catch {
-    /* skip malformed */
+  if (!body || typeof body !== 'string' || !body.trim()) return ids;
+  if (bodyFormat === 'prosemirror') {
+    try {
+      collectAttachmentIdsFromDocNode(JSON.parse(body), ids);
+      return ids;
+    } catch {
+      /* malformed prosemirror — fall through to raw URI scan */
+    }
+  }
+  // Markdown / legacy / unknown-format revisions store attachments as raw
+  // `cadence-attachment://<id>` URIs the structural scan can't see. Scanning
+  // them keeps GC from deleting images a markdown-bodied revision still uses.
+  for (const m of body.matchAll(/cadence-attachment:\/\/([a-zA-Z0-9_-]{8,128})/g)) {
+    const id = m[1] && m[1].trim();
+    if (id) ids.add(id);
   }
   return ids;
 }

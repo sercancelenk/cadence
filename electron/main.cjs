@@ -580,15 +580,40 @@ function collectAttachmentIdsFromDocNode(node, out) {
   }
 }
 
+const ATTACHMENT_URI_SCAN_RE = /cadence-attachment:\/\/([a-zA-Z0-9_-]{8,128})/g;
+
+/**
+ * Scan a markdown / legacy / unknown-format body for raw
+ * `cadence-attachment://<id>` URIs (inside `![](…)` or inline HTML). The
+ * prosemirror structural scan cannot see these, so orphan GC must fall back
+ * to this — otherwise a markdown-bodied note/todo's still-referenced images
+ * look like orphans and get deleted (silent attachment loss).
+ */
+function collectAttachmentIdsFromMarkdownBody(body, out) {
+  if (!body || typeof body !== 'string' || !body.includes(ATTACHMENT_URI_PREFIX)) return;
+  for (const m of body.matchAll(ATTACHMENT_URI_SCAN_RE)) {
+    const safe = sanitizeAttachmentId(m[1]);
+    if (safe) out.add(safe);
+  }
+}
+
 function collectReferencedAttachmentIdsFromPayload(payload) {
   const ids = new Set();
+  // Format-agnostic scan, mirroring the renderer's `scanAnyBody`: prosemirror
+  // bodies are parsed structurally; every other format is scanned for raw
+  // attachment URIs. A malformed prosemirror body also falls back to the URI
+  // scan so GC can never UNDER-count references (worst case: keep an orphan).
   const scan = (body, bodyFormat) => {
-    if (bodyFormat !== 'prosemirror' || !body || typeof body !== 'string' || !body.trim()) return;
-    try {
-      collectAttachmentIdsFromDocNode(JSON.parse(body), ids);
-    } catch {
-      /* malformed doc — skip */
+    if (!body || typeof body !== 'string' || !body.trim()) return;
+    if (bodyFormat === 'prosemirror') {
+      try {
+        collectAttachmentIdsFromDocNode(JSON.parse(body), ids);
+        return;
+      } catch {
+        /* malformed prosemirror — fall through to raw URI scan */
+      }
     }
+    collectAttachmentIdsFromMarkdownBody(body, ids);
   };
   for (const n of payload?.notes || []) {
     scan(n.body, n.bodyFormat);
@@ -1846,7 +1871,19 @@ function createWindow() {
   mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
     const allowed = process.env.VITE_DEV_SERVER_URL;
     if (allowed && targetUrl.startsWith(allowed)) return;
-    if (targetUrl.startsWith('file://')) return;
+    // Production renders from dist/index.html (a file:// URL). Permit
+    // navigations that stay inside the built app bundle (reload, hash routing)
+    // but refuse arbitrary file:// targets — a renderer XSS must not be able to
+    // pull `file:///etc/passwd` (or any local file) into the window.
+    if (targetUrl.startsWith('file://')) {
+      try {
+        const distDir = path.join(__dirname, '..', 'dist');
+        const target = path.resolve(decodeURIComponent(new URL(targetUrl).pathname));
+        if (target === path.join(distDir, 'index.html') || isPathInside(distDir, target)) return;
+      } catch {
+        /* fall through to deny */
+      }
+    }
     event.preventDefault();
     openExternalSafe(targetUrl);
   });
@@ -2679,7 +2716,18 @@ ipcMain.handle('data:listSources', () => {
  * is genuinely contained.
  */
 function isPathInside(parent, child) {
-  const rel = path.relative(path.resolve(parent), path.resolve(child));
+  // Canonicalize BOTH ends through realpath so a symlink planted under
+  // `parent` that points outside (or a symlinked `parent` such as macOS
+  // /var → /private/var) can't defeat the containment check. `fs.readFileSync`
+  // and friends follow symlinks, so we must compare the real targets. When a
+  // path doesn't exist yet (e.g. a write destination) realpath throws and we
+  // fall back to the lexically-resolved path — safe because a non-existent
+  // symlink has nothing to dereference to.
+  let p = path.resolve(parent);
+  let c = path.resolve(child);
+  try { p = fs.realpathSync(p); } catch { /* use resolved parent */ }
+  try { c = fs.realpathSync(c); } catch { /* use resolved child */ }
+  const rel = path.relative(p, c);
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
@@ -3203,6 +3251,14 @@ ipcMain.handle('data:importWorkspace', (_evt, payload) => {
     return {
       ok: false,
       error: 'The JSON does not look like a Cadence workspace export (no recognised collections).',
+    };
+  }
+  // Mirror the `data:save` ceiling so a malformed / hostile import can't OOM the
+  // main process or force an unbounded durable write.
+  if (measurePayloadBytes(payload) > MAX_SAVE_PAYLOAD_BYTES) {
+    return {
+      ok: false,
+      error: 'Workspace exceeds 25 MB. Compact attachments or archive old items before importing.',
     };
   }
   snapshotCurrentDataFile(uid, 'pre-import');

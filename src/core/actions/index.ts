@@ -615,16 +615,34 @@ export function clearCompletedInGroup(data: AppData, groupId: string): AppData {
  */
 export function markAllCompleteInGroup(data: AppData, groupId: string): AppData {
   const now = nowIso();
-  return {
-    ...data,
-    todoItems: data.todoItems.map((t) =>
+  const completedIds: string[] = [];
+  const todoItems = data.todoItems.map((t) => {
+    if (
       t.groupId === groupId &&
       !t.archived &&
       (t.status === 'todo' || t.status === 'in_progress')
-        ? { ...t, status: 'done', done: true, doneAt: t.doneAt ?? now, updatedAt: now }
-        : t,
-    ),
-  };
+    ) {
+      completedIds.push(t.id);
+      // Mirror single-item completion (`updateTodoItem`): a completed todo's
+      // reminder is logically void, so clear the remind fields too — leaving
+      // them set would surprise-fire the moment the row is re-opened.
+      return {
+        ...t,
+        status: 'done' as const,
+        done: true,
+        doneAt: t.doneAt ?? now,
+        remindAt: undefined,
+        remindRepeat: undefined,
+        updatedAt: now,
+      };
+    }
+    return t;
+  });
+  let notifiedReminderIds = data.notifiedReminderIds;
+  for (const id of completedIds) {
+    notifiedReminderIds = clearReminderNotifyKeys(notifiedReminderIds, id);
+  }
+  return { ...data, todoItems, notifiedReminderIds };
 }
 
 export function addTodoItem(
@@ -782,6 +800,11 @@ export function updateTodoItem(
       // checks the field on every tick, but a past timestamp would fire
       // immediately when status flips back to `todo`).
       if (nextStatus === 'done' || nextStatus === 'cancelled' || nextArchived === true) {
+        // Clearing a reminder here must also drop its notify slot keys, exactly
+        // like team items on complete (see `updateItem`). Otherwise the past
+        // `id\u0001iso` keys linger in `notifiedReminderIds` forever (unbounded
+        // growth) and a re-schedule back to that exact timestamp stays muted.
+        if (remindAt !== undefined || remindRepeat !== undefined) clearedNotify = true;
         remindAt = undefined;
         remindRepeat = undefined;
       }

@@ -806,6 +806,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const uid = userIdRef.current;
     const next = pendingSave.current ?? snapshotStoreRef.current.getSnapshot();
     pendingSave.current = null;
+    // Keep the snapshot store in lockstep with the just-flushed state. Callers
+    // (export / additive merge in Settings) read `getLatestSnapshot()` right
+    // after awaiting this flush; without this the store still lags React by one
+    // effect tick and the merge could rebuild from a pre-flush snapshot and
+    // overwrite the freshly-saved edits. Safe here — we're outside render.
+    if (next) snapshotStoreRef.current.setSnapshot(next);
 
     await persistQueueRef.current.flush();
 
@@ -1719,20 +1725,71 @@ export function usePwaReminderBridge() {
       const keys = await collectPwaDeliveredSlotKeys();
       if (!keys.length) return;
       update((prev) => {
-        const next = [...prev.notifiedReminderIds];
-        let changed = false;
+        const nextNotified = [...prev.notifiedReminderIds];
+        const todoAdvances: Record<string, string> = {};
+        const itemAdvances: Record<string, string> = {};
+        let notifiedChanged = false;
+
         for (const key of keys) {
           const sep = key.indexOf('\u0001');
           if (sep === -1) continue;
           const itemId = key.slice(0, sep);
           const remindAt = key.slice(sep + 1);
           if (isReminderSlotNotified(prev.notifiedReminderIds, itemId, remindAt)) continue;
-          if (!next.includes(key)) {
-            next.push(key);
-            changed = true;
+
+          const todo = prev.todoItems.find((t) => t.id === itemId);
+          const teamItem = todo ? undefined : prev.items.find((it) => it.id === itemId);
+          const target = todo ?? teamItem;
+          // Only reconcile a slot that still matches the item's CURRENT
+          // schedule; a stale delivered tag (already rolled forward by an
+          // earlier reconcile) is ignored so we never double-advance.
+          if (!target || target.remindAt !== remindAt) continue;
+
+          if (target.remindRepeat) {
+            // Recurring: roll the schedule forward one cycle instead of marking
+            // the slot notified, mirroring the in-app watcher and the Electron
+            // engine. Without this a recurring reminder delivered by the service
+            // worker (tab closed) fires exactly once and never re-schedules.
+            const next = advanceReminder(remindAt, target.remindRepeat);
+            if (next) {
+              if (todo) todoAdvances[itemId] = next;
+              else itemAdvances[itemId] = next;
+              continue;
+            }
+          }
+          // One-shot (or an unparseable repeat): mark notified so the SW's
+          // catch-up ping can't re-fire the same slot.
+          if (!nextNotified.includes(key)) {
+            nextNotified.push(key);
+            notifiedChanged = true;
           }
         }
-        return changed ? { ...prev, notifiedReminderIds: next } : prev;
+
+        const advancedTodoIds = Object.keys(todoAdvances);
+        const advancedItemIds = Object.keys(itemAdvances);
+        if (!notifiedChanged && advancedTodoIds.length === 0 && advancedItemIds.length === 0) {
+          return prev;
+        }
+
+        const nowIso = new Date().toISOString();
+        return {
+          ...prev,
+          notifiedReminderIds: notifiedChanged ? nextNotified : prev.notifiedReminderIds,
+          todoItems: advancedTodoIds.length
+            ? prev.todoItems.map((t) =>
+                todoAdvances[t.id]
+                  ? { ...t, remindAt: todoAdvances[t.id], updatedAt: nowIso }
+                  : t,
+              )
+            : prev.todoItems,
+          items: advancedItemIds.length
+            ? prev.items.map((it) =>
+                itemAdvances[it.id]
+                  ? { ...it, remindAt: itemAdvances[it.id], updatedAt: nowIso }
+                  : it,
+              )
+            : prev.items,
+        };
       });
     };
 

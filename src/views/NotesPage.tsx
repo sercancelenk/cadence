@@ -160,6 +160,7 @@ export function NotesPage() {
     replaceNote,
     flushPendingSave,
     setDecrypted,
+    editorState.getRevisionSnapshot,
   );
 
   const lock = useNotesLock({
@@ -174,6 +175,7 @@ export function NotesPage() {
     removeNote,
     captureRevision: captureAfterSave,
     getLatestBodyFields: editorState.getLatestBodyFields,
+    onEncryptError: (message) => toast.showError('Locked note not saved', message),
   });
 
   const {

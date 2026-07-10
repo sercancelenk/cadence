@@ -445,6 +445,18 @@ describe('actions mutation — deterministic reducers', () => {
         patch: { dueAt: '2030-06-20T10:00:00.000Z' },
         expectCleared: false,
       },
+      {
+        // Completing a reminded todo clears remindAt internally — the slot
+        // notify keys must be dropped too (parity with team `updateItem`).
+        label: 'status done clears notify slots',
+        patch: { status: 'done' as const },
+        expectCleared: true,
+      },
+      {
+        label: 'archived clears notify slots',
+        patch: { archived: true },
+        expectCleared: true,
+      },
     ])('todo notify: $label', ({ patch, expectCleared }) => {
       const base = freshData();
       const gid = firstGroupId(base);

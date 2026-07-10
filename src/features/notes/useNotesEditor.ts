@@ -15,7 +15,7 @@ import type { NoteRevisionSnapshot } from '../../lib/noteRevision/types';
 import type { NotesUnlockApi } from '../../providers/NotesUnlockContext';
 import type { Note } from '../../model';
 import type { NoteRevisionTrigger } from '../../lib/noteRevision/types';
-import { registerBeforeFlushHook } from '../../lib/pendingSaveFlush';
+import { registerBeforeFlushHook, runBeforeFlushHooks } from '../../lib/pendingSaveFlush';
 import { deriveStoredTitleFromPlainText } from './noteDisplay';
 
 export type NoteRevisionCapture = (
@@ -298,9 +298,14 @@ export function useNotesEditor(
     })();
   };
 
-  const hideSelected = () => {
+  const hideSelected = async () => {
     if (!selected || !selected.locked) return;
     setBodyEditing(false);
+    // Flush the debounced editor buffer AND encrypt the pending locked body
+    // before dropping the session key. Otherwise the editor's unmount flush
+    // (triggered by setBodyEditing(false)) fires onChangeBody after unlock.clear(),
+    // which bails with no key — silently losing up to one debounce of edits.
+    await runBeforeFlushHooks();
     setDecrypted(null);
     unlock.clear();
   };

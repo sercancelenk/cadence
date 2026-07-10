@@ -566,6 +566,23 @@ describe('todo groups', () => {
     expect(next.todoItems.find((t) => t.title === 'WIP')?.status).toBe('done');
     expect(next.todoItems.find((t) => t.title === 'Dropped')?.status).toBe('cancelled');
   });
+
+  it('markAllCompleteInGroup clears reminders and their notify slot keys', () => {
+    const base = emptyData();
+    const gid = firstGroupId(base);
+    let d = addTodoItem(base, gid, 'Reminded');
+    const id = d.todoItems.find((t) => t.title === 'Reminded')!.id;
+    const remindAt = '2030-06-01T10:00:00.000Z';
+    d = updateTodoItem(d, id, { remindAt, remindRepeat: 'daily' });
+    d = { ...d, notifiedReminderIds: [reminderNotifyKey(id, remindAt)] };
+
+    const next = markAllCompleteInGroup(d, gid);
+    const row = next.todoItems.find((t) => t.id === id)!;
+    expect(row.status).toBe('done');
+    expect(row.remindAt).toBeUndefined();
+    expect(row.remindRepeat).toBeUndefined();
+    expect(next.notifiedReminderIds).toEqual([]);
+  });
 });
 
 describe('todo items', () => {

@@ -61,10 +61,47 @@ function validateWinBlock(label, win) {
   }
 }
 
-validateMacBlock('package.json', readJson('package.json').build?.mac);
-validateWinBlock('package.json', readJson('package.json').build?.win);
-validateMacBlock('electron-builder.enterprise.json', readJson('electron-builder.enterprise.json').mac);
-validateWinBlock('electron-builder.enterprise.json', readJson('electron-builder.enterprise.json').win);
+/**
+ * The GitHub publish target is baked into `app-update.yml` and drives the
+ * runtime auto-updater feed. A placeholder / mismatched owner ships a build
+ * whose update checks 404 forever — validate it against the repository URL.
+ */
+function repoOwnerFromPackage(pkg) {
+  const url = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url;
+  const m = /github\.com[/:]([^/]+)\/([^/.]+)/.exec(url ?? '');
+  return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+function validatePublishBlock(label, publish, expected) {
+  const targets = Array.isArray(publish) ? publish : publish ? [publish] : [];
+  const github = targets.filter((t) => t?.provider === 'github');
+  if (github.length === 0) {
+    fail(`${label}: no github publish target (auto-updater has no feed)`);
+    return;
+  }
+  for (const t of github) {
+    if (!t.owner || /YOUR_GITHUB_USERNAME/i.test(t.owner)) {
+      fail(`${label}: publish.owner is a placeholder ("${t.owner}") — auto-updater will 404`);
+    } else if (expected && t.owner !== expected.owner) {
+      fail(`${label}: publish.owner "${t.owner}" != repository owner "${expected.owner}"`);
+    } else if (expected && t.repo && t.repo !== expected.repo) {
+      fail(`${label}: publish.repo "${t.repo}" != repository "${expected.repo}"`);
+    } else {
+      ok(`${label}: github publish target (${t.owner}/${t.repo}${t.channel ? `#${t.channel}` : ''})`);
+    }
+  }
+}
+
+const pkg = readJson('package.json');
+const enterprise = readJson('electron-builder.enterprise.json');
+const expectedRepo = repoOwnerFromPackage(pkg);
+
+validateMacBlock('package.json', pkg.build?.mac);
+validateWinBlock('package.json', pkg.build?.win);
+validatePublishBlock('package.json', pkg.build?.publish, expectedRepo);
+validateMacBlock('electron-builder.enterprise.json', enterprise.mac);
+validateWinBlock('electron-builder.enterprise.json', enterprise.win);
+validatePublishBlock('electron-builder.enterprise.json', enterprise.publish, expectedRepo);
 
 const programCs = fs.readFileSync(
   path.join(root, 'electron/reminder/native-windows/Program.cs'),

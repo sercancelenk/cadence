@@ -45,6 +45,7 @@ type UseNotesLockArgs = {
   removeNote: (id: string) => void;
   captureRevision?: NoteRevisionCapture;
   getLatestBodyFields?: () => ({ noteId: string } & RichTextBodyFields) | null;
+  onEncryptError?: (message: string) => void;
 };
 
 export function useNotesLock({
@@ -59,6 +60,7 @@ export function useNotesLock({
   removeNote,
   captureRevision,
   getLatestBodyFields,
+  onEncryptError,
 }: UseNotesLockArgs) {
   const account = useAccount();
 
@@ -149,7 +151,20 @@ export function useNotesLock({
                 ? (pending.bodyFormat ?? targetNote.bodyFormat)
                 : targetNote.bodyFormat ?? decrypted?.bodyFormat;
             const attachmentRefs = attachmentRefsFromAnyBody(bodyToLock, bodyFormat);
-            const cipher = await encryptBodyWithMaster(key, bodyToLock);
+            let cipher: Note['cipher'];
+            try {
+              cipher = await encryptBodyWithMaster(key, bodyToLock);
+            } catch (err) {
+              // Encryption failed: leave the note UNLOCKED with its plaintext
+              // intact (decrypted state + session key untouched) so nothing is
+              // lost, and tell the user the lock did not take instead of failing
+              // silently (the button would otherwise appear to do nothing).
+              console.error('[cadence] locked-note encrypt failed during lock', err);
+              onEncryptError?.(
+                'Could not lock this note — encryption failed. Your note is still unlocked and unchanged; try again.',
+              );
+              return;
+            }
             const lockedBodySignature = canonicalDocSignature(bodyToLock, bodyFormat);
             // Merge onto the live note (preserve concurrent title/pin/archive).
             update((d) =>

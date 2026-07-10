@@ -109,7 +109,20 @@ async function reconcileDeliveredNotifications(appData, userId) {
   const delivered = await plat.listDeliveredIds();
   if (!delivered.length) return appData;
 
-  let data = appData;
+  // Base the notified-flag mutation on the FRESHEST on-disk snapshot rather
+  // than the `appData` captured when this sync was scheduled. Between that
+  // capture and now a renderer `data:save` may have landed; folding our
+  // additive `notifiedReminderIds` update onto the stale snapshot and writing
+  // it back would clobber those just-saved edits on disk. Reading fresh here
+  // (then writing synchronously below, with no await in between) keeps the
+  // read-modify-write atomic on the single main thread — same discipline as
+  // onFireSlot.
+  const uid = userId || deps?.getSessionUserId?.() || '';
+  let data = (uid && deps?.readUserData ? deps.readUserData(uid) : null) || appData;
+  // Track real changes explicitly: the fresh-read base is a different object
+  // reference than `appData`, so a `data !== appData` write guard would fire
+  // even when no slot actually changed.
+  let changed = false;
   for (const osId of delivered) {
     const slotKey = slotKeyFromOsNotificationId(osId);
     if (!slotKey) continue;
@@ -132,10 +145,10 @@ async function reconcileDeliveredNotifications(appData, userId) {
       body: '',
       repeat,
     });
+    changed = true;
   }
 
-  const uid = userId || deps?.getSessionUserId?.() || '';
-  if (data !== appData && uid && deps?.writeUserData) {
+  if (changed && uid && deps?.writeUserData) {
     const write = deps.writeUserData(uid, data);
     // Mirror onFireSlot: if the disk write failed (e.g. write-conflict) the
     // computed snapshot never landed, so pushing it to the renderer would leak

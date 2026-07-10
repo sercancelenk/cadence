@@ -27,6 +27,7 @@ export function useNoteVersionHistory(
   setDecrypted: React.Dispatch<
     React.SetStateAction<({ noteId: string } & RichTextBodyFields) | null>
   >,
+  getRevisionSnapshot?: () => ReturnType<typeof noteSnapshotFromNote> | null,
 ) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -127,7 +128,14 @@ export function useNoteVersionHistory(
     setBusy(true);
     setError(null);
     try {
-      await tryAppendNoteRevision(noteSnapshotFromNote(note), noteSnapshotFromNote(note), 'manual', {
+      // Commit any in-flight edits first so an explicit "Save version" captures
+      // the user's latest keystrokes, not the note as it stood one debounce ago.
+      await runBeforeFlushHooks();
+      await flushPendingSave();
+      // Prefer the freshest snapshot (updated synchronously by the editor flush)
+      // over the render-closure `note`, which still lags the just-flushed edits.
+      const snapshot = getRevisionSnapshot?.() ?? noteSnapshotFromNote(note);
+      await tryAppendNoteRevision(snapshot, snapshot, 'manual', {
         force: true,
         label: manualLabel.trim() || undefined,
       });
@@ -138,7 +146,7 @@ export function useNoteVersionHistory(
     } finally {
       setBusy(false);
     }
-  }, [manualLabel, note, refreshList]);
+  }, [manualLabel, note, refreshList, flushPendingSave, getRevisionSnapshot]);
 
   const restoreSelected = useCallback(async () => {
     if (!note || !previewRevision) return;
@@ -152,9 +160,12 @@ export function useNoteVersionHistory(
       // discard pending changes that hadn't been persisted yet.
       await runBeforeFlushHooks();
       await flushPendingSave();
+      // Use the freshest snapshot for the safety checkpoint so it captures the
+      // edits we just flushed (the closure `note` still lags them by a render).
+      const preRestore = getRevisionSnapshot?.() ?? noteSnapshotFromNote(note);
       const checkpointOk = await tryAppendNoteRevision(
-        noteSnapshotFromNote(note),
-        noteSnapshotFromNote(note),
+        preRestore,
+        preRestore,
         'pre-restore',
         { force: true },
       );
@@ -181,7 +192,7 @@ export function useNoteVersionHistory(
     } finally {
       setBusy(false);
     }
-  }, [note, patchNote, previewRevision, replaceNote, flushPendingSave, setDecrypted, unlock]);
+  }, [note, patchNote, previewRevision, replaceNote, flushPendingSave, setDecrypted, unlock, getRevisionSnapshot]);
 
   const needsUnlock = !!note?.locked && !editorReady;
 
