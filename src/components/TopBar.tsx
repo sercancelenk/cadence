@@ -23,6 +23,7 @@ import { PATH_HOME, PATH_TEAMS } from '../lib/routes';
 import { teamBase } from '../lib/teamPaths';
 import { useTheme } from '../ThemeContext';
 import type { AppData, TeamStatus } from '../model';
+import { TopBarHistoryNav } from './TopBarHistoryNav';
 
 function breadcrumbFromPath(data: AppData, pathname: string): string {
   if (pathname === PATH_HOME) return 'Home';
@@ -38,6 +39,16 @@ function breadcrumbFromPath(data: AppData, pathname: string): string {
   if (pathname === '/settings') return 'Settings';
   if (pathname === '/utilities/document') return 'Utilities · Document';
   if (pathname === '/utilities/structured') return 'Utilities · JSON / YAML';
+  if (pathname === '/utilities/tools' || pathname.startsWith('/utilities/tools/')) {
+    if (pathname.endsWith('/encode')) return 'Utilities · Tools · Encode';
+    if (pathname.endsWith('/hash')) return 'Utilities · Tools · Hash';
+    if (pathname.endsWith('/text')) return 'Utilities · Tools · Text';
+    if (pathname.endsWith('/time')) return 'Utilities · Tools · Time';
+    if (pathname.endsWith('/codegen')) return 'Utilities · Tools · Codegen';
+    if (pathname.endsWith('/erd')) return 'Utilities · Tools · ERD';
+    if (pathname.endsWith('/sketch')) return 'Utilities · Tools · Sketch';
+    return 'Utilities · Tools';
+  }
   const tm = pathname.match(/^\/teams\/([^/]+)/);
   if (!tm) return 'Cadence';
   const id = tm[1];
@@ -146,6 +157,17 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
         >
           <IcMenu size={20} />
         </button>
+        <TopBarHistoryNav
+          onBeforeNavigate={async () => {
+            // Await the 400ms autosave debounce drain so a quick back-hop
+            // cannot strand the last keystrokes of the previous screen.
+            try {
+              await flushPendingSave();
+            } catch {
+              /* best effort — still allow navigation */
+            }
+          }}
+        />
         <div className="topbar__crumb muted" title={crumb}>
           {crumb}
         </div>

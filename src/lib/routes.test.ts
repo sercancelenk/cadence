@@ -14,6 +14,14 @@ import {
   PATH_TODOS,
   PATH_UTILITIES_DOCUMENT,
   PATH_UTILITIES_STRUCTURED,
+  PATH_UTILITIES_TOOLS,
+  PATH_UTILITIES_TOOLS_CODEGEN,
+  PATH_UTILITIES_TOOLS_ENCODE,
+  PATH_UTILITIES_TOOLS_ERD,
+  PATH_UTILITIES_TOOLS_HASH,
+  PATH_UTILITIES_TOOLS_SKETCH,
+  PATH_UTILITIES_TOOLS_TEXT,
+  PATH_UTILITIES_TOOLS_TIME,
 } from './routes';
 
 describe('protected route constants', () => {
@@ -26,6 +34,14 @@ describe('protected route constants', () => {
     PATH_NOTES,
     PATH_UTILITIES_DOCUMENT,
     PATH_UTILITIES_STRUCTURED,
+    PATH_UTILITIES_TOOLS,
+    PATH_UTILITIES_TOOLS_ENCODE,
+    PATH_UTILITIES_TOOLS_HASH,
+    PATH_UTILITIES_TOOLS_TEXT,
+    PATH_UTILITIES_TOOLS_TIME,
+    PATH_UTILITIES_TOOLS_CODEGEN,
+    PATH_UTILITIES_TOOLS_ERD,
+    PATH_UTILITIES_TOOLS_SKETCH,
     PATH_ANALYTICS,
     PATH_ANALYTICS_ACTIVITY,
     PATH_PROFILE,
@@ -43,6 +59,9 @@ describe('protected route constants', () => {
     expect(PATH_NOTES).toBe('/notes');
     expect(PATH_UTILITIES_DOCUMENT).toBe('/utilities/document');
     expect(PATH_UTILITIES_STRUCTURED).toBe('/utilities/structured');
+    expect(PATH_UTILITIES_TOOLS).toBe('/utilities/tools');
+    expect(PATH_UTILITIES_TOOLS_ERD).toBe('/utilities/tools/erd');
+    expect(PATH_UTILITIES_TOOLS_SKETCH).toBe('/utilities/tools/sketch');
     expect(PATH_ANALYTICS).toBe('/analytics');
     expect(PATH_ANALYTICS_ACTIVITY).toBe('/analytics/activity');
     expect(PATH_PROFILE).toBe('/profile');

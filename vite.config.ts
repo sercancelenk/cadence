@@ -132,6 +132,12 @@ export default defineConfig({
           if (id.includes('@codemirror') || id.includes('/codemirror/') || id.includes('/lezer-')) {
             return 'vendor-codemirror';
           }
+          if (id.includes('@excalidraw/') || id.includes('/excalidraw/')) {
+            return 'vendor-excalidraw';
+          }
+          if (id.includes('@xyflow/') || id.includes('/@xyflow/')) {
+            return 'vendor-xyflow';
+          }
           if (id.includes('/yaml/') || id.includes('yaml/dist')) return 'vendor-yaml';
           return 'vendor-misc';
         },

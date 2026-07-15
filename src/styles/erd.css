@@ -1,0 +1,194 @@
+/* Lite ERD canvas (Utilities → Tools → ERD) */
+
+.utilities-tools-panel--erd {
+  padding-bottom: 0.75rem;
+}
+
+.erd-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+}
+
+.erd-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.erd-toolbar__sep {
+  width: 1px;
+  height: 1.25rem;
+  background: var(--border-subtle, rgba(127, 127, 127, 0.35));
+  margin: 0 0.15rem;
+}
+
+.erd-toolbar__file {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.erd-hint {
+  margin: 0;
+}
+
+.erd-canvas {
+  height: min(68vh, 640px);
+  min-height: 420px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.3));
+  overflow: hidden;
+  background: var(--main-canvas, var(--bg, #111));
+}
+
+.erd-table-node {
+  min-width: 240px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.4));
+  background: var(--surface, #1e1e1e);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  color: inherit;
+}
+
+.erd-table-node--selected {
+  border-color: var(--accent, #6b8cae);
+  box-shadow: 0 0 0 1px var(--accent, #6b8cae);
+}
+
+.erd-table-node__head {
+  padding: 0.45rem 0.55rem;
+  border-bottom: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.3));
+  background: color-mix(in srgb, var(--accent, #6b8cae) 16%, transparent);
+  border-radius: 10px 10px 0 0;
+}
+
+.erd-table-node__title {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 0;
+}
+
+.erd-table-node__cols {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+}
+
+.erd-table-node__col {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.28rem 1.1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle, #888) 35%, transparent);
+}
+
+.erd-table-node__col:last-child {
+  border-bottom: 0;
+}
+
+.erd-table-node__pk {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: 10px;
+  opacity: 0.85;
+  cursor: pointer;
+}
+
+.erd-table-node__name,
+.erd-table-node__type {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  padding: 0.15rem 0.25rem;
+  min-width: 0;
+}
+
+.erd-table-node__name:focus,
+.erd-table-node__type:focus,
+.erd-table-node__title:focus {
+  outline: none;
+  border-color: var(--accent, #6b8cae);
+  background: var(--bg, transparent);
+}
+
+.erd-table-node__type {
+  max-width: 5.5rem;
+}
+
+.erd-table-node__remove {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.45;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 0.15rem;
+}
+
+.erd-table-node__remove:hover {
+  opacity: 1;
+  color: var(--danger, #c44);
+}
+
+.erd-table-node__handle {
+  width: 8px !important;
+  height: 8px !important;
+  border: 1.5px solid var(--accent, #6b8cae) !important;
+  background: var(--surface, #fff) !important;
+}
+
+.erd-table-node__handle--in {
+  left: -4px !important;
+}
+
+.erd-table-node__handle--out {
+  right: -4px !important;
+}
+
+.erd-table-node__add {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.3));
+  background: transparent;
+  color: inherit;
+  opacity: 0.75;
+  padding: 0.4rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  border-radius: 0 0 10px 10px;
+}
+
+.erd-table-node__add:hover {
+  opacity: 1;
+  background: var(--surface-hover, rgba(127, 127, 127, 0.1));
+}
+
+/* React Flow theming */
+.erd-canvas .react-flow__controls-button {
+  background: var(--surface, #222);
+  border-bottom-color: var(--border-subtle, #444);
+  fill: currentColor;
+}
+
+.erd-canvas .react-flow__minimap {
+  background: var(--surface, #222);
+}

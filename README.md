@@ -94,7 +94,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | 👥 **Teams + People** | Group people into teams, give each a private scratchpad and a running agenda. **1:1 mode** with a persistent markdown meeting agenda + archive of past meetings; unchecked items carry over. **Person Timeline** for review prep. |
 | 🔎 **⌘K command palette** | Global search across notes, tasks, items, people and navigation targets. Indexes **body text** (not just titles), highlights matches with contextual snippets, deep-links straight to the result. Locked notes searchable by title only. Archived notes excluded from search. |
 | 📊 **Analytics** | Local-only dashboard: completion rate, daily / weekly / monthly / yearly created-vs-completed SVG chart, per-team performance bars, top-contributors table. **Activity report** tab for a chronological change log. |
-| 🧰 **Utilities** | Sidebar scratch **Document** (rich-text, autosaved, not a note/todo) plus **JSON / YAML** editor: syntax highlighting, validation, code folding, pretty-print, side-by-side **Diff** (Before/After), JSON-only compact & stringify. |
+| 🧰 **Utilities** | Sidebar **Document** (rich-text, autosaved) and **JSON / YAML** (CodeMirror: format, fold, Diff, compact/stringify). Plus **Tools** — ephemeral encode/hash/text/time/codegen, lite ERD, and Excalidraw-style sketch. Tool inputs are session-only and never touch the workspace file. |
 
 ### Powered by your device
 

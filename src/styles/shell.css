@@ -340,6 +340,22 @@
   flex-shrink: 0;
 }
 
+.topbar__history {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.topbar__history-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.topbar__history-btn:disabled:hover {
+  background: transparent;
+}
+
 .topbar__crumb {
   font-size: 13px;
   font-weight: 600;

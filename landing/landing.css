@@ -600,6 +600,14 @@ section {
   margin-bottom: 22px;
 }
 
+.feature__footnote {
+  margin-top: 14px !important;
+  margin-bottom: 0 !important;
+  font-size: 0.9rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .feature__copy code {
   font-size: 0.85em;
 }

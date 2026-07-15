@@ -45,6 +45,41 @@ const UtilitiesDocumentPage = lazy(() =>
 const UtilitiesStructuredPage = lazy(() =>
   import('./views/UtilitiesStructuredPage').then((m) => ({ default: m.UtilitiesStructuredPage })),
 );
+const UtilitiesToolsLayout = lazy(() =>
+  import('./views/utilities/UtilitiesToolsLayout').then((m) => ({ default: m.UtilitiesToolsLayout })),
+);
+const UtilitiesToolsHubPage = lazy(() =>
+  import('./views/utilities/UtilitiesToolsHubPage').then((m) => ({ default: m.UtilitiesToolsHubPage })),
+);
+const UtilitiesToolsEncodePage = lazy(() =>
+  import('./views/utilities/UtilitiesToolsEncodePage').then((m) => ({
+    default: m.UtilitiesToolsEncodePage,
+  })),
+);
+const UtilitiesToolsHashPage = lazy(() =>
+  import('./views/utilities/UtilitiesToolsHashPage').then((m) => ({ default: m.UtilitiesToolsHashPage })),
+);
+const UtilitiesToolsTextPage = lazy(() =>
+  import('./views/utilities/UtilitiesToolsTextPage').then((m) => ({ default: m.UtilitiesToolsTextPage })),
+);
+const UtilitiesToolsTimePage = lazy(() =>
+  import('./views/utilities/UtilitiesToolsTimePage').then((m) => ({ default: m.UtilitiesToolsTimePage })),
+);
+const UtilitiesToolsCodegenPage = lazy(() =>
+  import('./views/utilities/UtilitiesToolsCodegenPage').then((m) => ({
+    default: m.UtilitiesToolsCodegenPage,
+  })),
+);
+const UtilitiesToolsErdPage = lazy(() =>
+  import('./views/utilities/UtilitiesToolsErdPage').then((m) => ({
+    default: m.UtilitiesToolsErdPage,
+  })),
+);
+const UtilitiesToolsSketchPage = lazy(() =>
+  import('./views/utilities/UtilitiesToolsSketchPage').then((m) => ({
+    default: m.UtilitiesToolsSketchPage,
+  })),
+);
 const PlanningPage = lazy(() =>
   import('./views/PlanningPage').then((m) => ({ default: m.PlanningPage })),
 );
@@ -205,6 +240,16 @@ function AppRoutes() {
             <Route path="notes" element={<NotesPage />} />
             <Route path="utilities/document" element={<UtilitiesDocumentPage />} />
             <Route path="utilities/structured" element={<UtilitiesStructuredPage />} />
+            <Route path="utilities/tools" element={<UtilitiesToolsLayout />}>
+              <Route index element={<UtilitiesToolsHubPage />} />
+              <Route path="encode" element={<UtilitiesToolsEncodePage />} />
+              <Route path="hash" element={<UtilitiesToolsHashPage />} />
+              <Route path="text" element={<UtilitiesToolsTextPage />} />
+              <Route path="time" element={<UtilitiesToolsTimePage />} />
+              <Route path="codegen" element={<UtilitiesToolsCodegenPage />} />
+              <Route path="erd" element={<UtilitiesToolsErdPage />} />
+              <Route path="sketch" element={<UtilitiesToolsSketchPage />} />
+            </Route>
             <Route path="analytics" element={<AnalyticsLayout />}>
               <Route index element={<AnalyticsPage />} />
               <Route path="activity" element={<ActivityReportPage />} />

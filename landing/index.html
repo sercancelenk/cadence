@@ -7,7 +7,7 @@
 
     <meta
       name="description"
-      content="Cadence is a local-first workspace for people, tasks, notes and agenda. AES-256-GCM encrypted on your device. Move data between devices with encrypted backup files — no cloud account required. AI assistance is BYO-key, off by default. Free and open source."
+      content="Cadence is a local-first workspace for people, tasks, notes, agenda and developer tools. AES-256-GCM encrypted on your device. Move data with encrypted backups — no cloud account. Optional BYO-key AI. Free and open source."
     />
     <meta name="theme-color" content="#0c0f15" />
     <meta name="color-scheme" content="dark" />
@@ -17,7 +17,7 @@
     <meta property="og:title" content="Cadence — local-first workspace, encrypted on your device" />
     <meta
       property="og:description"
-      content="People, tasks, notes, agenda. Encrypted at rest. Move between devices with encrypted backups. AI when you want it, off when you don't."
+      content="People, tasks, notes, agenda, and ephemeral developer tools. Encrypted at rest. Encrypted backups between devices. AI when you want it."
     />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="./icon-512.png" />
@@ -66,6 +66,7 @@
       </a>
       <nav class="topnav__links">
         <a href="#features">Features</a>
+        <a href="#tools">Tools</a>
         <a href="#ai">AI</a>
         <a href="#backup">Backup</a>
         <a href="#privacy">Privacy</a>
@@ -96,7 +97,8 @@
             </h1>
 
             <p class="lede">
-              People, tasks, notes and agenda — all in one calm interface.
+              People, tasks, notes, agenda and a built-in
+              <strong>developer toolkit</strong> — all in one calm interface.
               <strong>Encrypted on your device</strong> with AES-256-GCM.
               No cloud account, no SaaS we forgot to renew. Move data between
               devices with an <strong>encrypted backup file</strong> when you
@@ -123,7 +125,8 @@
               <li><span aria-hidden>●</span> macOS desktop · iOS / Android PWA</li>
               <li><span aria-hidden>●</span> Encrypted backups to move between devices</li>
               <li><span aria-hidden>●</span> Auto-snapshots + boot integrity checks</li>
-              <li><span aria-hidden>●</span> Teams, planning hub + activity report</li>
+              <li><span aria-hidden>●</span> Teams, planning, notes + activity report</li>
+              <li><span aria-hidden>●</span> Stateless tools: ERD, sketch, encode, codegen</li>
               <li><span aria-hidden>●</span> Free and open source</li>
             </ul>
           </div>
@@ -273,7 +276,7 @@
               <li>Five sort modes + drag-reorder inside the pinned tier</li>
               <li>Active · Archived segment — shelve without deleting</li>
               <li>Syntax-highlighted code · Mermaid diagrams</li>
-              <li>Search indexes note bodies, not just titles</li>
+              <li>Find &amp; replace in the editor · body search in ⌘K</li>
             </ul>
           </div>
           <figure class="feature__media">
@@ -400,7 +403,7 @@
             <p>
               Not everything belongs in a note or a todo. The
               <strong>Utilities</strong> sidebar holds workspace tools that
-              autosave beside your data — no sync hop, no separate app.
+              live beside your data — no separate app to open.
             </p>
             <p>
               <strong>Document</strong> is a rich-text scratch pad with the
@@ -411,10 +414,10 @@
               (single-line) and stringify (escape for env vars).
             </p>
             <ul class="checklist">
-              <li>Autosaved to your encrypted workspace file</li>
+              <li>Document + JSON/YAML autosave to your encrypted workspace</li>
               <li>Edit + Diff tabs; fold nested blocks from the gutter</li>
               <li>Undo/redo; icon toolbar with hover labels</li>
-              <li>⌘K → “Go to JSON / YAML (Utilities)”</li>
+              <li>⌘K → Document, JSON / YAML, or Tools</li>
             </ul>
           </div>
           <figure class="feature__media">
@@ -425,6 +428,45 @@
 
 → Diff highlights changes inline
 → Format pretty-prints both sides</code></pre>
+          </figure>
+        </div>
+
+        <div id="tools" class="feature feature--reverse">
+          <div class="feature__copy">
+            <div class="feature__eyebrow">Tools</div>
+            <h3>A developer toolkit that never touches your notes.</h3>
+            <p>
+              Under <strong>Utilities → Tools</strong>: encode/decode, hashes,
+              text helpers, time/cron, codegen, a lite ER diagram, and an
+              Excalidraw-style sketch board. Built for the moments between
+              tickets — paste a curl, decode a JWT, sketch a box diagram —
+              then leave. Nothing here is written into your workspace file.
+            </p>
+            <ul class="checklist">
+              <li>Encode · Base64 / URL / JWT (display only, no verify)</li>
+              <li>Hash · MD5, SHA-1, SHA-256, SHA-512</li>
+              <li>Text · UUIDs, case convert, live regex tester</li>
+              <li>Time · Unix epoch + 5-field cron explainer</li>
+              <li>Codegen · JSON → TS / Java / Go · curl → fetch / axios / Python / Java / Spring / Go</li>
+              <li>ERD + Sketch · session-only canvases; export PNG / JSON yourself</li>
+            </ul>
+            <p class="feature__footnote">
+              Reload clears tool inputs. That is intentional — your encrypted
+              notes and todos stay out of the clipboard playground.
+            </p>
+          </div>
+          <figure class="feature__media">
+            <pre class="feature__code-sample" aria-hidden><code>curl -X POST 'https://api.example.com/v1' \
+  -H 'Content-Type: application/json' \
+  -d '{"ok":true}'
+
+→ fetch / axios / requests / RestClient / net/http
+
+JSON sample → TypeScript interfaces
+            · Java classes · Go structs
+
+ERD / Sketch → Export PNG or JSON
+            · never autosaved to workspace</code></pre>
           </figure>
         </div>
       </section>
@@ -793,7 +835,7 @@
           A workspace that respects your time, your data, and your evening.
         </h2>
         <p class="closing__sub">
-          Local-first storage · Encrypted backups · Optional AI · Free and open source.
+          Local-first storage · Encrypted backups · Developer tools · Optional AI · Free and open source.
         </p>
         <div class="cta-row cta-row--center">
           <a class="btn btn--primary btn--lg" href="./app/">Open the web app →</a>

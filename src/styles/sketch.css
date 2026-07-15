@@ -1,0 +1,49 @@
+/* Lite Excalidraw sketch (Utilities → Tools → Sketch) */
+
+.utilities-tools-panel--sketch {
+  padding-bottom: 0.75rem;
+}
+
+.sketch-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+}
+
+.sketch-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.sketch-toolbar__file {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.sketch-toolbar__file.is-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.sketch-hint {
+  margin: 0;
+}
+
+.sketch-canvas {
+  height: min(72vh, 720px);
+  min-height: 480px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.3));
+  overflow: hidden;
+  background: var(--main-canvas, var(--bg, #111));
+  position: relative;
+}
+
+.sketch-canvas .excalidraw {
+  height: 100%;
+  --color-primary: var(--accent, #6b8cae);
+}

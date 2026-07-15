@@ -9,6 +9,7 @@ import {
   IcLayoutGrid,
   IcListTodo,
   IcSettings,
+  IcSliders,
   IcStickyNote,
   IcTarget,
   IcUser,
@@ -17,7 +18,14 @@ import {
 import { useAppDataSelector } from '../AppDataContext';
 import { brandIconUrl } from '../lib/appBranding';
 import { useMobileWeb } from '../lib/runtime';
-import { PATH_HOME, PATH_PLANNING, PATH_TEAMS, PATH_UTILITIES_DOCUMENT, PATH_UTILITIES_STRUCTURED } from '../lib/routes';
+import {
+  PATH_HOME,
+  PATH_PLANNING,
+  PATH_TEAMS,
+  PATH_UTILITIES_DOCUMENT,
+  PATH_UTILITIES_STRUCTURED,
+  PATH_UTILITIES_TOOLS,
+} from '../lib/routes';
 import {
   teamLeader,
   teamMe,
@@ -183,6 +191,12 @@ export function AppSidebar({ collapsed }: Props) {
               <IcBraces size={18} />
             </span>
             {!collapsed ? <span>JSON / YAML</span> : null}
+          </NavLink>
+          <NavLink to={PATH_UTILITIES_TOOLS} className={linkCls} title="Stateless developer tools">
+            <span className="app-sidebar__ic">
+              <IcSliders size={18} />
+            </span>
+            {!collapsed ? <span>Tools</span> : null}
           </NavLink>
         </div>
         ) : null}

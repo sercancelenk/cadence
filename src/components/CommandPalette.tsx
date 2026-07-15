@@ -16,6 +16,7 @@ import {
   PATH_TODOS,
   PATH_UTILITIES_DOCUMENT,
   PATH_UTILITIES_STRUCTURED,
+  PATH_UTILITIES_TOOLS,
 } from '../lib/routes';
 import { plainTextFromBodyFields } from '../lib/richTextBody';
 import { teamBase, teamPeople, teamPersonWorkspacePath } from '../lib/teamPaths';
@@ -33,6 +34,7 @@ import {
   IcListTodo,
   IcLock,
   IcSettings,
+  IcSliders,
   IcStickyNote,
   IcTarget,
   IcUser,
@@ -309,6 +311,13 @@ function buildCommands(
       label: 'Go to JSON / YAML (Utilities)',
       icon: <IcBraces size={16} />,
       run: () => navigate(PATH_UTILITIES_STRUCTURED),
+    },
+    {
+      id: 'nav-utilities-tools',
+      group: 'Navigate',
+      label: 'Go to Tools (Utilities)',
+      icon: <IcSliders size={16} />,
+      run: () => navigate(PATH_UTILITIES_TOOLS),
     },
     {
       id: 'nav-analytics',
