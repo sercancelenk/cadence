@@ -48,7 +48,7 @@ A practical guide to daily use, backups, recovery, and storage. For install and 
 ### People & teams
 
 - Group colleagues into **teams**. Each team has a scratchpad and running agenda.
-- **1:1 mode** keeps a persistent meeting agenda; unchecked items carry over to the next session.
+- **1:1 mode** keeps a shared meeting agenda on each person workspace (Me, leader, skip-level, and roster). **Apply template** inserts a bilingual (EN/TR) outline; **Guide** opens a peer-neutral way-of-working note (balance airtime, keep status elsewhere, prepare ahead, speak candidly, leave with owners). Unchecked `- [ ]` items carry over when you archive.
 - **Person Timeline** helps you prep for reviews.
 
 ### Analytics

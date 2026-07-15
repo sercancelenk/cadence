@@ -106,6 +106,91 @@
   display: none;
 }
 
+/* ─── 1:1 Mode agenda head + way-of-working help ───────────────── */
+
+.one-on-one-agenda__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.one-on-one-agenda__head .card__title {
+  margin-bottom: 0;
+}
+
+.one-on-one-agenda__head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.one-on-one-agenda__lang,
+.one-on-one-help__lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.one-on-one-agenda__lang-btn,
+.one-on-one-help__lang-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted, #a3a3a3);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.one-on-one-agenda__lang-btn.is-active,
+.one-on-one-help__lang-btn.is-active {
+  background: var(--panel, rgba(255, 255, 255, 0.1));
+  color: var(--text, #fff);
+}
+
+.one-on-one-help__lang {
+  margin-bottom: 14px;
+}
+
+.one-on-one-help__intro {
+  margin: 0 0 16px;
+  line-height: 1.55;
+}
+
+.one-on-one-help__rules {
+  margin: 0 0 16px;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.one-on-one-help__rules li strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.one-on-one-help__rules li p {
+  margin: 0;
+  color: var(--muted, #a3a3a3);
+  line-height: 1.5;
+}
+
+.one-on-one-help__footer {
+  margin: 0;
+}
+
 .person-kind__composer {
   margin-bottom: 12px;
   padding: 12px;

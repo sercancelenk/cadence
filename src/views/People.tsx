@@ -15,6 +15,8 @@ import {
   IcCheck,
   IcChevronDown,
   IcClock,
+  IcFileText,
+  IcHelpCircle,
   IcPencil,
   IcPlus,
   IcSave,
@@ -29,10 +31,20 @@ const AIAssistantDialog = lazy(() =>
 );
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { Button } from '../components/ui/Button';
+import { useConfirm } from '../components/ui/ConfirmProvider';
 import { MarkdownEditor, MarkdownView } from '../components/ui/MarkdownEditor';
 import { SchedulePopover } from '../components/ui/SchedulePopover';
+import { OneOnOneHelpDialog } from '../features/people/OneOnOneHelpDialog';
 import { isAIConfigured } from '../lib/ai';
 import { useFeatures } from '../lib/features';
+import {
+  carryOverHeading,
+  defaultAgenda,
+  extractCarryOver,
+  readOneOnOneLang,
+  writeOneOnOneLang,
+  type OneOnOneLang,
+} from '../lib/people/oneOnOneAgenda';
 import { useAppData, useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { distinctCategoriesForTeam, SUGGESTED_CATEGORIES } from '../lib/categories';
 import { schedulePatchToItemPatch } from '../features/people/schedulePatch';
@@ -1538,20 +1550,24 @@ function PersonMeetingMode({
   addItem: ReturnType<typeof useAppData>['addItem'];
   updatePerson: ReturnType<typeof useAppData>['updatePerson'];
 }) {
-  const [agenda, setAgenda] = useState<string>(person.agenda ?? defaultAgenda());
-  const agendaDirty = agenda !== (person.agenda ?? defaultAgenda());
+  const { confirm } = useConfirm();
+  const [lang, setLang] = useState<OneOnOneLang>(() => readOneOnOneLang());
+  const [helpOpen, setHelpOpen] = useState(false);
+  // Empty string is intentional — do not auto-seed a template into AppData.
+  const [agenda, setAgenda] = useState<string>(() => person.agenda ?? '');
+  const agendaDirty = agenda !== (person.agenda ?? '');
   const agendaRef = useRef(agenda);
   const agendaDirtyRef = useRef(agendaDirty);
   agendaRef.current = agenda;
   agendaDirtyRef.current = agendaDirty;
 
   useEffect(() => {
-    setAgenda(person.agenda ?? defaultAgenda());
+    setAgenda(person.agenda ?? '');
   }, [person.id]);
 
   useEffect(() => {
     if (!agendaDirty) {
-      setAgenda(person.agenda ?? defaultAgenda());
+      setAgenda(person.agenda ?? '');
     }
   }, [person.agenda, agendaDirty]);
 
@@ -1598,13 +1614,37 @@ function PersonMeetingMode({
     updatePerson(person.id, { agenda });
   }
 
+  function changeLang(next: OneOnOneLang) {
+    writeOneOnOneLang(next);
+    setLang(next);
+  }
+
+  async function insertTemplate() {
+    const next = defaultAgenda(person.name, lang);
+    if (agenda.trim()) {
+      const ok = await confirm({
+        title: lang === 'tr' ? 'Şablonu uygula?' : 'Apply starter template?',
+        description:
+          lang === 'tr'
+            ? 'Mevcut gündem metninin üzerine yazılır. Arşivlenmemiş içerik kaybolur.'
+            : 'This replaces the current agenda text. Unarchived content will be lost.',
+        confirmLabel: lang === 'tr' ? 'Şablonu uygula' : 'Apply template',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    setAgenda(next);
+    updatePerson(person.id, { agenda: next });
+  }
+
   function archive() {
     if (!agenda.trim()) return;
     const today = new Date();
     const title = `1:1 · ${today.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`;
     addItem(person.id, 'note', { title, body: agenda, category: '1:1' });
     const carryOver = extractCarryOver(agenda);
-    const next = `${defaultAgenda()}${carryOver ? `\n\n## Carry-over from last meeting\n${carryOver}` : ''}`;
+    const fresh = defaultAgenda(person.name, lang);
+    const next = `${fresh}${carryOver ? `\n\n${carryOverHeading(lang)}\n${carryOver}` : ''}`;
     setAgenda(next);
     updatePerson(person.id, { agenda: next });
   }
@@ -1612,38 +1652,83 @@ function PersonMeetingMode({
   return (
     <>
       <section className="card">
-        <h2 className="card__title">Current 1:1 agenda</h2>
+        <div className="one-on-one-agenda__head">
+          <h2 className="card__title">Current 1:1 agenda</h2>
+          <div className="one-on-one-agenda__head-actions">
+            <div className="one-on-one-agenda__lang" role="group" aria-label="Template language">
+              <button
+                type="button"
+                className={`one-on-one-agenda__lang-btn${lang === 'en' ? ' is-active' : ''}`}
+                aria-pressed={lang === 'en'}
+                onClick={() => changeLang('en')}
+              >
+                EN
+              </button>
+              <button
+                type="button"
+                className={`one-on-one-agenda__lang-btn${lang === 'tr' ? ' is-active' : ''}`}
+                aria-pressed={lang === 'tr'}
+                onClick={() => changeLang('tr')}
+              >
+                TR
+              </button>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              icon={<IcHelpCircle size={17} />}
+              onClick={() => setHelpOpen(true)}
+              aria-label={lang === 'tr' ? '1:1 çalışma çerçevesi' : '1:1 way of working'}
+              title={lang === 'tr' ? '1:1 çalışma çerçevesi' : '1:1 way of working'}
+            >
+              {lang === 'tr' ? 'Rehber' : 'Guide'}
+            </Button>
+          </div>
+        </div>
         <p className="muted small">
-          A persistent agenda for your next 1:1. Use `- [ ]` for action items — unchecked ones carry over when you
-          archive the meeting.
+          {lang === 'tr'
+            ? 'Bir sonraki 1:1 için ortak gündem. Aksiyonlar için `- [ ]` kullanın — arşivde işaretlenmeyenler taşınır.'
+            : 'Shared agenda for the next 1:1. Use `- [ ]` for actions — unchecked items carry over when you archive.'}
         </p>
         <MarkdownEditor
           value={agenda}
           onChange={setAgenda}
           onBlur={() => agendaDirty && updatePerson(person.id, { agenda })}
-          placeholder="Plan your next 1:1…"
+          placeholder={
+            lang === 'tr'
+              ? 'Gündemi yazın veya “Şablon uygula” ile başlayın…'
+              : 'Write the agenda, or apply the starter template…'
+          }
           rows={14}
         />
         <div className="row" style={{ marginTop: 10 }}>
+          <Button type="button" variant="secondary" icon={<IcFileText size={17} />} onClick={() => void insertTemplate()}>
+            {lang === 'tr' ? 'Şablon uygula' : 'Apply template'}
+          </Button>
           <Button type="button" variant="secondary" icon={<IcSave size={17} />} onClick={save}>
-            Save agenda
+            {lang === 'tr' ? 'Kaydet' : 'Save'}
           </Button>
           <Button type="button" variant="primary" icon={<IcCheck size={17} />} onClick={archive}>
-            Archive meeting
+            {lang === 'tr' ? 'Arşivle' : 'Archive'}
           </Button>
         </div>
       </section>
 
       <section className="card">
-        <h2 className="card__title">Past meetings <span className="pill">{meetings.length}</span></h2>
+        <h2 className="card__title">
+          {lang === 'tr' ? 'Geçmiş toplantılar' : 'Past meetings'}{' '}
+          <span className="pill">{meetings.length}</span>
+        </h2>
         {meetings.length === 0 ? (
-          <p className="muted">No archived meetings yet.</p>
+          <p className="muted">{lang === 'tr' ? 'Henüz arşivlenmiş toplantı yok.' : 'No archived meetings yet.'}</p>
         ) : (
           <ul className="list">
             {meetings.map((m) => (
               <li key={m.id} className="list__block">
                 <div className="list__title">{m.title}</div>
-                <div className="muted small">Archived {formatShort(m.createdAt)}</div>
+                <div className="muted small">
+                  {lang === 'tr' ? 'Arşiv' : 'Archived'} {formatShort(m.createdAt)}
+                </div>
                 {m.body ? (
                   <div className="list__body-preview">
                     <MarkdownView value={m.body} />
@@ -1654,29 +1739,11 @@ function PersonMeetingMode({
           </ul>
         )}
       </section>
+
+      {helpOpen ? (
+        <OneOnOneHelpDialog lang={lang} onLangChange={changeLang} onClose={() => setHelpOpen(false)} />
+      ) : null}
     </>
   );
 }
 
-function defaultAgenda(): string {
-  return [
-    '## Wins',
-    '- ',
-    '',
-    '## Blockers',
-    '- ',
-    '',
-    '## Action items',
-    '- [ ] ',
-    '',
-    '## Notes',
-    '',
-  ].join('\n');
-}
-
-function extractCarryOver(agenda: string): string {
-  // Pull lines that are unchecked checklist items.
-  const lines = agenda.split('\n');
-  const open = lines.filter((l) => /^\s*-\s*\[\s\]\s*\S/.test(l));
-  return open.join('\n').trim();
-}
