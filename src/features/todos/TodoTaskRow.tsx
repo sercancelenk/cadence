@@ -6,9 +6,16 @@ import {
   IcClock,
   IcGrip,
   IcSparkles,
-  IcStickyNote,
   IcTrash,
 } from '../../components/icons';
+import {
+  EntityLinkPills,
+  type EntityLinkPillItem,
+} from '../../components/ui/EntityLinkPills';
+import {
+  EntityLinkPicker,
+  type EntityLinkPickerOption,
+} from '../../components/ui/EntityLinkPicker';
 import { SchedulePopover } from '../../components/ui/SchedulePopover';
 import { formatDateShort, formatTimeOnly, isPast } from '../../lib/datetime';
 import {
@@ -38,14 +45,10 @@ export type TodoTaskRowProps = {
   allowDrag: boolean;
   isDragSrc: boolean;
   isDropTgt: boolean;
-  /**
-   * Optional metadata about the note this task was extracted from.
-   * `title` is the canonical note title at render time; if the note
-   * has been deleted we pass `undefined` and render a "(deleted note)"
-   * affordance instead of a link. Kept as a flat prop to avoid
-   * threading the entire notes collection into every row.
-   */
-  sourceNote?: { id: string; title: string } | { id: string; title?: undefined };
+  /** Linked notes for the pill strip (labels owned by parent). */
+  linkedNotes?: EntityLinkPillItem[];
+  /** Notes available to link (already-linked excluded by parent). */
+  notePickerOptions?: EntityLinkPickerOption[];
   /**
    * When set, the row is rendered with a brief flash animation so a
    * user who arrived via "open this task" from another route can
@@ -55,8 +58,9 @@ export type TodoTaskRowProps = {
   isFocused?: boolean;
   attachmentUserId: string;
   onAskAI: (item: TodoItem) => void;
-  /** Clicking the source-note chip routes to the linked note. */
-  onOpenSourceNote?: (noteId: string) => void;
+  onOpenLinkedNote?: (noteId: string) => void;
+  onLinkNote?: (noteId: string) => void;
+  onUnlinkNote?: (noteId: string) => void;
   onPatch: (
     id: string,
     patch: Partial<
@@ -93,11 +97,14 @@ export function TodoTaskRow({
   allowDrag,
   isDragSrc,
   isDropTgt,
-  sourceNote,
+  linkedNotes = [],
+  notePickerOptions = [],
   isFocused,
   attachmentUserId,
   onAskAI,
-  onOpenSourceNote,
+  onOpenLinkedNote,
+  onLinkNote,
+  onUnlinkNote,
   onPatch,
   onToggle,
   onRemove,
@@ -109,6 +116,7 @@ export function TodoTaskRow({
   const [editing, setEditing] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [linkPickerOpen, setLinkPickerOpen] = useState(false);
   /**
    * Single "row is expanded" toggle. When true:
    *   - The title's 2-line clamp is removed so the full text is
@@ -575,39 +583,17 @@ export function TodoTaskRow({
             ) : null}
           </div>
 
-          {item.sourceNoteId ? (() => {
-            // Source-note backlink chip. We branch on whether the
-            // note actually exists in the workspace: live → clickable
-            // link with the note title in the tooltip; deleted →
-            // muted, non-interactive chip explaining what happened.
-            // Keeping the orphan visible is intentional — it makes
-            // backup recovery obvious ("oh, that note was deleted,
-            // let me restore it") instead of silently hiding the
-            // reference.
-            const exists = !!sourceNote?.title;
-            const targetId = item.sourceNoteId;
-            return (
-              <button
-                type="button"
-                className={`todos-row__note-chip${exists ? '' : ' todos-row__note-chip--orphan'}`}
-                title={
-                  exists
-                    ? `From note: ${sourceNote!.title}`
-                    : 'The source note has been deleted. Restoring it from a backup will re-link this task automatically.'
-                }
-                aria-label={
-                  exists ? `Open source note: ${sourceNote!.title}` : 'Source note has been deleted'
-                }
-                disabled={!exists}
-                onClick={() => {
-                  if (!exists || !onOpenSourceNote) return;
-                  onOpenSourceNote(targetId);
-                }}
-              >
-                <IcStickyNote size={13} />
-              </button>
-            );
-          })() : null}
+          <div className="todos-row__entity-links">
+            <EntityLinkPills
+              items={linkedNotes}
+              ariaLabel="Linked notes"
+              onOpen={(noteId) => onOpenLinkedNote?.(noteId)}
+              onAdd={onLinkNote ? () => setLinkPickerOpen(true) : undefined}
+              onRemove={onUnlinkNote}
+              addLabel="Link note"
+              hideWhenEmpty={!onLinkNote}
+            />
+          </div>
 
           <div className="todos-row__toolbar">
             {aiEnabled ? (
@@ -648,6 +634,18 @@ export function TodoTaskRow({
         ) : null}
 
       </div>
+      {onLinkNote ? (
+        <EntityLinkPicker
+          open={linkPickerOpen}
+          title="Link a note"
+          description="Choose a note to link with this task."
+          options={notePickerOptions}
+          onClose={() => setLinkPickerOpen(false)}
+          onPick={(noteId) => onLinkNote(noteId)}
+          searchPlaceholder="Search notes…"
+          emptyLabel="No more notes to link"
+        />
+      ) : null}
     </li>
   );
 }

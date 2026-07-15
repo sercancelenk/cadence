@@ -55,18 +55,22 @@ export function TodosPage() {
     reorderTodoGroup,
     clearCompletedInGroup,
     markAllCompleteInGroup,
+    linkNoteTodo,
+    unlinkNoteTodo,
   } = useAppDataActions();
   const workspace = useAppDataSelector(
     (d) => ({
       todoGroups: d.todoGroups,
       todoItems: d.todoItems,
       notes: d.notes,
+      noteTodoLinks: d.noteTodoLinks,
       aiSettings: d.aiSettings,
     }),
     (a, b) =>
       a.todoGroups === b.todoGroups &&
       a.todoItems === b.todoItems &&
       a.notes === b.notes &&
+      a.noteTodoLinks === b.noteTodoLinks &&
       a.aiSettings === b.aiSettings,
   );
 
@@ -178,6 +182,8 @@ export function TodosPage() {
       markAllCompleteInGroup,
       reorderTodoGroup,
       onOpenSourceNote: openSourceNote,
+      onLinkNote: linkNoteTodo,
+      onUnlinkNote: unlinkNoteTodo,
       onAskAI: setAiTask,
     }),
     [
@@ -193,6 +199,9 @@ export function TodosPage() {
       clearCompletedInGroup,
       markAllCompleteInGroup,
       reorderTodoGroup,
+      openSourceNote,
+      linkNoteTodo,
+      unlinkNoteTodo,
     ],
   );
 
@@ -272,6 +281,7 @@ export function TodosPage() {
           allGroupsSorted={allGroupsSorted}
           groupById={groupById}
           noteTitleById={noteTitleById}
+          noteTodoLinks={workspace.noteTodoLinks}
           attachmentUserId={user?.id ?? 'anonymous'}
           totalGroupCount={workspace.todoGroups.length}
           isGroupDragSrc={dragGroupId === g.id}

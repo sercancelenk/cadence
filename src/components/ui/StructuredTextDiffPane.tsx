@@ -329,28 +329,52 @@ export function StructuredTextDiffPane({
     const currentB = merge.b.state.doc.toString();
     const resultA = formatStructuredText(currentA, language);
     const resultB = formatStructuredText(currentB, language);
+    // Atomic: if either side fails, leave both buffers unchanged.
     if (!resultA.ok) {
-      showNotice(resultA.error);
+      showNotice(`Left: ${resultA.error}`, 5000);
       return;
     }
     if (!resultB.ok) {
-      showNotice(resultB.error);
+      showNotice(`Right: ${resultB.error}`, 5000);
       return;
     }
-    clearNotice();
+    if (resultA.notice || resultB.notice) {
+      showNotice(resultA.notice ?? resultB.notice ?? 'Formatted both sides', 4000);
+    } else {
+      clearNotice();
+    }
+    // Align-keys is visual-only: format the visible buffers, then merge edits
+    // back onto the raw (unsorted) documents before persisting.
+    const persistA = alignKeysRef.current
+      ? (() => {
+          const merged = applyStructuredEditToRawText(valueARef.current, resultA.text, language);
+          return merged.ok ? merged.text : resultA.text;
+        })()
+      : resultA.text;
+    const persistB = alignKeysRef.current
+      ? (() => {
+          const merged = applyStructuredEditToRawText(valueBRef.current, resultB.text, language);
+          return merged.ok ? merged.text : resultB.text;
+        })()
+      : resultB.text;
     commitLocalStructuredTextEdit(merge.a, resultA.text, emitA.lastEmitted, holdPropSyncARef);
     commitLocalStructuredTextEdit(merge.b, resultB.text, emitB.lastEmitted, holdPropSyncBRef);
-    emitA.flush(resultA.text);
-    emitB.flush(resultB.text);
+    emitA.flush(persistA);
+    emitB.flush(persistB);
+    // Keep raw prop refs in sync so subsequent align-aware edits merge correctly.
+    valueARef.current = persistA;
+    valueBRef.current = persistB;
     refreshMeta();
   };
 
   const statusFor = (validation: StructuredTextValidation, side: string) =>
     validation.valid
       ? `${side}: valid`
-      : validation.line != null
-        ? `${side}: error line ${validation.line + 1}`
-        : `${side}: invalid`;
+      : validation.issueCount != null && validation.issueCount > 1
+        ? `${side}: ${validation.issueCount} errors (line ${(validation.line ?? 0) + 1})`
+        : validation.line != null
+          ? `${side}: error line ${validation.line + 1}`
+          : `${side}: invalid`;
 
   const jumpToPath = useCallback((side: 'a' | 'b', path: string) => {
     setCompareMode((mode) => (mode === 'structured' ? 'both' : mode));
@@ -445,8 +469,8 @@ export function StructuredTextDiffPane({
             label="Format"
             tooltip={
               language === 'json'
-                ? 'Pretty-print JSON on both sides (unwraps stringified)'
-                : 'Format both sides'
+                ? 'Pretty-print both sides — high-confidence paste cleanup; aborts if either side is invalid'
+                : 'Format both sides — high-confidence paste cleanup; aborts if either side is invalid'
             }
             icon={<IcBraces size={15} />}
             onClick={runFormatBoth}

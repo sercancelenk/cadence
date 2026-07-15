@@ -142,8 +142,8 @@ function DataIntegrityBanner() {
           this boot loaded <strong>{current.total} items</strong> (
           {current.teams} teams, {current.todoItems} todos, {current.notes} notes).
           {electron
-            ? ' Open Backups & Recovery to inspect or restore an earlier snapshot.'
-            : ' Export a JSON backup now if anything looks wrong.'}
+            ? ' Autosave is paused so nothing overwrites your file. Open Backups & Recovery to restore an earlier snapshot.'
+            : ' Autosave is paused. Export a JSON backup now if anything looks wrong.'}
         </span>
       </div>
       <div className="data-integrity-banner__actions">
@@ -158,8 +158,8 @@ function DataIntegrityBanner() {
           type="button"
           className="data-integrity-banner__btn"
           onClick={dismissDataLossSuspicion}
-          aria-label="Dismiss (accept current state as the new normal)"
-          title="Dismiss (accept current state as the new normal)"
+          aria-label="Dismiss (accept current state and resume autosave)"
+          title="Dismiss (accept current state and resume autosave)"
         >
           <IcX size={14} />
         </button>

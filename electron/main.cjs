@@ -85,6 +85,7 @@ const {
   isFutureDataVersion,
   isValidSnapshotPayload,
 } = require('./persistence/writeGeneration.cjs');
+const { isCatastrophicEmptyOverwrite } = require('./persistence/dataIntegrity.cjs');
 const { unwrapStoredWorkspace, wrapCommitEnvelope } = require('./persistence/commitEnvelope.cjs');
 const {
   splitWorkspaceForMonthlyShards,
@@ -1538,19 +1539,23 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
 
   if (fs.existsSync(file) && !allowOverwriteUnreadable) {
     const existing = readUserDataResult(userId);
-    if (!existing.ok && (existing.reason === 'no-key' || existing.reason === 'bad-key')) {
+    // Any unreadable on-disk file (key, parse, io, …) must block overwrite.
+    // Restore/import pass allowOverwriteUnreadable after an explicit user action.
+    if (!existing.ok) {
       console.error(
-        '[cadence] refusing to overwrite undecipherable data file',
+        '[cadence] refusing to overwrite unreadable data file',
         { userId, reason: existing.reason },
       );
       return {
         ok: false,
         error:
-          'A data file already exists for this account but cannot be decrypted with the current session key. Refusing to overwrite. Use Settings → Backups & Recovery to inspect or restore your data.',
-        reason: existing.reason,
+          existing.reason === 'no-key' || existing.reason === 'bad-key'
+            ? 'A data file already exists for this account but cannot be decrypted with the current session key. Refusing to overwrite. Use Settings → Backups & Recovery to inspect or restore your data.'
+            : 'A data file already exists for this account but cannot be read. Refusing to overwrite. Use Settings → Backups & Recovery to inspect or restore your data.',
+        reason: existing.reason ?? 'unreadable',
       };
     }
-    if (existing.ok && existing.data && isFutureDataVersion(existing.data)) {
+    if (existing.data && isFutureDataVersion(existing.data)) {
       console.error('[cadence] refusing to overwrite newer-version workspace on disk', { userId });
       return {
         ok: false,
@@ -2411,6 +2416,60 @@ function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRende
     // Stale renderer saves lose the race quietly — the IPC response carries
     // the current generation so the client can resync without alarming the user.
     return conflict;
+  }
+
+  // Last line of defence: never let an empty scaffold overwrite a populated
+  // workspace via normal autosave. Restore/import call commitUserData with
+  // allowOverwriteUnreadable and bypass this path. Unreadable on-disk files
+  // are refused by writeUserData; this guard must fail closed on exceptions.
+  try {
+    const existingResult = readUserDataResult(uid);
+    if (!existingResult.ok) {
+      // writeUserData will also refuse; surface early with a clear reason.
+      const rejected = {
+        ok: false,
+        reason: existingResult.reason ?? 'unreadable',
+        error:
+          'Autosave refused: the on-disk workspace could not be read. Open Backups & Recovery to restore.',
+        writeGeneration: resolvedGeneration,
+      };
+      if (notifyRenderer && mainWindow) {
+        try { mainWindow.webContents.send('data:saveError', rejected); } catch { /* ignore */ }
+      }
+      return rejected;
+    }
+    const existing = existingResult.data;
+    if (existing && isCatastrophicEmptyOverwrite(existing, payload)) {
+      console.warn('[cadence] refusing data:save — catastrophic empty overwrite', {
+        uid,
+        previousNotes: Array.isArray(existing.notes) ? existing.notes.length : 0,
+        previousTodos: Array.isArray(existing.todoItems) ? existing.todoItems.length : 0,
+      });
+      const rejected = {
+        ok: false,
+        reason: 'suspicious-empty-overwrite',
+        error:
+          'Autosave refused: the in-memory workspace is empty but your on-disk file still has notes or tasks. Open Backups & Recovery to restore, or dismiss the integrity warning only if you intentionally cleared everything.',
+        writeGeneration: resolvedGeneration,
+      };
+      if (notifyRenderer && mainWindow) {
+        try { mainWindow.webContents.send('data:saveError', rejected); } catch { /* ignore */ }
+      }
+      return rejected;
+    }
+  } catch (err) {
+    console.error('[cadence] empty-overwrite guard failed closed', err);
+    const rejected = {
+      ok: false,
+      reason: 'integrity-guard-failed',
+      error:
+        'Autosave refused: the empty-overwrite integrity check failed. Your on-disk file was not modified. Try again or restore from Backups & Recovery.',
+      writeGeneration: resolvedGeneration,
+    };
+    if (notifyRenderer && mainWindow) {
+      try { mainWindow.webContents.send('data:saveError', rejected); } catch { /* ignore */ }
+    }
+    return rejected;
   }
 
   const r = commitUserData(uid, payload);

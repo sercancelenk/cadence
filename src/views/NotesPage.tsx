@@ -50,7 +50,7 @@ const AITaskExtractorDialog = lazy(() =>
  * `docs/HEALTH-CHECK-AND-ROADMAP.md` (B2 notes module).
  */
 export function NotesPage() {
-  const { addNote, addNoteGroup, updateNoteGroup, removeNoteGroup, patchNote, replaceNote, removeNote, setNotesLock, update, flushPendingSave } =
+  const { addNote, addNoteGroup, updateNoteGroup, removeNoteGroup, patchNote, replaceNote, removeNote, setNotesLock, update, flushPendingSave, linkNoteTodo, unlinkNoteTodo } =
     useAppDataActions();
   const notesWorkspace = useAppDataSelector(
     (d) => ({
@@ -59,6 +59,7 @@ export function NotesPage() {
       notesLock: d.notesLock,
       todoItems: d.todoItems,
       todoGroups: d.todoGroups,
+      noteTodoLinks: d.noteTodoLinks,
       aiSettings: d.aiSettings,
     }),
     (a, b) =>
@@ -67,6 +68,7 @@ export function NotesPage() {
       a.notesLock === b.notesLock &&
       a.todoItems === b.todoItems &&
       a.todoGroups === b.todoGroups &&
+      a.noteTodoLinks === b.noteTodoLinks &&
       a.aiSettings === b.aiSettings,
   );
   const { user } = useAccount();
@@ -457,9 +459,12 @@ export function NotesPage() {
                 attachmentUserId={user?.id ?? 'anonymous'}
                 todoItems={notesWorkspace.todoItems}
                 todoGroups={notesWorkspace.todoGroups}
+                noteTodoLinks={notesWorkspace.noteTodoLinks}
                 onOpenTask={(taskId) => {
                   navigate(`/todos?focus=${encodeURIComponent(taskId)}`);
                 }}
+                onLinkTodo={(todoId) => linkNoteTodo(selected.id, todoId)}
+                onUnlinkTodo={(todoId) => unlinkNoteTodo(selected.id, todoId)}
               />
             )}
           </>

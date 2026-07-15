@@ -9,6 +9,7 @@ import {
   leaderPersonIdForTeam,
   selfPersonIdForTeam,
   skipLevelPersonIdForTeam,
+  normalizeData,
   type AppData,
   type AISettings,
   type ItemKind,
@@ -23,6 +24,8 @@ import {
   addTeam,
   addTodoGroup,
   addTodoItem,
+  linkNoteTodo,
+  unlinkNoteTodo,
   clearCompletedInGroup,
   markAllCompleteInGroup,
   moveTodoGroup,
@@ -39,6 +42,7 @@ import {
   removePerson,
   removeTeam,
   removeTodoGroup,
+  removeTodoItem,
   reorderTodoGroup,
   reorderTodoItem,
   replaceNote,
@@ -600,6 +604,11 @@ describe('todo items', () => {
     expect(item?.groupId).toBe(gid);
     expect(item?.sourceNoteId).toBe('note-1');
     expect(item?.priority).toBe('high');
+    expect(d.noteTodoLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ noteId: 'note-1', todoId: item!.id }),
+      ]),
+    );
   });
 
   it('addTodoItem drops stale sourceNoteId and empty body', () => {
@@ -610,6 +619,79 @@ describe('todo items', () => {
     expect(item?.title).toBe('Untitled task');
     expect(item?.body).toBeUndefined();
     expect(item?.sourceNoteId).toBeUndefined();
+  });
+
+  it('linkNoteTodo / unlinkNoteTodo are idempotent and isolated', () => {
+    let d = addNote(emptyData(), 'note-a');
+    d = addNote(d, 'note-b');
+    const gid = firstGroupId(d);
+    d = addTodoItem(d, gid, 'Task A');
+    d = addTodoItem(d, gid, 'Task B');
+    const todoA = d.todoItems.find((t) => t.title === 'Task A')!.id;
+    const todoB = d.todoItems.find((t) => t.title === 'Task B')!.id;
+    const notesBefore = d.notes;
+    const todosBefore = d.todoItems;
+
+    d = linkNoteTodo(d, 'note-a', todoA);
+    d = linkNoteTodo(d, 'note-a', todoA); // idempotent
+    d = linkNoteTodo(d, 'note-a', todoB);
+    expect(d.noteTodoLinks?.filter((l) => l.noteId === 'note-a')).toHaveLength(2);
+    // Link mutations must never rewrite notes / todos collections.
+    expect(d.notes).toBe(notesBefore);
+    expect(d.todoItems).toBe(todosBefore);
+
+    d = unlinkNoteTodo(d, 'note-a', todoA);
+    d = unlinkNoteTodo(d, 'note-a', todoA); // idempotent
+    expect(d.noteTodoLinks?.some((l) => l.todoId === todoA)).toBe(false);
+    expect(d.noteTodoLinks?.some((l) => l.todoId === todoB && l.noteId === 'note-a')).toBe(true);
+    expect(d.notes).toHaveLength(2);
+    expect(d.todoItems).toHaveLength(2);
+
+    const unchanged = linkNoteTodo(d, 'missing-note', todoB);
+    expect(unchanged).toBe(d);
+  });
+
+  it('unlinkNoteTodo clears sourceNoteId so normalize cannot resurrect the link', () => {
+    let d = addNote(emptyData(), 'note-a');
+    const gid = firstGroupId(d);
+    d = addTodoItem(d, gid, 'Extracted', { sourceNoteId: 'note-a' });
+    const todoId = d.todoItems.find((t) => t.title === 'Extracted')!.id;
+    expect(d.noteTodoLinks?.some((l) => l.noteId === 'note-a' && l.todoId === todoId)).toBe(true);
+    expect(d.todoItems.find((t) => t.id === todoId)?.sourceNoteId).toBe('note-a');
+
+    d = unlinkNoteTodo(d, 'note-a', todoId);
+    expect(d.noteTodoLinks?.some((l) => l.todoId === todoId)).toBe(false);
+    expect(d.todoItems.find((t) => t.id === todoId)?.sourceNoteId).toBeUndefined();
+
+    const roundTrip = normalizeData(JSON.parse(JSON.stringify(d)));
+    expect(roundTrip.noteTodoLinks?.some((l) => l.noteId === 'note-a' && l.todoId === todoId)).toBe(
+      false,
+    );
+    expect(roundTrip.todoItems.find((t) => t.id === todoId)?.sourceNoteId).toBeUndefined();
+  });
+
+  it('removeNote / removeTodoItem prune join rows without cascade-deleting the other entity', () => {
+    let d = addNote(emptyData(), 'note-a');
+    const gid = firstGroupId(d);
+    d = addTodoItem(d, gid, 'Linked', { sourceNoteId: 'note-a' });
+    const todoId = d.todoItems[0]!.id;
+    expect(d.noteTodoLinks?.length).toBe(1);
+
+    d = removeNote(d, 'note-a');
+    expect(d.notes).toHaveLength(0);
+    expect(d.todoItems).toHaveLength(1);
+    expect(d.noteTodoLinks ?? []).toHaveLength(0);
+    // sourceNoteId kept for backup-undo; ensure must not resurrect without the note
+    expect(d.todoItems[0]?.sourceNoteId).toBe('note-a');
+    const afterNormalize = normalizeData(JSON.parse(JSON.stringify(d)));
+    expect(afterNormalize.noteTodoLinks ?? []).toHaveLength(0);
+
+    d = addNote(afterNormalize, 'note-b');
+    d = linkNoteTodo(d, 'note-b', todoId);
+    d = removeTodoItem(d, todoId);
+    expect(d.todoItems).toHaveLength(0);
+    expect(d.notes).toHaveLength(1);
+    expect(d.noteTodoLinks ?? []).toHaveLength(0);
   });
 
   it('updateTodoItem clears remind fields when status is done', () => {

@@ -39,6 +39,10 @@ import {
 } from '../../lib/richTextImageLightbox';
 import { resolveRichTextContent } from '../../lib/richTextImport';
 import { insertMarkdownPaste, shouldPasteClipboardAsMarkdown } from '../../lib/richTextPaste';
+import {
+  serializeRichNodesToClipboardPlainText,
+  writeRichClipboard,
+} from '../../lib/richTextClipboard';
 import { RichTextImageLightbox } from './RichTextImageLightbox';
 import { RichTextFindController } from './RichTextFindController';
 import { Tooltip } from './Tooltip';
@@ -491,6 +495,12 @@ export function RichTextEditor({
         class: 'rich-editor__prose',
         spellcheck: 'true',
       },
+      // Compact plain text for any TipTap path that serializes the slice directly.
+      clipboardTextSerializer: (slice) => {
+        const raw = slice.content.toJSON() as RichTextDoc[] | RichTextDoc | null;
+        const nodes = Array.isArray(raw) ? raw : raw ? [raw] : [];
+        return serializeRichNodesToClipboardPlainText(nodes);
+      },
       handleKeyDown: (_view, event) => {
         if ((event.metaKey || event.ctrlKey) && (event.key === 'f' || event.key === 'F')) {
           event.preventDefault();
@@ -564,6 +574,14 @@ export function RichTextEditor({
           if (!attachmentScopeRef.current) return false;
           if (!dataTransferHasImageFiles(event.dataTransfer)) return false;
           event.preventDefault();
+          return true;
+        },
+        // Preview + edit: compact copy so VS Code / WhatsApp / Notes match on-screen lines.
+        copy: (view, event) => writeRichClipboard(view, event),
+        cut: (view, event) => {
+          if (!editableRef.current) return false;
+          if (!writeRichClipboard(view, event)) return false;
+          view.dispatch(view.state.tr.deleteSelection().scrollIntoView());
           return true;
         },
       },

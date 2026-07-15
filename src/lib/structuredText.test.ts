@@ -5,7 +5,10 @@ import {
   convertStructuredText,
   convertYamlToJson,
   formatStructuredText,
+  peelOuterSingleQuotedJson,
+  prepareStructuredTextInput,
   stringifyStructuredTextDocument,
+  tryNormalizeDoubledQuoteJson,
   validateStructuredText,
   canonicalizeStructuredTextForDiff,
   alignStructuredTextSidesForDiff,
@@ -14,6 +17,44 @@ import {
   mergeStructuredEditPreservingKeyOrder,
   parseStructuredDocumentValue,
 } from './structuredText';
+
+describe('prepareStructuredTextInput', () => {
+  it('strips a leading BOM and surrounding whitespace', () => {
+    expect(prepareStructuredTextInput('\uFEFF  {"a":1}  \n')).toBe('{"a":1}');
+  });
+});
+
+describe('peelOuterSingleQuotedJson', () => {
+  it('peels single-quoted JSON object/array pastes', () => {
+    expect(peelOuterSingleQuotedJson("'{\"a\":1}'")).toBe('{"a":1}');
+    expect(peelOuterSingleQuotedJson("'[1,2]'")).toBe('[1,2]');
+  });
+
+  it('unescapes SQL-style doubled single quotes inside the payload', () => {
+    expect(peelOuterSingleQuotedJson("'{\"n\":\"O''Brien\"}'")).toBe('{"n":"O\'Brien"}');
+  });
+
+  it('refuses non-object/array or invalid inner JSON', () => {
+    expect(peelOuterSingleQuotedJson("'hello'")).toBeNull();
+    expect(peelOuterSingleQuotedJson("'123'")).toBeNull();
+    expect(peelOuterSingleQuotedJson("'{bad'")).toBeNull();
+    expect(peelOuterSingleQuotedJson('{"a":1}')).toBeNull();
+  });
+});
+
+describe('tryNormalizeDoubledQuoteJson', () => {
+  it('normalizes Kibana-style outer-quoted doubled quotes', () => {
+    const input = `"{\n  ""z"": ""x""\n}"`;
+    const normalized = tryNormalizeDoubledQuoteJson(input);
+    expect(normalized).not.toBeNull();
+    expect(JSON.parse(normalized!)).toEqual({ z: 'x' });
+  });
+
+  it('returns null when doubled quotes do not yield valid JSON', () => {
+    expect(tryNormalizeDoubledQuoteJson('{ ""oops')).toBeNull();
+    expect(tryNormalizeDoubledQuoteJson('no quotes here')).toBeNull();
+  });
+});
 
 describe('validateStructuredText', () => {
   it('accepts empty input', () => {
@@ -30,6 +71,10 @@ describe('validateStructuredText', () => {
 
   it('accepts valid JSON with trailing content after parse', () => {
     expect(validateStructuredText('{"a":1}', 'json').valid).toBe(true);
+  });
+
+  it('does not treat single-quoted JSON as valid until Format rewrites it', () => {
+    expect(validateStructuredText("'{\"a\":1}'", 'json').valid).toBe(false);
   });
 
   it('rejects invalid YAML', () => {
@@ -49,10 +94,11 @@ describe('formatStructuredText', () => {
     if (r.ok) {
       expect(r.text).toContain('"a": 1');
       expect(r.text).toContain('"b": 2');
+      expect(r.notice).toBeUndefined();
     }
   });
 
-  it('returns error for invalid JSON format', () => {
+  it('returns error for invalid JSON format without inventing structure', () => {
     const r = formatStructuredText('{bad', 'json');
     expect(r.ok).toBe(false);
   });
@@ -73,13 +119,96 @@ describe('formatStructuredText', () => {
     if (r.ok) {
       expect(r.text).toContain('"a": 1');
       expect(r.text.trim().startsWith('{')).toBe(true);
+      expect(r.notice).toBe('Unwrapped stringified JSON');
     }
+  });
+
+  it('peels single-quoted DB pastes then formats', () => {
+    const r = formatStructuredText("'{\"b\":2,\"a\":1}'", 'json');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.text).toContain('"a": 1');
+      expect(r.text).toContain('"b": 2');
+      expect(r.notice).toBe('Removed single-quote wrapper');
+    }
+  });
+
+  it('strips BOM before formatting', () => {
+    const r = formatStructuredText('\uFEFF{"a":1}', 'json');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.text).toContain('"a": 1');
   });
 
   it('keeps plain JSON string values when pretty-printing', () => {
     const r = formatStructuredText('"hello"', 'json');
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.text.trim()).toBe('"hello"');
+    if (r.ok) {
+      expect(r.text.trim()).toBe('"hello"');
+      expect(r.notice).toBeUndefined();
+    }
+  });
+
+  it('unwraps stringified JSON embeds in YAML mode', () => {
+    const r = formatStructuredText('"{\\"a\\":1}"', 'yaml');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.text).toContain('a: 1');
+      expect(r.notice).toBe('Unwrapped stringified JSON');
+    }
+  });
+
+  it('fixes Kibana/CSV doubled-quote JSON pastes', () => {
+    const kibanaPaste = `"{\n  ""z"": ""x""\n}"`;
+    const r = formatStructuredText(kibanaPaste, 'json');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(JSON.parse(r.text)).toEqual({ z: 'x' });
+      expect(r.notice).toBe('Fixed Kibana/CSV doubled quotes');
+    }
+  });
+
+  it('fixes Kibana doubled quotes without an outer wrapper', () => {
+    const r = formatStructuredText('{\n  ""z"": ""x""\n}', 'json');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(JSON.parse(r.text)).toEqual({ z: 'x' });
+  });
+
+  it('preserves empty-string values when fixing doubled quotes', () => {
+    const r = formatStructuredText('"{\n  ""z"": """"\n}"', 'json');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(JSON.parse(r.text)).toEqual({ z: '' });
+  });
+
+  it('does not rewrite already-valid JSON that contains empty strings', () => {
+    const source = '{\n  "a": ""\n}\n';
+    const r = formatStructuredText(source, 'json');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(JSON.parse(r.text)).toEqual({ a: '' });
+      expect(r.notice).toBeUndefined();
+    }
+  });
+
+  it('preserves YAML block-scalar string roots (no speculative YAML re-parse)', () => {
+    const source = '|\n  name: cadence\n  count: 2\n';
+    const r = formatStructuredText(source, 'yaml');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const parsed = parseStructuredDocumentValue(r.text, 'yaml');
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(typeof parsed.value).toBe('string');
+  });
+
+  it('is idempotent for valid JSON after optimize', () => {
+    const once = formatStructuredText("'{\"a\":1}'", 'json');
+    expect(once.ok).toBe(true);
+    if (!once.ok) return;
+    const twice = formatStructuredText(once.text, 'json');
+    expect(twice.ok).toBe(true);
+    if (twice.ok) {
+      expect(twice.text).toBe(once.text);
+      expect(twice.notice).toBeUndefined();
+    }
   });
 });
 
@@ -105,7 +234,10 @@ describe('compactStructuredText', () => {
 
     const r = compactStructuredText(stringified.text, 'json');
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.text.trim()).toBe('{"a":1,"b":2}');
+    if (r.ok) {
+      expect(r.text.trim()).toBe('{"a":1,"b":2}');
+      expect(r.notice).toMatch(/compacted/i);
+    }
   });
 });
 
@@ -145,6 +277,12 @@ describe('convertJsonToYaml', () => {
     const r = convertJsonToYaml('[1, 2, 3]');
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.text).toContain('- 1');
+  });
+
+  it('converts single-quoted JSON pastes', () => {
+    const r = convertJsonToYaml("'{\"name\":\"cadence\"}'");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.text).toContain('name: cadence');
   });
 });
 
@@ -275,6 +413,14 @@ describe('validateStructuredText error lines', () => {
     const r = validateStructuredText(source, 'json');
     expect(r.valid).toBe(false);
     expect(r.line).toBeGreaterThanOrEqual(0);
+  });
+
+  it('keeps status line numbers aligned with leading blank lines in the editor', () => {
+    const source = '\n\n{\n  "a": 1,\n  bad\n}';
+    const r = validateStructuredText(source, 'json');
+    expect(r.valid).toBe(false);
+    // Error is on the "bad" line — with leading blanks that is line index 4 (0-based).
+    expect(r.line).toBeGreaterThanOrEqual(3);
   });
 
   it('maps YAML line errors when provided by the parser', () => {

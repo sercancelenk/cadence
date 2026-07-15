@@ -223,21 +223,11 @@ export interface TodoItem {
   /** Order index within the group. Lower comes first. */
   sortOrder?: number;
   /**
-   * Optional reference to the note this task was derived from.
-   *
-   * Today this gets set automatically when the user runs the AI task
-   * extractor on a specific note (Notes sidebar → ✨ Extract tasks).
-   * Manual link/unlink can be added later — the field is just a
-   * note `id`, so any UI that wants to manage it later is free to.
-   *
-   * If the referenced note gets deleted the field is intentionally
-   * NOT cleared on the task: keeping the orphan id is harmless (the
-   * UI renders it as "(deleted note)" with no link), and the moment
-   * the user undoes the delete from a backup the link is restored
-   * automatically. Wiping the field would lose that recovery hook
-   * and would require migrating every linked task on every note
-   * delete — both bad trade-offs for a back-reference that's already
-   * only advisory.
+   * Optional reference to the note this task was derived from (AI extract /
+   * addTodoItem). Dual-read into `noteTodoLinks` on load when the note still
+   * exists. Explicit unlink clears this so ensure cannot resurrect the pair.
+   * Note delete does NOT clear it (backup undo can restore the back-link);
+   * ensure skips missing notes so orphan pills are not re-created from it.
    */
   sourceNoteId?: string;
   /**
@@ -439,6 +429,21 @@ export interface AppData {
   utilityStructuredTabs?: UtilityStructuredTab[];
   /** Id of the currently active JSON / YAML tab. */
   activeStructuredTabId?: string;
+  /**
+   * N:N join between notes and todos. Canonical source for link pills;
+   * `TodoItem.sourceNoteId` remains for legacy / AI-extract and is migrated
+   * into this array on load (expand — field is never deleted here).
+   * Unlink clears matching `sourceNoteId` so ensure cannot resurrect the pair.
+   */
+  noteTodoLinks?: NoteTodoLink[];
+}
+
+/** A single note ↔ todo association (many-to-many). */
+export interface NoteTodoLink {
+  id: string;
+  noteId: string;
+  todoId: string;
+  createdAt: string;
 }
 
 /** Persisted rich-text scratch pad under Utilities. */
@@ -579,6 +584,7 @@ export function emptyData(): AppData {
     profile: { displayName: 'Me', favoriteTeamIds: [] },
     ...defaultNoteBundle(),
     ...defaultTodoBundle(),
+    noteTodoLinks: [],
   };
 }
 
@@ -1062,11 +1068,21 @@ export function compactAppDataForPersist(data: AppData): Record<string, unknown>
     const { groupId: _drop, ...rest } = n;
     return rest;
   });
-  if (data.noteGroups.length === 0) {
-    const { noteGroups: _drop, ...rest } = data;
-    return { ...rest, notes };
+  // Omit empty optional collections so workspaces that never used them stay
+  // byte-compatible with older builds (unknown keys are preserved on load via
+  // withExtras; writing an empty array is unnecessary noise).
+  let out: Record<string, unknown> =
+    data.noteGroups.length === 0
+      ? (() => {
+          const { noteGroups: _drop, ...rest } = data;
+          return { ...rest, notes };
+        })()
+      : { ...data, notes };
+  if (!data.noteTodoLinks || data.noteTodoLinks.length === 0) {
+    const { noteTodoLinks: _drop, ...rest } = out;
+    out = rest;
   }
-  return { ...data, notes };
+  return out;
 }
 
 export function appDataToPersistJson(data: AppData): string {
@@ -1124,6 +1140,7 @@ export function normalizeData(raw: unknown): AppData {
   const utilityStructuredTabs = parseUtilityStructuredTabs(o.utilityStructuredTabs);
   const activeStructuredTabId =
     typeof o.activeStructuredTabId === 'string' ? o.activeStructuredTabId : undefined;
+  const noteTodoLinks = parseNoteTodoLinks(o.noteTodoLinks);
 
   // Defensive: orphan notesLock cleanup. The lock object can survive on
   // disk after the user clears the notes passphrase if the corresponding
@@ -1160,6 +1177,7 @@ export function normalizeData(raw: unknown): AppData {
     utilityStructuredText,
     utilityStructuredTabs,
     activeStructuredTabId,
+    noteTodoLinks,
     profile: parseProfile(o.profile),
   });
 
@@ -1168,6 +1186,7 @@ export function normalizeData(raw: unknown): AppData {
   data = ensureTeamsHaveSkipLevel(data);
   data = ensureProfile(data);
   data = ensureStructuredTabs(data);
+  data = ensureNoteTodoLinksFromSourceNoteIds(data);
 
   return patchDataToV3(data);
 }
@@ -1358,6 +1377,65 @@ function parseUtilityStructuredTabs(raw: unknown): UtilityStructuredTab[] | unde
     .map((r, i) => parseUtilityStructuredTab(r, i))
     .filter((t): t is UtilityStructuredTab => Boolean(t));
   return tabs.length > 0 ? tabs : undefined;
+}
+
+function noteTodoPairKey(noteId: string, todoId: string): string {
+  return `${noteId}\0${todoId}`;
+}
+
+function parseNoteTodoLinks(raw: unknown): NoteTodoLink[] {
+  if (!Array.isArray(raw)) return [];
+  const out: NoteTodoLink[] = [];
+  const seen = new Set<string>();
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue;
+    const o = row as Record<string, unknown>;
+    const noteId = typeof o.noteId === 'string' ? o.noteId.trim() : '';
+    const todoId = typeof o.todoId === 'string' ? o.todoId.trim() : '';
+    if (!noteId || !todoId) continue;
+    const key = noteTodoPairKey(noteId, todoId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(
+      withExtras<NoteTodoLink>(o, {
+        id: typeof o.id === 'string' && o.id ? o.id : uuid(),
+        noteId,
+        todoId,
+        createdAt: typeof o.createdAt === 'string' ? o.createdAt : nowIso(),
+      }),
+    );
+  }
+  return out;
+}
+
+/**
+ * Expand-only: copy legacy `sourceNoteId` into `noteTodoLinks` when the pair
+ * is missing AND the note still exists. Never deletes `sourceNoteId`
+ * (downgrade / AI extract / backup-undo of a deleted note still use it).
+ */
+function ensureNoteTodoLinksFromSourceNoteIds(data: AppData): AppData {
+  const noteIds = new Set(data.notes.map((n) => n.id));
+  const links = [...(data.noteTodoLinks ?? [])];
+  const seen = new Set(links.map((l) => noteTodoPairKey(l.noteId, l.todoId)));
+  let changed = false;
+  for (const todo of data.todoItems) {
+    const noteId = todo.sourceNoteId?.trim();
+    if (!noteId || !noteIds.has(noteId)) continue;
+    const key = noteTodoPairKey(noteId, todo.id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    links.push({
+      id: uuid(),
+      noteId,
+      todoId: todo.id,
+      createdAt: todo.createdAt || nowIso(),
+    });
+    changed = true;
+  }
+  if (!changed) {
+    return data.noteTodoLinks ? data : { ...data, noteTodoLinks: links };
+  }
+  return { ...data, noteTodoLinks: links };
 }
 
 /**

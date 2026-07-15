@@ -31,6 +31,8 @@ import {
   addTeam as addTeamFn,
   addTodoGroup as addTodoGroupFn,
   addTodoItem as addTodoItemFn,
+  linkNoteTodo as linkNoteTodoFn,
+  unlinkNoteTodo as unlinkNoteTodoFn,
   clearCompletedInGroup as clearCompletedInGroupFn,
   markAllCompleteInGroup as markAllCompleteInGroupFn,
   moveTodoGroup as moveTodoGroupFn,
@@ -89,6 +91,9 @@ import type {
   UtilityStructuredTab,
 } from '../core/model';
 import { isUnsupportedDataVersionError, normalizeData, appDataToPersistJson, compactAppDataForPersist, shapeOfData } from '../core/model';
+import {
+  shouldBlockPersistOnSuspiciousShrink,
+} from '../lib/dataIntegrity';
 import { parseSaveDataResult } from '../lib/appDataSave';
 import { prepareForRemoteApply } from '../lib/syncApplyGuard';
 import { createPersistQueue, type PersistResult } from '../lib/persistQueue';
@@ -250,6 +255,8 @@ type Api = {
   toggleTodoItem: (id: string) => void;
   setTodoStatus: (id: string, status: TodoStatus) => void;
   removeTodoItem: (id: string) => void;
+  linkNoteTodo: (noteId: string, todoId: string) => void;
+  unlinkNoteTodo: (noteId: string, todoId: string) => void;
   addNote: (groupId?: string) => string;
   addNoteGroup: (name: string) => string;
   updateNoteGroup: (
@@ -413,23 +420,6 @@ function writeLocalGeneration(userId: string, gen: number) {
   } catch {
     /* best effort — conflict detection degrades, data write already happened */
   }
-}
-
-/**
- * Decide whether the freshly loaded shape is "much smaller" than the
- * last-known-good marker. We're deliberately conservative: a few items
- * less is normal (the user deleted something between sessions). Only
- * fire when the absolute drop is meaningful AND the relative drop is
- * large, so a 1-item workspace going to 0 doesn't trip the banner.
- */
-function isSuspiciousShrink(current: DataShape, previous: DataShape): boolean {
-  if (previous.total <= 0) return false;
-  const drop = previous.total - current.total;
-  if (drop < 3) return false; // ignore tiny diffs (one note + one todo deletion is normal)
-  // Drop must be at least 50% of the previous total, OR the workspace went
-  // from "had content" to "essentially empty" (≤ 1 item left).
-  if (current.total <= 1) return true;
-  return drop / previous.total >= 0.5;
 }
 
 /**
@@ -665,6 +655,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         });
         return;
       }
+      if (evt?.reason === 'suspicious-empty-overwrite' || evt?.reason === 'integrity-guard-failed') {
+        if (typeof evt?.writeGeneration === 'number') {
+          writeGenerationRef.current = evt.writeGeneration;
+        }
+        persistBlockedRef.current = true;
+        setLastSaveError({
+          reason: evt.reason,
+          error: evt?.error ?? 'Autosave refused to overwrite your on-disk workspace.',
+          at: Date.now(),
+        });
+        return;
+      }
       setLastSaveError({
         reason: evt?.reason ?? 'main-process',
         error: evt?.error ?? 'Main process reported a save error.',
@@ -766,7 +768,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           writeGenerationRef.current = r.writeGeneration;
         }
         if (shouldSurfacePersistError(r.reason)) {
-          if (r.reason === 'write-conflict') {
+          if (r.reason === 'write-conflict' || r.reason === 'suspicious-empty-overwrite') {
             persistBlockedRef.current = true;
           }
           setLastSaveError({
@@ -798,7 +800,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         writeGenerationRef.current = r.writeGeneration;
       }
       if (shouldSurfacePersistError(r.reason)) {
-        if (r.reason === 'write-conflict') {
+        if (r.reason === 'write-conflict' || r.reason === 'suspicious-empty-overwrite') {
           persistBlockedRef.current = true;
         }
         setLastSaveError({
@@ -819,6 +821,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
+    }
+    // Never flush an empty/failed scaffold over disk while persist is blocked
+    // (pagehide, syncFromDisk, visibilitychange, effect cleanup).
+    if (persistBlockedRef.current) {
+      pendingSave.current = null;
+      persistQueueRef.current.cancelPending();
+      await persistQueueRef.current.flush();
+      return;
     }
     const uid = userIdRef.current;
     const next = pendingSave.current ?? snapshotStoreRef.current.getSnapshot();
@@ -966,12 +976,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       try {
         const currentShape = shapeOfData(merged);
         const lastShape = readLastShape(userId);
-        if (lastShape && isSuspiciousShrink(currentShape, lastShape)) {
+        if (shouldBlockPersistOnSuspiciousShrink(currentShape, lastShape)) {
           setDataLossSuspicion({
             current: currentShape,
-            previous: lastShape,
+            previous: lastShape!,
             at: Date.now(),
           });
+          // CRITICAL: refuse to autosave an empty/shrunk scaffold over a
+          // previously healthy workspace. Without this, the integrity
+          // banner only warned while the debounced save still overwrote
+          // the live file (pre-save backups kept the old bytes, but the
+          // user saw an empty app). Restore (replaceAll) or dismiss
+          // clears the block.
+          persistBlockedRef.current = true;
           // Intentionally DO NOT clear the marker yet — keep it around
           // until the user dismisses the banner OR restores from a
           // backup. That way, even if they sign out and back in, the
@@ -983,7 +1000,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
       setData(merged);
       setReady(true);
-      if (seeded) void runPersist(userId, merged);
+      // Never seed-write while persist is blocked (would overwrite disk).
+      if (seeded && !persistBlockedRef.current) void runPersist(userId, merged);
     })();
     return () => {
       cancelled = true;
@@ -1074,9 +1092,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         error: loaded.loadError.error,
         at: Date.now(),
       });
-    } else {
-      setLastSaveError(null);
+      // Keep last-known-good shape + suspicion so a failed reload cannot
+      // erase the integrity marker with an empty scaffold shape.
+      setData(loaded.data);
+      setReady(true);
+      return;
     }
+    setLastSaveError(null);
     setData(loaded.data);
     setReady(true);
     setDataLossSuspicion(null);
@@ -1221,6 +1243,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const dismissDataLossSuspicion = useCallback(() => {
     setDataLossSuspicion(null);
+    // Explicit accept of the shrunk workspace — allow saves again.
+    persistBlockedRef.current = false;
     const uid = userIdRef.current;
     if (!uid) return;
     // Dismissing the banner is an explicit "accept current state as the
@@ -1308,6 +1332,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         cancelPendingReminderSlots(id);
         update((x) => removeTodoItemFn(x, id));
       },
+      linkNoteTodo: (noteId, todoId) => update((x) => linkNoteTodoFn(x, noteId, todoId)),
+      unlinkNoteTodo: (noteId, todoId) => update((x) => unlinkNoteTodoFn(x, noteId, todoId)),
       // Generate the id BEFORE the updater runs, so the updater itself is
       // pure (a requirement for React's setState(updater) — StrictMode may
       // run it twice). The view gets the id back synchronously and selects
@@ -1405,6 +1431,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setTodoStatus: (id: string, status: Parameters<Api['setTodoStatus']>[1]) =>
         actionsBridgeRef.current.setTodoStatus(id, status),
       removeTodoItem: (id: string) => actionsBridgeRef.current.removeTodoItem(id),
+      linkNoteTodo: (noteId: string, todoId: string) =>
+        actionsBridgeRef.current.linkNoteTodo(noteId, todoId),
+      unlinkNoteTodo: (noteId: string, todoId: string) =>
+        actionsBridgeRef.current.unlinkNoteTodo(noteId, todoId),
       addNote: (groupId?: string) => actionsBridgeRef.current.addNote(groupId),
       addNoteGroup: (name: string) => actionsBridgeRef.current.addNoteGroup(name),
       updateNoteGroup: (groupId: string, patch: Parameters<Api['updateNoteGroup']>[1]) =>

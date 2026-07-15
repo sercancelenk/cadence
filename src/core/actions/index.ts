@@ -22,6 +22,7 @@ import type {
   UtilityStructuredText,
   UtilityStructuredTab,
   StructuredTextMode,
+  NoteTodoLink,
 } from '../model';
 import {
   isSyntheticPerson,
@@ -703,7 +704,54 @@ export function addTodoItem(
     ...(extras.bodyPlainText?.trim() ? { bodyPlainText: extras.bodyPlainText.trim() } : {}),
     ...(sourceNoteId ? { sourceNoteId } : {}),
   };
-  return { ...data, todoItems: [item, ...data.todoItems] };
+  const withItem = { ...data, todoItems: [item, ...data.todoItems] };
+  return sourceNoteId ? linkNoteTodo(withItem, sourceNoteId, item.id) : withItem;
+}
+
+/** Idempotent N:N link between a note and a todo. */
+export function linkNoteTodo(data: AppData, noteId: string, todoId: string): AppData {
+  const nId = noteId.trim();
+  const tId = todoId.trim();
+  if (!nId || !tId) return data;
+  if (!data.notes.some((n) => n.id === nId)) return data;
+  if (!data.todoItems.some((t) => t.id === tId)) return data;
+  const links = data.noteTodoLinks ?? [];
+  if (links.some((l) => l.noteId === nId && l.todoId === tId)) return data;
+  const link: NoteTodoLink = {
+    id: uuid(),
+    noteId: nId,
+    todoId: tId,
+    createdAt: nowIso(),
+  };
+  return { ...data, noteTodoLinks: [...links, link] };
+}
+
+/** Remove a note↔todo link if present (idempotent).
+ * Also clears matching `TodoItem.sourceNoteId` so normalize/ensure cannot
+ * resurrect the join on the next load.
+ */
+export function unlinkNoteTodo(data: AppData, noteId: string, todoId: string): AppData {
+  const nId = noteId.trim();
+  const tId = todoId.trim();
+  if (!nId || !tId) return data;
+  const links = data.noteTodoLinks ?? [];
+  const nextLinks = links.filter((l) => !(l.noteId === nId && l.todoId === tId));
+  const linksChanged = nextLinks.length !== links.length;
+
+  let todosChanged = false;
+  const nextTodos = data.todoItems.map((t) => {
+    if (t.id !== tId || t.sourceNoteId !== nId) return t;
+    todosChanged = true;
+    const { sourceNoteId: _drop, ...rest } = t;
+    return rest;
+  });
+
+  if (!linksChanged && !todosChanged) return data;
+  return {
+    ...data,
+    ...(linksChanged ? { noteTodoLinks: nextLinks } : {}),
+    ...(todosChanged ? { todoItems: nextTodos } : {}),
+  };
 }
 
 /**
@@ -945,10 +993,14 @@ export function toggleTodoItem(data: AppData, id: string): AppData {
 }
 
 export function removeTodoItem(data: AppData, id: string): AppData {
+  const links = data.noteTodoLinks ?? [];
+  const nextLinks = links.filter((l) => l.todoId !== id);
   return {
     ...data,
     todoItems: data.todoItems.filter((x) => x.id !== id),
     notifiedReminderIds: clearReminderNotifyKeys(data.notifiedReminderIds, id),
+    // Prune join rows only — never cascade-delete notes.
+    ...(nextLinks.length !== links.length ? { noteTodoLinks: nextLinks } : {}),
   };
 }
 
@@ -1070,7 +1122,14 @@ export function patchNote(
 }
 
 export function removeNote(data: AppData, id: string): AppData {
-  return { ...data, notes: data.notes.filter((n) => n.id !== id) };
+  const links = data.noteTodoLinks ?? [];
+  const nextLinks = links.filter((l) => l.noteId !== id);
+  return {
+    ...data,
+    notes: data.notes.filter((n) => n.id !== id),
+    // Prune join rows only — never cascade-delete todos.
+    ...(nextLinks.length !== links.length ? { noteTodoLinks: nextLinks } : {}),
+  };
 }
 
 /**

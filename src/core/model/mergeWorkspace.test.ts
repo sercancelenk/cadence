@@ -181,13 +181,48 @@ describe('mergeAppendWorkspace', () => {
 
   it('describes an empty merge and a populated one', () => {
     expect(describeMergeSummary({
-      notes: 0, noteGroups: 0, todoItems: 0, todoGroups: 0, items: 0, people: 0, teams: 0,
+      notes: 0, noteGroups: 0, todoItems: 0, todoGroups: 0, noteTodoLinks: 0,
+      items: 0, people: 0, teams: 0,
       notifiedReminderIds: 0, total: 0,
     })).toMatch(/up to date/i);
 
     expect(describeMergeSummary({
-      notes: 2, noteGroups: 0, todoItems: 1, todoGroups: 0, items: 0, people: 0, teams: 0,
+      notes: 2, noteGroups: 0, todoItems: 1, todoGroups: 0, noteTodoLinks: 0,
+      items: 0, people: 0, teams: 0,
       notifiedReminderIds: 0, total: 3,
     })).toBe('Imported 2 notes, 1 to-do.');
+
+    expect(describeMergeSummary({
+      notes: 0, noteGroups: 0, todoItems: 0, todoGroups: 0, noteTodoLinks: 2,
+      items: 0, people: 0, teams: 0,
+      notifiedReminderIds: 0, total: 2,
+    })).toBe('Imported 2 links.');
+  });
+
+  it('appends remote-only noteTodoLinks by noteId+todoId without touching notes/todos', () => {
+    const local = {
+      ...baseData(),
+      notes: [note('n1')],
+      todoItems: [todo('t1')],
+      noteTodoLinks: [
+        { id: 'l-local', noteId: 'n1', todoId: 't1', createdAt: T },
+      ],
+    };
+    const remote = {
+      ...baseData(),
+      notes: [note('n1'), note('n2')],
+      todoItems: [todo('t1'), todo('t2')],
+      noteTodoLinks: [
+        { id: 'l-dup', noteId: 'n1', todoId: 't1', createdAt: T },
+        { id: 'l-new', noteId: 'n2', todoId: 't2', createdAt: T },
+      ],
+    };
+    const { data, summary } = mergeAppendWorkspace(local, remote);
+    expect(data.notes.map((n) => n.id)).toEqual(['n1', 'n2']);
+    expect(data.todoItems.map((t) => t.id)).toEqual(['t1', 't2']);
+    expect(data.noteTodoLinks).toHaveLength(2);
+    expect(data.noteTodoLinks?.[0]).toMatchObject({ id: 'l-local', noteId: 'n1', todoId: 't1' });
+    expect(data.noteTodoLinks?.[1]).toMatchObject({ noteId: 'n2', todoId: 't2' });
+    expect(summary.noteTodoLinks).toBe(1);
   });
 });

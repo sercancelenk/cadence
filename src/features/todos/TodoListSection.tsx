@@ -1,9 +1,15 @@
-import { FormEvent, lazy, Suspense } from 'react';
+import { FormEvent, lazy, Suspense, useMemo } from 'react';
 import { IcChevronDown, IcGrip, IcPlus, IcStar } from '../../components/icons';
 import { useConfirm } from '../../components/ui/ConfirmProvider';
+import type { EntityLinkPillItem } from '../../components/ui/EntityLinkPills';
 import { richTextPayloadToBodyFields } from '../../lib/richTextBody';
+import {
+  linksForTodo,
+  noteIdsLinkedToTodo,
+  truncateEntityLinkLabel,
+} from '../../lib/noteTodoLinks';
 import { PRIORITY_OPTIONS, isTodoOpen } from '../../model';
-import type { Priority, TodoGroup, TodoItem } from '../../model';
+import type { NoteTodoLink, Priority, TodoGroup, TodoItem } from '../../model';
 import { prefetchRichTextEditor } from './prefetchRichTextEditor';
 import { emptyInlineAddDraft, todoBodyPatchFromFields, type InlineAddDraft } from './todoBody';
 import { matchesStatusFilter, isSectionOpen, type SortMode, type StatusFilter, type TodoItemViewMode } from './todoPreferences';
@@ -50,6 +56,8 @@ export type TodoListSectionCallbacks = {
   markAllCompleteInGroup: (groupId: string) => void;
   reorderTodoGroup: (sourceId: string, targetId: string | null) => void;
   onOpenSourceNote: (noteId: string) => void;
+  onLinkNote: (noteId: string, todoId: string) => void;
+  onUnlinkNote: (noteId: string, todoId: string) => void;
   onAskAI: (item: TodoItem) => void;
 };
 
@@ -74,6 +82,7 @@ export type TodoListSectionProps = {
   allGroupsSorted: TodoGroup[];
   groupById: Map<string, TodoGroup>;
   noteTitleById: Map<string, string>;
+  noteTodoLinks?: NoteTodoLink[];
   attachmentUserId: string;
   totalGroupCount: number;
   isGroupDragSrc: boolean;
@@ -113,6 +122,7 @@ export function TodoListSection(props: TodoListSectionProps) {
     allGroupsSorted,
     groupById,
     noteTitleById,
+    noteTodoLinks,
     attachmentUserId,
     totalGroupCount,
     isGroupDragSrc: isDragSrc,
@@ -128,6 +138,17 @@ export function TodoListSection(props: TodoListSectionProps) {
     onItemDragEnd,
     actions,
   } = props;
+
+  const notePickerOptions = useMemo(
+    () =>
+      [...noteTitleById.entries()]
+        .map(([id, title]) => ({
+          id,
+          label: title.trim() || 'Untitled note',
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [noteTitleById],
+  );
 
   const archivedView = itemsViewMode === 'archived';
   if (archivedView && list.length === 0) return null;
@@ -151,6 +172,16 @@ export function TodoListSection(props: TodoListSectionProps) {
   const canMoveUp = myIdx > 0;
   const canMoveDown = myIdx >= 0 && myIdx < peers.length - 1;
 
+  const linkedNotesFor = (todoId: string): EntityLinkPillItem[] =>
+    linksForTodo(noteTodoLinks, todoId).map((link) => {
+      const title = noteTitleById.get(link.noteId);
+      return {
+        id: link.noteId,
+        label: truncateEntityLinkLabel(title ?? 'Deleted note'),
+        orphan: title === undefined,
+      };
+    });
+
   const rowProps = (it: TodoItem, allowDrag: boolean) => ({
     item: it,
     group: groupById.get(it.groupId) ?? g,
@@ -160,15 +191,16 @@ export function TodoListSection(props: TodoListSectionProps) {
     allowDrag: allowDrag && !archivedView,
     isDragSrc: allowDrag && dragItemId === it.id,
     isDropTgt: allowDrag && dropItemTargetId === it.id && dragItemId !== it.id,
-    sourceNote: it.sourceNoteId
-      ? noteTitleById.has(it.sourceNoteId)
-        ? { id: it.sourceNoteId, title: noteTitleById.get(it.sourceNoteId)! }
-        : { id: it.sourceNoteId }
-      : undefined,
+    linkedNotes: linkedNotesFor(it.id),
+    notePickerOptions: notePickerOptions.filter(
+      (n) => !noteIdsLinkedToTodo(noteTodoLinks, it.id).includes(n.id),
+    ),
     isFocused: focusedTaskId === it.id,
     attachmentUserId,
     onAskAI: actions.onAskAI,
-    onOpenSourceNote: actions.onOpenSourceNote,
+    onOpenLinkedNote: actions.onOpenSourceNote,
+    onLinkNote: (noteId: string) => actions.onLinkNote(noteId, it.id),
+    onUnlinkNote: (noteId: string) => actions.onUnlinkNote(noteId, it.id),
     onPatch: (id: string, patch: Parameters<typeof actions.updateTodoItem>[1]) =>
       actions.updateTodoItem(id, patch),
     onToggle: actions.toggleTodoItem,

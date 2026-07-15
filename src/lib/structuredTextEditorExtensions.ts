@@ -1,6 +1,6 @@
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from '@codemirror/view';
 import { EditorState, Compartment, type Extension } from '@codemirror/state';
-import { json, jsonParseLinter } from '@codemirror/lang-json';
+import { json } from '@codemirror/lang-json';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
 import { linter, lintGutter } from '@codemirror/lint';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
@@ -18,6 +18,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { parse as parseYaml } from 'yaml';
 import type { StructuredTextLanguage } from './structuredText';
+import { collectStructuredTextJsonDiagnostics } from './structuredTextDiagnostics';
 
 export type StructuredTextCompartments = {
   language: Compartment;
@@ -71,9 +72,16 @@ function yamlParseLinter() {
   });
 }
 
+function jsonStructuralLinter() {
+  return linter((view) => {
+    const text = view.state.doc.toString();
+    return collectStructuredTextJsonDiagnostics(text, (lineNumber) => view.state.doc.line(lineNumber));
+  });
+}
+
 export function structuredTextLanguageExtensions(language: StructuredTextLanguage): Extension[] {
   if (language === 'json') {
-    return [json(), linter(jsonParseLinter())];
+    return [json(), jsonStructuralLinter()];
   }
   return [yamlLang(), yamlParseLinter()];
 }
@@ -148,8 +156,50 @@ export const cadenceStructuredTextTheme = EditorView.theme(
     '.cm-activeLine': {
       backgroundColor: 'color-mix(in srgb, var(--accent) 8%, transparent)',
     },
+    /* Lint hover tooltips — must not inherit editor fg onto CM’s default white panel. */
+    '.cm-tooltip': {
+      backgroundColor: 'var(--panel)',
+      color: 'var(--text)',
+      border: '1px solid var(--border)',
+      borderRadius: '8px',
+      boxShadow: '0 10px 28px color-mix(in srgb, #000 28%, transparent)',
+    },
+    '.cm-tooltip.cm-tooltip-lint': {
+      backgroundColor: 'var(--panel)',
+      color: 'var(--text)',
+      padding: '4px 0',
+      maxWidth: '420px',
+    },
+    '.cm-tooltip-lint ul': {
+      margin: 0,
+      padding: 0,
+      listStyle: 'none',
+    },
+    '.cm-diagnostic': {
+      color: 'var(--text)',
+      padding: '6px 10px',
+      margin: 0,
+      fontSize: '12px',
+      lineHeight: '1.45',
+    },
     '.cm-diagnostic-error': {
-      borderLeft: '3px solid #e5534b',
+      borderLeft: '3px solid var(--danger, #e5534b)',
+      backgroundColor: 'color-mix(in srgb, var(--danger, #e5534b) 10%, transparent)',
+    },
+    '.cm-diagnostic-warning': {
+      borderLeft: '3px solid #e6b464',
+      backgroundColor: 'color-mix(in srgb, #e6b464 12%, transparent)',
+    },
+    '.cm-diagnostic-info, .cm-diagnostic-hint': {
+      borderLeft: '3px solid var(--accent)',
+    },
+    '.cm-lintRange-error': {
+      backgroundImage: 'none',
+      textDecoration: 'underline wavy var(--danger, #e5534b)',
+    },
+    '.cm-panel.cm-panel-lint ul [aria-selected]': {
+      backgroundColor: 'color-mix(in srgb, var(--accent) 16%, transparent)',
+      color: 'var(--text)',
     },
     '.cm-foldGutter span': {
       cursor: 'pointer',

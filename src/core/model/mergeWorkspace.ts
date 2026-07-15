@@ -46,7 +46,17 @@
  * deterministic for tests.
  */
 
-import type { AppData, Item, Note, NoteGroup, Person, Team, TodoGroup, TodoItem } from './index';
+import type {
+  AppData,
+  Item,
+  Note,
+  NoteGroup,
+  NoteTodoLink,
+  Person,
+  Team,
+  TodoGroup,
+  TodoItem,
+} from './index';
 
 /** Per-collection count of entities appended from the remote workspace. */
 export interface MergeAppendSummary {
@@ -54,6 +64,7 @@ export interface MergeAppendSummary {
   noteGroups: number;
   todoItems: number;
   todoGroups: number;
+  noteTodoLinks: number;
   items: number;
   people: number;
   teams: number;
@@ -177,12 +188,20 @@ export function mergeAppendWorkspace(local: AppData, remote: AppData): MergeAppe
     local.notifiedReminderIds ?? [],
     remote.notifiedReminderIds ?? [],
   );
+  // Links are identity = (noteId, todoId). Deduping by link `id` alone would
+  // re-import the same pair after independently-created link rows.
+  const noteTodoLinks = appendMissing<NoteTodoLink>(
+    local.noteTodoLinks ?? [],
+    remote.noteTodoLinks ?? [],
+    (l) => `${l.noteId}\0${l.todoId}`,
+  );
 
   const summary: MergeAppendSummary = {
     notes: notes.added,
     noteGroups: noteGroups.added,
     todoItems: todoItems.added,
     todoGroups: todoGroups.added,
+    noteTodoLinks: noteTodoLinks.added,
     items: items.added,
     people: people.added,
     teams: teams.added,
@@ -192,6 +211,7 @@ export function mergeAppendWorkspace(local: AppData, remote: AppData): MergeAppe
       noteGroups.added +
       todoItems.added +
       todoGroups.added +
+      noteTodoLinks.added +
       items.added +
       people.added +
       teams.added +
@@ -211,6 +231,7 @@ export function mergeAppendWorkspace(local: AppData, remote: AppData): MergeAppe
     todoItems: todoItems.merged,
     notes: notes.merged,
     noteGroups: noteGroups.merged,
+    noteTodoLinks: noteTodoLinks.merged,
   };
 
   return { data, summary };
@@ -226,6 +247,7 @@ export function describeMergeSummary(summary: MergeAppendSummary): string {
   push(summary.notes, 'note', 'notes');
   push(summary.todoItems, 'to-do', 'to-dos');
   push(summary.items, 'team item', 'team items');
+  push(summary.noteTodoLinks, 'link', 'links');
   push(summary.noteGroups + summary.todoGroups, 'list', 'lists');
   push(summary.people, 'person', 'people');
   push(summary.teams, 'team', 'teams');

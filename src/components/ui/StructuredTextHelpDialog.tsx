@@ -49,6 +49,13 @@ export function StructuredTextHelpDialog({ onClose }: StructuredTextHelpDialogPr
             Toolbar: <strong>Format</strong>, <strong>Compact</strong>, <strong>Stringify</strong>{' '}
             (JSON), fold/unfold blocks, copy, and in-document search.
           </li>
+          <li>
+            <strong>Format</strong> pretty-prints and applies high-confidence paste cleanup
+            (stringified JSON, single-quoted / Kibana doubled quotes, assignment wrappers,
+            markdown fences). If the document is structurally broken (missing commas, unclosed
+            strings, mismatched brackets), Format leaves it unchanged and the gutter lists each
+            issue — it never invents missing syntax.
+          </li>
           <li>Invalid syntax is flagged inline — status shows the first error line.</li>
         </ul>
       </section>

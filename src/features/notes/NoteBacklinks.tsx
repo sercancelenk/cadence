@@ -1,38 +1,46 @@
 import { useMemo } from 'react';
 import { IcCheck, IcListTodo } from '../../components/icons';
 import { isTodoOpen } from '../../model';
-import type { TodoGroup, TodoItem } from '../../model';
+import type { NoteTodoLink, TodoGroup, TodoItem } from '../../model';
+import { todoIdsLinkedToNote } from '../../lib/noteTodoLinks';
 
 export type NoteBacklinksProps = {
   noteId: string;
   todoItems: TodoItem[];
   todoGroups: TodoGroup[];
+  /** Canonical N:N links; dual-read with legacy sourceNoteId below. */
+  noteTodoLinks?: NoteTodoLink[];
   onOpenTask: (taskId: string) => void;
 };
 
 /**
- * Compact "Tasks extracted from this note" panel rendered beneath the
- * note's markdown editor.
+ * Compact "Tasks from this note" panel rendered beneath the note editor.
+ * Prefers `noteTodoLinks`, unions legacy `sourceNoteId` for dual-read.
  */
-export function NoteBacklinks({ noteId, todoItems, todoGroups, onOpenTask }: NoteBacklinksProps) {
-  const linked = useMemo(
-    () =>
-      todoItems
-        .filter((t) => t.sourceNoteId === noteId)
-        .sort((a, b) => {
-          const ao = isTodoOpen(a.status) ? 0 : 1;
-          const bo = isTodoOpen(b.status) ? 0 : 1;
-          if (ao !== bo) return ao - bo;
-          return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
-        }),
-    [todoItems, noteId],
-  );
+export function NoteBacklinks({
+  noteId,
+  todoItems,
+  todoGroups,
+  noteTodoLinks,
+  onOpenTask,
+}: NoteBacklinksProps) {
+  const linked = useMemo(() => {
+    const fromJoin = new Set(todoIdsLinkedToNote(noteTodoLinks, noteId));
+    return todoItems
+      .filter((t) => fromJoin.has(t.id) || t.sourceNoteId === noteId)
+      .sort((a, b) => {
+        const ao = isTodoOpen(a.status) ? 0 : 1;
+        const bo = isTodoOpen(b.status) ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+        return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
+      });
+  }, [todoItems, noteId, noteTodoLinks]);
   if (linked.length === 0) return null;
 
   const groupName = (gid: string) => todoGroups.find((g) => g.id === gid)?.name ?? 'Unknown list';
 
   return (
-    <section className="note-backlinks" aria-label="Tasks extracted from this note">
+    <section className="note-backlinks" aria-label="Tasks from this note">
       <header className="note-backlinks__head">
         <IcListTodo size={14} />
         <h3 className="note-backlinks__title">

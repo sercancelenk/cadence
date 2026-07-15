@@ -10,6 +10,7 @@ import {
   TODO_STATUS_OPTIONS,
   emptyData,
   appDataToPersistJson,
+  compactAppDataForPersist,
   getLeaderPerson,
   getSelfPerson,
   getSkipLevelPerson,
@@ -476,6 +477,200 @@ describe('TodoItem — sourceNoteId migration', () => {
     // string ID, so undefined renders no chip / no backlink, which is
     // the legacy behaviour we need to preserve.
     expect(norm.todoItems[0]!.sourceNoteId).toBeUndefined();
+  });
+});
+
+describe('noteTodoLinks', () => {
+  const TS = '2026-01-01T00:00:00.000Z';
+
+  it('parses links and dedupes noteId+todoId pairs', () => {
+    const norm = normalizeData({
+      version: 3,
+      teams: [{ id: 't1', name: 'A', createdAt: TS, status: 'active' }],
+      people: [],
+      items: [],
+      notifiedReminderIds: [],
+      todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: TS }],
+      todoItems: [],
+      notes: [],
+      noteGroups: [],
+      noteTodoLinks: [
+        { id: 'l1', noteId: 'n1', todoId: 't1', createdAt: TS },
+        { id: 'l2', noteId: 'n1', todoId: 't1', createdAt: TS },
+        { id: 'bad', noteId: '', todoId: 't1', createdAt: TS },
+      ],
+    });
+    expect(norm.noteTodoLinks).toHaveLength(1);
+    expect(norm.noteTodoLinks![0]).toMatchObject({ noteId: 'n1', todoId: 't1' });
+  });
+
+  it('migrates sourceNoteId into noteTodoLinks on load', () => {
+    const norm = normalizeData({
+      version: 3,
+      teams: [{ id: 't1', name: 'A', createdAt: TS, status: 'active' }],
+      people: [],
+      items: [],
+      notifiedReminderIds: [],
+      todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: TS }],
+      todoItems: [
+        {
+          id: 'todo-1',
+          groupId: 'g1',
+          title: 'From note',
+          status: 'todo',
+          done: false,
+          sourceNoteId: 'note-42',
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+      notes: [
+        {
+          id: 'note-42',
+          title: 'Source',
+          body: '',
+          locked: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+      noteGroups: [],
+    });
+    expect(norm.todoItems[0]?.sourceNoteId).toBe('note-42');
+    expect(norm.noteTodoLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ noteId: 'note-42', todoId: 'todo-1' }),
+      ]),
+    );
+  });
+
+  it('legacy workspace load never drops or rewrites notes/todos content', () => {
+    // Pre–noteTodoLinks file shape (v3 without the join array). Migrate may
+    // ADD links from sourceNoteId, but notes + todos must survive byte-for-
+    // byte on identity/content fields — zero data loss zone.
+    const legacy = {
+      version: 3,
+      teams: [{ id: 't1', name: 'A', createdAt: TS, status: 'active' }],
+      people: [],
+      items: [],
+      notifiedReminderIds: [],
+      todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: TS }],
+      todoItems: [
+        {
+          id: 'todo-keep',
+          groupId: 'g1',
+          title: 'Keep me',
+          body: 'important body',
+          status: 'todo',
+          done: false,
+          sourceNoteId: 'note-keep',
+          createdAt: TS,
+          updatedAt: TS,
+        },
+        {
+          id: 'todo-plain',
+          groupId: 'g1',
+          title: 'No source',
+          status: 'in_progress',
+          done: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+      notes: [
+        {
+          id: 'note-keep',
+          title: 'Keep note',
+          body: 'note body forever',
+          bodyPlainText: 'note body forever',
+          locked: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+        {
+          id: 'note-other',
+          title: 'Other',
+          body: 'x',
+          locked: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+      noteGroups: [],
+    };
+    const norm = normalizeData(legacy);
+    expect(norm.notes).toHaveLength(2);
+    expect(norm.todoItems).toHaveLength(2);
+    expect(norm.notes.map((n) => ({ id: n.id, title: n.title, body: n.body }))).toEqual([
+      { id: 'note-keep', title: 'Keep note', body: 'note body forever' },
+      { id: 'note-other', title: 'Other', body: 'x' },
+    ]);
+    expect(norm.todoItems.map((t) => ({
+      id: t.id,
+      title: t.title,
+      body: t.body,
+      sourceNoteId: t.sourceNoteId,
+      status: t.status,
+    }))).toEqual([
+      {
+        id: 'todo-keep',
+        title: 'Keep me',
+        body: 'important body',
+        sourceNoteId: 'note-keep',
+        status: 'todo',
+      },
+      {
+        id: 'todo-plain',
+        title: 'No source',
+        body: undefined,
+        sourceNoteId: undefined,
+        status: 'in_progress',
+      },
+    ]);
+    // Additive only: join row appears; DATA_VERSION stays 3 (old builds open it).
+    expect(norm.version).toBe(3);
+    expect(norm.noteTodoLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ noteId: 'note-keep', todoId: 'todo-keep' }),
+      ]),
+    );
+  });
+
+  it('compactAppDataForPersist omits empty noteTodoLinks so unused workspaces stay lean', () => {
+    const norm = normalizeData({
+      version: 3,
+      teams: [{ id: 't1', name: 'A', createdAt: TS, status: 'active' }],
+      people: [],
+      items: [],
+      notifiedReminderIds: [],
+      todoGroups: [{ id: 'g1', name: 'Inbox', sortOrder: 0, createdAt: TS }],
+      todoItems: [
+        {
+          id: 't1',
+          groupId: 'g1',
+          title: 'Plain',
+          status: 'todo',
+          done: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+      notes: [
+        {
+          id: 'n1',
+          title: 'N',
+          body: '',
+          locked: false,
+          createdAt: TS,
+          updatedAt: TS,
+        },
+      ],
+      noteGroups: [],
+    });
+    const persisted = compactAppDataForPersist(norm);
+    expect(persisted.noteTodoLinks).toBeUndefined();
+    expect(persisted.notes).toHaveLength(1);
+    expect(persisted.todoItems).toHaveLength(1);
   });
 });
 
@@ -2070,7 +2265,7 @@ describe('normalizeData — forward-compatible unknown-field passthrough', () =>
       'version', 'teams', 'people', 'items', 'notifiedReminderIds', 'lastTeamId',
       'profile', 'todoGroups', 'todoItems', 'aiSettings', 'notes', 'noteGroups',
       'notesLock', 'utilityDocument', 'utilityStructuredText',
-      'utilityStructuredTabs', 'activeStructuredTabId',
+      'utilityStructuredTabs', 'activeStructuredTabId', 'noteTodoLinks',
     ]);
     for (const key of Object.keys(norm)) {
       expect(allowed.has(key)).toBe(true);

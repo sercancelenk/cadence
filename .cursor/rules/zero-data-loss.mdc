@@ -1,0 +1,36 @@
+---
+description: ZERO DATA LOSS — sacred trust invariant for Cadence (version upgrades, load/save, migrations)
+alwaysApply: true
+---
+
+# ZERO DATA LOSS (non-negotiable)
+
+Cadence is a **local-first** app. Users trust us with notes, todos, and locked content.
+**Never losing user data** is the product’s #1 feature — more important than any new UI or convenience.
+
+## Absolute rules
+
+1. **Version transitions must not lose data.** Schema/feature upgrades are expand-only or dual-read. Never bump `DATA_VERSION` / `MAX_DATA_VERSION` unless old builds can still open the file OR there is an explicit, tested migration + blocked-persist path for unsupported downgrades.
+2. **Never overwrite a populated workspace with an empty/scaffold snapshot** via autosave, hot reload, failed decrypt, missing file, or “looks empty” boot. Prefer `persistBlocked` + integrity banner + Backups restore.
+3. **Migrations are additive.** Prefer join tables / optional fields over rewriting or deleting existing entities. Keep legacy fields (`sourceNoteId`, etc.) until dual-read is proven.
+4. **Load failure ≠ empty success.** Decrypt/parse/IO/unsupported-version failures must block persist. Do not treat `normalizeData(null)` / `emptyData()` as a writable healthy workspace when a prior healthy shape or on-disk file existed.
+5. **Unknown keys survive round-trips** (`withExtras` / forward-compat). Older builds must not strip newer top-level collections when they save.
+6. **Deletes of user content require explicit user action** (or documented restore/import). Link/unlink, UI chips, and feature flags must never cascade-delete notes or todos.
+7. **Before shipping model/persistence/sync changes:** prove with tests that legacy fixtures keep the same notes/todos (ids + content). If unsure, stop and verify — do not “ship and see”.
+
+## Hot zones (extra care)
+
+- `src/core/model/**` (parse, migrate, compact, shape)
+- `src/providers/AppDataContext.tsx` (load, save, persistBlocked, integrity)
+- `electron/main.cjs` + `electron/persistence/**` (commit, restore, empty-overwrite guards)
+- Sync / `replaceAll` / import / restore paths
+
+## When investigating “my data is gone”
+
+1. Do **not** assume the feature caused deletion — check Dev vs Prod userData, account id, and `backups/<userId>/data-pre-save-*.json`.
+2. Prefer restore from rolling pre-save snapshots; never “fix” by writing empty over live.
+3. Harden the wipe path that allowed the save; add a regression test.
+
+## Trust statement (repeat to yourself)
+
+> Users must never lose existing notes or todos across upgrades, reloads, or our mistakes. If a change risks that, it does not ship.

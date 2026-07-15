@@ -181,10 +181,15 @@ export function StructuredTextEditor({
       const current = view.state.doc.toString();
       const result = transform(current, languageRef.current);
       if (!result.ok) {
+        // Leave the buffer untouched on parse failure — never invent structure.
         showNotice(result.error, 4000);
         return;
       }
-      clearNotice();
+      if (result.notice) {
+        showNotice(result.notice, 4000);
+      } else {
+        clearNotice();
+      }
       commitLocalStructuredTextEdit(view, result.text, lastEmitted, holdPropSyncRef);
       pushValidation(result.text, languageRef.current);
       flushEmit(result.text);
@@ -277,9 +282,11 @@ export function StructuredTextEditor({
 
   const statusLabel = validation.valid
     ? 'Valid'
-    : validation.line != null
-      ? `Error (line ${validation.line + 1})`
-      : 'Invalid';
+    : validation.issueCount != null && validation.issueCount > 1
+      ? `${validation.issueCount} errors (line ${(validation.line ?? 0) + 1})`
+      : validation.line != null
+        ? `Error (line ${validation.line + 1})`
+        : 'Invalid';
 
   return (
     <div className={`structured-text-editor${className ? ` ${className}` : ''}`}>
@@ -321,8 +328,8 @@ export function StructuredTextEditor({
             label="Format"
             tooltip={
               language === 'json'
-                ? 'Pretty-print JSON (unwraps stringified)'
-                : 'Format document'
+                ? 'Pretty-print JSON — cleans high-confidence pastes (stringified, quotes, fences, assignments); never invents missing syntax'
+                : 'Format YAML — cleans high-confidence pastes; never invents missing syntax'
             }
             icon={<IcBraces size={15} />}
             onClick={() => applyTransform(formatStructuredText)}

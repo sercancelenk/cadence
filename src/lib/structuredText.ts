@@ -1,9 +1,44 @@
 /**
  * Pure helpers for JSON / YAML structured text (format + validate).
  * Used by StructuredTextEditor and unit tests — no CodeMirror dependency.
+ *
+ * Format / Compact / Convert only rewrite the document when parse succeeds
+ * end-to-end. Invalid input returns an error and callers leave the buffer
+ * untouched — no speculative “healing” of broken syntax.
  */
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import {
+  collectStructuredTextJsonDiagnostics,
+  summarizeJsonDiagnostics,
+} from './structuredTextDiagnostics';
+import {
+  collectHighConfidencePasteCandidates,
+  noticeForPasteFix,
+  peelOuterSingleQuotedJson as peelOuterSingleQuotedJsonCandidate,
+  tryNormalizeDoubledQuoteJson as tryNormalizeDoubledQuoteJsonCandidate,
+  type StructuredPasteFixKind,
+} from './structuredTextPaste';
+import { prepareStructuredTextInput } from './structuredTextPrepare';
+
+export { prepareStructuredTextInput } from './structuredTextPrepare';
+export {
+  peelAssignmentWrapper,
+  peelMarkdownCodeFence,
+  peelOuterSingleQuotedJson as peelOuterSingleQuotedJsonDetailed,
+  tryNormalizeDoubledQuoteJson as tryNormalizeDoubledQuoteJsonDetailed,
+  collectHighConfidencePasteCandidates,
+} from './structuredTextPaste';
+
+/** @deprecated Prefer detailed paste helpers; kept for existing tests. */
+export function peelOuterSingleQuotedJson(text: string): string | null {
+  return peelOuterSingleQuotedJsonCandidate(text)?.text ?? null;
+}
+
+/** @deprecated Prefer detailed paste helpers; kept for existing tests. */
+export function tryNormalizeDoubledQuoteJson(text: string): string | null {
+  return tryNormalizeDoubledQuoteJsonCandidate(text)?.text ?? null;
+}
 
 export type StructuredTextLanguage = 'json' | 'yaml';
 
@@ -12,57 +47,140 @@ export type StructuredTextValidation = {
   message?: string;
   /** 0-based line hint when the parser provides one. */
   line?: number;
+  /** Extra structural issues (JSON) beyond the primary parse error. */
+  issueCount?: number;
 };
 
 export type StructuredTextFormatResult =
-  | { ok: true; text: string }
+  | { ok: true; text: string; /** Set when a high-confidence paste fix ran. */ notice?: string }
+  | { ok: false; error: string };
+
+/** Cap nested unwrap loops (DB dumps sometimes double/triple-encode). */
+const MAX_STRUCTURED_UNWRAP_DEPTH = 8;
+
+function isStructuredObjectOrArray(value: unknown): value is object {
+  return value !== null && typeof value === 'object';
+}
+
+function tryParseJsonObjectOrArray(text: string): unknown | undefined {
+  const inner = text.trim();
+  if (!inner.startsWith('{') && !inner.startsWith('[')) return undefined;
+  try {
+    const reparsed = JSON.parse(inner);
+    if (isStructuredObjectOrArray(reparsed)) return reparsed;
+  } catch {
+    /* not JSON structure */
+  }
+  return undefined;
+}
+
+/**
+ * After Stringify (or a DB paste), the document root may be a string that
+ * itself contains object/array JSON. Unwrap so Format / Compact restore the
+ * original structure. Stops at plain strings (`"hello"`) and caps depth.
+ *
+ * Intentionally does NOT re-parse string roots as YAML: a YAML block scalar
+ * whose text happens to look like a mapping must stay a string (data safety).
+ */
+function unwrapStringifiedStructuredDocument(
+  value: unknown,
+): { value: unknown; unwrapped: boolean } {
+  let current = value;
+  let unwrapped = false;
+  for (let depth = 0; depth < MAX_STRUCTURED_UNWRAP_DEPTH && typeof current === 'string'; depth++) {
+    const asJson = tryParseJsonObjectOrArray(current);
+    if (asJson === undefined) break;
+    current = asJson;
+    unwrapped = true;
+  }
+  return { value: current, unwrapped };
+}
+
+type ParsedStructuredDocument =
+  | { ok: true; value: unknown; fixKind?: StructuredPasteFixKind | 'stringified' }
   | { ok: false; error: string };
 
 /**
- * After Stringify, the document root is a JSON string containing object/array
- * text. Unwrap so Format / Compact restore the original structure.
+ * Parse document to a JS value — shared by format, semantic diff, and canonicalize.
+ * High-confidence paste fixes (Stage 2) run only when the raw document fails to parse.
  */
-function unwrapStringifiedJsonDocument(value: unknown): unknown {
-  let current = value;
-  while (typeof current === 'string') {
-    const inner = current.trim();
-    if (!inner.startsWith('{') && !inner.startsWith('[')) break;
-    try {
-      const reparsed = JSON.parse(inner);
-      if (reparsed === null || typeof reparsed !== 'object') break;
-      current = reparsed;
-    } catch {
-      break;
-    }
-  }
-  return current;
-}
-
-function parseJsonDocumentValue(text: string): unknown {
-  return unwrapStringifiedJsonDocument(JSON.parse(text.trim()));
-}
-
-/** Parse document to a JS value — shared by format, semantic diff, and canonicalize. */
 export function parseStructuredDocumentValue(
   text: string,
   language: StructuredTextLanguage,
 ): { ok: true; value: unknown } | { ok: false; error: string } {
-  const trimmed = text.trim();
-  if (!trimmed) return { ok: true, value: {} };
+  const parsed = parseStructuredDocumentValueDetailed(text, language);
+  if (!parsed.ok) return parsed;
+  return { ok: true, value: parsed.value };
+}
+
+function finishParsedValue(
+  raw: unknown,
+  fixKind?: StructuredPasteFixKind | 'stringified',
+): ParsedStructuredDocument {
+  const unwrapped = unwrapStringifiedStructuredDocument(raw);
+  return {
+    ok: true,
+    value: unwrapped.value,
+    fixKind: unwrapped.unwrapped ? 'stringified' : fixKind,
+  };
+}
+
+function tryParseJsonText(
+  candidate: string,
+  fixKind?: StructuredPasteFixKind,
+): ParsedStructuredDocument | null {
+  try {
+    return finishParsedValue(JSON.parse(candidate) as unknown, fixKind);
+  } catch {
+    return null;
+  }
+}
+
+function tryParseYamlText(
+  candidate: string,
+  fixKind?: StructuredPasteFixKind,
+): ParsedStructuredDocument | null {
+  try {
+    return finishParsedValue(parseYaml(candidate, { strict: true }), fixKind);
+  } catch {
+    return null;
+  }
+}
+
+function parseStructuredDocumentValueDetailed(
+  text: string,
+  language: StructuredTextLanguage,
+): ParsedStructuredDocument {
+  const prepared = prepareStructuredTextInput(text);
+  if (!prepared) return { ok: true, value: {} };
 
   if (language === 'json') {
-    try {
-      return { ok: true, value: parseJsonDocumentValue(trimmed) };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'Invalid JSON' };
+    const direct = tryParseJsonText(prepared);
+    if (direct) return direct;
+
+    for (const candidate of collectHighConfidencePasteCandidates(prepared)) {
+      const fixed = tryParseJsonText(candidate.text, candidate.kind);
+      if (fixed) return fixed;
     }
+    return { ok: false, error: 'Invalid JSON' };
   }
 
-  try {
-    return { ok: true, value: parseYaml(trimmed, { strict: true }) };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Invalid YAML' };
+  const directYaml = tryParseYamlText(prepared);
+  if (directYaml) return directYaml;
+
+  for (const candidate of collectHighConfidencePasteCandidates(prepared)) {
+    const asYaml = tryParseYamlText(candidate.text, candidate.kind);
+    if (asYaml) return asYaml;
+    // Fence/assignment often wraps JSON while YAML mode is selected.
+    const asJson = tryParseJsonText(candidate.text, candidate.kind);
+    if (asJson) return asJson;
   }
+
+  return { ok: false, error: 'Invalid YAML' };
+}
+
+function formatNotice(fixKind?: StructuredPasteFixKind | 'stringified'): string | undefined {
+  return fixKind ? noticeForPasteFix(fixKind) : undefined;
 }
 
 /** Recursively sort object keys so line diff aligns fields regardless of source order. */
@@ -191,27 +309,48 @@ export function validateStructuredText(
   text: string,
   language: StructuredTextLanguage,
 ): StructuredTextValidation {
-  const trimmed = text.trim();
-  if (!trimmed) return { valid: true };
+  // Validate the editor document as-is (BOM-strip only). Trimming would shift
+  // line numbers vs the CodeMirror gutter / linter which sees the full doc.
+  const prepared = text.replace(/^\uFEFF/, '');
+  if (!prepared.trim()) return { valid: true };
 
   if (language === 'json') {
-    try {
-      JSON.parse(trimmed);
-      return { valid: true };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Invalid JSON';
-      const line = parseJsonErrorLine(message, trimmed);
-      return { valid: false, message, line };
-    }
+    const lineAt = (lineNumber: number) => {
+      // 1-based line → offsets in the prepared string
+      let line = 1;
+      let start = 0;
+      for (let i = 0; i < prepared.length; i++) {
+        if (line === lineNumber) {
+          let end = prepared.indexOf('\n', i);
+          if (end < 0) end = prepared.length;
+          return { from: start, to: end };
+        }
+        if (prepared[i] === '\n') {
+          line++;
+          start = i + 1;
+        }
+      }
+      return { from: Math.max(0, prepared.length - 1), to: prepared.length };
+    };
+
+    const diagnostics = collectStructuredTextJsonDiagnostics(prepared, lineAt);
+    if (diagnostics.length === 0) return { valid: true };
+    const primary = diagnostics[0]!;
+    return {
+      valid: false,
+      message: summarizeJsonDiagnostics(diagnostics),
+      line: primary.line,
+      issueCount: diagnostics.length,
+    };
   }
 
   try {
-    parseYaml(trimmed, { strict: true });
+    parseYaml(prepared, { strict: true });
     return { valid: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Invalid YAML';
     const line = parseYamlErrorLine(message);
-    return { valid: false, message, line };
+    return { valid: false, message, line, issueCount: 1 };
   }
 }
 
@@ -219,23 +358,53 @@ export function formatStructuredText(
   text: string,
   language: StructuredTextLanguage,
 ): StructuredTextFormatResult {
-  const trimmed = text.trim();
-  if (!trimmed) {
+  const prepared = prepareStructuredTextInput(text);
+  if (!prepared) {
     return { ok: true, text: language === 'json' ? '{\n}\n' : '' };
   }
 
-  if (language === 'json') {
-    try {
-      const parsed = parseJsonDocumentValue(trimmed);
-      return { ok: true, text: `${JSON.stringify(parsed, null, 2)}\n` };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'Invalid JSON' };
+  const parsed = parseStructuredDocumentValueDetailed(text, language);
+  if (!parsed.ok) {
+    if (language === 'json') {
+      const diagnostics = collectStructuredTextJsonDiagnostics(prepared, (lineNumber) => {
+        let line = 1;
+        let start = 0;
+        for (let i = 0; i < prepared.length; i++) {
+          if (line === lineNumber) {
+            let end = prepared.indexOf('\n', i);
+            if (end < 0) end = prepared.length;
+            return { from: start, to: end };
+          }
+          if (prepared[i] === '\n') {
+            line++;
+            start = i + 1;
+          }
+        }
+        return { from: Math.max(0, prepared.length - 1), to: prepared.length };
+      });
+      return {
+        ok: false,
+        error: `${summarizeJsonDiagnostics(diagnostics)} — left unchanged (not a safe auto-fix)`,
+      };
     }
+    return parsed;
+  }
+
+  if (language === 'json') {
+    return {
+      ok: true,
+      text: `${JSON.stringify(parsed.value, null, 2)}\n`,
+      notice: formatNotice(parsed.fixKind),
+    };
   }
 
   try {
-    const parsed = parseYaml(trimmed, { strict: true });
-    return { ok: true, text: stringifyYaml(parsed, { indent: 2 }) };
+    const yamlText = stringifyYaml(parsed.value, { indent: 2 });
+    return {
+      ok: true,
+      text: yamlText.endsWith('\n') ? yamlText : `${yamlText}\n`,
+      notice: formatNotice(parsed.fixKind),
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Invalid YAML' };
   }
@@ -250,17 +419,18 @@ export function compactStructuredText(
     return { ok: false, error: 'Compact is only available for JSON' };
   }
 
-  const trimmed = text.trim();
-  if (!trimmed) {
+  const prepared = prepareStructuredTextInput(text);
+  if (!prepared) {
     return { ok: true, text: '{}\n' };
   }
 
-  try {
-    const parsed = parseJsonDocumentValue(trimmed);
-    return { ok: true, text: `${JSON.stringify(parsed)}\n` };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Invalid JSON' };
-  }
+  const parsed = parseStructuredDocumentValueDetailed(text, 'json');
+  if (!parsed.ok) return parsed;
+  return {
+    ok: true,
+    text: `${JSON.stringify(parsed.value)}\n`,
+    notice: parsed.fixKind ? `${noticeForPasteFix(parsed.fixKind)} (compacted)` : undefined,
+  };
 }
 
 /**
@@ -275,30 +445,28 @@ export function stringifyStructuredTextDocument(
     return { ok: false, error: 'Stringify is only available for JSON' };
   }
 
-  const trimmed = text.trim();
-  if (!trimmed) {
+  const prepared = prepareStructuredTextInput(text);
+  if (!prepared) {
     return { ok: true, text: '""\n' };
   }
 
-  try {
-    const parsed = parseJsonDocumentValue(trimmed);
-    const compact = JSON.stringify(parsed);
-    return { ok: true, text: `${JSON.stringify(compact)}\n` };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Invalid JSON' };
-  }
+  const parsed = parseStructuredDocumentValueDetailed(text, 'json');
+  if (!parsed.ok) return parsed;
+  const compact = JSON.stringify(parsed.value);
+  return { ok: true, text: `${JSON.stringify(compact)}\n` };
 }
 
 /** Parse the document as JSON and emit pretty YAML (2-space indent). */
 export function convertJsonToYaml(text: string): StructuredTextFormatResult {
-  const trimmed = text.trim();
-  if (!trimmed) {
+  const prepared = prepareStructuredTextInput(text);
+  if (!prepared) {
     return { ok: true, text: '{}\n' };
   }
 
+  const parsed = parseStructuredDocumentValueDetailed(text, 'json');
+  if (!parsed.ok) return parsed;
   try {
-    const parsed = parseJsonDocumentValue(trimmed);
-    const yamlText = stringifyYaml(parsed, { indent: 2 });
+    const yamlText = stringifyYaml(parsed.value, { indent: 2 });
     return { ok: true, text: yamlText.endsWith('\n') ? yamlText : `${yamlText}\n` };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Invalid JSON' };
@@ -307,17 +475,14 @@ export function convertJsonToYaml(text: string): StructuredTextFormatResult {
 
 /** Parse the document as YAML and emit pretty JSON. */
 export function convertYamlToJson(text: string): StructuredTextFormatResult {
-  const trimmed = text.trim();
-  if (!trimmed) {
+  const prepared = prepareStructuredTextInput(text);
+  if (!prepared) {
     return { ok: true, text: '{\n}\n' };
   }
 
-  try {
-    const parsed = parseYaml(trimmed, { strict: true });
-    return { ok: true, text: `${JSON.stringify(parsed, null, 2)}\n` };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Invalid YAML' };
-  }
+  const parsed = parseStructuredDocumentValueDetailed(text, 'yaml');
+  if (!parsed.ok) return parsed;
+  return { ok: true, text: `${JSON.stringify(parsed.value, null, 2)}\n` };
 }
 
 /** Convert structured text to the target language (parses source format from the action). */
@@ -326,28 +491,6 @@ export function convertStructuredText(
   target: StructuredTextLanguage,
 ): StructuredTextFormatResult {
   return target === 'yaml' ? convertJsonToYaml(text) : convertYamlToJson(text);
-}
-
-function parseJsonErrorLine(message: string, source?: string): number | undefined {
-  const lineMatch = message.match(/line\s+(\d+)/i);
-  if (lineMatch) {
-    const line = Number(lineMatch[1]);
-    return Number.isFinite(line) ? line - 1 : undefined;
-  }
-
-  const posMatch = message.match(/position\s+(\d+)/i);
-  if (posMatch && source) {
-    const pos = Number(posMatch[1]);
-    if (!Number.isFinite(pos) || pos < 0) return undefined;
-    let line = 0;
-    const limit = Math.min(pos, source.length);
-    for (let i = 0; i < limit; i++) {
-      if (source[i] === '\n') line++;
-    }
-    return line;
-  }
-
-  return undefined;
 }
 
 function parseYamlErrorLine(message: string): number | undefined {
