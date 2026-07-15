@@ -32,6 +32,10 @@ describe('dataIntegrity', () => {
     ).toBe(false);
   });
 
+  it('isSuspiciousShrink ignores previous marker with no content', () => {
+    expect(isSuspiciousShrink(shape({ total: 0 }), shape({ total: 0 }))).toBe(false);
+  });
+
   it('isSuspiciousShrink fires on any populated → empty wipe', () => {
     expect(
       isSuspiciousShrink(shape({ total: 0 }), shape({ total: 1, notes: 1 })),
@@ -44,10 +48,22 @@ describe('dataIntegrity', () => {
     ).toBe(true);
   });
 
-  it('isSuspiciousShrink fires on empty / half wipe', () => {
+  it('isSuspiciousShrink fires when nearly emptied or half wiped', () => {
+    expect(
+      isSuspiciousShrink(shape({ total: 1, notes: 1 }), shape({ total: 10, notes: 5, todoItems: 5 })),
+    ).toBe(true);
     expect(
       isSuspiciousShrink(shape({ total: 5 }), shape({ total: 20, notes: 10, todoItems: 8 })),
     ).toBe(true);
+    // Large absolute drop but under 50% relative — not suspicious.
+    expect(
+      isSuspiciousShrink(shape({ total: 12 }), shape({ total: 20 })),
+    ).toBe(false);
+  });
+
+  it('materialContentCount treats missing arrays as zero', () => {
+    expect(materialContentCount({})).toBe(0);
+    expect(materialContentCount({ notes: undefined, todoItems: [1], items: undefined })).toBe(1);
   });
 
   it('shouldBlockPersistOnSuspiciousShrink needs a previous marker', () => {
