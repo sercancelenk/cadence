@@ -85,6 +85,69 @@ describe('erdModel', () => {
     expect(t.id).toBe('t1');
   });
 
+  it('skips malformed rows and duplicate ids while keeping valid relations', () => {
+    const raw = {
+      version: 1,
+      tables: [
+        null,
+        'skip',
+        {
+          id: 'dup',
+          name: '',
+          columns: [null, { id: 'c1', name: '', type: 'nope' }, { id: 'c1', name: 'ignored-dup' }],
+        },
+        {
+          id: 'dup',
+          name: 'second-dup-table',
+          columns: [{ id: 'c9', name: 'x', type: 'string' }],
+        },
+        {
+          id: 't2',
+          name: 'ok',
+          x: Number.NaN,
+          y: 'bad',
+          columns: [{ id: 'pk', name: 'id', type: 'uuid', pk: true }],
+        },
+      ],
+      relations: [
+        null,
+        {
+          id: 'r1',
+          fromTableId: 'dup',
+          fromColumnId: 'c1',
+          toTableId: 't2',
+          toColumnId: 'missing',
+        },
+        {
+          id: 'r1',
+          fromTableId: 'dup',
+          fromColumnId: 'c1',
+          toTableId: 't2',
+          toColumnId: 'pk',
+        },
+        {
+          id: 'r1',
+          fromTableId: 'dup',
+          fromColumnId: 'c1',
+          toTableId: 't2',
+          toColumnId: 'pk',
+        },
+        { fromTableId: '', fromColumnId: 'c1', toTableId: 't2', toColumnId: 'pk' },
+      ],
+    };
+    const parsed = parseErdDocument(raw);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.doc.tables).toHaveLength(2);
+      expect(parsed.doc.tables[0]?.name).toBe('Table');
+      expect(parsed.doc.tables[0]?.columns[0]?.name).toBe('column');
+      expect(parsed.doc.tables[1]?.columns.some((c) => c.pk)).toBe(true);
+      expect(parsed.doc.relations).toHaveLength(1);
+      expect(parsed.doc.relations[0]?.id).toBe('r1');
+      expect(parsed.doc.relations[0]?.toColumnId).toBe('pk');
+    }
+  });
+
   it('triggers browser downloads for JSON and data URLs', () => {
     const click = vi.fn();
     const revoke = vi.fn();

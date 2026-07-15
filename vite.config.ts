@@ -113,33 +113,20 @@ export default defineConfig({
           if (id.includes('@tiptap/') || id.includes('/prosemirror-')) {
             return 'vendor-richtext';
           }
-          // Mermaid is dynamically imported on first diagram preview — keep it
-          // out of vendor-misc so Notes/Todos editor mounts stay lean.
-          if (
-            id.includes('/mermaid/') ||
-            id.includes('mermaid/dist') ||
-            id.includes('/@mermaid-js/') ||
-            id.includes('/cytoscape') ||
-            id.includes('/katex/') ||
-            id.includes('/dagre') ||
-            id.includes('/roughjs')
-          ) {
-            return 'vendor-mermaid';
-          }
+          // Do not assign mermaid / excalidraw / xyflow (or a catch-all
+          // vendor-misc) to manual chunks. Named heavy chunks absorb Vite's
+          // `__vitePreload` helper; other vendors then import that chunk and
+          // form a circular ESM init (`Cannot access 'X' before initialization`)
+          // that blanks boot / e2e register. Those libs stay on automatic async
+          // chunks from `lazy()` / `import()`.
           if (id.includes('highlight.js') || id.includes('/lowlight/')) {
             return 'vendor-richtext';
           }
           if (id.includes('@codemirror') || id.includes('/codemirror/') || id.includes('/lezer-')) {
             return 'vendor-codemirror';
           }
-          if (id.includes('@excalidraw/') || id.includes('/excalidraw/')) {
-            return 'vendor-excalidraw';
-          }
-          if (id.includes('@xyflow/') || id.includes('/@xyflow/')) {
-            return 'vendor-xyflow';
-          }
           if (id.includes('/yaml/') || id.includes('yaml/dist')) return 'vendor-yaml';
-          return 'vendor-misc';
+          return undefined;
         },
       },
     },

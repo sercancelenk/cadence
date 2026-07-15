@@ -34,6 +34,11 @@ describe('oneOnOneAgenda', () => {
     expect(tr).not.toMatch(/buz kırıcı|Nasıl hissediyor|Lider|Onun gündemi|Benim gündemim/i);
   });
 
+  it('uses neutral fallbacks when the person name is blank', () => {
+    expect(defaultAgenda('   ', 'en')).toContain('## Agenda — Other');
+    expect(defaultAgenda('', 'tr')).toContain('## Gündem — Karşı taraf');
+  });
+
   it('extracts unchecked checklist lines for carry-over', () => {
     const agenda = [
       '## Actions',
@@ -55,6 +60,7 @@ describe('oneOnOneAgenda', () => {
     const tr = oneOnOneWayOfWorking('tr');
     expect(tr.heading).toMatch(/1:1/);
     expect(tr.rules.some((r) => /liderin işi/i.test(r.body))).toBe(false);
+    expect(carryOverHeading('en')).toBe('## Carry-over');
     expect(carryOverHeading('tr')).toMatch(/Devreden/i);
   });
 
@@ -71,5 +77,11 @@ describe('oneOnOneAgenda', () => {
     });
     expect(readOneOnOneLang()).toBe('en');
     getItem.mockRestore();
+
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    expect(() => writeOneOnOneLang('en')).not.toThrow();
+    setItem.mockRestore();
   });
 });

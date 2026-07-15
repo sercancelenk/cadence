@@ -88,6 +88,19 @@ describe('jsonToTypescript coverage', () => {
     expect(jsonToCode('{}', 'go', 'Empty').ok).toBe(true);
   });
 
+  it('covers union arrays, null roots, and numeric key sanitizing', () => {
+    const mixed = jsonToCode('{"vals":[1,true,null]}', 'typescript');
+    expect(mixed.ok).toBe(true);
+    if (mixed.ok) expect(mixed.code).toMatch(/\|/);
+    expect(jsonToCode('null', 'java').ok).toBe(true);
+    expect(jsonToCode('null', 'go').ok).toBe(true);
+    const keyed = jsonToCode('{"1bad":{"x":1},"dup":{"x":1},"dup":{"y":2}}'.replace(
+      '"dup":{"x":1},"dup":{"y":2}',
+      '"dup":{"x":1},"dup2":{"x":1}',
+    ), 'go', '9Root');
+    expect(keyed.ok).toBe(true);
+  });
+
   it('rejects oversized node graphs', () => {
     const huge = JSON.stringify(
       Object.fromEntries(Array.from({ length: 2_100 }, (_, i) => [`k${i}`, i])),
@@ -148,6 +161,21 @@ describe('curlToCode coverage', () => {
     expect(curlToCode('curl -d', 'fetch').ok).toBe(false);
     expect(curlToCode('', 'fetch').ok).toBe(false);
   });
+
+  it('skips known args and resolves relative URLs', () => {
+    const r = curlToCode(
+      `curl -u user:pass --max-time 5 -o out.txt example.com/api`,
+      'fetch',
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.url).toContain('example.com/api');
+    const goBody = curlToCode(
+      `curl -X POST https://example.com -d '{"a":true}' -H 'X-Test: 1'`,
+      'go',
+    );
+    expect(goBody.ok).toBe(true);
+    if (goBody.ok) expect(goBody.code).toContain('NewReader');
+  });
 });
 
 describe('regexTester extras', () => {
@@ -158,6 +186,15 @@ describe('regexTester extras', () => {
     expect(testRegex('a', 'x'.repeat(25_001)).ok).toBe(false);
     const zero = testRegex('(?=x)', 'xxx', 'g');
     expect(zero.ok).toBe(true);
+  });
+
+  it('truncates when match count hits the cap', () => {
+    const r = testRegex('a', 'a'.repeat(600), 'g');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.truncated).toBe(true);
+      expect(r.matches.length).toBeLessThanOrEqual(500);
+    }
   });
 });
 
