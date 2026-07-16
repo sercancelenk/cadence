@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, type DragEvent } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  type DragEvent,
+} from 'react';
 import {
   Background,
+  BackgroundVariant,
   Controls,
   MarkerType,
   MiniMap,
@@ -21,6 +30,8 @@ import {
   createTable,
   downloadDataUrl,
   downloadTextFile,
+  emptyErdDocument,
+  ERD_DOC_VERSION,
   erdDocumentToJson,
   parseErdDocument,
   sampleErdDocument,
@@ -29,11 +40,32 @@ import {
   type ErdTable,
 } from '../../lib/erd/erdModel';
 import { uuid } from '../../lib/uuid';
+import { useTheme } from '../../providers/ThemeContext';
 import { ErdTableNodeView, tableToNode, type ErdTableNode } from './ErdTableNode';
 
 const nodeTypes = { erdTable: ErdTableNodeView };
 
+export type ErdCanvasHandle = {
+  getDocument: () => ErdDocument;
+  loadDocument: (doc: ErdDocument) => void;
+  newBlank: () => void;
+};
+
+export type ErdCanvasProps = {
+  /** Fired after the user edits the canvas (not on programmatic load). */
+  onDirty?: () => void;
+  /** Gate destructive replaces (Import / Load sample). Return false to cancel. */
+  onBeforeReplace?: () => boolean | Promise<boolean>;
+};
+
+function edgeStroke(): string {
+  return (
+    getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#b3b3b3'
+  );
+}
+
 function docToFlow(doc: ErdDocument): { nodes: ErdTableNode[]; edges: Edge[] } {
+  const stroke = edgeStroke();
   const nodes = doc.tables.map(tableToNode);
   const edges: Edge[] = doc.relations.map((r) => ({
     id: r.id,
@@ -42,9 +74,13 @@ function docToFlow(doc: ErdDocument): { nodes: ErdTableNode[]; edges: Edge[] } {
     target: r.toTableId,
     targetHandle: r.toColumnId,
     type: 'smoothstep',
-    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: stroke },
     label: 'FK',
-    style: { strokeWidth: 1.5 },
+    style: { strokeWidth: 1.5, stroke },
+    labelStyle: { fill: 'var(--text)', fontSize: 10, fontWeight: 600 },
+    labelBgStyle: { fill: 'var(--panel)' },
+    labelBgPadding: [4, 2] as [number, number],
+    labelBgBorderRadius: 4,
   }));
   return { nodes, edges };
 }
@@ -68,16 +104,90 @@ function flowToDoc(nodes: Node[], edges: Edge[]): ErdDocument {
       toTableId: e.target,
       toColumnId: String(e.targetHandle),
     }));
-  return { version: 1, tables, relations };
+  return { version: ERD_DOC_VERSION, tables, relations };
 }
 
-function ErdCanvasInner() {
-  const initial = useMemo(() => docToFlow(sampleErdDocument()), []);
-  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
+const ErdCanvasInner = forwardRef<ErdCanvasHandle, ErdCanvasProps>(function ErdCanvasInner(
+  { onDirty, onBeforeReplace },
+  ref,
+) {
+  const { theme } = useTheme();
+  const initial = useMemo(() => docToFlow(emptyErdDocument()), []);
+  const [nodes, setNodes, onNodesChangeBase] = useNodesState(initial.nodes);
+  const [edges, setEdges, onEdgesChangeBase] = useEdgesState(initial.edges);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const { fitView, getNodes, getEdges, screenToFlowPosition } = useReactFlow();
   const selectedRef = useRef<{ nodes: string[]; edges: string[] }>({ nodes: [], edges: [] });
+  const suppressDirtyRef = useRef(false);
+  const onDirtyRef = useRef(onDirty);
+  onDirtyRef.current = onDirty;
+  const onBeforeReplaceRef = useRef(onBeforeReplace);
+  onBeforeReplaceRef.current = onBeforeReplace;
+  const applyRafRef = useRef<number | null>(null);
+
+  const markDirty = useCallback(() => {
+    if (suppressDirtyRef.current) return;
+    onDirtyRef.current?.();
+  }, []);
+
+  const onNodesChange = useCallback(
+    (changes: Parameters<typeof onNodesChangeBase>[0]) => {
+      onNodesChangeBase(changes);
+      if (changes.some((c) => c.type !== 'select' && c.type !== 'dimensions')) markDirty();
+    },
+    [onNodesChangeBase, markDirty],
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: Parameters<typeof onEdgesChangeBase>[0]) => {
+      onEdgesChangeBase(changes);
+      if (changes.some((c) => c.type !== 'select')) markDirty();
+    },
+    [onEdgesChangeBase, markDirty],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (applyRafRef.current != null) cancelAnimationFrame(applyRafRef.current);
+    };
+  }, []);
+
+  const applyDoc = useCallback(
+    (doc: ErdDocument) => {
+      if (applyRafRef.current != null) {
+        cancelAnimationFrame(applyRafRef.current);
+        applyRafRef.current = null;
+      }
+      suppressDirtyRef.current = true;
+      const flow = docToFlow(doc);
+      setNodes(flow.nodes);
+      setEdges(flow.edges);
+      applyRafRef.current = requestAnimationFrame(() => {
+        fitView({ padding: 0.2 });
+        applyRafRef.current = requestAnimationFrame(() => {
+          suppressDirtyRef.current = false;
+          applyRafRef.current = null;
+        });
+      });
+    },
+    [fitView, setNodes, setEdges],
+  );
+
+  const confirmReplace = useCallback(async (): Promise<boolean> => {
+    const gate = onBeforeReplaceRef.current;
+    if (!gate) return true;
+    return gate();
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      getDocument: () => flowToDoc(getNodes(), getEdges()),
+      loadDocument: (doc) => applyDoc(doc),
+      newBlank: () => applyDoc(emptyErdDocument()),
+    }),
+    [applyDoc, getNodes, getEdges],
+  );
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -87,21 +197,27 @@ function ErdCanvasInner() {
       if (connection.source === connection.target && connection.sourceHandle === connection.targetHandle) {
         return;
       }
+      const stroke = edgeStroke();
       setEdges((eds) =>
         addEdge(
           {
             ...connection,
             id: uuid(),
             type: 'smoothstep',
-            markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+            markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: stroke },
             label: 'FK',
-            style: { strokeWidth: 1.5 },
+            style: { strokeWidth: 1.5, stroke },
+            labelStyle: { fill: 'var(--text)', fontSize: 10, fontWeight: 600 },
+            labelBgStyle: { fill: 'var(--panel)' },
+            labelBgPadding: [4, 2] as [number, number],
+            labelBgBorderRadius: 4,
           },
           eds,
         ),
       );
+      markDirty();
     },
-    [setEdges],
+    [setEdges, markDirty],
   );
 
   const onSelectionChange = useCallback((params: OnSelectionChangeParams) => {
@@ -118,6 +234,7 @@ function ErdCanvasInner() {
       y: 120 + getNodes().length * 16,
     });
     setNodes((ns) => [...ns, tableToNode(t)]);
+    markDirty();
   };
 
   const deleteSelected = () => {
@@ -132,6 +249,7 @@ function ErdCanvasInner() {
           !sel.nodes.includes(e.target),
       ),
     );
+    markDirty();
   };
 
   const exportJson = () => {
@@ -167,20 +285,22 @@ function ErdCanvasInner() {
     const reader = new FileReader();
     reader.onload = () => {
       if (!importAlive.current) return;
-      try {
-        const raw = JSON.parse(String(reader.result ?? ''));
-        const parsed = parseErdDocument(raw);
-        if (!parsed.ok) {
-          window.alert(parsed.error);
-          return;
+      void (async () => {
+        try {
+          const raw = JSON.parse(String(reader.result ?? ''));
+          const parsed = parseErdDocument(raw);
+          if (!parsed.ok) {
+            window.alert(parsed.error);
+            return;
+          }
+          if (!(await confirmReplace())) return;
+          if (!importAlive.current) return;
+          applyDoc(parsed.doc);
+          markDirty();
+        } catch {
+          window.alert('Could not parse that JSON file.');
         }
-        const flow = docToFlow(parsed.doc);
-        setNodes(flow.nodes);
-        setEdges(flow.edges);
-        requestAnimationFrame(() => fitView({ padding: 0.2 }));
-      } catch {
-        window.alert('Could not parse that JSON file.');
-      }
+      })();
     };
     reader.onerror = () => {
       if (importAlive.current) window.alert('Could not read that file.');
@@ -204,6 +324,7 @@ function ErdCanvasInner() {
       y: position.y,
     });
     setNodes((ns) => [...ns, tableToNode(t)]);
+    markDirty();
   };
 
   return (
@@ -251,10 +372,11 @@ function ErdCanvasInner() {
           type="button"
           className="btn btn--ghost btn--small"
           onClick={() => {
-            const flow = docToFlow(sampleErdDocument());
-            setNodes(flow.nodes);
-            setEdges(flow.edges);
-            requestAnimationFrame(() => fitView({ padding: 0.2 }));
+            void (async () => {
+              if (!(await confirmReplace())) return;
+              applyDoc(sampleErdDocument());
+              markDirty();
+            })();
           }}
         >
           Load sample
@@ -262,7 +384,7 @@ function ErdCanvasInner() {
       </div>
       <p className="muted small erd-hint">
         Drag from a column’s right handle to another column’s left handle to create a foreign key.
-        Nothing is saved to your workspace — use Export JSON / PNG.
+        Use Save above to keep a named copy in your workspace — Export for a file on disk.
       </p>
       <div className="erd-canvas" ref={wrapperRef} onDragOver={onDragOver} onDrop={onDrop}>
         <ReactFlow
@@ -274,22 +396,38 @@ function ErdCanvasInner() {
           onSelectionChange={onSelectionChange}
           nodeTypes={nodeTypes}
           fitView
+          colorMode={theme}
           deleteKeyCode={['Backspace', 'Delete']}
           proOptions={{ hideAttribution: true }}
         >
-          <Background gap={18} size={1} />
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={18}
+            size={1}
+            color={
+              getComputedStyle(document.documentElement).getPropertyValue('--border-strong').trim() ||
+              'rgba(127,127,127,0.35)'
+            }
+          />
           <Controls />
-          <MiniMap pannable zoomable />
+          <MiniMap
+            pannable
+            zoomable
+            maskColor={theme === 'dark' ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.08)'}
+            nodeColor={() =>
+              getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#c4a574'
+            }
+          />
         </ReactFlow>
       </div>
     </div>
   );
-}
+});
 
-export function ErdCanvas() {
+export const ErdCanvas = forwardRef<ErdCanvasHandle, ErdCanvasProps>(function ErdCanvas(props, ref) {
   return (
     <ReactFlowProvider>
-      <ErdCanvasInner />
+      <ErdCanvasInner ref={ref} {...props} />
     </ReactFlowProvider>
   );
-}
+});

@@ -19,11 +19,18 @@ import type {
   TodoStatus,
   UserProfile,
   UtilityDocument,
+  UtilityErdDocument,
+  UtilitySketchDocument,
   UtilityStructuredText,
   UtilityStructuredTab,
   StructuredTextMode,
   NoteTodoLink,
 } from '../model';
+import type { ErdDocument } from '../../lib/erd/erdModel';
+import {
+  validateErdDocumentForSave,
+  validateSketchSceneForSave,
+} from '../../lib/utilityDiagrams';
 import {
   isSyntheticPerson,
   nowIso,
@@ -132,27 +139,73 @@ export function addPerson(data: AppData, teamId: string, name: string, title?: s
 export function updatePerson(
   data: AppData,
   id: string,
-  patch: Partial<Pick<Person, 'name' | 'title' | 'scratchpad' | 'agenda'>>,
+  patch: Partial<
+    Pick<
+      Person,
+      | 'name'
+      | 'title'
+      | 'scratchpad'
+      | 'scratchpadFormat'
+      | 'scratchpadPlainText'
+      | 'agenda'
+      | 'agendaFormat'
+      | 'agendaPlainText'
+    >
+  >,
 ): AppData {
   return {
     ...data,
     people: data.people.map((p) => {
       if (p.id !== id) return p;
+      const nextScratchpad = 'scratchpad' in patch ? (patch.scratchpad ?? '') : (p.scratchpad ?? '');
+      const nextAgenda = 'agenda' in patch ? (patch.agenda ?? '') : (p.agenda ?? '');
+      const richPad =
+        'scratchpad' in patch || 'scratchpadFormat' in patch || 'scratchpadPlainText' in patch
+          ? {
+              scratchpad: nextScratchpad,
+              scratchpadFormat: nextScratchpad.trim()
+                ? 'scratchpadFormat' in patch
+                  ? patch.scratchpadFormat
+                  : p.scratchpadFormat
+                : undefined,
+              scratchpadPlainText: nextScratchpad.trim()
+                ? 'scratchpadPlainText' in patch
+                  ? patch.scratchpadPlainText
+                  : p.scratchpadPlainText
+                : undefined,
+            }
+          : {};
+      const richAgenda =
+        'agenda' in patch || 'agendaFormat' in patch || 'agendaPlainText' in patch
+          ? {
+              agenda: nextAgenda,
+              agendaFormat: nextAgenda.trim()
+                ? 'agendaFormat' in patch
+                  ? patch.agendaFormat
+                  : p.agendaFormat
+                : undefined,
+              agendaPlainText: nextAgenda.trim()
+                ? 'agendaPlainText' in patch
+                  ? patch.agendaPlainText
+                  : p.agendaPlainText
+                : undefined,
+            }
+          : {};
       if (isSyntheticPerson(p)) {
         return {
           ...p,
           name: patch.name?.trim() ? patch.name.trim() : p.name,
           title: patch.title !== undefined ? patch.title.trim() || undefined : p.title,
-          scratchpad: patch.scratchpad !== undefined ? patch.scratchpad : p.scratchpad,
-          agenda: patch.agenda !== undefined ? patch.agenda : p.agenda,
+          ...richPad,
+          ...richAgenda,
         };
       }
       return {
         ...p,
         name: patch.name !== undefined ? patch.name.trim() || p.name : p.name,
         title: patch.title !== undefined ? patch.title.trim() || undefined : p.title,
-        scratchpad: patch.scratchpad !== undefined ? patch.scratchpad : p.scratchpad,
-        agenda: patch.agenda !== undefined ? patch.agenda : p.agenda,
+        ...richPad,
+        ...richAgenda,
       };
     }),
   };
@@ -187,6 +240,8 @@ export function addItem(
       Item,
       | 'title'
       | 'body'
+      | 'bodyFormat'
+      | 'bodyPlainText'
       | 'dueAt'
       | 'startAt'
       | 'remindAt'
@@ -219,12 +274,23 @@ export function addItem(
     fields.remindAt && fields.remindRepeat && allowedRepeat.includes(fields.remindRepeat)
       ? fields.remindRepeat
       : undefined;
+  const body = fields.body?.trim() || '';
+  const bodyFormat =
+    body && (fields.bodyFormat === 'markdown' || fields.bodyFormat === 'prosemirror')
+      ? fields.bodyFormat
+      : undefined;
+  const bodyPlainText =
+    body && typeof fields.bodyPlainText === 'string' && fields.bodyPlainText.trim()
+      ? fields.bodyPlainText.trim()
+      : undefined;
   const item: Item = {
     id: uuid(),
     personId,
     kind,
     title: fields.title?.trim() || defaultTitle(kind),
-    body: fields.body?.trim() || '',
+    body,
+    ...(bodyFormat ? { bodyFormat } : {}),
+    ...(bodyPlainText ? { bodyPlainText } : {}),
     category: fields.category?.trim() || undefined,
     dueAt: fields.dueAt || undefined,
     startAt: kind === 'goal' && fields.startAt ? fields.startAt : undefined,
@@ -269,6 +335,8 @@ export function updateItem(
       Item,
       | 'title'
       | 'body'
+      | 'bodyFormat'
+      | 'bodyPlainText'
       | 'dueAt'
       | 'startAt'
       | 'remindAt'
@@ -292,7 +360,9 @@ export function updateItem(
     }
 
     const title = patch.title !== undefined ? patch.title.trim() || it.title : it.title;
-    const body = patch.body !== undefined ? patch.body : it.body;
+    const body = 'body' in patch ? (patch.body ?? '') : it.body;
+    const bodyFormat = 'bodyFormat' in patch ? patch.bodyFormat : it.bodyFormat;
+    const bodyPlainText = 'bodyPlainText' in patch ? patch.bodyPlainText : it.bodyPlainText;
     const dueAt = patch.dueAt !== undefined ? patch.dueAt || undefined : it.dueAt;
     const startAt =
       it.kind === 'goal' ? (patch.startAt !== undefined ? patch.startAt || undefined : it.startAt) : undefined;
@@ -334,6 +404,8 @@ export function updateItem(
       ...it,
       title,
       body,
+      bodyFormat: body.trim() ? bodyFormat : undefined,
+      bodyPlainText: body.trim() ? bodyPlainText : undefined,
       dueAt,
       startAt,
       remindAt,
@@ -1368,4 +1440,147 @@ export function patchStructuredTab(
   });
   if (!changed) return data;
   return { ...data, utilityStructuredTabs: next };
+}
+
+// ---------------------------------------------------------------------------
+// Utilities → Tools → ERD / Sketch named libraries (explicit Save only).
+// ---------------------------------------------------------------------------
+
+export type UpsertUtilityErdResult =
+  | { ok: true; data: AppData; id: string }
+  | { ok: false; error: string };
+
+export type UpsertUtilitySketchResult =
+  | { ok: true; data: AppData; id: string }
+  | { ok: false; error: string };
+
+/**
+ * Insert or update a saved ERD. `id` is always caller-supplied so React Strict
+ * Mode double-invokes of the AppData updater stay idempotent.
+ */
+export function upsertUtilityErdDocument(
+  data: AppData,
+  input: {
+    id: string;
+    title: string;
+    document: ErdDocument;
+  },
+): UpsertUtilityErdResult {
+  const title = input.title.trim();
+  if (!title) return { ok: false, error: 'Title is required.' };
+  if (!input.id.trim()) return { ok: false, error: 'Missing document id.' };
+  const valid = validateErdDocumentForSave(input.document);
+  if (!valid.ok) return valid;
+
+  const list = data.utilityErdDocuments ?? [];
+  const t = nowIso();
+  const idx = list.findIndex((d) => d.id === input.id);
+  if (idx >= 0) {
+    const prev = list[idx]!;
+    const next: UtilityErdDocument = {
+      ...prev,
+      title,
+      document: input.document,
+      updatedAt: t,
+    };
+    const utilityErdDocuments = list.map((d, i) => (i === idx ? next : d));
+    return { ok: true, data: { ...data, utilityErdDocuments }, id: next.id };
+  }
+
+  const created: UtilityErdDocument = {
+    id: input.id,
+    title,
+    document: input.document,
+    createdAt: t,
+    updatedAt: t,
+  };
+  return {
+    ok: true,
+    data: { ...data, utilityErdDocuments: [created, ...list] },
+    id: created.id,
+  };
+}
+
+export function renameUtilityErdDocument(data: AppData, id: string, title: string): AppData {
+  const nextTitle = title.trim();
+  if (!nextTitle) return data;
+  const list = data.utilityErdDocuments ?? [];
+  let changed = false;
+  const utilityErdDocuments = list.map((d) => {
+    if (d.id !== id) return d;
+    changed = true;
+    return { ...d, title: nextTitle, updatedAt: nowIso() };
+  });
+  return changed ? { ...data, utilityErdDocuments } : data;
+}
+
+export function removeUtilityErdDocument(data: AppData, id: string): AppData {
+  const list = data.utilityErdDocuments ?? [];
+  const utilityErdDocuments = list.filter((d) => d.id !== id);
+  if (utilityErdDocuments.length === list.length) return data;
+  return { ...data, utilityErdDocuments };
+}
+
+/** Insert or update a saved Sketch. `id` is always caller-supplied (idempotent). */
+export function upsertUtilitySketchDocument(
+  data: AppData,
+  input: {
+    id: string;
+    title: string;
+    sceneJson: string;
+  },
+): UpsertUtilitySketchResult {
+  const title = input.title.trim();
+  if (!title) return { ok: false, error: 'Title is required.' };
+  if (!input.id.trim()) return { ok: false, error: 'Missing document id.' };
+  const valid = validateSketchSceneForSave(input.sceneJson);
+  if (!valid.ok) return valid;
+
+  const list = data.utilitySketchDocuments ?? [];
+  const t = nowIso();
+  const idx = list.findIndex((d) => d.id === input.id);
+  if (idx >= 0) {
+    const prev = list[idx]!;
+    const next: UtilitySketchDocument = {
+      ...prev,
+      title,
+      sceneJson: input.sceneJson,
+      updatedAt: t,
+    };
+    const utilitySketchDocuments = list.map((d, i) => (i === idx ? next : d));
+    return { ok: true, data: { ...data, utilitySketchDocuments }, id: next.id };
+  }
+
+  const created: UtilitySketchDocument = {
+    id: input.id,
+    title,
+    sceneJson: input.sceneJson,
+    createdAt: t,
+    updatedAt: t,
+  };
+  return {
+    ok: true,
+    data: { ...data, utilitySketchDocuments: [created, ...list] },
+    id: created.id,
+  };
+}
+
+export function renameUtilitySketchDocument(data: AppData, id: string, title: string): AppData {
+  const nextTitle = title.trim();
+  if (!nextTitle) return data;
+  const list = data.utilitySketchDocuments ?? [];
+  let changed = false;
+  const utilitySketchDocuments = list.map((d) => {
+    if (d.id !== id) return d;
+    changed = true;
+    return { ...d, title: nextTitle, updatedAt: nowIso() };
+  });
+  return changed ? { ...data, utilitySketchDocuments } : data;
+}
+
+export function removeUtilitySketchDocument(data: AppData, id: string): AppData {
+  const list = data.utilitySketchDocuments ?? [];
+  const utilitySketchDocuments = list.filter((d) => d.id !== id);
+  if (utilitySketchDocuments.length === list.length) return data;
+  return { ...data, utilitySketchDocuments };
 }

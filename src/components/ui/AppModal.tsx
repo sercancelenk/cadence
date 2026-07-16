@@ -99,27 +99,60 @@ export function AppModal({
   const titleId = useId();
   const descId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     const previousActive = document.activeElement;
     const panel = panelRef.current;
     panel?.focus();
 
+    const focusableSelector =
+      'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        event.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab' || !panel) return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(focusableSelector)).filter(
+        (el) => !el.hasAttribute('disabled') && el.tabIndex !== -1 && el.offsetParent !== null,
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      const active = document.activeElement;
+      if (event.shiftKey) {
+        if (active === first || active === panel) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (active === last) {
+        event.preventDefault();
+        first.focus();
+      } else if (!panel.contains(active)) {
+        event.preventDefault();
+        first.focus();
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
+    // Capture so canvas tools (Excalidraw / React Flow) behind the modal
+    // do not handle Escape / shortcuts while the dialog is open.
+    window.addEventListener('keydown', onKeyDown, true);
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKeyDown, true);
       if (previousActive instanceof HTMLElement) {
         previousActive.focus();
       }
     };
-  }, [onClose]);
+  }, []);
 
   const onBackdropClick = () => {
     if (closeOnBackdrop) onClose();

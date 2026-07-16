@@ -1,4 +1,5 @@
 import { uuid } from '../../lib/uuid';
+import { parseErdDocument, type ErdDocument } from '../../lib/erd/erdModel';
 import { UnsupportedDataVersionError } from './unsupportedDataVersion';
 
 export { UnsupportedDataVersionError, isUnsupportedDataVersionError } from './unsupportedDataVersion';
@@ -56,8 +57,18 @@ export interface Person {
   isSelf?: boolean;
   /** Free-form notes / 1:1 scratchpad (per person). */
   scratchpad?: string;
-  /** Persistent 1:1 meeting agenda (markdown). Cleared and carry-over on archive. */
+  /**
+   * `'prosemirror'` when `scratchpad` is JSON; absent / `'markdown'` = legacy markdown.
+   * Expand-only — older builds keep the string via withExtras.
+   */
+  scratchpadFormat?: 'markdown' | 'prosemirror';
+  /** Denormalised search / preview index for the scratchpad. */
+  scratchpadPlainText?: string;
+  /** Persistent 1:1 meeting agenda. Cleared and carry-over on archive. */
   agenda?: string;
+  /** Same contract as `scratchpadFormat` for the meeting agenda. */
+  agendaFormat?: 'markdown' | 'prosemirror';
+  agendaPlainText?: string;
   createdAt: string;
 }
 
@@ -67,6 +78,13 @@ export interface Item {
   kind: ItemKind;
   title: string;
   body: string;
+  /**
+   * `'prosemirror'` when `body` is JSON; absent / `'markdown'` = legacy markdown.
+   * Mirrors Notes/Todos — expand-only dual-read.
+   */
+  bodyFormat?: 'markdown' | 'prosemirror';
+  /** Denormalised search / AI / preview index for the item body. */
+  bodyPlainText?: string;
   /** Optional free-form category (e.g. Initiative, Operations). */
   category?: string;
   /** Goal / task deadline. */
@@ -430,12 +448,41 @@ export interface AppData {
   /** Id of the currently active JSON / YAML tab. */
   activeStructuredTabId?: string;
   /**
+   * Utilities → Tools → ERD saved diagrams. Expand-only; absent on older files.
+   * Explicit Save only — never autosaved.
+   */
+  utilityErdDocuments?: UtilityErdDocument[];
+  /**
+   * Utilities → Tools → Sketch saved boards. Expand-only; absent on older files.
+   * Explicit Save only — never autosaved.
+   */
+  utilitySketchDocuments?: UtilitySketchDocument[];
+  /**
    * N:N join between notes and todos. Canonical source for link pills;
    * `TodoItem.sourceNoteId` remains for legacy / AI-extract and is migrated
    * into this array on load (expand — field is never deleted here).
    * Unlink clears matching `sourceNoteId` so ensure cannot resurrect the pair.
    */
   noteTodoLinks?: NoteTodoLink[];
+}
+
+/** Named ER diagram under Utilities → Tools → ERD. */
+export interface UtilityErdDocument {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  document: ErdDocument;
+}
+
+/** Named Excalidraw scene under Utilities → Tools → Sketch. */
+export interface UtilitySketchDocument {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  /** Full Excalidraw `serializeAsJSON` string. */
+  sceneJson: string;
 }
 
 /** A single note ↔ todo association (many-to-many). */
@@ -585,6 +632,8 @@ export function emptyData(): AppData {
     ...defaultNoteBundle(),
     ...defaultTodoBundle(),
     noteTodoLinks: [],
+    utilityErdDocuments: [],
+    utilitySketchDocuments: [],
   };
 }
 
@@ -661,7 +710,23 @@ function parsePeople(raw: unknown[]): Person[] {
       title: typeof p.title === 'string' ? p.title : undefined,
       isSelf: !!p.isSelf || (typeof p.id === 'string' && p.id.startsWith('__self__')),
       scratchpad: typeof p.scratchpad === 'string' ? p.scratchpad : '',
+      scratchpadFormat:
+        p.scratchpadFormat === 'markdown' || p.scratchpadFormat === 'prosemirror'
+          ? p.scratchpadFormat
+          : undefined,
+      scratchpadPlainText:
+        typeof p.scratchpadPlainText === 'string' && p.scratchpadPlainText.trim()
+          ? p.scratchpadPlainText
+          : undefined,
       agenda: typeof p.agenda === 'string' ? p.agenda : '',
+      agendaFormat:
+        p.agendaFormat === 'markdown' || p.agendaFormat === 'prosemirror'
+          ? p.agendaFormat
+          : undefined,
+      agendaPlainText:
+        typeof p.agendaPlainText === 'string' && p.agendaPlainText.trim()
+          ? p.agendaPlainText
+          : undefined,
       createdAt: typeof p.createdAt === 'string' ? p.createdAt : nowIso(),
     }));
 }
@@ -714,6 +779,14 @@ function parseItems(raw: unknown[]): Item[] {
         kind,
         title: typeof it.title === 'string' ? it.title : '',
         body: typeof it.body === 'string' ? it.body : '',
+        bodyFormat:
+          it.bodyFormat === 'markdown' || it.bodyFormat === 'prosemirror'
+            ? it.bodyFormat
+            : undefined,
+        bodyPlainText:
+          typeof it.bodyPlainText === 'string' && it.bodyPlainText.trim()
+            ? it.bodyPlainText
+            : undefined,
         dueAt: typeof it.dueAt === 'string' ? it.dueAt : undefined,
         startAt: typeof it.startAt === 'string' ? it.startAt : undefined,
         goalStatus,
@@ -1082,6 +1155,16 @@ export function compactAppDataForPersist(data: AppData): Record<string, unknown>
     const { noteTodoLinks: _drop, ...rest } = out;
     out = rest;
   }
+  // Omit empty diagram libraries so upgrades that never Save stay byte-quiet
+  // for older builds (optional keys; withExtras still preserves populated ones).
+  if (!data.utilityErdDocuments || data.utilityErdDocuments.length === 0) {
+    const { utilityErdDocuments: _drop, ...rest } = out;
+    out = rest;
+  }
+  if (!data.utilitySketchDocuments || data.utilitySketchDocuments.length === 0) {
+    const { utilitySketchDocuments: _drop, ...rest } = out;
+    out = rest;
+  }
   return out;
 }
 
@@ -1140,6 +1223,8 @@ export function normalizeData(raw: unknown): AppData {
   const utilityStructuredTabs = parseUtilityStructuredTabs(o.utilityStructuredTabs);
   const activeStructuredTabId =
     typeof o.activeStructuredTabId === 'string' ? o.activeStructuredTabId : undefined;
+  const utilityErdDocuments = parseUtilityErdDocuments(o.utilityErdDocuments);
+  const utilitySketchDocuments = parseUtilitySketchDocuments(o.utilitySketchDocuments);
   const noteTodoLinks = parseNoteTodoLinks(o.noteTodoLinks);
 
   // Defensive: orphan notesLock cleanup. The lock object can survive on
@@ -1177,6 +1262,8 @@ export function normalizeData(raw: unknown): AppData {
     utilityStructuredText,
     utilityStructuredTabs,
     activeStructuredTabId,
+    utilityErdDocuments,
+    utilitySketchDocuments,
     noteTodoLinks,
     profile: parseProfile(o.profile),
   });
@@ -1377,6 +1464,54 @@ function parseUtilityStructuredTabs(raw: unknown): UtilityStructuredTab[] | unde
     .map((r, i) => parseUtilityStructuredTab(r, i))
     .filter((t): t is UtilityStructuredTab => Boolean(t));
   return tabs.length > 0 ? tabs : undefined;
+}
+
+function parseUtilityErdDocument(raw: unknown): UtilityErdDocument | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  // Require a document object shell so we never invent empty diagrams — but do
+  // NOT drop the named library row when nested parse fails (newer ERD_DOC_VERSION,
+  // partial corruption). Round-trips must preserve user libraries; Open validates.
+  if (!o.document || typeof o.document !== 'object' || Array.isArray(o.document)) {
+    return undefined;
+  }
+  const parsed = parseErdDocument(o.document);
+  const title = typeof o.title === 'string' && o.title.trim() ? o.title.trim() : 'Untitled ERD';
+  return withExtras<UtilityErdDocument>(o, {
+    id: typeof o.id === 'string' && o.id ? o.id : uuid(),
+    title,
+    createdAt: typeof o.createdAt === 'string' ? o.createdAt : nowIso(),
+    updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
+    document: parsed.ok ? parsed.doc : (o.document as ErdDocument),
+  });
+}
+
+function parseUtilityErdDocuments(raw: unknown): UtilityErdDocument[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r) => parseUtilityErdDocument(r))
+    .filter((d): d is UtilityErdDocument => Boolean(d));
+}
+
+function parseUtilitySketchDocument(raw: unknown): UtilitySketchDocument | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.sceneJson !== 'string' || !o.sceneJson.trim()) return undefined;
+  const title = typeof o.title === 'string' && o.title.trim() ? o.title.trim() : 'Untitled sketch';
+  return withExtras<UtilitySketchDocument>(o, {
+    id: typeof o.id === 'string' && o.id ? o.id : uuid(),
+    title,
+    createdAt: typeof o.createdAt === 'string' ? o.createdAt : nowIso(),
+    updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
+    sceneJson: o.sceneJson,
+  });
+}
+
+function parseUtilitySketchDocuments(raw: unknown): UtilitySketchDocument[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r) => parseUtilitySketchDocument(r))
+    .filter((d): d is UtilitySketchDocument => Boolean(d));
 }
 
 function noteTodoPairKey(noteId: string, todoId: string): string {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
   Excalidraw,
   exportToBlob,
@@ -7,6 +7,7 @@ import {
 } from '@excalidraw/excalidraw';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import '@excalidraw/excalidraw/index.css';
+import { useConfirm } from '../../components/ui/ConfirmProvider';
 import { useTheme } from '../../providers/ThemeContext';
 import {
   downloadBlob,
@@ -14,11 +15,33 @@ import {
   parseSketchSceneJson,
 } from '../../lib/sketch/sketchExport';
 
-export function SketchCanvas() {
+export type SketchCanvasHandle = {
+  getSceneJson: () => string | null;
+  loadSceneJson: (sceneJson: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  newBlank: () => void;
+  isReady: () => boolean;
+};
+
+export type SketchCanvasProps = {
+  onDirty?: () => void;
+  /** Gate destructive replaces (Import / Clear). Return false to cancel. */
+  onBeforeReplace?: () => boolean | Promise<boolean>;
+};
+
+export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(function SketchCanvas(
+  { onDirty, onBeforeReplace },
+  ref,
+) {
   const { theme } = useTheme();
+  const { confirm } = useConfirm();
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const [ready, setReady] = useState(false);
   const aliveRef = useRef(true);
+  const suppressDirtyRef = useRef(false);
+  const onDirtyRef = useRef(onDirty);
+  onDirtyRef.current = onDirty;
+  const onBeforeReplaceRef = useRef(onBeforeReplace);
+  onBeforeReplaceRef.current = onBeforeReplace;
 
   useEffect(() => {
     aliveRef.current = true;
@@ -31,6 +54,79 @@ export function SketchCanvas() {
     apiRef.current = api;
     setReady(true);
   }, []);
+
+  const markDirty = useCallback(() => {
+    if (suppressDirtyRef.current) return;
+    onDirtyRef.current?.();
+  }, []);
+
+  const confirmReplace = useCallback(async (): Promise<boolean> => {
+    const gate = onBeforeReplaceRef.current;
+    if (!gate) return true;
+    return gate();
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      isReady: () => !!apiRef.current,
+      getSceneJson: () => {
+        const api = apiRef.current;
+        if (!api) return null;
+        return serializeAsJSON(api.getSceneElements(), api.getAppState(), api.getFiles(), 'local');
+      },
+      loadSceneJson: async (sceneJson) => {
+        const api = apiRef.current;
+        if (!api) return { ok: false, error: 'Sketch canvas is not ready yet.' };
+        let raw: unknown;
+        try {
+          raw = JSON.parse(sceneJson);
+        } catch {
+          return { ok: false, error: 'Saved sketch is not valid JSON.' };
+        }
+        const parsed = parseSketchSceneJson(raw);
+        if (!parsed.ok) return { ok: false, error: parsed.error };
+        try {
+          suppressDirtyRef.current = true;
+          const blob = new Blob([sceneJson], { type: 'application/json' });
+          const restored = await loadFromBlob(blob, api.getAppState(), null);
+          if (!aliveRef.current || apiRef.current !== api) {
+            return { ok: false, error: 'Sketch canvas was closed.' };
+          }
+          api.updateScene({
+            elements: restored.elements,
+            appState: { ...restored.appState, collaborators: new Map() },
+          });
+          if (restored.files && Object.keys(restored.files).length > 0) {
+            api.addFiles(Object.values(restored.files));
+          }
+          api.scrollToContent(undefined, { fitToContent: true });
+          requestAnimationFrame(() => {
+            suppressDirtyRef.current = false;
+          });
+          return { ok: true };
+        } catch {
+          suppressDirtyRef.current = false;
+          return { ok: false, error: 'Could not load that saved sketch.' };
+        }
+      },
+      newBlank: () => {
+        const api = apiRef.current;
+        if (!api) return;
+        suppressDirtyRef.current = true;
+        try {
+          api.resetScene();
+          const hist = (api as { history?: { clear?: () => void } }).history;
+          hist?.clear?.();
+        } finally {
+          requestAnimationFrame(() => {
+            suppressDirtyRef.current = false;
+          });
+        }
+      },
+    }),
+    [],
+  );
 
   const exportJson = () => {
     const api = apiRef.current;
@@ -69,14 +165,16 @@ export function SketchCanvas() {
     const reader = new FileReader();
     reader.onload = () => {
       if (!aliveRef.current) return;
-      try {
-        const raw = JSON.parse(String(reader.result ?? ''));
-        const parsed = parseSketchSceneJson(raw);
-        if (!parsed.ok) {
-          window.alert(parsed.error);
-          return;
-        }
-        void (async () => {
+      void (async () => {
+        try {
+          const raw = JSON.parse(String(reader.result ?? ''));
+          const parsed = parseSketchSceneJson(raw);
+          if (!parsed.ok) {
+            window.alert(parsed.error);
+            return;
+          }
+          if (!(await confirmReplace())) return;
+          if (!aliveRef.current || apiRef.current !== api) return;
           try {
             const restored = await loadFromBlob(file, api.getAppState(), null);
             if (!aliveRef.current || apiRef.current !== api) return;
@@ -88,13 +186,14 @@ export function SketchCanvas() {
               api.addFiles(Object.values(restored.files));
             }
             api.scrollToContent(undefined, { fitToContent: true });
+            markDirty();
           } catch {
             if (aliveRef.current) window.alert('Could not load that Excalidraw file.');
           }
-        })();
-      } catch {
-        window.alert('Could not parse that JSON file.');
-      }
+        } catch {
+          window.alert('Could not parse that JSON file.');
+        }
+      })();
     };
     reader.onerror = () => {
       if (aliveRef.current) window.alert('Could not read that file.');
@@ -103,17 +202,25 @@ export function SketchCanvas() {
   };
 
   const clearScene = () => {
-    const api = apiRef.current;
-    if (!api) return;
-    if (!window.confirm('Clear the entire sketch? This cannot be undone.')) return;
-    try {
-      api.resetScene();
-      // history.clear is optional across Excalidraw versions
-      const hist = (api as { history?: { clear?: () => void } }).history;
-      hist?.clear?.();
-    } catch {
-      window.alert('Could not clear the sketch.');
-    }
+    void (async () => {
+      const api = apiRef.current;
+      if (!api) return;
+      const ok = await confirm({
+        title: 'Clear the entire sketch?',
+        description: 'This clears the canvas. Unsaved work on this board will be lost.',
+        confirmLabel: 'Clear',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        api.resetScene();
+        const hist = (api as { history?: { clear?: () => void } }).history;
+        hist?.clear?.();
+        markDirty();
+      } catch {
+        window.alert('Could not clear the sketch.');
+      }
+    })();
   };
 
   return (
@@ -149,8 +256,8 @@ export function SketchCanvas() {
         </button>
       </div>
       <p className="muted small sketch-hint">
-        Hand-drawn whiteboard for meeting sketches and system design. Nothing is saved to your
-        workspace — use Export JSON / PNG.
+        Hand-drawn whiteboard for meeting sketches and system design. Use Save above to keep a named
+        copy in your workspace — Export for a file on disk.
       </p>
       <div className="sketch-canvas">
         <Excalidraw
@@ -159,9 +266,9 @@ export function SketchCanvas() {
           langCode="en"
           aiEnabled={false}
           name="Cadence sketch"
+          onChange={() => markDirty()}
           UIOptions={{
             canvasActions: {
-              // Route loads through our Import toolbar (validated + size-capped).
               loadScene: false,
               export: { saveFileToDisk: true },
               toggleTheme: false,
@@ -171,4 +278,4 @@ export function SketchCanvas() {
       </div>
     </div>
   );
-}
+});

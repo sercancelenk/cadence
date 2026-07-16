@@ -44,6 +44,12 @@ import {
   renameStructuredTab as renameStructuredTabFn,
   setActiveStructuredTab as setActiveStructuredTabFn,
   patchStructuredTab as patchStructuredTabFn,
+  upsertUtilityErdDocument as upsertUtilityErdDocumentFn,
+  renameUtilityErdDocument as renameUtilityErdDocumentFn,
+  removeUtilityErdDocument as removeUtilityErdDocumentFn,
+  upsertUtilitySketchDocument as upsertUtilitySketchDocumentFn,
+  renameUtilitySketchDocument as renameUtilitySketchDocumentFn,
+  removeUtilitySketchDocument as removeUtilitySketchDocumentFn,
   removeNote as removeNoteFn,
   removeNoteGroup as removeNoteGroupFn,
   reorderTodoGroup as reorderTodoGroupFn,
@@ -90,6 +96,7 @@ import type {
   UtilityStructuredText,
   UtilityStructuredTab,
 } from '../core/model';
+import type { ErdDocument } from '../lib/erd/erdModel';
 import { isUnsupportedDataVersionError, normalizeData, appDataToPersistJson, compactAppDataForPersist, shapeOfData } from '../core/model';
 import {
   shouldBlockPersistOnSuspiciousShrink,
@@ -131,7 +138,8 @@ type Api = {
    * import, restore). Discards pending debounced edits and clears save errors.
    */
   syncFromDisk: () => Promise<void>;
-  update: (fn: (d: AppData) => AppData) => void;
+  /** Returns false when persist is blocked (mutation is not applied). */
+  update: (fn: (d: AppData) => AppData) => boolean;
   /**
    * Most recent unrecoverable save failure (or null). Subscribe to this from
    * a Layout-level banner so users see save issues anywhere in the app, not
@@ -175,7 +183,22 @@ type Api = {
   updateTeam: (teamId: string, patch: Partial<Pick<Team, 'name' | 'status'>>) => void;
   removeTeam: (teamId: string) => void;
   addPerson: (teamId: string, name: string, title?: string) => void;
-  updatePerson: (id: string, patch: Partial<Pick<Person, 'name' | 'title' | 'scratchpad' | 'agenda'>>) => void;
+  updatePerson: (
+    id: string,
+    patch: Partial<
+      Pick<
+        Person,
+        | 'name'
+        | 'title'
+        | 'scratchpad'
+        | 'scratchpadFormat'
+        | 'scratchpadPlainText'
+        | 'agenda'
+        | 'agendaFormat'
+        | 'agendaPlainText'
+      >
+    >,
+  ) => void;
   removePerson: (id: string) => void;
   updateUserProfile: (
     patch: Partial<Pick<UserProfile, 'displayName' | 'jobTitle' | 'department' | 'phone' | 'bio' | 'avatarDataUrl'>>,
@@ -188,7 +211,18 @@ type Api = {
     fields?: Partial<
       Pick<
         Item,
-        'title' | 'body' | 'dueAt' | 'startAt' | 'remindAt' | 'remindRepeat' | 'url' | 'category' | 'goalStatus' | 'feedbackKind'
+        | 'title'
+        | 'body'
+        | 'bodyFormat'
+        | 'bodyPlainText'
+        | 'dueAt'
+        | 'startAt'
+        | 'remindAt'
+        | 'remindRepeat'
+        | 'url'
+        | 'category'
+        | 'goalStatus'
+        | 'feedbackKind'
       >
     >,
   ) => void;
@@ -199,6 +233,8 @@ type Api = {
         Item,
         | 'title'
         | 'body'
+        | 'bodyFormat'
+        | 'bodyPlainText'
         | 'dueAt'
         | 'startAt'
         | 'remindAt'
@@ -303,6 +339,21 @@ type Api = {
       Pick<UtilityStructuredTab, 'content' | 'diffContentLeft' | 'diffContent' | 'language' | 'mode'>
     >,
   ) => void;
+  /** Explicit Save for Utilities → ERD. Pass `id` to update; omit to create. */
+  upsertUtilityErdDocument: (input: {
+    id?: string;
+    title: string;
+    document: ErdDocument;
+  }) => { ok: true; id: string } | { ok: false; error: string };
+  renameUtilityErdDocument: (id: string, title: string) => void;
+  removeUtilityErdDocument: (id: string) => void;
+  upsertUtilitySketchDocument: (input: {
+    id?: string;
+    title: string;
+    sceneJson: string;
+  }) => { ok: true; id: string } | { ok: false; error: string };
+  renameUtilitySketchDocument: (id: string, title: string) => void;
+  removeUtilitySketchDocument: (id: string) => void;
 };
 
 const Ctx = createContext<Api | null>(null);
@@ -1022,14 +1073,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [runPersist]);
 
   const update = useCallback(
-    (fn: (d: AppData) => AppData) => {
-      if (persistBlockedRef.current) return;
+    (fn: (d: AppData) => AppData): boolean => {
+      if (persistBlockedRef.current) return false;
       setData((prev) => {
         if (!prev) return prev;
         const next = fn(prev);
         scheduleSave(next);
         return next;
       });
+      return true;
     },
     [scheduleSave],
   );
@@ -1365,6 +1417,49 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       renameStructuredTab: (id, title) => update((x) => renameStructuredTabFn(x, id, title)),
       setActiveStructuredTab: (id) => update((x) => setActiveStructuredTabFn(x, id)),
       patchStructuredTab: (id, patch) => update((x) => patchStructuredTabFn(x, id, patch)),
+      upsertUtilityErdDocument: (input) => {
+        const id = input.id?.trim() || uuid();
+        const payload = { id, title: input.title, document: input.document };
+        const current = snapshotStoreRef.current.getSnapshot();
+        if (!current) return { ok: false, error: 'Workspace is not ready.' };
+        if (persistBlockedRef.current) {
+          return { ok: false, error: 'Save is blocked — resolve the workspace issue first.' };
+        }
+        const preview = upsertUtilityErdDocumentFn(current, payload);
+        if (!preview.ok) return { ok: false, error: preview.error };
+        const applied = update((x) => {
+          const r = upsertUtilityErdDocumentFn(x, payload);
+          return r.ok ? r.data : x;
+        });
+        if (!applied) {
+          return { ok: false, error: 'Save is blocked — resolve the workspace issue first.' };
+        }
+        return { ok: true, id };
+      },
+      renameUtilityErdDocument: (id, title) => update((x) => renameUtilityErdDocumentFn(x, id, title)),
+      removeUtilityErdDocument: (id) => update((x) => removeUtilityErdDocumentFn(x, id)),
+      upsertUtilitySketchDocument: (input) => {
+        const id = input.id?.trim() || uuid();
+        const payload = { id, title: input.title, sceneJson: input.sceneJson };
+        const current = snapshotStoreRef.current.getSnapshot();
+        if (!current) return { ok: false, error: 'Workspace is not ready.' };
+        if (persistBlockedRef.current) {
+          return { ok: false, error: 'Save is blocked — resolve the workspace issue first.' };
+        }
+        const preview = upsertUtilitySketchDocumentFn(current, payload);
+        if (!preview.ok) return { ok: false, error: preview.error };
+        const applied = update((x) => {
+          const r = upsertUtilitySketchDocumentFn(x, payload);
+          return r.ok ? r.data : x;
+        });
+        if (!applied) {
+          return { ok: false, error: 'Save is blocked — resolve the workspace issue first.' };
+        }
+        return { ok: true, id };
+      },
+      renameUtilitySketchDocument: (id, title) =>
+        update((x) => renameUtilitySketchDocumentFn(x, id, title)),
+      removeUtilitySketchDocument: (id) => update((x) => removeUtilitySketchDocumentFn(x, id)),
     };
   }, [data, ready, update, replaceAll, reload, importWorkspace, syncFromDisk, lastSaveError, lastSavedAt, saving, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
 
@@ -1456,6 +1551,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setActiveStructuredTab: (id: string) => actionsBridgeRef.current.setActiveStructuredTab(id),
       patchStructuredTab: (id: string, patch: Parameters<Api['patchStructuredTab']>[1]) =>
         actionsBridgeRef.current.patchStructuredTab(id, patch),
+      upsertUtilityErdDocument: (input: Parameters<Api['upsertUtilityErdDocument']>[0]) =>
+        actionsBridgeRef.current.upsertUtilityErdDocument(input),
+      renameUtilityErdDocument: (id: string, title: string) =>
+        actionsBridgeRef.current.renameUtilityErdDocument(id, title),
+      removeUtilityErdDocument: (id: string) => actionsBridgeRef.current.removeUtilityErdDocument(id),
+      upsertUtilitySketchDocument: (input: Parameters<Api['upsertUtilitySketchDocument']>[0]) =>
+        actionsBridgeRef.current.upsertUtilitySketchDocument(input),
+      renameUtilitySketchDocument: (id: string, title: string) =>
+        actionsBridgeRef.current.renameUtilitySketchDocument(id, title),
+      removeUtilitySketchDocument: (id: string) =>
+        actionsBridgeRef.current.removeUtilitySketchDocument(id),
     }),
     [],
   );

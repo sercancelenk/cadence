@@ -37,13 +37,13 @@
   height: min(72vh, 720px);
   min-height: 480px;
   border-radius: 10px;
-  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.3));
+  border: 1px solid var(--border);
   overflow: hidden;
-  background: var(--main-canvas, var(--bg, #111));
+  background: var(--main-canvas, var(--bg));
   position: relative;
 }
 
 .sketch-canvas .excalidraw {
   height: 100%;
-  --color-primary: var(--accent, #6b8cae);
+  --color-primary: var(--accent);
 }

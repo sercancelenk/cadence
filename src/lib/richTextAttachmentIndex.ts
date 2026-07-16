@@ -101,5 +101,10 @@ export function collectReferencedAttachmentIds(data: AppData): string[] {
   if (data.utilityDocument) {
     scanAnyBody(data.utilityDocument.body, data.utilityDocument.bodyFormat, ids);
   }
+  for (const it of data.items ?? []) scanAnyBody(it.body, it.bodyFormat, ids);
+  for (const p of data.people ?? []) {
+    scanAnyBody(p.scratchpad, p.scratchpadFormat, ids);
+    scanAnyBody(p.agenda, p.agendaFormat, ids);
+  }
   return [...ids];
 }

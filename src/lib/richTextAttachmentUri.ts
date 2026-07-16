@@ -42,6 +42,6 @@ export function createAttachmentId(documentKind: string, documentId: string): st
 }
 
 export type RichTextAttachmentScope = {
-  documentKind: 'note' | 'todo' | 'lab' | 'utility';
+  documentKind: 'note' | 'todo' | 'lab' | 'utility' | 'item' | 'person';
   documentId: string;
 };

@@ -628,6 +628,11 @@ function collectReferencedAttachmentIdsFromPayload(payload) {
   for (const t of payload?.todoItems || []) scan(t.body, t.bodyFormat);
   const util = payload?.utilityDocument;
   if (util) scan(util.body, util.bodyFormat);
+  for (const it of payload?.items || []) scan(it.body, it.bodyFormat);
+  for (const p of payload?.people || []) {
+    scan(p.scratchpad, p.scratchpadFormat);
+    scan(p.agenda, p.agendaFormat);
+  }
   return ids;
 }
 

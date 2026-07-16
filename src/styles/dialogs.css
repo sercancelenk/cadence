@@ -196,6 +196,20 @@
   gap: 16px;
 }
 
+.app-modal__prompt-form .field {
+  margin-top: 0;
+}
+
+.app-modal__prompt-form .input {
+  width: 100%;
+}
+
+.app-modal__prompt-error {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--danger, #c0392b);
+}
+
 .app-modal__btn-cancel {
   background: none;
   border: none;

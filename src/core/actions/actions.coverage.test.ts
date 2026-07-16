@@ -190,6 +190,28 @@ describe('people', () => {
     expect(updated?.scratchpad).toBe('notes');
   });
 
+  it('updatePerson clears scratchpad/agenda format when body is emptied', () => {
+    const base = emptyData();
+    let d = addPerson(base, firstTeamId(base), 'Pat');
+    const pat = d.people.find((p) => p.name === 'Pat')!;
+    d = updatePerson(d, pat.id, {
+      scratchpad: '{"type":"doc","content":[]}',
+      scratchpadFormat: 'prosemirror',
+      scratchpadPlainText: 'x',
+      agenda: '- [ ] a',
+      agendaFormat: 'markdown',
+      agendaPlainText: '- [ ] a',
+    });
+    d = updatePerson(d, pat.id, { scratchpad: '', agenda: '' });
+    const updated = d.people.find((p) => p.id === pat.id)!;
+    expect(updated.scratchpad).toBe('');
+    expect(updated.scratchpadFormat).toBeUndefined();
+    expect(updated.scratchpadPlainText).toBeUndefined();
+    expect(updated.agenda).toBe('');
+    expect(updated.agendaFormat).toBeUndefined();
+    expect(updated.agendaPlainText).toBeUndefined();
+  });
+
   it('removePerson refuses self, leader, and skip-level', () => {
     const base = emptyData();
     const teamId = firstTeamId(base);

@@ -39,12 +39,12 @@ const CARDS: Array<{ to: string; title: string; blurb: string }> = [
   {
     to: PATH_UTILITIES_TOOLS_ERD,
     title: 'ER diagram',
-    blurb: 'Lite visual ERD — tables, columns, FK edges; export PNG or JSON (session only).',
+    blurb: 'Lite visual ERD — tables, columns, FK edges. Save named copies to your workspace, or Export.',
   },
   {
     to: PATH_UTILITIES_TOOLS_SKETCH,
     title: 'Sketch',
-    blurb: 'Excalidraw-style whiteboard for system design and meeting sketches (session only).',
+    blurb: 'Excalidraw-style whiteboard. Save named boards to your workspace, or Export JSON / PNG.',
   },
 ];
 
@@ -52,8 +52,8 @@ export function UtilitiesToolsHubPage() {
   return (
     <div className="utilities-tools-hub">
       <p className="muted utilities-tools-hub__intro">
-        Pick a tool below. Inputs stay in this session only — reload clears them. For large JSON or
-        YAML paste buffers with format and diff, use{' '}
+        Pick a tool below. Most inputs stay in this session only. ERD and Sketch can Save named copies
+        to your workspace. For large JSON or YAML paste buffers with format and diff, use{' '}
         <Link to={PATH_UTILITIES_STRUCTURED}>JSON / YAML</Link>.
       </p>
       <ul className="utilities-tools-hub__grid">

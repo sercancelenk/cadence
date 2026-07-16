@@ -22,7 +22,8 @@ const TABS: Array<{ to: string; end?: boolean; label: string }> = [
 ];
 
 /**
- * Shared chrome for Utilities → Tools. Ephemeral: nothing is persisted.
+ * Shared chrome for Utilities → Tools.
+ * Most tools are ephemeral; ERD / Sketch can Save named copies to the workspace.
  */
 export function UtilitiesToolsLayout() {
   return (
@@ -31,7 +32,8 @@ export function UtilitiesToolsLayout() {
         <div>
           <h1 className="utilities-doc-page__title">Tools</h1>
           <p className="utilities-doc-page__lead muted">
-            Stateless developer utilities — nothing is saved to your workspace.
+            Developer utilities. Encode/hash/text stay ephemeral; ERD and Sketch can Save named
+            copies to your workspace.
           </p>
         </div>
       </header>

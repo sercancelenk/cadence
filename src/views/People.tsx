@@ -29,10 +29,10 @@ import {
 const AIAssistantDialog = lazy(() =>
   import('../components/AIAssistantDialog').then((m) => ({ default: m.AIAssistantDialog })),
 );
+import { useAccount } from '../AccountContext';
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { Button } from '../components/ui/Button';
 import { useConfirm } from '../components/ui/ConfirmProvider';
-import { MarkdownEditor, MarkdownView } from '../components/ui/MarkdownEditor';
 import { SchedulePopover } from '../components/ui/SchedulePopover';
 import { OneOnOneHelpDialog } from '../features/people/OneOnOneHelpDialog';
 import { isAIConfigured } from '../lib/ai';
@@ -48,9 +48,16 @@ import {
 import { useAppData, useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { distinctCategoriesForTeam, SUGGESTED_CATEGORIES } from '../lib/categories';
 import { schedulePatchToItemPatch } from '../features/people/schedulePatch';
+import { registerBeforeFlushHook } from '../lib/pendingSaveFlush';
 import { useItemFocus } from '../features/people/useItemFocus';
 import { fromLocalDatetimeValue, formatDateShort, formatShort, formatTimeOnly, isPast, toLocalDatetimeValue } from '../lib/datetime';
 import { kindLabel } from '../lib/labels';
+import {
+  appendPlainTextToBodyFields,
+  plainTextFromBodyFields,
+  richBodyFieldsFromPayload,
+  type RichTextBodyFields,
+} from '../lib/richTextBody';
 import { isSafeRichTextPreviewHref } from '../lib/richTextPreviewLinks';
 import { teamLeader, teamMe, teamPeople as teamPeoplePath, teamSkipLevel } from '../lib/teamPaths';
 import { PATH_TEAMS } from '../lib/routes';
@@ -67,6 +74,72 @@ import {
   isSkipLevelPerson,
   teamPeople,
 } from '../model';
+
+const RichTextEditor = lazy(() =>
+  import('../components/ui/RichTextEditor').then((m) => ({ default: m.RichTextEditor })),
+);
+
+function emptyRichFields(): RichTextBodyFields {
+  return { body: '', bodyFormat: undefined, bodyPlainText: undefined };
+}
+
+function richFieldsEqual(a: RichTextBodyFields, b: RichTextBodyFields): boolean {
+  return (
+    (a.body ?? '') === (b.body ?? '') &&
+    (a.bodyFormat ?? undefined) === (b.bodyFormat ?? undefined) &&
+    (a.bodyPlainText ?? undefined) === (b.bodyPlainText ?? undefined)
+  );
+}
+
+function personScratchpadFields(person: Person): RichTextBodyFields {
+  return {
+    body: person.scratchpad ?? '',
+    bodyFormat: person.scratchpadFormat,
+    bodyPlainText: person.scratchpadPlainText,
+  };
+}
+
+function personAgendaFields(person: Person): RichTextBodyFields {
+  return {
+    body: person.agenda ?? '',
+    bodyFormat: person.agendaFormat,
+    bodyPlainText: person.agendaPlainText,
+  };
+}
+
+function scratchpadPatchFromFields(
+  fields: RichTextBodyFields,
+): Pick<Person, 'scratchpad' | 'scratchpadFormat' | 'scratchpadPlainText'> {
+  return {
+    scratchpad: fields.body,
+    scratchpadFormat: fields.bodyFormat,
+    scratchpadPlainText: fields.bodyPlainText,
+  };
+}
+
+function agendaPatchFromFields(
+  fields: RichTextBodyFields,
+): Pick<Person, 'agenda' | 'agendaFormat' | 'agendaPlainText'> {
+  return {
+    agenda: fields.body,
+    agendaFormat: fields.bodyFormat,
+    agendaPlainText: fields.bodyPlainText,
+  };
+}
+
+function itemBodyPatchFromFields(
+  fields: RichTextBodyFields,
+): Pick<Item, 'body' | 'bodyFormat' | 'bodyPlainText'> {
+  return {
+    body: fields.body,
+    bodyFormat: fields.bodyFormat,
+    bodyPlainText: fields.bodyPlainText,
+  };
+}
+
+function itemHasRichBody(item: Pick<Item, 'body' | 'bodyFormat' | 'bodyPlainText'>): boolean {
+  return !!plainTextFromBodyFields(item).trim() || !!(item.bodyFormat === 'prosemirror' && item.body?.trim());
+}
 
 function goalStatusLabel(gs?: GoalStatus): string {
   return GOAL_STATUS_OPTIONS.find((o) => o.value === gs)?.label ?? '—';
@@ -102,31 +175,50 @@ function workspaceSubtitle(isSelf: boolean, isLeader: boolean, isSkipLevel: bool
 }
 
 /**
- * Buffers item-body markdown locally and flushes on blur or when the user
- * switches to preview mode. Avoids one persist round-trip per keystroke
- * while still preserving cursor position.
+ * Buffers item-body rich text locally and flushes on blur / unmount / sync.
+ * Same TipTap editor as Notes and Todos.
  */
-function ItemBodyField({ initial, onCommit }: { initial: string; onCommit: (next: string) => void }) {
-  const [value, setValue] = useState(initial);
+function ItemBodyField({
+  initial,
+  itemId,
+  attachmentUserId,
+  onCommit,
+}: {
+  initial: RichTextBodyFields;
+  itemId: string;
+  attachmentUserId: string;
+  onCommit: (next: RichTextBodyFields) => void;
+}) {
+  const [fields, setFields] = useState(initial);
   const lastCommitted = useRef(initial);
-  const valueRef = useRef(value);
-  valueRef.current = value;
+  const fieldsRef = useRef(fields);
+  fieldsRef.current = fields;
   const onCommitRef = useRef(onCommit);
   onCommitRef.current = onCommit;
 
+  const applyFields = useCallback((next: RichTextBodyFields) => {
+    // Sync ref before setState so unmount flush (after child editor flush) sees
+    // the latest payload — setState alone would leave fieldsRef stale until render.
+    fieldsRef.current = next;
+    setFields(next);
+  }, []);
+
   const commitPending = useCallback(() => {
-    if (valueRef.current !== lastCommitted.current) {
-      onCommitRef.current(valueRef.current);
-      lastCommitted.current = valueRef.current;
+    if (!richFieldsEqual(fieldsRef.current, lastCommitted.current)) {
+      onCommitRef.current(fieldsRef.current);
+      lastCommitted.current = fieldsRef.current;
     }
   }, []);
 
   useEffect(() => {
-    if (initial !== lastCommitted.current && value === lastCommitted.current) {
-      setValue(initial);
+    if (!richFieldsEqual(initial, lastCommitted.current) && richFieldsEqual(fields, lastCommitted.current)) {
+      fieldsRef.current = initial;
+      setFields(initial);
       lastCommitted.current = initial;
     }
-  }, [initial, value]);
+  }, [initial, fields]);
+
+  useEffect(() => registerBeforeFlushHook(() => commitPending()), [commitPending]);
 
   useEffect(() => {
     const onBeforeSync = () => commitPending();
@@ -138,13 +230,18 @@ function ItemBodyField({ initial, onCommit }: { initial: string; onCommit: (next
   }, [commitPending]);
 
   return (
-    <MarkdownEditor
-      value={value}
-      onChange={setValue}
-      onBlur={commitPending}
-      placeholder="Write the body in markdown…"
-      rows={6}
-    />
+    <Suspense fallback={<div className="muted small">Loading editor…</div>}>
+      <RichTextEditor
+        value={fields.body}
+        valueFormat={fields.bodyFormat ?? 'auto'}
+        onChange={(payload) => applyFields(richBodyFieldsFromPayload(payload))}
+        onBlur={commitPending}
+        placeholder="Write details — paste screenshots with ⌘V, add tables, dates…"
+        minHeight={160}
+        attachmentScope={{ documentKind: 'item', documentId: itemId }}
+        attachmentUserId={attachmentUserId}
+      />
+    </Suspense>
   );
 }
 
@@ -328,11 +425,13 @@ export function PersonWorkspace({ personId }: { personId: string }) {
   const { teamId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAccount();
+  const attachmentUserId = user?.id ?? 'anonymous';
   const { data, updatePerson, addItem, updateItem, toggleItemDone, removeItem } = useAppData();
   const person = data.people.find((p) => p.id === personId);
   const [name, setName] = useState('');
   const [title, setTitle] = useState('');
-  const [scratchpad, setScratchpad] = useState('');
+  const [scratchpad, setScratchpad] = useState<RichTextBodyFields>(emptyRichFields);
   const [openId, setOpenId] = useState<string | null>(null);
   const [tab, setTab] = useState<WorkspaceTab>('workspace');
 
@@ -345,7 +444,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
     return [...new Set([...SUGGESTED_CATEGORIES, ...distinctCategoriesForTeam(data, teamId)])];
   }, [data, teamId]);
 
-  const scratchpadDirty = person ? scratchpad !== (person.scratchpad ?? '') : false;
+  const scratchpadDirty = person ? !richFieldsEqual(scratchpad, personScratchpadFields(person)) : false;
   const profileDirty = person
     ? name.trim() !== person.name.trim() || title !== (person.title ?? '')
     : false;
@@ -360,16 +459,42 @@ export function PersonWorkspace({ personId }: { personId: string }) {
   nameRef.current = name;
   titleRef.current = title;
 
+  /** Keep refs in lockstep with editor onChange (before React re-renders). */
+  const applyScratchpad = useCallback((next: RichTextBodyFields) => {
+    scratchpadRef.current = next;
+    scratchpadDirtyRef.current = true;
+    setScratchpad(next);
+  }, []);
+
+  const flushPersonLocal = useCallback(() => {
+    const pid = person?.id;
+    if (!pid) return;
+    if (profileDirtyRef.current) {
+      updatePerson(pid, {
+        name: nameRef.current.trim() || 'Unnamed',
+        title: titleRef.current,
+        ...scratchpadPatchFromFields(scratchpadRef.current),
+      });
+      profileDirtyRef.current = false;
+      scratchpadDirtyRef.current = false;
+    } else if (scratchpadDirtyRef.current) {
+      updatePerson(pid, scratchpadPatchFromFields(scratchpadRef.current));
+      scratchpadDirtyRef.current = false;
+    }
+  }, [person?.id, updatePerson]);
+
+  useEffect(() => registerBeforeFlushHook(() => flushPersonLocal()), [flushPersonLocal]);
+
   useEffect(() => {
     if (!person) {
       setName('');
       setTitle('');
-      setScratchpad('');
+      setScratchpad(emptyRichFields());
       return;
     }
     setName(person.name);
     setTitle(person.title ?? '');
-    setScratchpad(person.scratchpad ?? '');
+    setScratchpad(personScratchpadFields(person));
   }, [person?.id]);
 
   useEffect(() => {
@@ -379,54 +504,53 @@ export function PersonWorkspace({ personId }: { personId: string }) {
       setTitle(person.title ?? '');
     }
     if (!scratchpadDirty) {
-      setScratchpad(person.scratchpad ?? '');
+      setScratchpad(personScratchpadFields(person));
     }
-  }, [person?.name, person?.title, person?.scratchpad, profileDirty, scratchpadDirty]);
+  }, [
+    person?.name,
+    person?.title,
+    person?.scratchpad,
+    person?.scratchpadFormat,
+    person?.scratchpadPlainText,
+    profileDirty,
+    scratchpadDirty,
+    person,
+  ]);
 
   useEffect(() => {
     if (!person || !scratchpadDirty) return;
-    const personId = person.id;
+    const pid = person.id;
     const timer = window.setTimeout(() => {
-      updatePerson(personId, { scratchpad });
+      updatePerson(pid, scratchpadPatchFromFields(scratchpadRef.current));
+      scratchpadDirtyRef.current = false;
     }, 800);
     return () => clearTimeout(timer);
   }, [person?.id, scratchpad, scratchpadDirty, updatePerson]);
 
   useEffect(() => {
-    const personId = person?.id;
+    const pid = person?.id;
     return () => {
-      if (!personId) return;
+      if (!pid) return;
       if (profileDirtyRef.current) {
-        updatePerson(personId, {
+        updatePerson(pid, {
           name: nameRef.current.trim() || 'Unnamed',
           title: titleRef.current,
-          scratchpad: scratchpadRef.current,
+          ...scratchpadPatchFromFields(scratchpadRef.current),
         });
       } else if (scratchpadDirtyRef.current) {
-        updatePerson(personId, { scratchpad: scratchpadRef.current });
+        updatePerson(pid, scratchpadPatchFromFields(scratchpadRef.current));
       }
     };
   }, [person?.id, updatePerson]);
 
   useEffect(() => {
-    const onBeforeSync = () => {
-      if (!person) return;
-      if (profileDirty) {
-        updatePerson(person.id, {
-          name: name.trim() || person.name,
-          title,
-          scratchpad,
-        });
-      } else if (scratchpadDirty) {
-        updatePerson(person.id, { scratchpad });
-      }
-    };
+    const onBeforeSync = () => flushPersonLocal();
     window.addEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
     return () => {
       window.removeEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
       onBeforeSync();
     };
-  }, [person?.id, name, title, scratchpad, profileDirty, scratchpadDirty, updatePerson]);
+  }, [flushPersonLocal]);
 
   if (!teamId) {
     return (
@@ -532,9 +656,15 @@ export function PersonWorkspace({ personId }: { personId: string }) {
       </header>
 
       {tab === 'timeline' ? (
-        <PersonTimeline items={items} />
+        <PersonTimeline items={items} attachmentUserId={attachmentUserId} />
       ) : tab === 'meeting' ? (
-        <PersonMeetingMode person={person} items={items} addItem={addItem} updatePerson={updatePerson} />
+        <PersonMeetingMode
+          person={person}
+          items={items}
+          addItem={addItem}
+          updatePerson={updatePerson}
+          attachmentUserId={attachmentUserId}
+        />
       ) : (
         <PersonWorkspaceTabContent
           person={person}
@@ -543,7 +673,8 @@ export function PersonWorkspace({ personId }: { personId: string }) {
           title={title}
           setTitle={setTitle}
           scratchpad={scratchpad}
-          setScratchpad={setScratchpad}
+          setScratchpad={applyScratchpad}
+          flushScratchpad={flushPersonLocal}
           updatePerson={updatePerson}
           isSelf={isSelf}
           isLeader={isLeader}
@@ -558,6 +689,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
           updateItem={updateItem}
           toggleItemDone={toggleItemDone}
           removeItem={removeItem}
+          attachmentUserId={attachmentUserId}
         />
       )}
     </div>
@@ -570,8 +702,9 @@ function PersonWorkspaceTabContent(props: {
   setName: (v: string) => void;
   title: string;
   setTitle: (v: string) => void;
-  scratchpad: string;
-  setScratchpad: (v: string) => void;
+  scratchpad: RichTextBodyFields;
+  setScratchpad: (v: RichTextBodyFields) => void;
+  flushScratchpad: () => void;
   updatePerson: ReturnType<typeof useAppData>['updatePerson'];
   isSelf: boolean;
   isLeader: boolean;
@@ -586,6 +719,7 @@ function PersonWorkspaceTabContent(props: {
   updateItem: ReturnType<typeof useAppData>['updateItem'];
   toggleItemDone: ReturnType<typeof useAppData>['toggleItemDone'];
   removeItem: ReturnType<typeof useAppData>['removeItem'];
+  attachmentUserId: string;
 }) {
   const {
     person,
@@ -595,6 +729,7 @@ function PersonWorkspaceTabContent(props: {
     setTitle,
     scratchpad,
     setScratchpad,
+    flushScratchpad,
     updatePerson,
     isSelf,
     isLeader,
@@ -609,14 +744,16 @@ function PersonWorkspaceTabContent(props: {
     updateItem,
     toggleItemDone,
     removeItem,
+    attachmentUserId,
   } = props;
   const [profileOpen, setProfileOpen] = useState(false);
-  const [scratchOpen, setScratchOpen] = useState(() => !!(person.scratchpad ?? '').trim());
-  const scratchpadDirty = scratchpad !== (person.scratchpad ?? '');
+  const scratchPreview = plainTextFromBodyFields(scratchpad);
+  const [scratchOpen, setScratchOpen] = useState(() => !!scratchPreview.trim());
+  const scratchpadDirty = !richFieldsEqual(scratchpad, personScratchpadFields(person));
 
   useEffect(() => {
     setProfileOpen(false);
-    setScratchOpen(!!(person.scratchpad ?? '').trim());
+    setScratchOpen(!!plainTextFromBodyFields(personScratchpadFields(person)).trim());
   }, [person.id]);
 
   return (
@@ -648,7 +785,7 @@ function PersonWorkspaceTabContent(props: {
                 updatePerson(person.id, {
                   name: nextName,
                   title: nextTitle,
-                  scratchpad,
+                  ...scratchpadPatchFromFields(scratchpad),
                 });
                 setProfileOpen(false);
               }}
@@ -705,7 +842,7 @@ function PersonWorkspaceTabContent(props: {
         <div className="person-card__head">
           <h2 className="card__title">
             Scratchpad{' '}
-            {scratchpad.trim() ? <span className="pill">notes</span> : null}
+            {scratchPreview.trim() ? <span className="pill">notes</span> : null}
           </h2>
           <Button
             type="button"
@@ -720,23 +857,26 @@ function PersonWorkspaceTabContent(props: {
         </div>
         {!scratchOpen ? (
           <p className="muted small" style={{ margin: 0 }}>
-            {scratchpad.trim()
-              ? scratchpad.trim().split('\n')[0]!.slice(0, 120) +
-                (scratchpad.trim().length > 120 ? '…' : '')
+            {scratchPreview.trim()
+              ? scratchPreview.trim().split('\n')[0]!.slice(0, 120) +
+                (scratchPreview.trim().length > 120 ? '…' : '')
               : 'Quick notes and talking points — expands when you need them.'}
           </p>
         ) : (
           <>
             <p className="muted small person-card__hint">Autosaves as you type.</p>
-            <MarkdownEditor
-              value={scratchpad}
-              onChange={setScratchpad}
-              onBlur={() =>
-                person && scratchpad !== (person.scratchpad ?? '') && updatePerson(person.id, { scratchpad })
-              }
-              placeholder="Talking points, drafts, reminders…"
-              rows={6}
-            />
+            <Suspense fallback={<div className="muted small">Loading editor…</div>}>
+              <RichTextEditor
+                value={scratchpad.body}
+                valueFormat={scratchpad.bodyFormat ?? 'auto'}
+                onChange={(payload) => setScratchpad(richBodyFieldsFromPayload(payload))}
+                onBlur={flushScratchpad}
+                placeholder="Talking points, drafts, reminders…"
+                minHeight={140}
+                attachmentScope={{ documentKind: 'person', documentId: `${person.id}-scratchpad` }}
+                attachmentUserId={attachmentUserId}
+              />
+            </Suspense>
             {scratchpadDirty ? (
               <div className="row" style={{ marginTop: 8 }}>
                 <Button
@@ -744,7 +884,7 @@ function PersonWorkspaceTabContent(props: {
                   variant="secondary"
                   size="sm"
                   icon={<IcSave size={15} />}
-                  onClick={() => updatePerson(person.id, { scratchpad })}
+                  onClick={flushScratchpad}
                 >
                   Save now
                 </Button>
@@ -766,6 +906,7 @@ function PersonWorkspaceTabContent(props: {
         onUpdate={updateItem}
         onToggle={toggleItemDone}
         onRemove={removeItem}
+        attachmentUserId={attachmentUserId}
       />
       <KindSection
         title="Goals"
@@ -779,6 +920,7 @@ function PersonWorkspaceTabContent(props: {
         onUpdate={updateItem}
         onToggle={toggleItemDone}
         onRemove={removeItem}
+        attachmentUserId={attachmentUserId}
       />
       <KindSection
         title="Notes (structured)"
@@ -792,6 +934,7 @@ function PersonWorkspaceTabContent(props: {
         onUpdate={updateItem}
         onToggle={toggleItemDone}
         onRemove={removeItem}
+        attachmentUserId={attachmentUserId}
       />
       <KindSection
         title="Feedback log"
@@ -805,6 +948,7 @@ function PersonWorkspaceTabContent(props: {
         onUpdate={updateItem}
         onToggle={toggleItemDone}
         onRemove={removeItem}
+        attachmentUserId={attachmentUserId}
       />
       <KindSection
         title="Documents"
@@ -818,6 +962,7 @@ function PersonWorkspaceTabContent(props: {
         onUpdate={updateItem}
         onToggle={toggleItemDone}
         onRemove={removeItem}
+        attachmentUserId={attachmentUserId}
       />
     </>
   );
@@ -917,6 +1062,7 @@ function KindSection({
   onUpdate,
   onToggle,
   onRemove,
+  attachmentUserId,
 }: {
   title: string;
   kind: ItemKind;
@@ -929,7 +1075,18 @@ function KindSection({
     fields: Partial<
       Pick<
         Item,
-        'title' | 'body' | 'dueAt' | 'startAt' | 'remindAt' | 'remindRepeat' | 'url' | 'category' | 'goalStatus' | 'feedbackKind'
+        | 'title'
+        | 'body'
+        | 'bodyFormat'
+        | 'bodyPlainText'
+        | 'dueAt'
+        | 'startAt'
+        | 'remindAt'
+        | 'remindRepeat'
+        | 'url'
+        | 'category'
+        | 'goalStatus'
+        | 'feedbackKind'
       >
     >,
   ) => void;
@@ -940,6 +1097,8 @@ function KindSection({
         Item,
         | 'title'
         | 'body'
+        | 'bodyFormat'
+        | 'bodyPlainText'
         | 'dueAt'
         | 'startAt'
         | 'remindAt'
@@ -954,6 +1113,7 @@ function KindSection({
   ) => void;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
+  attachmentUserId: string;
 }) {
   const list = useMemo(() => items.filter((i) => i.kind === kind).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [items, kind]);
   const [draftTitle, setDraftTitle] = useState('');
@@ -1347,11 +1507,17 @@ function KindSection({
                     </label>
                   ) : null}
                   <div className="field">
-                    <span>Content (markdown)</span>
+                    <span>Content</span>
                     <ItemBodyField
                       key={`b-${it.id}-${it.updatedAt}`}
-                      initial={it.body}
-                      onCommit={(v) => onUpdate(it.id, { body: v })}
+                      initial={{
+                        body: it.body,
+                        bodyFormat: it.bodyFormat,
+                        bodyPlainText: it.bodyPlainText,
+                      }}
+                      itemId={it.id}
+                      attachmentUserId={attachmentUserId}
+                      onCommit={(v) => onUpdate(it.id, itemBodyPatchFromFields(v))}
                     />
                   </div>
                   {it.kind === 'goal' ? (
@@ -1378,9 +1544,19 @@ function KindSection({
                     />
                   ) : null}
                 </div>
-              ) : it.body ? (
+              ) : itemHasRichBody(it) ? (
                 <div className="list__body-preview">
-                  <MarkdownView value={it.body} />
+                  <Suspense fallback={<div className="muted small">Loading preview…</div>}>
+                    <RichTextEditor
+                      value={it.body}
+                      valueFormat={it.bodyFormat ?? 'auto'}
+                      editable={false}
+                      toolbar={false}
+                      minHeight={72}
+                      attachmentScope={{ documentKind: 'item', documentId: it.id }}
+                      attachmentUserId={attachmentUserId}
+                    />
+                  </Suspense>
                 </div>
               ) : null}
             </li>
@@ -1392,11 +1568,21 @@ function KindSection({
           <AIAssistantDialog
             open={!!aiTarget}
             onClose={() => setAiTarget(null)}
-            task={{ title: aiTarget.title, body: aiTarget.body }}
+            task={{
+              title: aiTarget.title,
+              body: plainTextFromBodyFields(aiTarget) || undefined,
+            }}
             onAppendToBody={(markdown) => {
               const t = aiTarget;
-              const next = `${t.body ? `${t.body}\n\n` : ''}---\n**AI suggestions**\n\n${markdown}`;
-              onUpdate(t.id, { body: next });
+              const next = appendPlainTextToBodyFields(
+                {
+                  body: t.body,
+                  bodyFormat: t.bodyFormat,
+                  bodyPlainText: t.bodyPlainText,
+                },
+                markdown,
+              );
+              onUpdate(t.id, itemBodyPatchFromFields(next));
               setAiTarget(null);
             }}
           />
@@ -1423,7 +1609,13 @@ const TIMELINE_FILTERS: { value: TimelineFilter; label: string }[] = [
   { value: 'document', label: 'Documents' },
 ];
 
-function PersonTimeline({ items }: { items: Item[] }) {
+function PersonTimeline({
+  items,
+  attachmentUserId,
+}: {
+  items: Item[];
+  attachmentUserId: string;
+}) {
   const [filter, setFilter] = useState<TimelineFilter>('all');
 
   const filtered = useMemo(() => {
@@ -1477,9 +1669,19 @@ function PersonTimeline({ items }: { items: Item[] }) {
                     Updated {formatShort(it.updatedAt)}
                     {it.dueAt ? ` · due ${formatShort(it.dueAt)}` : ''}
                   </div>
-                  {it.body ? (
+                  {itemHasRichBody(it) ? (
                     <div className="timeline__body">
-                      <MarkdownView value={it.body} />
+                      <Suspense fallback={<div className="muted small">Loading preview…</div>}>
+                        <RichTextEditor
+                          value={it.body}
+                          valueFormat={it.bodyFormat ?? 'auto'}
+                          editable={false}
+                          toolbar={false}
+                          minHeight={72}
+                          attachmentScope={{ documentKind: 'item', documentId: it.id }}
+                          attachmentUserId={attachmentUserId}
+                        />
+                      </Suspense>
                     </div>
                   ) : null}
                   {it.kind === 'document' && it.url ? (
@@ -1534,7 +1736,7 @@ function friendlyDay(key: string): string {
 
 /* ============================================================
    1:1 Mode
-   - Persistent agenda (markdown) on the person record
+   - Persistent agenda (rich text / legacy markdown) on the person record
    - "Archive meeting" turns the agenda into a dated note item
      and starts a fresh agenda with carry-over checkboxes
    ============================================================ */
@@ -1544,38 +1746,61 @@ function PersonMeetingMode({
   items,
   addItem,
   updatePerson,
+  attachmentUserId,
 }: {
   person: Person;
   items: Item[];
   addItem: ReturnType<typeof useAppData>['addItem'];
   updatePerson: ReturnType<typeof useAppData>['updatePerson'];
+  attachmentUserId: string;
 }) {
   const { confirm } = useConfirm();
   const [lang, setLang] = useState<OneOnOneLang>(() => readOneOnOneLang());
   const [helpOpen, setHelpOpen] = useState(false);
-  // Empty string is intentional — do not auto-seed a template into AppData.
-  const [agenda, setAgenda] = useState<string>(() => person.agenda ?? '');
-  const agendaDirty = agenda !== (person.agenda ?? '');
+  // Empty is intentional — do not auto-seed a template into AppData.
+  const [agenda, setAgenda] = useState<RichTextBodyFields>(() => personAgendaFields(person));
+  const agendaDirty = !richFieldsEqual(agenda, personAgendaFields(person));
   const agendaRef = useRef(agenda);
   const agendaDirtyRef = useRef(agendaDirty);
   agendaRef.current = agenda;
   agendaDirtyRef.current = agendaDirty;
 
+  const applyAgenda = useCallback((next: RichTextBodyFields) => {
+    // Sync refs before setState so leave/unmount flush sees the latest editor
+    // payload (child RichTextEditor flushes into onChange, then parent cleanup runs).
+    agendaRef.current = next;
+    agendaDirtyRef.current = true;
+    setAgenda(next);
+  }, []);
+
+  const flushAgenda = useCallback(() => {
+    if (!agendaDirtyRef.current) return;
+    updatePerson(person.id, agendaPatchFromFields(agendaRef.current));
+    agendaDirtyRef.current = false;
+  }, [person.id, updatePerson]);
+
+  useEffect(() => registerBeforeFlushHook(() => flushAgenda()), [flushAgenda]);
+
   useEffect(() => {
-    setAgenda(person.agenda ?? '');
+    const next = personAgendaFields(person);
+    agendaRef.current = next;
+    setAgenda(next);
   }, [person.id]);
 
   useEffect(() => {
     if (!agendaDirty) {
-      setAgenda(person.agenda ?? '');
+      const next = personAgendaFields(person);
+      agendaRef.current = next;
+      setAgenda(next);
     }
-  }, [person.agenda, agendaDirty]);
+  }, [person.agenda, person.agendaFormat, person.agendaPlainText, agendaDirty, person]);
 
   useEffect(() => {
     if (!agendaDirty) return;
     const personId = person.id;
     const timer = window.setTimeout(() => {
-      updatePerson(personId, { agenda });
+      updatePerson(personId, agendaPatchFromFields(agendaRef.current));
+      agendaDirtyRef.current = false;
     }, 800);
     return () => clearTimeout(timer);
   }, [person.id, agenda, agendaDirty, updatePerson]);
@@ -1584,23 +1809,19 @@ function PersonMeetingMode({
     const personId = person.id;
     return () => {
       if (agendaDirtyRef.current) {
-        updatePerson(personId, { agenda: agendaRef.current });
+        updatePerson(personId, agendaPatchFromFields(agendaRef.current));
       }
     };
   }, [person.id, updatePerson]);
 
   useEffect(() => {
-    const onBeforeSync = () => {
-      if (agendaDirty) {
-        updatePerson(person.id, { agenda });
-      }
-    };
+    const onBeforeSync = () => flushAgenda();
     window.addEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
     return () => {
       window.removeEventListener(SYNC_BEFORE_APPLY, onBeforeSync);
       onBeforeSync();
     };
-  }, [person.id, agenda, agendaDirty, updatePerson]);
+  }, [flushAgenda]);
 
   const meetings = useMemo(
     () =>
@@ -1611,7 +1832,7 @@ function PersonMeetingMode({
   );
 
   function save() {
-    updatePerson(person.id, { agenda });
+    flushAgenda();
   }
 
   function changeLang(next: OneOnOneLang) {
@@ -1620,8 +1841,13 @@ function PersonMeetingMode({
   }
 
   async function insertTemplate() {
-    const next = defaultAgenda(person.name, lang);
-    if (agenda.trim()) {
+    const nextBody = defaultAgenda(person.name, lang);
+    const nextFields: RichTextBodyFields = {
+      body: nextBody,
+      bodyFormat: 'markdown',
+      bodyPlainText: nextBody,
+    };
+    if (plainTextFromBodyFields(agendaRef.current).trim()) {
       const ok = await confirm({
         title: lang === 'tr' ? 'Şablonu uygula?' : 'Apply starter template?',
         description:
@@ -1633,20 +1859,36 @@ function PersonMeetingMode({
       });
       if (!ok) return;
     }
-    setAgenda(next);
-    updatePerson(person.id, { agenda: next });
+    applyAgenda(nextFields);
+    updatePerson(person.id, agendaPatchFromFields(nextFields));
+    agendaDirtyRef.current = false;
   }
 
   function archive() {
-    if (!agenda.trim()) return;
+    const current = agendaRef.current;
+    const currentPlain = plainTextFromBodyFields(current);
+    // Empty PM docs still serialize to a short JSON string — gate on plain text only.
+    if (!currentPlain.trim()) return;
     const today = new Date();
     const title = `1:1 · ${today.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`;
-    addItem(person.id, 'note', { title, body: agenda, category: '1:1' });
-    const carryOver = extractCarryOver(agenda);
+    addItem(person.id, 'note', {
+      title,
+      body: current.body,
+      bodyFormat: current.bodyFormat,
+      bodyPlainText: current.bodyPlainText,
+      category: '1:1',
+    });
+    const carryOver = extractCarryOver(current.body, current.bodyFormat);
     const fresh = defaultAgenda(person.name, lang);
-    const next = `${fresh}${carryOver ? `\n\n${carryOverHeading(lang)}\n${carryOver}` : ''}`;
-    setAgenda(next);
-    updatePerson(person.id, { agenda: next });
+    const nextBody = `${fresh}${carryOver ? `\n\n${carryOverHeading(lang)}\n${carryOver}` : ''}`;
+    const nextFields: RichTextBodyFields = {
+      body: nextBody,
+      bodyFormat: 'markdown',
+      bodyPlainText: nextBody,
+    };
+    applyAgenda(nextFields);
+    updatePerson(person.id, agendaPatchFromFields(nextFields));
+    agendaDirtyRef.current = false;
   }
 
   return (
@@ -1687,20 +1929,32 @@ function PersonMeetingMode({
         </div>
         <p className="muted small">
           {lang === 'tr'
-            ? 'Bir sonraki 1:1 için ortak gündem. Aksiyonlar için `- [ ]` kullanın — arşivde işaretlenmeyenler taşınır.'
-            : 'Shared agenda for the next 1:1. Use `- [ ]` for actions — unchecked items carry over when you archive.'}
+            ? 'Bir sonraki 1:1 için ortak gündem. Aksiyonlar için görev listesi kullanın — arşivde işaretlenmeyenler taşınır.'
+            : 'Shared agenda for the next 1:1. Use task checkboxes for actions — unchecked items carry over when you archive.'}
         </p>
-        <MarkdownEditor
-          value={agenda}
-          onChange={setAgenda}
-          onBlur={() => agendaDirty && updatePerson(person.id, { agenda })}
-          placeholder={
-            lang === 'tr'
-              ? 'Gündemi yazın veya “Şablon uygula” ile başlayın…'
-              : 'Write the agenda, or apply the starter template…'
-          }
-          rows={14}
-        />
+        <p className="muted small person-card__hint">
+          {lang === 'tr'
+            ? 'Yazarken otomatik kaydedilir; başka sekmeye veya sayfaya geçseniz de korunur.'
+            : 'Autosaves as you type — safe to switch tabs or leave this screen.'}
+        </p>
+        <div className="one-on-one-agenda__editor">
+          <Suspense fallback={<div className="muted small">Loading editor…</div>}>
+            <RichTextEditor
+              value={agenda.body}
+              valueFormat={agenda.bodyFormat ?? 'auto'}
+              onChange={(payload) => applyAgenda(richBodyFieldsFromPayload(payload))}
+              onBlur={flushAgenda}
+              placeholder={
+                lang === 'tr'
+                  ? 'Gündemi yazın veya “Şablon uygula” ile başlayın…'
+                  : 'Write the agenda, or apply the starter template…'
+              }
+              minHeight={280}
+              attachmentScope={{ documentKind: 'person', documentId: `${person.id}-agenda` }}
+              attachmentUserId={attachmentUserId}
+            />
+          </Suspense>
+        </div>
         <div className="row" style={{ marginTop: 10 }}>
           <Button type="button" variant="secondary" icon={<IcFileText size={17} />} onClick={() => void insertTemplate()}>
             {lang === 'tr' ? 'Şablon uygula' : 'Apply template'}
@@ -1729,9 +1983,19 @@ function PersonMeetingMode({
                 <div className="muted small">
                   {lang === 'tr' ? 'Arşiv' : 'Archived'} {formatShort(m.createdAt)}
                 </div>
-                {m.body ? (
+                {itemHasRichBody(m) ? (
                   <div className="list__body-preview">
-                    <MarkdownView value={m.body} />
+                    <Suspense fallback={<div className="muted small">Loading preview…</div>}>
+                      <RichTextEditor
+                        value={m.body}
+                        valueFormat={m.bodyFormat ?? 'auto'}
+                        editable={false}
+                        toolbar={false}
+                        minHeight={72}
+                        attachmentScope={{ documentKind: 'item', documentId: m.id }}
+                        attachmentUserId={attachmentUserId}
+                      />
+                    </Suspense>
                   </div>
                 ) : null}
               </li>

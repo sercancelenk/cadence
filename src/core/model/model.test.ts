@@ -669,6 +669,8 @@ describe('noteTodoLinks', () => {
     });
     const persisted = compactAppDataForPersist(norm);
     expect(persisted.noteTodoLinks).toBeUndefined();
+    expect(persisted.utilityErdDocuments).toBeUndefined();
+    expect(persisted.utilitySketchDocuments).toBeUndefined();
     expect(persisted.notes).toHaveLength(1);
     expect(persisted.todoItems).toHaveLength(1);
   });
@@ -2266,6 +2268,7 @@ describe('normalizeData — forward-compatible unknown-field passthrough', () =>
       'profile', 'todoGroups', 'todoItems', 'aiSettings', 'notes', 'noteGroups',
       'notesLock', 'utilityDocument', 'utilityStructuredText',
       'utilityStructuredTabs', 'activeStructuredTabId', 'noteTodoLinks',
+      'utilityErdDocuments', 'utilitySketchDocuments',
     ]);
     for (const key of Object.keys(norm)) {
       expect(allowed.has(key)).toBe(true);

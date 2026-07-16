@@ -1,5 +1,7 @@
 /** 1:1 Mode agenda templates + way-of-working copy. UI-only — no AppData schema. */
 
+import { extractPlainText, parseRichDoc, type RichTextDoc } from '../richText';
+
 export type OneOnOneLang = 'en' | 'tr';
 
 export const ONE_ON_ONE_LANG_STORAGE_KEY = 'cadence.oneOnOne.lang';
@@ -151,9 +153,47 @@ export function carryOverHeading(lang: OneOnOneLang): string {
   return lang === 'tr' ? '## Devreden maddeler' : '## Carry-over';
 }
 
-/** Pull unchecked checklist lines for the next agenda. */
-export function extractCarryOver(agenda: string): string {
-  const lines = agenda.split('\n');
-  const open = lines.filter((l) => /^\s*-\s*\[\s\]\s*\S/.test(l));
+function uncheckedTaskLinesFromDoc(doc: RichTextDoc): string[] {
+  const lines: string[] = [];
+  const walk = (node: RichTextDoc) => {
+    if (node.type === 'taskItem') {
+      if (node.attrs?.checked === true) return;
+      const text = extractPlainText(node).trim();
+      if (text) lines.push(`- [ ] ${text}`);
+      return;
+    }
+    for (const child of node.content ?? []) walk(child);
+  };
+  walk(doc);
+  return lines;
+}
+
+/** Markdown open-checkbox lines (`- [ ] …`, flexible bracket spacing). */
+function extractMarkdownCarryOver(text: string): string {
+  const open = text.split('\n').filter((l) => /^\s*[-*]\s*\[\s*\]\s+\S/.test(l));
   return open.join('\n').trim();
+}
+
+/**
+ * Pull unchecked checklist lines for the next agenda.
+ * Supports legacy markdown (`- [ ] …`) and ProseMirror task lists.
+ * When a PM doc has no real `taskItem` nodes, falls back to scanning
+ * plain text for markdown-style checkboxes (pasted Slack/email notes).
+ */
+export function extractCarryOver(
+  agenda: string,
+  agendaFormat?: 'markdown' | 'prosemirror',
+): string {
+  const looksProseMirror =
+    agendaFormat === 'prosemirror' ||
+    (agendaFormat !== 'markdown' && !!parseRichDoc(agenda));
+  if (looksProseMirror) {
+    const doc = parseRichDoc(agenda);
+    if (doc) {
+      const fromTasks = uncheckedTaskLinesFromDoc(doc);
+      if (fromTasks.length > 0) return fromTasks.join('\n').trim();
+      return extractMarkdownCarryOver(extractPlainText(doc));
+    }
+  }
+  return extractMarkdownCarryOver(agenda);
 }

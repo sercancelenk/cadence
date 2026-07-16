@@ -50,6 +50,57 @@ describe('oneOnOneAgenda', () => {
     expect(extractCarryOver(agenda)).toBe('- [ ] Open item');
   });
 
+  it('extracts unchecked ProseMirror task items for carry-over', () => {
+    const agenda = JSON.stringify({
+      type: 'doc',
+      content: [
+        {
+          type: 'taskList',
+          content: [
+            {
+              type: 'taskItem',
+              attrs: { checked: false },
+              content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Open PM item' }] }],
+            },
+            {
+              type: 'taskItem',
+              attrs: { checked: true },
+              content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Done PM item' }] }],
+            },
+            {
+              type: 'taskItem',
+              attrs: { checked: false },
+              content: [{ type: 'paragraph' }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(extractCarryOver(agenda, 'prosemirror')).toBe('- [ ] Open PM item');
+  });
+
+  it('falls back to markdown checkboxes inside a ProseMirror doc without taskItems', () => {
+    const agenda = JSON.stringify({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: '- [ ] Pasted open item' }],
+        },
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: '- [x] Pasted done item' }],
+        },
+      ],
+    });
+    expect(extractCarryOver(agenda, 'prosemirror')).toBe('- [ ] Pasted open item');
+  });
+
+  it('accepts flexible checkbox bracket spacing in markdown carry-over', () => {
+    const agenda = ['- [  ] Two spaces', '- []No space after', '- [ ] Keep'].join('\n');
+    expect(extractCarryOver(agenda)).toBe('- [  ] Two spaces\n- [ ] Keep');
+  });
+
   it('returns bilingual way-of-working rules in a peer-neutral tone', () => {
     const en = oneOnOneWayOfWorking('en');
     expect(en.heading).toBe('1:1 way of working');
