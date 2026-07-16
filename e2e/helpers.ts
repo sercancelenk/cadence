@@ -97,6 +97,16 @@ export async function fillControlledTextarea(page: Page, locator: ReturnType<Pag
 }
 
 /**
+ * Type into a TipTap / ProseMirror surface so RichTextEditor onChange fires.
+ * Prefer insertText over fill — TipTap's controlled sync is more reliable this way.
+ */
+export async function fillProseMirror(page: Page, locator: ReturnType<Page['locator']>, text: string) {
+  await locator.click();
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
+  await page.keyboard.insertText(text);
+}
+
+/**
  * Fill a React-controlled `<input>` so `onChange` fires and dirty flags update.
  * Resets React's value tracker first — otherwise React ignores the synthetic
  * `input` event when the DOM value already matches what it last wrote.

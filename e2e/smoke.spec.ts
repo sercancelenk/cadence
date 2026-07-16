@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import {
   completeOnboarding,
   fillControlledInput,
-  fillControlledTextarea,
+  fillProseMirror,
   registerSmokeUser,
   route,
 } from './helpers';
@@ -80,19 +80,17 @@ test('register → team scratchpad survives reload', async ({ page }) => {
   const scratchCard = page.locator('.person-scratchpad');
   await scratchCard.getByRole('button', { name: /^expand$/i }).click();
 
-  const scratchpad = scratchCard.locator('.md-editor__textarea').first();
+  // Scratchpad uses TipTap RichTextEditor (not the legacy markdown textarea).
+  const scratchpad = scratchCard.locator('.ProseMirror').first();
   await expect(scratchpad).toBeVisible({ timeout: 15_000 });
-  // Set the value deterministically. pressSequentially races the controlled
-  // React round-trip and intermittently drops characters under CI load.
-  await fillControlledTextarea(page, scratchpad, scratchLine);
-  await expect(scratchpad).toHaveValue(scratchLine);
+  await fillProseMirror(page, scratchpad, scratchLine);
+  await expect(scratchpad).toContainText(scratchLine);
 
   // PersonWorkspace autosaves dirty scratchpad after 800ms; wait past that + AppData debounce.
   await page.waitForTimeout(2000);
 
   await page.reload();
   await completeOnboarding(page);
-  await expect(page.locator('.person-scratchpad .md-editor__textarea').first()).toHaveValue(scratchLine, {
-    timeout: 15_000,
-  });
+  // With content, scratchpad auto-expands; assert persisted plain text in the card.
+  await expect(page.locator('.person-scratchpad')).toContainText(scratchLine, { timeout: 15_000 });
 });
