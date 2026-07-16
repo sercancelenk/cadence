@@ -113,19 +113,18 @@ export default defineConfig({
           if (id.includes('@tiptap/') || id.includes('/prosemirror-')) {
             return 'vendor-richtext';
           }
-          // Do not assign mermaid / excalidraw / xyflow (or a catch-all
+          // Do not assign mermaid / excalidraw / xyflow / yaml (or a catch-all
           // vendor-misc) to manual chunks. Named heavy chunks absorb Vite's
-          // `__vitePreload` helper; other vendors then import that chunk and
-          // form a circular ESM init (`Cannot access 'X' before initialization`)
-          // that blanks boot / e2e register. Those libs stay on automatic async
-          // chunks from `lazy()` / `import()`.
+          // `__vitePreload` helper and form circular ESM init with sibling
+          // vendors (`Cannot access 'X' before initialization`) — blank boot
+          // or crashed route mounts (JSON/YAML utility). Those libs stay on
+          // automatic async chunks from `lazy()` / `import()`.
           if (id.includes('highlight.js') || id.includes('/lowlight/')) {
             return 'vendor-richtext';
           }
           if (id.includes('@codemirror') || id.includes('/codemirror/') || id.includes('/lezer-')) {
             return 'vendor-codemirror';
           }
-          if (id.includes('/yaml/') || id.includes('yaml/dist')) return 'vendor-yaml';
           return undefined;
         },
       },
