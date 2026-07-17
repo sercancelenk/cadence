@@ -8,6 +8,7 @@ import {
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import '@excalidraw/excalidraw/index.css';
 import { useConfirm } from '../../components/ui/ConfirmProvider';
+import { IcMaximize, IcMinimize } from '../../components/icons';
 import { useTheme } from '../../providers/ThemeContext';
 import {
   downloadBlob,
@@ -36,6 +37,7 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   const { confirm } = useConfirm();
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const [ready, setReady] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const aliveRef = useRef(true);
   const suppressDirtyRef = useRef(false);
   const onDirtyRef = useRef(onDirty);
@@ -49,6 +51,42 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
       aliveRef.current = false;
     };
   }, []);
+
+  // Immersive board mode (app chrome, not browser Fullscreen API — more reliable in Electron).
+  useEffect(() => {
+    if (!fullscreen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    let disposed = false;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      // Bubble phase so Excalidraw can consume Escape first (deselect / close menus).
+      if (event.defaultPrevented) return;
+      const api = apiRef.current;
+      // If the board still has a selection, let Esc clear it first — don't exit immersive mode.
+      if (api) {
+        try {
+          const selected = api.getAppState().selectedElementIds;
+          if (selected && Object.keys(selected).length > 0) return;
+        } catch {
+          /* API not ready */
+        }
+      }
+      event.preventDefault();
+      setFullscreen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    const enterRaf = requestAnimationFrame(() => {
+      if (!disposed) window.dispatchEvent(new Event('resize'));
+    });
+    return () => {
+      disposed = true;
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+      cancelAnimationFrame(enterRaf);
+      requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    };
+  }, [fullscreen]);
 
   const onApi = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
@@ -224,7 +262,10 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
   };
 
   return (
-    <div className="sketch-workspace">
+    <div
+      className={`sketch-workspace${fullscreen ? ' sketch-workspace--fullscreen' : ''}`}
+      data-fullscreen={fullscreen ? 'true' : undefined}
+    >
       <div className="sketch-toolbar" role="toolbar" aria-label="Sketch tools">
         <button type="button" className="btn btn--ghost btn--small" disabled={!ready} onClick={exportJson}>
           Export JSON
@@ -254,11 +295,25 @@ export const SketchCanvas = forwardRef<SketchCanvasHandle, SketchCanvasProps>(fu
         <button type="button" className="btn btn--ghost btn--small" disabled={!ready} onClick={clearScene}>
           Clear
         </button>
+        <span className="sketch-toolbar__spacer" aria-hidden />
+        <button
+          type="button"
+          className={`btn btn--small${fullscreen ? ' btn--primary' : ' btn--ghost'}`}
+          disabled={!ready}
+          aria-pressed={fullscreen}
+          title={fullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen whiteboard'}
+          onClick={() => setFullscreen((v) => !v)}
+        >
+          {fullscreen ? <IcMinimize size={15} /> : <IcMaximize size={15} />}
+          <span>{fullscreen ? 'Exit fullscreen' : 'Fullscreen'}</span>
+        </button>
       </div>
-      <p className="muted small sketch-hint">
-        Hand-drawn whiteboard for meeting sketches and system design. Use Save above to keep a named
-        copy in your workspace — Export for a file on disk.
-      </p>
+      {fullscreen ? null : (
+        <p className="muted small sketch-hint">
+          Hand-drawn whiteboard for meeting sketches and system design. Use Save above to keep a named
+          copy in your workspace — Export for a file on disk. Fullscreen for meetings (Esc to exit).
+        </p>
+      )}
       <div className="sketch-canvas">
         <Excalidraw
           excalidrawAPI={onApi}

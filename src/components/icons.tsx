@@ -411,6 +411,24 @@ export function IcLayoutGrid(p: IconProps) {
   );
 }
 
+export function IcMaximize(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function IcMinimize(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path d="M8 3v3a2 2 0 0 1-2 2H3M16 3v3a2 2 0 0 0 2 2h3M8 21v-3a2 2 0 0 0-2-2H3M16 21v-3a2 2 0 0 1 2-2h3" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function IcTarget(p: IconProps) {
   const { s, cn, sw, rest } = split(p);
   return (

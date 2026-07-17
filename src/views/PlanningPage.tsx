@@ -1,11 +1,16 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { useToast } from '../components/ui/Toast';
+import {
+  setTodoStatus as setTodoStatusFn,
+  updateTodoItem as updateTodoItemFn,
+} from '../core/actions';
 import { IcPlus, IcTarget } from '../components/icons';
 import {
   AddToPlanningModal,
   PlanningFocusStrip,
   PlanningMatrixBoard,
+  usePlanningFocusDayRollover,
 } from '../features/planning';
 import {
   canAddToPlanningHub,
@@ -16,18 +21,21 @@ import {
   planningAxesForQuadrant,
   planningPatchForAddToHub,
   planningPatchForRemoveFromHub,
+  pickIdsToAddToPlanningHub,
   type PlanningQuadrant,
 } from '../lib/planningMatrix';
 import { isTodoOpen, type TodoStatus } from '../model';
 
 export function PlanningPage() {
   const toast = useToast();
-  const { updateTodoItem, setTodoStatus } = useAppDataActions();
+  const { update, updateTodoItem } = useAppDataActions();
   const { todoItems, todoGroups } = useAppDataSelector(
     (d) => ({ todoItems: d.todoItems, todoGroups: d.todoGroups }),
     (a, b) => a.todoItems === b.todoItems && a.todoGroups === b.todoGroups,
   );
   const [addOpen, setAddOpen] = useState(false);
+
+  usePlanningFocusDayRollover();
 
   const hubItems = useMemo(() => filterPlanningHubItems(todoItems), [todoItems]);
   const focusItems = useMemo(() => filterFocusTodayItems(todoItems), [todoItems]);
@@ -42,17 +50,36 @@ export function PlanningPage() {
     [updateTodoItem],
   );
 
-  const addToHub = useCallback(
-    (itemId: string) => {
-      if (atCapacity) {
-        toast.showWarning('Planning hub is full', 'Remove a task before adding more (max 20).');
+  const addManyToHub = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      let addedCount = 0;
+      const applied = update((data) => {
+        const toAdd = pickIdsToAddToPlanningHub(data.todoItems, ids);
+        addedCount = toAdd.length;
+        if (toAdd.length === 0) return data;
+        let next = data;
+        for (const id of toAdd) {
+          next = updateTodoItemFn(next, id, planningPatchForAddToHub());
+        }
+        return next;
+      });
+      if (!applied) {
+        toast.showWarning('Could not update planning', 'Saving is temporarily blocked.');
         return;
       }
-      updateTodoItem(itemId, planningPatchForAddToHub());
+      if (addedCount === 0) {
+        if (!canAddToPlanningHub(filterPlanningHubItems(todoItems).length)) {
+          toast.showWarning('Planning hub is full', 'Remove a task before adding more (max 20).');
+        }
+        return;
+      }
       setAddOpen(false);
-      toast.showSuccess('Added to planning hub');
+      toast.showSuccess(
+        addedCount === 1 ? 'Added to planning hub' : `Added ${addedCount} tasks to planning hub`,
+      );
     },
-    [atCapacity, toast, updateTodoItem],
+    [toast, todoItems, update],
   );
 
   const removeFromHub = useCallback(
@@ -76,27 +103,51 @@ export function PlanningPage() {
     [focusItems.length, todoItems, toast, updateTodoItem],
   );
 
+  const clearTodayFocus = useCallback(() => {
+    let cleared = 0;
+    const applied = update((data) => {
+      let next = data;
+      cleared = 0;
+      for (const item of data.todoItems) {
+        if (item.planFocusToday === true) {
+          next = updateTodoItemFn(next, item.id, { planFocusToday: false });
+          cleared += 1;
+        }
+      }
+      return cleared > 0 ? next : data;
+    });
+    if (applied && cleared > 0) {
+      toast.showSuccess('Cleared today focus');
+    }
+  }, [toast, update]);
+
   const toggleComplete = useCallback(
     (itemId: string) => {
       const item = todoItems.find((x) => x.id === itemId);
       if (!item) return;
       const next: TodoStatus = isTodoOpen(item.status) ? 'done' : 'todo';
-      setTodoStatus(itemId, next);
-      if (next === 'done') {
-        updateTodoItem(itemId, { planFocusToday: false, planInHub: false });
-      }
+      update((data) => {
+        let out = setTodoStatusFn(data, itemId, next);
+        if (next === 'done') {
+          out = updateTodoItemFn(out, itemId, { planFocusToday: false, planInHub: false });
+        }
+        return out;
+      });
     },
-    [setTodoStatus, todoItems, updateTodoItem],
+    [todoItems, update],
   );
 
   const setItemStatus = useCallback(
     (itemId: string, status: TodoStatus) => {
-      setTodoStatus(itemId, status);
-      if (status === 'done' || status === 'cancelled') {
-        updateTodoItem(itemId, { planFocusToday: false, planInHub: false });
-      }
+      update((data) => {
+        let out = setTodoStatusFn(data, itemId, status);
+        if (status === 'done' || status === 'cancelled') {
+          out = updateTodoItemFn(out, itemId, { planFocusToday: false, planInHub: false });
+        }
+        return out;
+      });
     },
-    [setTodoStatus, updateTodoItem],
+    [update],
   );
 
   return (
@@ -134,6 +185,7 @@ export function PlanningPage() {
           onToggleFocus={toggleFocus}
           onToggleComplete={toggleComplete}
           onStatusChange={setItemStatus}
+          onClearFocus={clearTodayFocus}
         />
         <PlanningMatrixBoard
           hubItems={hubItems}
@@ -151,8 +203,9 @@ export function PlanningPage() {
         <AddToPlanningModal
           candidates={candidates}
           groups={todoGroups}
+          hubCount={hubItems.length}
           atCapacity={atCapacity}
-          onAdd={addToHub}
+          onAddMany={addManyToHub}
           onClose={() => setAddOpen(false)}
         />
       ) : null}

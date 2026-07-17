@@ -164,6 +164,7 @@ export function UtilitiesToolsSketchPage() {
           </p>
         </header>
         <UtilitySavedDocsPanel
+          libraryId="sketch"
           kindLabel="sketches"
           docs={docs}
           activeId={activeId}

@@ -1,5 +1,6 @@
 export { HomeContinueCard } from './HomeContinueCard';
 export { HomeDashboardHeader } from './HomeDashboardHeader';
+export { HomePlanningFocus } from './HomePlanningFocus';
 export { HomeQuickAccess } from './HomeQuickAccess';
 export { HomeStatGrid } from './HomeStatGrid';
 export { HomeTeamsSection } from './HomeTeamsSection';

@@ -159,6 +159,7 @@ export function UtilitiesToolsErdPage() {
           </p>
         </header>
         <UtilitySavedDocsPanel
+          libraryId="erd"
           kindLabel="ERDs"
           docs={docs}
           activeId={activeId}

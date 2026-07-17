@@ -5,8 +5,9 @@ import {
   IcFolder,
   IcListTodo,
   IcStickyNote,
+  IcTarget,
 } from '../../components/icons';
-import { PATH_AGENDA, PATH_NOTES, PATH_TEAMS, PATH_TODOS } from '../../lib/routes';
+import { PATH_AGENDA, PATH_NOTES, PATH_PLANNING, PATH_TEAMS, PATH_TODOS } from '../../lib/routes';
 
 const TILES = [
   {
@@ -14,6 +15,12 @@ const TILES = [
     title: 'Agenda',
     description: 'Today and the week ahead — reminders and due dates.',
     icon: IcCalendar,
+  },
+  {
+    to: PATH_PLANNING,
+    title: 'Planning',
+    description: 'Eisenhower matrix and up to three focus tasks for today.',
+    icon: IcTarget,
   },
   {
     to: PATH_TODOS,

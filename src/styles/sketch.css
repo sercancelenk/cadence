@@ -11,11 +11,58 @@
   min-height: 0;
 }
 
+.sketch-workspace--fullscreen {
+  position: fixed;
+  inset: 0;
+  /* Below app modals (220) / toasts; above shell chrome. */
+  z-index: 180;
+  /* Top padding reserved for pinned UtilitySavedDocsPanel Save chrome. */
+  padding: 3.4rem 0.75rem 0.75rem;
+  background: var(--bg);
+  gap: 0.45rem;
+}
+
+/* Keep Save / Unsaved reachable above the immersive board. */
+.utilities-tools-panel--sketch:has(.sketch-workspace--fullscreen) .utility-saved {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 190;
+  margin: 0;
+  border-radius: 0;
+  background: var(--bg);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.utilities-tools-panel--sketch:has(.sketch-workspace--fullscreen) .utility-saved.is-open .utility-saved__body {
+  max-height: min(40vh, 16rem);
+  overflow: auto;
+}
+
+.sketch-workspace--fullscreen .sketch-canvas {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  border-radius: 8px;
+}
+
 .sketch-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
+}
+
+.sketch-toolbar__spacer {
+  flex: 1 1 auto;
+  min-width: 0.5rem;
+}
+
+.sketch-toolbar .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .sketch-toolbar__file {

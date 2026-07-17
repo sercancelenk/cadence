@@ -6,6 +6,7 @@ import {
   filterAgendaEntriesForDay,
   filterOverdueAgendaEntries,
 } from '../../lib/agendaEntries';
+import { filterFocusTodayItems } from '../../lib/planningMatrix';
 import { PATH_AGENDA, PATH_TEAMS, PATH_TODOS } from '../../lib/routes';
 import { sortedTeams } from '../../lib/teamSort';
 import { teamBase, teamPeople } from '../../lib/teamPaths';
@@ -111,6 +112,8 @@ export function useHomeDashboard() {
       teamsSorted.map((team) => [team.id, teamMemberCount(data, team.id)]),
     );
 
+    const planningFocusItems = filterFocusTodayItems(data.todoItems);
+
     return {
       profile,
       user,
@@ -124,6 +127,8 @@ export function useHomeDashboard() {
       continueIsLastVisited: Boolean(lastTeam),
       peopleCountByTeamId,
       agendaHref: PATH_AGENDA,
+      planningFocusItems,
+      todoGroups: data.todoGroups,
     };
   }, [data, user]);
 }

@@ -1,14 +1,18 @@
 import {
   HomeContinueCard,
   HomeDashboardHeader,
+  HomePlanningFocus,
   HomeQuickAccess,
   HomeStatGrid,
   HomeTeamsSection,
   HomeTodaySection,
   useHomeDashboard,
 } from '../features/home';
+import { usePlanningFocusDayRollover } from '../features/planning';
 
 export function HomePage() {
+  usePlanningFocusDayRollover();
+
   const {
     profile,
     user,
@@ -22,6 +26,8 @@ export function HomePage() {
     continueIsLastVisited,
     peopleCountByTeamId,
     agendaHref,
+    planningFocusItems,
+    todoGroups,
   } = useHomeDashboard();
 
   return (
@@ -39,6 +45,7 @@ export function HomePage() {
           {continueTarget ? (
             <HomeContinueCard target={continueTarget} isLastVisited={continueIsLastVisited} />
           ) : null}
+          <HomePlanningFocus items={planningFocusItems} groups={todoGroups} />
           <HomeTodaySection
             overdueCount={overdueCount}
             todayPreview={todayPreview}

@@ -4,11 +4,13 @@ import { IcGrip } from '../../components/icons';
 import type { TodoGroup, TodoItem, TodoStatus } from '../../model';
 import { TODO_STATUS_OPTIONS } from '../../model';
 import {
+  isPlanningTodoOverdue,
   PLANNING_QUADRANT_META,
   PLANNING_UNSORTED_META,
   type PlanningQuadrant,
 } from '../../lib/planningMatrix';
 import { PATH_TODOS } from '../../lib/routes';
+import { PlanningTaskMeta } from './PlanningTaskMeta';
 
 /** All move destinations, in display order, including back to Unsorted. */
 const PLANNING_MOVE_TARGETS: { id: PlanningQuadrant; title: string }[] = [
@@ -164,6 +166,7 @@ export function PlanningTaskCard({
 }: PlanningTaskCardProps) {
   const terminal = item.status === 'done' || item.status === 'cancelled';
   const checked = item.status === 'done';
+  const overdue = isPlanningTodoOverdue(item);
   const cardRef = useRef<HTMLElement | null>(null);
 
   return (
@@ -171,7 +174,9 @@ export function PlanningTaskCard({
       ref={cardRef}
       className={`planning-card${dragging ? ' planning-card--dragging' : ''}${focused ? ' planning-card--focus' : ''}${
         terminal ? ' planning-card--terminal' : ''
-      }${item.status === 'in_progress' ? ' planning-card--wip' : ''}`}
+      }${item.status === 'in_progress' ? ' planning-card--wip' : ''}${
+        overdue ? ' planning-card--overdue' : ''
+      }`}
       // The whole card is the drag surface — the tiny grip alone was easy to
       // miss, and grabbing the title (an <a>) used to start a native link drag
       // that the quadrant drop handler couldn't classify. Mirrors NotesListRow.
@@ -228,7 +233,10 @@ export function PlanningTaskCard({
         </button>
       </div>
       <div className="planning-card__meta muted small">
-        <span className="planning-card__list-name">{groupName}</span>
+        <span className="planning-card__meta-left">
+          <span className="planning-card__list-name">{groupName}</span>
+          <PlanningTaskMeta item={item} />
+        </span>
         <div className="planning-card__meta-actions">
           <PlanningMoveMenu currentQuadrant={currentQuadrant} onMove={onMove} />
           <PlanningStatusChip status={item.status} onChange={onStatusChange} />

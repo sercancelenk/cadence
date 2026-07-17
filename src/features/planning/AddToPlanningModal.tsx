@@ -1,34 +1,79 @@
 import { useMemo, useState } from 'react';
-import { AppModal } from '../../components/ui/AppModal';
+import { AppModal, AppModalActions } from '../../components/ui/AppModal';
 import { IcSearch } from '../../components/icons';
+import {
+  filterCandidatesDueSoon,
+  planningHubSlotsRemaining,
+  sortPlanningCandidates,
+} from '../../lib/planningMatrix';
+import { formatDateShort } from '../../lib/datetime';
 import type { TodoGroup, TodoItem } from '../../model';
+import { PlanningTaskMeta } from './PlanningTaskMeta';
 
 export type AddToPlanningModalProps = {
   candidates: TodoItem[];
   groups: TodoGroup[];
+  hubCount: number;
   atCapacity: boolean;
-  onAdd: (id: string) => void;
+  onAddMany: (ids: string[]) => void;
   onClose: () => void;
 };
 
 export function AddToPlanningModal({
   candidates,
   groups,
+  hubCount,
   atCapacity,
-  onAdd,
+  onAddMany,
   onClose,
 }: AddToPlanningModalProps) {
   const [query, setQuery] = useState('');
+  const [dueSoonOnly, setDueSoonOnly] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
+  const slotsLeft = planningHubSlotsRemaining(hubCount);
 
   const filtered = useMemo(() => {
+    const base = dueSoonOnly ? filterCandidatesDueSoon(candidates, 7) : candidates;
     const q = query.trim().toLowerCase();
-    if (!q) return candidates;
-    return candidates.filter((item) => {
-      const list = groupById.get(item.groupId)?.name.toLowerCase() ?? '';
-      return item.title.toLowerCase().includes(q) || list.includes(q);
+    const searched = !q
+      ? base
+      : base.filter((item) => {
+          const list = groupById.get(item.groupId)?.name.toLowerCase() ?? '';
+          return item.title.toLowerCase().includes(q) || list.includes(q);
+        });
+    return sortPlanningCandidates(searched);
+  }, [candidates, dueSoonOnly, groupById, query]);
+
+  const allVisibleSelected =
+    filtered.length > 0 && filtered.every((item) => selected.has(item.id));
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
     });
-  }, [candidates, groupById, query]);
+  };
+
+  const toggleAllVisible = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const item of filtered) next.delete(item.id);
+      } else {
+        for (const item of filtered) next.add(item.id);
+      }
+      return next;
+    });
+  };
+
+  const selectedIds = useMemo(
+    () => filtered.map((item) => item.id).filter((id) => selected.has(id)),
+    [filtered, selected],
+  );
+  const addCount = Math.min(selectedIds.length, slotsLeft);
 
   return (
     <AppModal
@@ -39,12 +84,35 @@ export function AddToPlanningModal({
       showCloseButton
       panelClassName="planning-add-dialog"
       bodyClassName="ai-dialog__scroll planning-add-dialog__body"
+      footer={
+        <AppModalActions
+          onCancel={onClose}
+          onConfirm={() => {
+            if (addCount === 0) return;
+            onAddMany(selectedIds.slice(0, slotsLeft));
+          }}
+          cancelLabel="Cancel"
+          confirmLabel={
+            addCount === 0
+              ? 'Add selected'
+              : `Add ${addCount} task${addCount === 1 ? '' : 's'}`
+          }
+          confirmDisabled={atCapacity || addCount === 0}
+        />
+      }
     >
       {atCapacity ? (
         <p className="planning-add-dialog__notice" role="status">
           Hub is full — remove a task from the matrix before adding more.
         </p>
-      ) : null}
+      ) : (
+        <p className="planning-add-dialog__notice muted small" role="status">
+          {slotsLeft} slot{slotsLeft === 1 ? '' : 's'} left in the hub
+          {selectedIds.length > slotsLeft
+            ? ` · only the first ${slotsLeft} of ${selectedIds.length} selected will be added`
+            : null}
+        </p>
+      )}
       <label className="planning-add-dialog__search">
         <IcSearch size={16} aria-hidden />
         <input
@@ -55,25 +123,69 @@ export function AddToPlanningModal({
           autoFocus
         />
       </label>
+      <div className="planning-add-dialog__filters">
+        <button
+          type="button"
+          className={`planning-add-dialog__chip${!dueSoonOnly ? ' is-active' : ''}`}
+          aria-pressed={!dueSoonOnly}
+          onClick={() => setDueSoonOnly(false)}
+        >
+          All open
+        </button>
+        <button
+          type="button"
+          className={`planning-add-dialog__chip${dueSoonOnly ? ' is-active' : ''}`}
+          aria-pressed={dueSoonOnly}
+          onClick={() => setDueSoonOnly(true)}
+          title="Overdue or due within the next 7 days"
+        >
+          Due soon
+        </button>
+        <button
+          type="button"
+          className="planning-add-dialog__chip planning-add-dialog__chip--ghost"
+          onClick={toggleAllVisible}
+          disabled={filtered.length === 0 || atCapacity}
+        >
+          {allVisibleSelected ? 'Clear visible' : 'Select visible'}
+        </button>
+      </div>
       {filtered.length === 0 ? (
-        <p className="muted small">No open to-dos available to add.</p>
+        <p className="muted small">
+          {dueSoonOnly
+            ? 'No open to-dos due soon (or overdue).'
+            : 'No open to-dos available to add.'}
+        </p>
       ) : (
         <ul className="planning-add-dialog__list">
-          {filtered.map((item) => (
-            <li key={item.id}>
-              <button
-                type="button"
-                className="planning-add-dialog__row"
-                disabled={atCapacity}
-                onClick={() => onAdd(item.id)}
-              >
-                <span className="planning-add-dialog__title">{item.title}</span>
-                <span className="planning-add-dialog__list muted small">
-                  {groupById.get(item.groupId)?.name ?? 'List'}
-                </span>
-              </button>
-            </li>
-          ))}
+          {filtered.map((item) => {
+            const checked = selected.has(item.id);
+            const listName = groupById.get(item.groupId)?.name ?? 'List';
+            return (
+              <li key={item.id}>
+                <label
+                  className={`planning-add-dialog__row${checked ? ' is-selected' : ''}${
+                    atCapacity ? ' is-disabled' : ''
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={atCapacity}
+                    onChange={() => toggle(item.id)}
+                  />
+                  <span className="planning-add-dialog__row-main">
+                    <span className="planning-add-dialog__title">{item.title}</span>
+                    <span className="planning-add-dialog__list muted small">
+                      {listName}
+                      {item.dueAt ? ` · ${formatDateShort(item.dueAt)}` : ''}
+                    </span>
+                    <PlanningTaskMeta item={item} />
+                  </span>
+                </label>
+              </li>
+            );
+          })}
         </ul>
       )}
     </AppModal>
