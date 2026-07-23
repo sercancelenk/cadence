@@ -11,7 +11,9 @@ const MD_INLINE =
 
 /** Rich HTML from Word/Docs/browsers — prefer native paste over markdown re-parse. */
 const SEMANTIC_RICH_HTML =
-  /<(?:h[1-6]|ul|ol|table|blockquote)\b[^>]*>/i;
+  // Include <pre>: mixed Cadence copies keep code in <pre> while plain drops ```
+  // fences — without this, markdown paste turns `# comment` into headings.
+  /<(?:h[1-6]|ul|ol|table|blockquote|pre)\b[^>]*>/i;
 
 const STYLED_RICH_HTML =
   /<(?:strong|em|b\b|i\b)\b[^>]*>/i;
@@ -48,12 +50,22 @@ export function hasSemanticRichHtml(html: string): boolean {
   return false;
 }
 
+/** Cadence code-only copy marker — must not be re-parsed as markdown. */
+const CADENCE_PLAIN_CLIPBOARD_RE = /<!--\s*cadence-clipboard\s*:\s*plain\s*-->/i;
+
+export function isCadencePlainClipboardHtml(html: string): boolean {
+  return CADENCE_PLAIN_CLIPBOARD_RE.test(html);
+}
+
 /** True when clipboard plain text should be parsed as markdown on paste. */
 export function shouldPasteClipboardAsMarkdown(dataTransfer: DataTransfer | null): boolean {
   if (!dataTransfer) return false;
   const plain = dataTransfer.getData('text/plain');
   if (!plain.trim()) return false;
-  if (hasSemanticRichHtml(dataTransfer.getData('text/html') ?? '')) return false;
+  const html = dataTransfer.getData('text/html') ?? '';
+  // Code-only Cadence copies intentionally use <p> HTML; never markdown-parse them.
+  if (isCadencePlainClipboardHtml(html)) return false;
+  if (hasSemanticRichHtml(html)) return false;
   return looksLikeMarkdown(plain);
 }
 

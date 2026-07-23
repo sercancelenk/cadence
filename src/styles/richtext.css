@@ -185,6 +185,46 @@
   border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   background: color-mix(in srgb, var(--panel) 70%, var(--bg));
 }
+.rich-editor-codeblock--collapsed .rich-editor-codeblock__chrome {
+  border-bottom: none;
+}
+.rich-editor-codeblock__chrome-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.rich-editor-codeblock__fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.rich-editor-codeblock__fold:hover,
+.rich-editor-codeblock__fold:focus-visible {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--surface-hover, var(--panel)) 80%, transparent);
+  outline: none;
+}
+.rich-editor-codeblock__summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--muted);
+}
 .rich-editor-codeblock__lang {
   display: inline-flex;
   min-width: 0;
@@ -493,9 +533,17 @@
   right: -2px;
   top: 0;
   width: 4px;
+  z-index: 3;
 }
 .rich-editor__surface .tiptap.resize-cursor {
   cursor: col-resize;
+}
+/* Plugin stays mounted for width persistence; hide drag UI in preview. */
+.rich-editor__surface .tiptap:not([contenteditable='true']) .column-resize-handle {
+  display: none;
+}
+.rich-editor__surface .tiptap:not([contenteditable='true']).resize-cursor {
+  cursor: inherit;
 }
 
 /* Images */

@@ -6,12 +6,26 @@ import { richTextLowlight } from './richTextLowlight';
 
 /**
  * Syntax-highlighted code blocks (lowlight) with a React chrome for language
- * selection and Mermaid preview. Replaces StarterKit's default codeBlock.
+ * selection, collapse, and Mermaid preview. Replaces StarterKit's default codeBlock.
  *
- * Persisted shape is unchanged: `{ type: 'codeBlock', attrs: { language }, content }`.
+ * Persisted shape: `{ type: 'codeBlock', attrs: { language, collapsed? }, content }`.
+ * `collapsed` is optional (default false) — expand-only; older builds ignore it.
  * Mermaid diagrams store source text only — never rendered SVG.
  */
 export const RichTextCodeBlock = CodeBlockLowlight.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      collapsed: {
+        default: false,
+        parseHTML: (element) => element.getAttribute('data-collapsed') === 'true',
+        renderHTML: (attributes) => {
+          if (!attributes.collapsed) return {};
+          return { 'data-collapsed': 'true' };
+        },
+      },
+    };
+  },
   addNodeView() {
     return ReactNodeViewRenderer(RichTextCodeBlockView);
   },

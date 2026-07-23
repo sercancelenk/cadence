@@ -4,51 +4,51 @@
 :root {
   color-scheme: dark;
 
-  /* Surface stack (deepest → elevated) */
-  --main-canvas: #000000;
-  --bg: #121212;
-  --bg-elevated: #121212;
-  --panel: #181818;
-  --panel-hover: #282828;
+  /* Surface stack — flat steps with enough lift for readable contrast */
+  --main-canvas: #0a0a0a;
+  --bg: #141414;
+  --bg-elevated: #141414;
+  --panel: #1c1c1c;
+  --panel-hover: #2a2a2a;
 
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
 
-  --text: #ffffff;
-  --muted: #b3b3b3;
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
 
   /* Warm cream / amber — matches Cadence icon dial; calm but visible */
-  --accent: #c4a574;
-  --accent-2: #a88b5c;
-  --accent-soft: rgba(196, 165, 116, 0.16);
+  --accent: #d0b48a;
+  --accent-2: #b8956a;
+  --accent-soft: rgba(208, 180, 138, 0.18);
   --accent-contrast: #1a1408;
 
   --danger: #f87171;
   --ok: #4ade80;
-  --warn: #f59e0b;
+  --warn: #fbbf24;
   --structured-diff-highlight: #e6b464;
 
   /* Eisenhower matrix quadrant accents */
   --plan-do: #f87171;
   --plan-schedule: #4ade80;
-  --plan-delegate: #f59e0b;
-  --plan-eliminate: #8a8a8a;
-  --plan-unsorted: #727272;
+  --plan-delegate: #fbbf24;
+  --plan-eliminate: #9ca3af;
+  --plan-unsorted: #8b8b93;
 
   --radius: 8px;
   --radius-sm: 4px;
   --radius-md: 12px;
   --radius-pill: 999px;
 
-  /* Spotify-style modal surfaces */
-  --modal-backdrop: rgba(0, 0, 0, 0.7);
-  --modal-surface: #282828;
-  --modal-radius: 24px;
-  --modal-padding: 32px;
-  --modal-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  /* Flat modal surfaces (no heavy glow stack) */
+  --modal-backdrop: rgba(0, 0, 0, 0.72);
+  --modal-surface: #242424;
+  --modal-radius: 20px;
+  --modal-padding: 28px;
+  --modal-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
 
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.55);
+  --shadow-sm: none;
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.4);
 
   --font: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
     Helvetica, Arial, sans-serif;
@@ -58,28 +58,29 @@
   --sidebar-w: 280px;
   --sidebar-w-collapsed: 72px;
 
-  --input-bg: #282828;
-  --input-border: rgba(255, 255, 255, 0.1);
+  --input-bg: #242424;
+  --input-border: rgba(255, 255, 255, 0.14);
   --input-text: var(--text);
-  --input-placeholder: #727272;
+  --input-placeholder: #8b8b93;
   --input-focus-border: var(--accent);
-  --input-focus-ring: rgba(196, 165, 116, 0.28);
+  --input-focus-ring: rgba(208, 180, 138, 0.28);
 
-  --btn-bg-from: rgba(255, 255, 255, 0.08);
-  --btn-bg-to: rgba(255, 255, 255, 0.04);
-  --btn-hover-from: rgba(255, 255, 255, 0.12);
-  --btn-hover-to: rgba(255, 255, 255, 0.06);
-  --btn-inset: rgba(255, 255, 255, 0.04);
+  /* Flat secondary button fill (no gradient wash) */
+  --btn-bg-from: #2a2a2a;
+  --btn-bg-to: #2a2a2a;
+  --btn-hover-from: #333333;
+  --btn-hover-to: #333333;
+  --btn-inset: transparent;
 
   --btn-primary-text: var(--accent-contrast);
   --btn-danger-text: #fecaca;
 
-  --btn-danger-bg-from: rgba(248, 113, 113, 0.12);
-  --btn-danger-bg-to: rgba(248, 113, 113, 0.04);
-  --btn-danger-border: rgba(248, 113, 113, 0.45);
+  --btn-danger-bg-from: rgba(248, 113, 113, 0.14);
+  --btn-danger-bg-to: rgba(248, 113, 113, 0.14);
+  --btn-danger-border: rgba(248, 113, 113, 0.5);
 
   --surface-hover: rgba(255, 255, 255, 0.08);
-  --surface-pressed: rgba(255, 255, 255, 0.12);
+  --surface-pressed: rgba(255, 255, 255, 0.14);
 
   /* CodeMirror / structured text syntax */
   --cm-property: #7eb8e3;

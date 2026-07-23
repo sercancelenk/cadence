@@ -1323,13 +1323,21 @@
 }
 
 .structured-tab__badge--json {
-  color: #15803d;
+  color: #4ade80;
   background: color-mix(in srgb, #22c55e 18%, transparent);
 }
 
 .structured-tab__badge--yaml {
-  color: #c2410c;
+  color: #fb923c;
   background: color-mix(in srgb, #f97316 20%, transparent);
+}
+
+:root[data-theme='light'] .structured-tab__badge--json {
+  color: #15803d;
+}
+
+:root[data-theme='light'] .structured-tab__badge--yaml {
+  color: #c2410c;
 }
 
 .structured-tab__title {

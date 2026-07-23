@@ -257,7 +257,7 @@ export interface TodoItem {
   planImportant?: boolean;
   /** Manual urgency axis for planning hub. */
   planUrgent?: boolean;
-  /** Pin to today's focus strip (max 3 in UI). */
+  /** Pin to today's focus strip (max enforced in Planning UI). */
   planFocusToday?: boolean;
   /** When true, hidden from active lists until unarchived. */
   archived?: boolean;

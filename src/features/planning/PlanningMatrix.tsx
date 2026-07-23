@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { IcGrip } from '../../components/icons';
 import type { TodoGroup, TodoItem, TodoStatus } from '../../model';
 import { TODO_STATUS_OPTIONS } from '../../model';
@@ -9,7 +8,6 @@ import {
   PLANNING_UNSORTED_META,
   type PlanningQuadrant,
 } from '../../lib/planningMatrix';
-import { PATH_TODOS } from '../../lib/routes';
 import { PlanningTaskMeta } from './PlanningTaskMeta';
 
 /** All move destinations, in display order, including back to Unsorted. */
@@ -32,6 +30,8 @@ export type PlanningTaskCardProps = {
   onMove: (quadrant: PlanningQuadrant) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
+  /** Open an in-place preview (stay on Planning). */
+  onPreview: () => void;
   dragging?: boolean;
 };
 
@@ -162,6 +162,7 @@ export function PlanningTaskCard({
   onMove,
   onDragStart,
   onDragEnd,
+  onPreview,
   dragging = false,
 }: PlanningTaskCardProps) {
   const terminal = item.status === 'done' || item.status === 'cancelled';
@@ -211,16 +212,16 @@ export function PlanningTaskCard({
         >
           <span className="planning-card__check-box" aria-hidden />
         </button>
-        <Link
-          to={`${PATH_TODOS}?focus=${encodeURIComponent(item.id)}`}
+        <button
+          type="button"
           className="planning-card__title-link"
-          title={`Open "${item.title}" in to-dos`}
-          // Anchors are natively draggable; without this, grabbing the title
-          // starts a link drag instead of the card drag and the drop is lost.
+          title={`Preview "${item.title}"`}
+          // Buttons are not natively draggable for link-drags; keep the card DnD.
           draggable={false}
+          onClick={onPreview}
         >
           {item.title}
-        </Link>
+        </button>
         <button
           type="button"
           className={`planning-card__star${focused ? ' planning-card__star--on' : ''}`}
@@ -264,6 +265,7 @@ export type PlanningQuadrantCellProps = {
   onStatusChange: (id: string, status: TodoStatus) => void;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
+  onPreview: (id: string) => void;
 };
 
 export function PlanningQuadrantCell({
@@ -281,6 +283,7 @@ export function PlanningQuadrantCell({
   onStatusChange,
   onDragStart,
   onDragEnd,
+  onPreview,
 }: PlanningQuadrantCellProps) {
   const [dropActive, setDropActive] = useState(false);
 
@@ -335,6 +338,7 @@ export function PlanningQuadrantCell({
                 onMove={(target) => onDrop(target, item.id)}
                 onDragStart={() => onDragStart(item.id)}
                 onDragEnd={onDragEnd}
+                onPreview={() => onPreview(item.id)}
               />
             </li>
           ))

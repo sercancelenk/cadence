@@ -219,7 +219,15 @@
 }
 
 .btn--secondary {
-  /* same as .btn default look */
+  background: var(--btn-bg-from);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background: var(--btn-hover-from);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border-strong));
+  color: var(--text);
 }
 
 .btn__icon {

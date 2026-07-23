@@ -4,6 +4,8 @@ import type { RichTextDoc } from './richText';
 import {
   buildRichClipboardPayload,
   compactClipboardHtml,
+  isCodeOnlyClipboardNodes,
+  plainTextToClipboardHtml,
   serializeRichNodesToClipboardPlainText,
   wrapHtmlForClipboard,
   writeRichClipboard,
@@ -203,15 +205,32 @@ describe('serializeRichNodesToClipboardPlainText', () => {
     expect(plain).toContain('---');
     expect(plain).toContain('[image: diagram]');
     expect(plain).toContain('[image]');
-    expect(plain).toContain('```ts');
-    expect(plain).toContain('const x = 1;');
+    // Default serialize (no options): raw source for terminals.
+    expect(plain).not.toContain('```');
+    expect(plain).toContain('const x = 1;\nconst y = 2;');
+    // Mixed clipboard payload fences code so markdown paste cannot eat `#` lines.
+    const fenced = serializeRichNodesToClipboardPlainText(nodes, { fenceCodeBlocks: true });
+    expect(fenced).toContain('```');
+    expect(fenced).toContain('const x = 1;\nconst y = 2;');
     expect(plain).toContain('> quoted');
     expect(plain).toContain('A\tB');
     expect(plain).toContain('• parent');
     expect(plain).toContain('  second line');
     expect(plain).toContain('  • child');
-    expect(plain).toContain('  ```');
     expect(plain).toContain('  nested');
+  });
+
+  it('copies a standalone code block as plain source without markdown fences', () => {
+    const nodes: RichTextDoc[] = [
+      {
+        type: 'codeBlock',
+        attrs: { language: 'javascript' },
+        content: [{ type: 'text', text: 'function hi() {\n  return 1;\n}' }],
+      },
+    ];
+    expect(serializeRichNodesToClipboardPlainText(nodes)).toBe(
+      'function hi() {\n  return 1;\n}',
+    );
   });
 
   it('trims trailing blank lines from the serialized payload', () => {
@@ -220,6 +239,40 @@ describe('serializeRichNodesToClipboardPlainText', () => {
       { type: 'paragraph', content: [] },
     ];
     expect(serializeRichNodesToClipboardPlainText(nodes)).toBe('ok');
+  });
+});
+
+describe('isCodeOnlyClipboardNodes / plainTextToClipboardHtml', () => {
+  it('detects a single code block only (not multi-fence or mixed)', () => {
+    expect(
+      isCodeOnlyClipboardNodes([
+        {
+          type: 'codeBlock',
+          content: [{ type: 'text', text: 'x' }],
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      isCodeOnlyClipboardNodes([
+        { type: 'codeBlock', content: [{ type: 'text', text: 'a' }] },
+        { type: 'codeBlock', content: [{ type: 'text', text: 'b' }] },
+      ]),
+    ).toBe(false);
+    expect(
+      isCodeOnlyClipboardNodes([
+        { type: 'paragraph', content: [{ type: 'text', text: 'hi' }] },
+        { type: 'codeBlock', content: [{ type: 'text', text: 'x' }] },
+      ]),
+    ).toBe(false);
+  });
+
+  it('emits escaped paragraph HTML with cadence plain marker and no pre', () => {
+    const html = plainTextToClipboardHtml('a <b>\nsecond');
+    expect(html).toContain('StartFragment');
+    expect(html).toContain('cadence-clipboard:plain');
+    expect(html).not.toMatch(/<pre\b/i);
+    expect(html).toContain('a &lt;b&gt;');
+    expect(html).toContain('second');
   });
 });
 
@@ -272,6 +325,69 @@ describe('buildRichClipboardPayload / writeRichClipboard', () => {
     expect(payload!.plain).toContain('• Item');
     expect(payload!.html).toContain('StartFragment');
     expect(payload!.html).toContain('margin:0');
+    editor.destroy();
+  });
+
+  it('copies code-block selection as paragraph HTML (not <pre>) so paste is not a codeBlock', () => {
+    const editor = new Editor({
+      extensions: createRichTextExtensions(),
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'codeBlock',
+            attrs: { language: 'javascript' },
+            content: [{ type: 'text', text: 'const a = 1;\nconst b = 2;' }],
+          },
+          {
+            type: 'paragraph',
+            content: [{ type: 'text', text: 'after' }],
+          },
+        ],
+      },
+    });
+    // Select all text inside the first code block.
+    let codePos = -1;
+    let codeNodeSize = 0;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'codeBlock') {
+        codePos = pos;
+        codeNodeSize = node.nodeSize;
+        return false;
+      }
+      return undefined;
+    });
+    expect(codePos).toBeGreaterThanOrEqual(0);
+    editor.commands.setTextSelection({
+      from: codePos + 1,
+      to: codePos + codeNodeSize - 1,
+    });
+
+    const payload = buildRichClipboardPayload(editor.view);
+    expect(payload).not.toBeNull();
+    expect(payload!.plain).toBe('const a = 1;\nconst b = 2;');
+    expect(payload!.html).not.toMatch(/<pre\b/i);
+    expect(payload!.html).toContain('cadence-clipboard:plain');
+    expect(payload!.html).toContain('<p');
+    expect(payload!.html).toContain('const a = 1;');
+
+    // TipTap paste prefers text/html — ensure that path does not spawn a 2nd codeBlock.
+    editor.commands.focus('end');
+    editor.commands.insertContent(payload!.html);
+    const types = (editor.getJSON().content ?? []).map((n) => n.type);
+    expect(types.filter((t) => t === 'codeBlock')).toHaveLength(1);
+    expect(editor.getText()).toContain('const a = 1;');
+    expect(editor.getText()).toContain('after');
+    editor.destroy();
+  });
+
+  it('keeps <pre> HTML when selection mixes prose and a code block', () => {
+    const editor = editorWithSelection(
+      '<p>intro</p><pre><code class="language-js">x</code></pre>',
+    );
+    const payload = buildRichClipboardPayload(editor.view);
+    expect(payload).not.toBeNull();
+    expect(payload!.html).toMatch(/<pre\b/i);
     editor.destroy();
   });
 

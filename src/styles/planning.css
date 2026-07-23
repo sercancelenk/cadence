@@ -136,9 +136,20 @@
 }
 
 .planning-focus__task-link {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+  font-size: 13.5px;
   color: var(--text);
   text-decoration: none;
   line-height: 1.35;
+  cursor: pointer;
 }
 
 .planning-focus__task-link:hover {
@@ -428,8 +439,18 @@
 .planning-card__title-link {
   flex: 1;
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
   color: var(--text);
   text-decoration: none;
+  cursor: pointer;
 }
 
 .planning-card__title-link:hover {
@@ -632,15 +653,18 @@
 }
 
 .planning-add-dialog {
-  width: min(520px, 96vw);
-  min-height: min(360px, 80vh);
-  max-height: min(560px, 88vh);
+  width: min(560px, 96vw);
+  /* Taller than the default short override so the candidate list is usable. */
+  min-height: min(520px, 88vh);
+  max-height: min(780px, 94vh);
 }
 
 .planning-add-dialog__body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* Scroll the list, not the whole body — keeps search/filters visible. */
+  overflow: hidden;
 }
 
 .planning-add-dialog__notice {
@@ -709,13 +733,32 @@
   outline: none;
 }
 
+.planning-add-dialog__empty {
+  margin: 0;
+  padding: 16px 4px;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.planning-add-dialog__empty-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .planning-add-dialog__list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 2px 4px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1 1 0;
+  min-height: 220px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 .planning-add-dialog__row {
@@ -763,4 +806,64 @@
 .planning-add-dialog__title {
   font-weight: 600;
   font-size: 13.5px;
+}
+
+/* In-place todo preview (stay on Planning) */
+.planning-todo-preview__desc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.planning-todo-preview__list {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.planning-todo-preview__status {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+  color: var(--muted);
+}
+
+.planning-todo-preview__status--doing {
+  background: color-mix(in srgb, var(--info) 18%, transparent);
+  color: color-mix(in srgb, var(--info) 85%, var(--text));
+}
+
+.planning-todo-preview__status--blocked {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: color-mix(in srgb, var(--warn) 85%, var(--text));
+}
+
+.planning-todo-preview__status--done {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  color: color-mix(in srgb, var(--ok) 85%, var(--text));
+}
+
+.planning-todo-preview__body {
+  min-height: 120px;
+}
+
+.planning-todo-preview__editor {
+  min-height: 160px;
+}
+
+.planning-todo-preview__empty {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.planning-todo-preview__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
 }

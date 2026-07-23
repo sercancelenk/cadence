@@ -9,7 +9,7 @@ type Props = {
   groups: TodoGroup[];
 };
 
-/** Home surface for Planning “today focus” pins (max 3). */
+/** Home surface for Planning “today focus” pins. */
 export function HomePlanningFocus({ items, groups }: Props) {
   const groupById = new Map(groups.map((g) => [g.id, g]));
   const visible = items.slice(0, PLANNING_FOCUS_MAX);
@@ -29,7 +29,7 @@ export function HomePlanningFocus({ items, groups }: Props) {
           <p className="home-today-empty muted">
             No focus tasks pinned.{' '}
             <Link to={PATH_PLANNING} className="home-page__inline-link">
-              Star up to 3 in Planning
+              Star up to {PLANNING_FOCUS_MAX} in Planning
             </Link>
           </p>
         ) : (

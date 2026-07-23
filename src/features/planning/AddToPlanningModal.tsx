@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AppModal, AppModalActions } from '../../components/ui/AppModal';
 import { IcSearch } from '../../components/icons';
 import {
@@ -7,6 +8,7 @@ import {
   sortPlanningCandidates,
 } from '../../lib/planningMatrix';
 import { formatDateShort } from '../../lib/datetime';
+import { PATH_TODOS } from '../../lib/routes';
 import type { TodoGroup, TodoItem } from '../../model';
 import { PlanningTaskMeta } from './PlanningTaskMeta';
 
@@ -83,7 +85,7 @@ export function AddToPlanningModal({
       layout="flex"
       showCloseButton
       panelClassName="planning-add-dialog"
-      bodyClassName="ai-dialog__scroll planning-add-dialog__body"
+      bodyClassName="planning-add-dialog__body"
       footer={
         <AppModalActions
           onCancel={onClose}
@@ -151,10 +153,20 @@ export function AddToPlanningModal({
         </button>
       </div>
       {filtered.length === 0 ? (
-        <p className="muted small">
-          {dueSoonOnly
-            ? 'No open to-dos due soon (or overdue).'
-            : 'No open to-dos available to add.'}
+        <p className="planning-add-dialog__empty muted">
+          {dueSoonOnly ? (
+            'No open to-dos due soon (or overdue).'
+          ) : candidates.length === 0 ? (
+            <>
+              All open to-dos are already in Planning.{' '}
+              <Link to={PATH_TODOS} className="planning-add-dialog__empty-link" onClick={onClose}>
+                Create or reopen a task in To-dos
+              </Link>{' '}
+              to add more here.
+            </>
+          ) : (
+            'No matching to-dos for this search.'
+          )}
         </p>
       ) : (
         <ul className="planning-add-dialog__list">

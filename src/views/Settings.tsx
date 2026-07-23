@@ -19,7 +19,14 @@ import {
   mergeAppendWorkspace,
   type MergeAppendSummary,
 } from '../core/model/mergeWorkspace';
-import type { CacheBreakdownEntry, CacheStats, DataFileInfo, DataSources, SaveError } from '../vite-env';
+import type {
+  CacheBreakdownEntry,
+  CacheStats,
+  DailyBackupMirrorPrefs,
+  DataFileInfo,
+  DataSources,
+  SaveError,
+} from '../vite-env';
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
 import { RecoveryCodesPanel } from '../components/RecoveryCodesPanel';
 import { prepareForRemoteApply } from '../lib/syncApplyGuard';
@@ -1240,13 +1247,31 @@ function BackupsRecoverySection({
   fileInput: ReactNode;
 }) {
   const { confirm } = useConfirm();
-  const { reload, flushPendingSave } = useAppData();
+  const toast = useToast();
+  const { data, reload, flushPendingSave } = useAppData();
   const platform = backupPlatform();
   const isElectron = platform === 'desktop';
   const [sources, setSources] = useState<DataSources | null>(null);
+  const [selectedBackupPath, setSelectedBackupPath] = useState<string | null>(null);
+  const [mirrorPrefs, setMirrorPrefs] = useState<DailyBackupMirrorPrefs | null>(null);
+  const [mirrorKeepDays, setMirrorKeepDays] = useState(30);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [saveError, setSaveError] = useState<SaveError | null>(null);
+
+  const supportsDailyMirror =
+    isElectron && typeof window !== 'undefined' && !!window.cadence?.backupMirrorGet;
+
+  const refreshMirror = async () => {
+    if (!supportsDailyMirror) return;
+    try {
+      const r = await window.cadence!.backupMirrorGet!();
+      if (r.prefs) setMirrorPrefs(r.prefs);
+      if (typeof r.keepDays === 'number') setMirrorKeepDays(r.keepDays);
+    } catch (err) {
+      console.warn('[cadence] backupMirrorGet failed', err);
+    }
+  };
 
   const refresh = async () => {
     if (!isElectron) return;
@@ -1254,6 +1279,11 @@ function BackupsRecoverySection({
     try {
       const r = await window.cadence!.dataListSources!();
       setSources(r);
+      setSelectedBackupPath((prev) => {
+        if (prev && r.backups.some((b) => b.path === prev)) return prev;
+        return r.backups[0]?.path ?? null;
+      });
+      await refreshMirror();
     } catch (err) {
       setMsg({ kind: 'error', text: err instanceof Error ? err.message : 'Could not load snapshots.' });
     } finally {
@@ -1541,8 +1571,8 @@ function BackupsRecoverySection({
       {isElectron ? (
         <>
           <p className="muted small" style={{ marginBottom: 12 }}>
-            Cadence saves automatic snapshots at launch, sign-in, and before each save. Restore any snapshot below —
-            your current state is backed up first, so you can undo a restore.
+            Cadence saves automatic snapshots at launch, sign-in, and before each save — workspace text, images, and
+            note history. Restoring puts that full set back; your current state is snapshotted first so you can undo.
             {liveSummary ? (
               <>
                 {' '}
@@ -1550,6 +1580,120 @@ function BackupsRecoverySection({
               </>
             ) : null}
           </p>
+
+          {supportsDailyMirror && canExport ? (
+            <div className="backup-daily-mirror">
+              <h3 className="backup-daily-mirror__title">Daily full backup folder</h3>
+              <p className="muted small backup-daily-mirror__lead">
+                Optional. In-app snapshots keep working as before. If you choose a folder, Cadence also writes one{' '}
+                <strong>full export</strong> there per day (data, images, note history) — so a copy survives even if
+                the app is removed. Files are <strong>readable on disk</strong> (same as Export full backup) — pick a
+                private folder. Older daily folders are pruned after {mirrorKeepDays} days. Restore with{' '}
+                <strong>Import backup folder</strong>.
+              </p>
+              {mirrorPrefs?.mirrorDir ? (
+                <p className="small backup-daily-mirror__path" title={mirrorPrefs.mirrorDir}>
+                  <strong>Folder:</strong> {mirrorPrefs.mirrorDir}
+                </p>
+              ) : (
+                <p className="muted small">No folder selected — daily off-app backup is off.</p>
+              )}
+              {mirrorPrefs?.lastOkAt ? (
+                <p className="muted small">
+                  Last daily backup: {formatRelativeTime(mirrorPrefs.lastOkAt)}
+                  {mirrorPrefs.lastDailyDate ? ` (${mirrorPrefs.lastDailyDate})` : ''}.
+                </p>
+              ) : null}
+              {mirrorPrefs?.lastError ? (
+                <p className="small backup-daily-mirror__error" role="alert">
+                  Last attempt failed: {mirrorPrefs.lastError}
+                </p>
+              ) : null}
+              <div className="backup-platform__actions">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={busy || importBusy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      const r = await window.cadence!.backupMirrorChooseDir!();
+                      if (r.canceled) return;
+                      if (!r.ok) {
+                        toast.showError('Daily backup', r.error || 'Could not set folder.');
+                        return;
+                      }
+                      if (r.prefs) setMirrorPrefs(r.prefs);
+                      if (typeof r.keepDays === 'number') setMirrorKeepDays(r.keepDays);
+                      toast.showSuccess('Daily backup folder set', 'A full export will run once per day.');
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  {mirrorPrefs?.mirrorDir ? 'Change folder' : 'Choose folder'}
+                </Button>
+                {mirrorPrefs?.mirrorDir ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={busy || importBusy || !data}
+                      onClick={async () => {
+                        if (!data) return;
+                        setBusy(true);
+                        try {
+                          await flushPendingSave();
+                          const r = await window.cadence!.backupMirrorRunNow!(data);
+                          if (r.prefs) setMirrorPrefs(r.prefs);
+                          if (!r.ok) {
+                            toast.showError('Daily backup', r.error || 'Backup failed.');
+                            return;
+                          }
+                          toast.showSuccess('Daily backup written', r.path || 'Folder updated.');
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Backup now
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={busy || importBusy}
+                      onClick={async () => {
+                        if (
+                          !(await confirm({
+                            title: 'Stop daily folder backups?',
+                            description:
+                              'In-app automatic snapshots are unchanged. Existing files in the folder are not deleted.',
+                            confirmLabel: 'Clear folder setting',
+                          }))
+                        ) {
+                          return;
+                        }
+                        setBusy(true);
+                        try {
+                          const r = await window.cadence!.backupMirrorClearDir!();
+                          if (!r.ok) {
+                            toast.showError('Daily backup', r.error || 'Could not clear setting.');
+                            return;
+                          }
+                          if (r.prefs) setMirrorPrefs(r.prefs);
+                          toast.showSuccess('Daily backup folder cleared', 'Off-app daily backups are off.');
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Clear
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           {saveError ? (
         <div
@@ -1617,19 +1761,43 @@ function BackupsRecoverySection({
           ) : null}
 
           {sources.backups.length > 0 ? (
-            <>
-              <h3 style={{ fontSize: 14, marginTop: 18, marginBottom: 8 }}>Automatic snapshots</h3>
-              {sources.backups.map((b) => (
-                <DataSourceRow
-                  key={b.path}
-                  info={b}
-                  label={b.name}
-                  sub={`${formatBytes(b.bytes)} · ${formatRelativeTime(b.mtime)}`}
-                  onRestore={(f) => restore(f, b.name)}
-                  restoreBusy={busy}
-                />
-              ))}
-            </>
+            <div className="backup-snapshots">
+              <h3 className="backup-snapshots__title">Automatic snapshots</h3>
+              <p className="muted small backup-snapshots__lead">
+                {sources.backups.length} local safety cop{sources.backups.length === 1 ? 'y' : 'ies'} (up to 50).
+                Pick one to preview or restore — same coverage as a full local backup.
+              </p>
+              <label className="backup-snapshots__picker">
+                <span className="backup-snapshots__picker-label">Snapshot</span>
+                <select
+                  className="backup-snapshots__select"
+                  value={selectedBackupPath ?? sources.backups[0]?.path ?? ''}
+                  onChange={(e) => setSelectedBackupPath(e.target.value)}
+                  disabled={busy}
+                  aria-label="Choose automatic snapshot"
+                >
+                  {sources.backups.map((b) => (
+                    <option key={b.path} value={b.path}>
+                      {formatSnapshotOptionLabel(b)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {(() => {
+                const selected =
+                  sources.backups.find((b) => b.path === selectedBackupPath) ?? sources.backups[0] ?? null;
+                if (!selected) return null;
+                return (
+                  <DataSourceRow
+                    info={selected}
+                    label={formatSnapshotKindLabel(selected.name)}
+                    sub={`${formatBytes(selected.bytes)} · ${formatRelativeTime(selected.mtime)}`}
+                    onRestore={(f) => restore(f, selected.name)}
+                    restoreBusy={busy}
+                  />
+                );
+              })()}
+            </div>
           ) : (
             <p className="muted small" style={{ marginTop: 12 }}>
               No automatic snapshots yet. The next save will create one.
@@ -2115,6 +2283,38 @@ function formatRelativeTime(iso: string | undefined) {
   const days = Math.round(h / 24);
   if (days < 14) return `${days}d ago`;
   return d.toLocaleString();
+}
+
+const SNAPSHOT_KIND_LABELS: Record<string, string> = {
+  'pre-save': 'Before save',
+  'pre-restore': 'Before restore',
+  'pre-import': 'Before import',
+  'pre-write': 'Before write',
+  'pre-monthly-layout': 'Before layout change',
+  'pre-pwchange': 'Before password change',
+  'pre-recovery': 'Before recovery',
+  launch: 'At launch',
+  'post-login': 'After sign-in',
+};
+
+/** Human label from `data-<kind>-<ts>.json` filenames. */
+function formatSnapshotKindLabel(name: string): string {
+  const m = /^data-([a-z0-9-]+)-\d{4}-.+\.json$/i.exec(name);
+  if (!m) return name;
+  const kind = m[1].toLowerCase();
+  return SNAPSHOT_KIND_LABELS[kind] ?? kind.replace(/-/g, ' ');
+}
+
+function formatSnapshotOptionLabel(info: DataFileInfo): string {
+  const kind = formatSnapshotKindLabel(info.name);
+  const when = formatRelativeTime(info.mtime) || 'unknown time';
+  const notes = info.counts?.notes;
+  const tasks = info.counts?.todoItems;
+  const shape =
+    notes != null || tasks != null
+      ? ` · ${tasks ?? 0} task${(tasks ?? 0) === 1 ? '' : 's'}, ${notes ?? 0} note${(notes ?? 0) === 1 ? '' : 's'}`
+      : '';
+  return `${kind} · ${when}${shape}`;
 }
 
 // ─── Account recovery codes (local-first password reset) ─────────────────────

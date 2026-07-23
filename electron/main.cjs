@@ -126,6 +126,13 @@ const {
   wrapRecoverySecret,
   unwrapRecoverySecret,
 } = require('./accountRecovery.cjs');
+const {
+  readPrefs: readDailyBackupPrefs,
+  writePrefs: writeDailyBackupPrefs,
+  normalizePrefs: normalizeDailyBackupPrefs,
+  maybeRunDailyBackupMirror,
+  DEFAULT_KEEP_DAYS: DAILY_BACKUP_KEEP_DAYS,
+} = require('./dailyBackupMirror.cjs');
 
 /** Reject IPC saves larger than this cap (defence against OOM). */
 const MAX_SAVE_PAYLOAD_BYTES = 25 * 1024 * 1024;
@@ -2483,10 +2490,170 @@ function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRende
   }
   if (r.ok) {
     void syncRemindersFromAppData(payload, uid);
+    // Optional off-app daily full export — never blocks / fails the save.
+    scheduleDailyBackupMirror(uid, payload);
     return { ok: true, writeGeneration: r.writeGeneration };
   }
   return r;
 }
+
+/**
+ * Machine-local daily full backup to a user-chosen folder (optional).
+ * No-op when unset. Failures are recorded in prefs for Settings — never
+ * thrown into the save path (zero disruption for users without the feature).
+ */
+function dailyBackupMirrorDeps(userId) {
+  return {
+    fs,
+    path,
+    userDataDir: app.getPath('userData'),
+    filePrefix: DATA_FILE_PREFIX,
+    userId,
+    appSlug: APP_SLUG,
+    writeJsonText,
+    exportAttachments: (destDir) => exportAttachmentsPortableToDir(userId, destDir),
+    exportNoteHistory: (destFolder) => {
+      exportNoteHistoryToDir(userId, destFolder);
+    },
+    countNoteHistoryRevisions: () => countNoteHistoryRevisions(userId),
+    keepDays: DAILY_BACKUP_KEEP_DAYS,
+  };
+}
+
+function scheduleDailyBackupMirror(userId, workspacePayload, { force = false } = {}) {
+  if (!userId || !workspacePayload || typeof workspacePayload !== 'object') return;
+  // Same policy gate as manual export — never auto-dump when dataExport is off.
+  if (!isFeatureAllowed('dataExport')) return;
+  setImmediate(() => {
+    try {
+      const result = maybeRunDailyBackupMirror({
+        ...dailyBackupMirrorDeps(userId),
+        workspacePayload,
+        force,
+      });
+      if (result.ran && !result.ok) {
+        console.warn('[cadence] daily backup mirror failed', result.error);
+      }
+    } catch (err) {
+      console.warn('[cadence] daily backup mirror threw (ignored)', err);
+    }
+  });
+}
+
+function getDailyBackupMirrorStatus(userId) {
+  if (!userId) {
+    return { ok: false, error: 'Not signed in.', prefs: normalizeDailyBackupPrefs(null) };
+  }
+  const prefs = readDailyBackupPrefs(dailyBackupMirrorDeps(userId));
+  return {
+    ok: true,
+    prefs,
+    keepDays: DAILY_BACKUP_KEEP_DAYS,
+  };
+}
+
+ipcMain.handle('backupMirror:get', () => {
+  const uid = readSessionUserId();
+  return getDailyBackupMirrorStatus(uid);
+});
+
+ipcMain.handle('backupMirror:chooseDir', async () => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const pick = await dialog.showOpenDialog(win, {
+    title: 'Choose folder for daily full backups',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (pick.canceled || !pick.filePaths?.[0]) return { ok: false, canceled: true };
+  const mirrorDir = pick.filePaths[0];
+  const deps = dailyBackupMirrorDeps(uid);
+  const prefs = readDailyBackupPrefs(deps);
+  // Clear lastDailyDate so the next save/login (or runNow) writes today promptly.
+  const next = {
+    ...prefs,
+    mirrorDir,
+    lastDailyDate: null,
+    lastError: null,
+    lastErrorAt: null,
+  };
+  const written = writeDailyBackupPrefs(deps, next);
+  if (!written.ok) {
+    return { ok: false, error: written.error || 'Could not save backup folder preference.' };
+  }
+  return { ok: true, prefs: normalizeDailyBackupPrefs(next), keepDays: DAILY_BACKUP_KEEP_DAYS };
+});
+
+ipcMain.handle('backupMirror:clearDir', () => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  const deps = dailyBackupMirrorDeps(uid);
+  const prefs = readDailyBackupPrefs(deps);
+  const next = {
+    ...prefs,
+    mirrorDir: null,
+    // Keep lastOk* for transparency; clear errors so UI looks idle.
+    lastError: null,
+    lastErrorAt: null,
+  };
+  const written = writeDailyBackupPrefs(deps, next);
+  if (!written.ok) {
+    return { ok: false, error: written.error || 'Could not clear backup folder preference.' };
+  }
+  return { ok: true, prefs: normalizeDailyBackupPrefs(next), keepDays: DAILY_BACKUP_KEEP_DAYS };
+});
+
+ipcMain.handle('backupMirror:runNow', (_evt, { data: payload } = {}) => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  try {
+    const deps = dailyBackupMirrorDeps(uid);
+    const prefs = readDailyBackupPrefs(deps);
+    if (!prefs.mirrorDir) {
+      return { ok: false, error: 'Choose a daily backup folder first.' };
+    }
+    // Prefer on-disk workspace (post-flush) over the renderer snapshot so a
+    // stale/empty client payload cannot clobber today's good daily folder.
+    const disk = readUserData(uid);
+    const workspacePayload =
+      disk && typeof disk === 'object'
+        ? disk
+        : payload && typeof payload === 'object'
+          ? payload
+          : null;
+    if (!workspacePayload) {
+      return { ok: false, error: 'No workspace data available to back up.' };
+    }
+    // Force rewrite via .partial → rename (never delete today's final first).
+    const result = maybeRunDailyBackupMirror({
+      ...deps,
+      workspacePayload,
+      force: true,
+    });
+    const status = getDailyBackupMirrorStatus(uid);
+    // Spread status first — getDailyBackupMirrorStatus always sets ok:true.
+    if (!result.ran) {
+      return {
+        ...status,
+        ok: false,
+        error:
+          result.skipped === 'in-flight'
+            ? 'A daily backup is already running. Try again in a moment.'
+            : 'Daily backup did not run.',
+      };
+    }
+    if (!result.ok) {
+      return { ...status, ok: false, error: result.error || 'Daily backup failed.' };
+    }
+    return { ...status, ok: true, path: result.path };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
 
 ipcMain.handle('data:load', () => {
   const uid = readSessionUserId();
@@ -4081,6 +4248,14 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
     // Take a snapshot right after we successfully derived the key, so even
     // a buggy in-session save can never destroy this known-good baseline.
     snapshotCurrentDataFile(u.id, 'post-login');
+
+    // Optional daily off-app full export (no-op unless user chose a folder).
+    try {
+      const workspace = readUserData(u.id);
+      if (workspace) scheduleDailyBackupMirror(u.id, workspace);
+    } catch (err) {
+      console.warn('[cadence] post-login daily backup schedule failed', err);
+    }
 
     // If the data file is currently plaintext (legacy in-place), upgrade it transparently now.
     if (fs.existsSync(file)) {

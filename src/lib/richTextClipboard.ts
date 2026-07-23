@@ -6,11 +6,61 @@
  * into VS Code / WhatsApp / Notes with huge blank gaps. We emit one visual
  * line per textblock (with list markers) and compact HTML margins for apps
  * that prefer `text/html`.
+ *
+ * Code-only selections copy as plain source in both mime types (no ``` fences,
+ * no `<pre>`) so paste inside Cadence becomes paragraphs, not a new codeBlock.
  */
 
 import type { EditorView } from '@tiptap/pm/view';
 import { DOMSerializer } from '@tiptap/pm/model';
 import type { RichTextDoc } from './richText';
+
+const BLOCK_MARGIN_RESET = 'margin:0;padding-top:0;padding-bottom:0;';
+
+/** Marker so paste skips markdown heuristics for code-only Cadence copies. */
+export const CADENCE_PLAIN_CLIPBOARD_MARKER = '<!--cadence-clipboard:plain-->';
+
+function unwrapClipboardNodes(nodes: RichTextDoc[]): RichTextDoc[] {
+  if (nodes.length === 1 && nodes[0]?.type === 'doc' && nodes[0].content) {
+    return nodes[0].content;
+  }
+  return nodes;
+}
+
+/**
+ * True when the slice is only code-block source (selection inside / of code blocks).
+ * Mixed selections (paragraph + code, etc.) keep structured HTML.
+ */
+export function isCodeOnlyClipboardNodes(nodes: RichTextDoc[]): boolean {
+  const top = unwrapClipboardNodes(nodes);
+  // Single code block only — multi-fence selections keep structured HTML.
+  return top.length === 1 && top[0]?.type === 'codeBlock';
+}
+
+function escapeHtmlText(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Build paste-safe HTML from plain text so TipTap does not recreate a codeBlock
+ * from a `<pre>` fragment.
+ */
+export function plainTextToClipboardHtml(plain: string): string {
+  const lines = plain.split('\n');
+  const paragraphs = lines
+    .map((line) => {
+      const body = escapeHtmlText(line);
+      return `<p style="${BLOCK_MARGIN_RESET}">${body || '<br>'}</p>`;
+    })
+    .join('');
+  return wrapHtmlForClipboard(
+    `${CADENCE_PLAIN_CLIPBOARD_MARKER}<div style="line-height:1.35">${paragraphs}</div>`,
+  );
+}
 
 function inlinePlainText(node: RichTextDoc): string {
   const parts: string[] = [];
@@ -82,10 +132,22 @@ function walkListItem(
   }
 }
 
+export type SerializeClipboardPlainOptions = {
+  /**
+   * When true, wrap code blocks in ``` fences so markdown paste (if HTML is
+   * stripped) can recreate them. Code-only copies keep this false.
+   */
+  fenceCodeBlocks?: boolean;
+};
+
 /**
  * Serialize selected rich nodes to compact plain text (one line per visual row).
  */
-export function serializeRichNodesToClipboardPlainText(nodes: RichTextDoc[]): string {
+export function serializeRichNodesToClipboardPlainText(
+  nodes: RichTextDoc[],
+  options?: SerializeClipboardPlainOptions,
+): string {
+  const fenceCodeBlocks = Boolean(options?.fenceCodeBlocks);
   const lines: string[] = [];
 
   const walk = (node: RichTextDoc, prefix: string) => {
@@ -118,12 +180,23 @@ export function serializeRichNodesToClipboardPlainText(nodes: RichTextDoc[]): st
         node.content?.forEach((child) => walk(child, `${prefix}> `));
         return;
       case 'codeBlock': {
-        const lang = typeof node.attrs?.language === 'string' ? node.attrs.language : '';
-        lines.push(`${prefix}\`\`\`${lang}`.replace(/\s+$/, ''));
-        for (const line of inlinePlainText(node).split('\n')) {
-          lines.push(prefix + line);
+        const source = inlinePlainText(node);
+        if (fenceCodeBlocks) {
+          const lang =
+            typeof node.attrs?.language === 'string' && node.attrs.language.trim()
+              ? node.attrs.language.trim()
+              : '';
+          lines.push(`${prefix}\`\`\`${lang}`);
+          for (const line of source.split('\n')) {
+            lines.push(prefix + line);
+          }
+          lines.push(`${prefix}\`\`\``);
+        } else {
+          // Code-only copies: raw source for terminals / VS Code (no fences).
+          for (const line of source.split('\n')) {
+            lines.push(prefix + line);
+          }
         }
-        lines.push(`${prefix}\`\`\``);
         return;
       }
       case 'horizontalRule':
@@ -152,8 +225,6 @@ export function serializeRichNodesToClipboardPlainText(nodes: RichTextDoc[]): st
   while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
   return lines.join('\n');
 }
-
-const BLOCK_MARGIN_RESET = 'margin:0;padding-top:0;padding-bottom:0;';
 
 /**
  * Zero default browser margins on clipboard HTML so Apple Notes / Mail don’t
@@ -194,7 +265,17 @@ export function buildRichClipboardPayload(view: EditorView): RichClipboardPayloa
 
   const rawJson = slice.content.toJSON() as RichTextDoc[] | RichTextDoc | null;
   const nodes = Array.isArray(rawJson) ? rawJson : rawJson ? [rawJson] : [];
-  const plain = serializeRichNodesToClipboardPlainText(nodes);
+  const codeOnly = isCodeOnlyClipboardNodes(nodes);
+  // Mixed selections: fence code in plain so markdown fallback cannot eat `#` lines.
+  const plain = serializeRichNodesToClipboardPlainText(nodes, {
+    fenceCodeBlocks: !codeOnly,
+  });
+
+  // TipTap prefers text/html on paste. A `<pre>` fragment becomes a codeBlock
+  // again — so code-only copies must emit paragraph HTML, not DOMSerializer.
+  if (codeOnly) {
+    return { plain, html: plainTextToClipboardHtml(plain) };
+  }
 
   const serializer = DOMSerializer.fromSchema(view.state.schema);
   const holder = document.createElement('div');

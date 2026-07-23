@@ -71,7 +71,7 @@
 
 .topbar__search:hover {
   border-color: transparent;
-  background: color-mix(in srgb, var(--panel-hover) 70%, white 30%);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -151,26 +151,60 @@
   letter-spacing: -0.04em;
 }
 
-/* ── Primary CTA (Spotify play-button energy, Cadence accent) ── */
+/* ── Buttons — flat, high-contrast (especially dark mode) ── */
+.btn {
+  border-color: var(--border-strong);
+  box-shadow: none;
+}
+
 .btn--primary {
   background: var(--accent);
   border-color: transparent;
   color: var(--accent-contrast);
   font-weight: 700;
+  box-shadow: none;
 }
 
 .btn--primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 88%, white);
   border-color: transparent;
-  transform: scale(1.02);
-}
-
-.btn {
-  border-color: var(--border-strong);
+  transform: none;
 }
 
 .btn--ghost {
   border-color: transparent;
+  color: var(--text);
+}
+
+:root:not([data-theme='light']) .btn:not(.btn--primary):not(.btn--ghost):not(.btn--danger),
+:root:not([data-theme='light']) .btn--secondary {
+  background: var(--panel-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+:root:not([data-theme='light']) .btn:not(.btn--primary):not(.btn--ghost):not(.btn--danger):hover:not(:disabled),
+:root:not([data-theme='light']) .btn--secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--panel-hover) 70%, white 12%);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-strong));
+  color: var(--text);
+}
+
+:root:not([data-theme='light']) .btn--ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+:root:not([data-theme='light']) .icon-btn {
+  background: var(--panel-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+:root:not([data-theme='light']) .icon-btn:hover {
+  background: color-mix(in srgb, var(--panel-hover) 70%, white 12%);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--text);
 }
 
 /* ── Icon buttons ── */
@@ -303,4 +337,49 @@
 
 :root[data-theme='light'] .pre {
   background: #f0f0f0;
+}
+
+/* Native <select> / <option> — prevent black-on-black OS menus in dark */
+:root:not([data-theme='light']) select,
+:root:not([data-theme='light']) .select,
+:root:not([data-theme='light']) .backup-snapshots__select {
+  color-scheme: dark;
+  background: var(--input-bg);
+  color: var(--text);
+  border-color: var(--input-border);
+}
+
+:root:not([data-theme='light']) select option,
+:root:not([data-theme='light']) .select option {
+  background: var(--panel);
+  color: var(--text);
+}
+
+:root:not([data-theme='light']) .muted,
+:root:not([data-theme='light']) .field span,
+:root:not([data-theme='light']) .app-sidebar__section-label {
+  color: var(--muted);
+}
+
+:root:not([data-theme='light']) .app-sidebar__link {
+  color: var(--muted);
+}
+
+:root:not([data-theme='light']) .app-sidebar__link:hover,
+:root:not([data-theme='light']) .app-sidebar__link--active {
+  color: var(--text);
+}
+
+:root:not([data-theme='light']) .card,
+:root:not([data-theme='light']) .list__row,
+:root:not([data-theme='light']) .list__block,
+:root:not([data-theme='light']) .tile {
+  background: var(--panel);
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+:root:not([data-theme='light']) .page-head h1,
+:root:not([data-theme='light']) .card__title {
+  color: var(--text);
 }

@@ -19,6 +19,13 @@ export {
 } from './stringCase';
 export { testRegex, MAX_REGEX_PATTERN_LEN, MAX_REGEX_INPUT_LEN, REGEX_FLAG_OPTIONS, REGEX_FLAG_PRESETS, type RegexTestResult } from './regexTester';
 export { parseEpochInput, formatEpochViews, isoToEpochMs, type EpochParseResult } from './epochConvert';
+export {
+  DURATION_UNITS,
+  convertDurationAll,
+  parseDurationAmount,
+  type DurationUnit,
+  type DurationRow,
+} from './durationConvert';
 export { explainCron, type CronExplainResult } from './cronExplain';
 export { jsonToTypescript, jsonToCode, type JsonToTsResult, type JsonToCodeResult, type JsonCodeLang } from './jsonToTs';
 export { curlToCode, type CurlCodeTarget, type CurlToCodeResult } from './curlToCode';

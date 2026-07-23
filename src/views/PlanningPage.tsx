@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { useToast } from '../components/ui/Toast';
 import {
@@ -10,6 +10,8 @@ import {
   AddToPlanningModal,
   PlanningFocusStrip,
   PlanningMatrixBoard,
+  PlanningTodoPreviewDialog,
+  planningGroupNameForItem,
   usePlanningFocusDayRollover,
 } from '../features/planning';
 import {
@@ -18,6 +20,7 @@ import {
   filterFocusTodayItems,
   filterPlanningCandidates,
   filterPlanningHubItems,
+  PLANNING_FOCUS_MAX,
   planningAxesForQuadrant,
   planningPatchForAddToHub,
   planningPatchForRemoveFromHub,
@@ -34,6 +37,15 @@ export function PlanningPage() {
     (a, b) => a.todoItems === b.todoItems && a.todoGroups === b.todoGroups,
   );
   const [addOpen, setAddOpen] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const previewItem = useMemo(
+    () => (previewId ? todoItems.find((t) => t.id === previewId) ?? null : null),
+    [previewId, todoItems],
+  );
+
+  useEffect(() => {
+    if (previewId && !previewItem) setPreviewId(null);
+  }, [previewId, previewItem]);
 
   usePlanningFocusDayRollover();
 
@@ -95,7 +107,10 @@ export function PlanningPage() {
       if (!item?.planInHub) return;
       const focused = item.planFocusToday === true;
       if (!canToggleFocusToday(focusItems.length, focused)) {
-        toast.showWarning('Today focus is full', 'Unstar a task first (max 3).');
+        toast.showWarning(
+          'Today focus is full',
+          `Unstar a task first (max ${PLANNING_FOCUS_MAX}).`,
+        );
         return;
       }
       updateTodoItem(itemId, { planFocusToday: focused ? false : true });
@@ -162,7 +177,7 @@ export function PlanningPage() {
               <h1 className="planning-page__title">Planning</h1>
               <p className="planning-page__lead muted">
                 Personal Eisenhower matrix — separate from team to-do lists. Import open tasks,
-                classify by importance and urgency, pin up to three for today.
+                classify by importance and urgency, pin up to {PLANNING_FOCUS_MAX} for today.
               </p>
             </div>
           </div>
@@ -170,7 +185,14 @@ export function PlanningPage() {
         <button
           type="button"
           className="btn btn--primary planning-page__add-btn"
-          disabled={atCapacity || candidates.length === 0}
+          disabled={atCapacity}
+          title={
+            atCapacity
+              ? 'Hub is full — remove a task from the matrix first'
+              : candidates.length === 0
+                ? 'All open to-dos are already in Planning — create or reopen a task in To-dos'
+                : 'Add open to-dos to the planning hub'
+          }
           onClick={() => setAddOpen(true)}
         >
           <IcPlus size={16} />
@@ -185,6 +207,7 @@ export function PlanningPage() {
           onToggleFocus={toggleFocus}
           onToggleComplete={toggleComplete}
           onStatusChange={setItemStatus}
+          onPreview={setPreviewId}
           onClearFocus={clearTodayFocus}
         />
         <PlanningMatrixBoard
@@ -196,6 +219,7 @@ export function PlanningPage() {
           onRemoveFromHub={removeFromHub}
           onToggleComplete={toggleComplete}
           onStatusChange={setItemStatus}
+          onPreview={setPreviewId}
         />
       </div>
 
@@ -207,6 +231,14 @@ export function PlanningPage() {
           atCapacity={atCapacity}
           onAddMany={addManyToHub}
           onClose={() => setAddOpen(false)}
+        />
+      ) : null}
+
+      {previewItem ? (
+        <PlanningTodoPreviewDialog
+          item={previewItem}
+          groupName={planningGroupNameForItem(previewItem, todoGroups)}
+          onClose={() => setPreviewId(null)}
         />
       ) : null}
     </div>

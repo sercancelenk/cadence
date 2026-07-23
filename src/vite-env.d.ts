@@ -58,6 +58,26 @@ export type DataSources = {
   otherUsers: DataFileInfo[];
 };
 
+/** Optional daily full-backup mirror prefs (machine-local; not in workspace JSON). */
+export type DailyBackupMirrorPrefs = {
+  version: number;
+  mirrorDir: string | null;
+  lastDailyDate: string | null;
+  lastOkPath: string | null;
+  lastOkAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+};
+
+export type DailyBackupMirrorStatus = {
+  ok: boolean;
+  error?: string;
+  canceled?: boolean;
+  prefs?: DailyBackupMirrorPrefs;
+  keepDays?: number;
+  path?: string;
+};
+
 export type LoadResult =
   | { ok: true; data: unknown; encrypted: boolean; reason?: string; writeGeneration?: number }
   | {
@@ -160,6 +180,10 @@ interface CadenceApi {
       dataRestoreFromSource?: (payload: { filePath: string }) => Promise<{ ok: boolean; restoredFrom?: string; error?: string; reason?: string }>;
       openUserDataFolder?: () => Promise<{ ok: boolean }>;
       revealInOS?: (payload: { filePath: string }) => Promise<{ ok: boolean; error?: string }>;
+      backupMirrorGet?: () => Promise<DailyBackupMirrorStatus>;
+      backupMirrorChooseDir?: () => Promise<DailyBackupMirrorStatus>;
+      backupMirrorClearDir?: () => Promise<DailyBackupMirrorStatus>;
+      backupMirrorRunNow?: (data: unknown) => Promise<DailyBackupMirrorStatus>;
       cacheStats?: () => Promise<CacheStats>;
       clearChromiumCache?: () => Promise<CacheClearResult>;
       onSaveError?: (cb: (event: SaveError) => void) => () => void;

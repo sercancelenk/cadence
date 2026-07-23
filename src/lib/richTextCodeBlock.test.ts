@@ -55,6 +55,63 @@ describe('RichTextCodeBlock persistence', () => {
     editor.destroy();
   });
 
+  it('persists collapsed without dropping source text (legacy default open)', () => {
+    const source = 'line one\nline two\nline three';
+    const editor = new Editor({
+      extensions: createRichTextExtensions(),
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'codeBlock',
+            attrs: { language: 'python' },
+            content: [{ type: 'text', text: source }],
+          },
+        ],
+      },
+    });
+    const before = editor.getJSON().content?.[0] as {
+      attrs?: { collapsed?: boolean; language?: string };
+      content?: { text?: string }[];
+    };
+    expect(before.attrs?.collapsed).toBe(false);
+
+    editor.commands.updateAttributes('codeBlock', { collapsed: true });
+    const after = editor.getJSON().content?.[0] as typeof before;
+    expect(after.attrs?.collapsed).toBe(true);
+    expect(after.attrs?.language).toBe('python');
+    expect(after.content?.[0]?.text).toBe(source);
+
+    editor.commands.updateAttributes('codeBlock', { collapsed: false });
+    const reopened = editor.getJSON().content?.[0] as typeof before;
+    expect(reopened.attrs?.collapsed).toBe(false);
+    expect(reopened.content?.[0]?.text).toBe(source);
+    editor.destroy();
+  });
+
+  it('loads legacy codeBlock JSON that omits collapsed', () => {
+    const editor = new Editor({
+      extensions: createRichTextExtensions(),
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'codeBlock',
+            attrs: { language: 'go' },
+            content: [{ type: 'text', text: 'package main' }],
+          },
+        ],
+      },
+    });
+    const block = editor.getJSON().content?.[0] as {
+      attrs?: { collapsed?: boolean };
+      content?: { text?: string }[];
+    };
+    expect(block.attrs?.collapsed).toBe(false);
+    expect(block.content?.[0]?.text).toBe('package main');
+    editor.destroy();
+  });
+
   it('round-trips mermaid source as codeBlock language without storing SVG', () => {
     const source = 'flowchart LR\n  A-->B';
     const editor = new Editor({
@@ -174,6 +231,33 @@ describe('RichTextCodeBlock persistence', () => {
       | { type: string; attrs?: { language?: string | null } }
       | undefined;
     expect(block?.type).toBe('codeBlock');
+    editor.destroy();
+  });
+
+  it('pastes HTML-looking plain as a text node without splitting the fence', () => {
+    const editor = new Editor({
+      extensions: createRichTextExtensions(),
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'codeBlock',
+            attrs: { language: 'javascript' },
+            content: [{ type: 'text', text: 'before' }],
+          },
+        ],
+      },
+    });
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    // Mirrors RichTextEditor codeBlock paste: text node, not string insertContent.
+    editor.commands.insertContent({ type: 'text', text: '<div class="x">hi</div>' });
+    const top = editor.getJSON().content ?? [];
+    expect(top).toHaveLength(1);
+    expect(top[0]?.type).toBe('codeBlock');
+    const text = ((top[0] as { content?: { text?: string }[] }).content ?? [])
+      .map((n) => n.text ?? '')
+      .join('');
+    expect(text).toContain('<div class="x">hi</div>');
     editor.destroy();
   });
 });

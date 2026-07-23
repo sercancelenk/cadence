@@ -19,6 +19,7 @@ export type PlanningMatrixBoardProps = {
   onRemoveFromHub: (id: string) => void;
   onToggleComplete: (id: string) => void;
   onStatusChange: (id: string, status: TodoStatus) => void;
+  onPreview: (id: string) => void;
 };
 
 export function PlanningMatrixBoard({
@@ -30,6 +31,7 @@ export function PlanningMatrixBoard({
   onRemoveFromHub,
   onToggleComplete,
   onStatusChange,
+  onPreview,
 }: PlanningMatrixBoardProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
@@ -72,6 +74,7 @@ export function PlanningMatrixBoard({
             onStatusChange={onStatusChange}
             onDragStart={setDraggingId}
             onDragEnd={() => setDraggingId(null)}
+            onPreview={onPreview}
           />
         ))}
       </div>
@@ -90,6 +93,7 @@ export function PlanningMatrixBoard({
         onStatusChange={onStatusChange}
         onDragStart={setDraggingId}
         onDragEnd={() => setDraggingId(null)}
+        onPreview={onPreview}
       />
     </div>
   );

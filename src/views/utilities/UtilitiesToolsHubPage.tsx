@@ -29,7 +29,7 @@ const CARDS: Array<{ to: string; title: string; blurb: string }> = [
   {
     to: PATH_UTILITIES_TOOLS_TIME,
     title: 'Time',
-    blurb: 'Unix epoch converter and cron expression explainer.',
+    blurb: 'Duration units, Unix epoch converter, and cron expression explainer.',
   },
   {
     to: PATH_UTILITIES_TOOLS_CODEGEN,

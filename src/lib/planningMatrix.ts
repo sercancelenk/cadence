@@ -5,7 +5,7 @@ import { isTodoOpen, isTodoItemArchived, priorityRank, type TodoItem } from '../
 export type PlanningQuadrant = 'do' | 'schedule' | 'delegate' | 'eliminate' | 'unsorted';
 
 export const PLANNING_HUB_MAX_ITEMS = 20;
-export const PLANNING_FOCUS_MAX = 3;
+export const PLANNING_FOCUS_MAX = 10;
 
 /** localStorage key for the calendar day that currently owns “today focus” pins. */
 export const PLANNING_FOCUS_DAY_STORAGE_KEY = 'cadence.planning.focusDay';

@@ -6,7 +6,6 @@ import TaskItem from '@tiptap/extension-task-item';
 import Placeholder from '@tiptap/extension-placeholder';
 import Underline from '@tiptap/extension-underline';
 import Highlight from '@tiptap/extension-highlight';
-import Table from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
@@ -14,6 +13,7 @@ import type { Extensions } from '@tiptap/core';
 import { RichTextCodeBlock } from './richTextCodeBlock';
 import { DateChip } from './richTextDateChip';
 import { RichTextSearchExtension } from './richTextSearch';
+import { RichTextTable } from './richTextTable';
 
 const IMAGE_MIN_WIDTH = 48;
 
@@ -251,8 +251,9 @@ export function createRichTextExtensions(placeholder = 'Write here…'): Extensi
         class: 'rich-editor-image',
       },
     }),
-    Table.configure({
+    RichTextTable.configure({
       resizable: true,
+      cellMinWidth: 48,
       HTMLAttributes: {
         class: 'rich-editor-table',
       },

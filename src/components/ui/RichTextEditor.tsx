@@ -528,6 +528,7 @@ export function RichTextEditor({
         if (!editableRef.current) return false;
         const clipboard = event.clipboardData;
         if (!clipboard) return false;
+        const ed = editorRef.current;
 
         if (attachmentScopeRef.current) {
           const file = readDataTransferImageFile(clipboard);
@@ -549,8 +550,18 @@ export function RichTextEditor({
           }
         }
 
+        // Inside a code fence, always paste as a text node — string insertContent
+        // runs DOMParser and can split the fence on `<div>`, `<br>`, JSX, etc.
+        if (ed?.isActive('codeBlock')) {
+          const plain = clipboard.getData('text/plain');
+          event.preventDefault();
+          if (plain) {
+            ed.chain().focus().insertContent({ type: 'text', text: plain }).run();
+          }
+          return true;
+        }
+
         if (shouldPasteClipboardAsMarkdown(clipboard)) {
-          const ed = editorRef.current;
           if (ed && insertMarkdownPaste(ed, clipboard.getData('text/plain'))) {
             event.preventDefault();
             return true;

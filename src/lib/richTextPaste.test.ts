@@ -35,6 +35,9 @@ describe('richTextPaste', () => {
       expect(hasSemanticRichHtml('<h1>Title</h1><p>Text</p>')).toBe(true);
       expect(hasSemanticRichHtml('<ul><li>a</li></ul>')).toBe(true);
       expect(hasSemanticRichHtml('<p><strong>bold</strong></p>')).toBe(true);
+      expect(hasSemanticRichHtml('<p>intro</p><pre><code># comment\nx = 1</code></pre>')).toBe(
+        true,
+      );
     });
 
     it('ignores syntax-highlighter wrappers from code editors', () => {
@@ -63,6 +66,32 @@ describe('richTextPaste', () => {
         getData: (type: string) => {
           if (type === 'text/plain') return '## Hello';
           if (type === 'text/html') return '<h2>Hello</h2><p><strong>world</strong></p>';
+          return '';
+        },
+      } as DataTransfer;
+      expect(shouldPasteClipboardAsMarkdown(dt)).toBe(false);
+    });
+
+    it('never markdown-parses Cadence code-only clipboard HTML (even if plain looks like MD)', () => {
+      const dt = {
+        getData: (type: string) => {
+          if (type === 'text/plain') return '# comment\nx = 1';
+          if (type === 'text/html') {
+            return '<!--cadence-clipboard:plain--><div><p># comment</p><p>x = 1</p></div>';
+          }
+          return '';
+        },
+      } as DataTransfer;
+      expect(shouldPasteClipboardAsMarkdown(dt)).toBe(false);
+    });
+
+    it('defers to native paste for mixed prose+code HTML (plain may look like markdown)', () => {
+      const dt = {
+        getData: (type: string) => {
+          if (type === 'text/plain') return 'intro\n# comment\nx = 1';
+          if (type === 'text/html') {
+            return '<p>intro</p><pre><code># comment\nx = 1</code></pre>';
+          }
           return '';
         },
       } as DataTransfer;
