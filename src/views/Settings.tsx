@@ -28,6 +28,8 @@ import type {
   SaveError,
 } from '../vite-env';
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
+import { AppearanceSettingsSection } from '../components/settings/AppearanceSettingsSection';
+import { PreferencesShell } from '../components/settings/PreferencesShell';
 import { RecoveryCodesPanel } from '../components/RecoveryCodesPanel';
 import { prepareForRemoteApply } from '../lib/syncApplyGuard';
 import { estimateWorkspaceStorage } from '../lib/workspaceStorageStats';
@@ -46,10 +48,18 @@ import { supportsPwaOsSchedule } from '../lib/reminderDelivery/capabilities';
 function RemindersSettingsSection() {
   const toast = useToast();
   const [status, setStatus] = useState<ReminderSyncStatus | null>(null);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   const refreshStatus = () => {
     void window.cadence?.reminderSyncStatus?.().then((s) => {
-      if (s) setStatus(s);
+      if (aliveRef.current && s) setStatus(s);
     });
   };
 
@@ -57,7 +67,7 @@ function RemindersSettingsSection() {
     let cancelled = false;
     void (async () => {
       const s = await window.cadence?.reminderSyncStatus?.();
-      if (!cancelled && s) setStatus(s);
+      if (!cancelled && aliveRef.current && s) setStatus(s);
     })();
     return () => {
       cancelled = true;
@@ -76,6 +86,7 @@ function RemindersSettingsSection() {
 
   const updateBackground = (patch: { launchAtLogin?: boolean; hideToTrayOnClose?: boolean }) => {
     void window.cadence?.setReminderBackgroundSettings?.(patch).then((r) => {
+      if (!aliveRef.current) return;
       if (!r?.ok) {
         toast.showError('Reminder settings', r?.error || 'Could not save');
         return;
@@ -414,269 +425,272 @@ export function Settings() {
   };
 
   return (
-    <div className="page settings-page">
-      <header className="page-head settings-page__head">
-        <h1>Settings</h1>
-        <p className="muted">
-          Everything about Cadence lives on your device. Grouped here by what each setting controls.
-        </p>
-      </header>
-
-      <SettingsGroup
-        eyebrow="Account & security"
-        description="Who can open Cadence on this device, and how your data file is protected."
-      >
-        <StaySignedInSection />
-        <AccountRecoverySection />
-        {isElectron ? (
-        <CollapsibleCard id="pin" title="PIN protection" badge={pinEnabled ? 'Enabled' : 'Disabled'}>
-        <p className="muted">
-          Adds a quick lock screen when Cadence starts and when you choose <em>Lock now</em>. Useful when you step away from your desk so a passer-by can't open the app and read 1:1 notes.
-        </p>
-        <p className="muted small">
-          The PIN is independent of your account password. Your data file is already encrypted at rest with a key derived from the account password — the PIN is purely a UI barrier in front of the unlocked workspace.
-        </p>
-        <p className="muted small">Status: {pinEnabled ? 'Enabled' : 'Disabled'}</p>
-        {pinEnabled ? (
-          <div className="row" style={{ marginTop: 8 }}>
-            <Button type="button" variant="secondary" icon={<IcLock size={17} />} onClick={() => lockSession()}>
-              Lock now
-            </Button>
-            <span className="muted small">Returns you to the PIN screen without quitting the app.</span>
-          </div>
-        ) : null}
-        {!pinEnabled ? (
-          <form
-            className="row"
-            style={{ marginTop: 10, flexDirection: 'column', alignItems: 'stretch' }}
-            onSubmit={async (e: FormEvent) => {
-              e.preventDefault();
-              const a = newPin.trim();
-              const b = newPin2.trim();
-              if (a.length < 4 || a !== b) {
-                toast.showError(
-                  'Invalid PIN',
-                  'It must be at least 4 characters and both fields must match.',
-                );
-                return;
-              }
-              // setPin runs a round-trip self-verify in the main process and
-              // rolls back if the stored hash cannot reproduce the same PIN.
-              // So a successful response here guarantees the lock screen will
-              // accept the same characters the user just typed.
-              const r = await window.cadence?.authSetPin?.({ pin: a });
-              if (r?.ok) {
-                setNewPin('');
-                setNewPin2('');
-                // refreshSession() only updates the pinEnabled flag (the
-                // current session stays unlocked). The next launch — or an
-                // explicit "Lock now" click — is when the PIN screen appears.
-                await refreshSession();
-                toast.showSuccess(
-                  'PIN saved',
-                  'It\u2019ll appear at next launch or when you click \u201cLock now\u201d. Forgot it later? Reset from the lock screen with your account password.',
-                );
-              } else {
-                toast.showError('Could not save PIN', r?.error);
-              }
-            }}
-          >
-            <input className="input" type="password" placeholder="New PIN" value={newPin} onChange={(e) => setNewPin(e.target.value)} />
-            <input className="input" type="password" placeholder="Confirm PIN" value={newPin2} onChange={(e) => setNewPin2(e.target.value)} />
-            <Button type="submit" variant="primary" icon={<IcLock size={17} />}>
-              Create PIN
-            </Button>
-          </form>
-        ) : (
-          <form
-            className="row"
-            style={{ marginTop: 10, flexDirection: 'column', alignItems: 'stretch' }}
-            onSubmit={async (e: FormEvent) => {
-              e.preventDefault();
-              const r = await window.cadence?.authClear?.({ pin: clearPin.trim() });
-              if (r?.ok) {
-                setClearPin('');
-                await refreshSession();
-                toast.showSuccess('PIN removed', 'The lock screen will no longer appear at launch.');
-              } else {
-                toast.showError('Incorrect PIN', r?.error);
-              }
-            }}
-          >
-            <input
-              className="input"
-              type="password"
-              placeholder="Current PIN (to remove)"
-              value={clearPin}
-              onChange={(e) => setClearPin(e.target.value)}
-            />
-            <Button type="submit" variant="danger" icon={<IcTrash size={17} />}>
-              Remove PIN protection
-            </Button>
-          </form>
-        )}
-        </CollapsibleCard>
-        ) : null}
-      </SettingsGroup>
-
-      <SettingsGroup
-        eyebrow="Data & backup"
-        description="Automatic snapshots, manual export, and restore — everything in one place."
-      >
-        <BackupsRecoverySection
-          canExport={features.dataExport}
-          importBusy={importBusy}
-          onSetImportBusy={setImportBusy}
-          onExportJson={() => void exportJson()}
-          onExportPortableZip={() => void exportPortableZip()}
-          onExportFullBundle={() => void exportFullBundle()}
-          onImportBackup={() => fileRef.current?.click()}
-          onMergeImport={() => mergeFileRef.current?.click()}
-          onImportFolder={() => void importFullBundle()}
-          fileInput={
+    <PreferencesShell
+      title="Settings"
+      lead="Preferences for this device — appearance, security, backups, and integrations. Your notes stay in your workspace file; look-and-feel stays local."
+      panels={[
+        {
+          id: 'appearance',
+          content: <AppearanceSettingsSection />,
+        },
+        {
+          id: 'account',
+          content: (
             <>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="application/json,.json,application/zip,.zip"
-                hidden
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = '';
-                  if (!f) return;
-                  await importBackupFile(f);
-                }}
-              />
-              <input
-                ref={mergeFileRef}
-                type="file"
-                accept="application/json,.json,application/zip,.zip"
-                hidden
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = '';
-                  if (!f) return;
-                  await mergeImportFile(f);
-                }}
-              />
-            </>
-          }
-        />
-
-        <StorageCacheSection />
-      </SettingsGroup>
-
-      <SettingsGroup
-        eyebrow="Integrations"
-        description="Optional services and OS-level features Cadence can talk to."
-      >
-        {features.ai ? <AISettingsSection /> : null}
-        <CollapsibleCard id="reminders" title="Reminders" defaultOpen={false}>
-          <RemindersSettingsSection />
-        </CollapsibleCard>
-      </SettingsGroup>
-
-      <SettingsGroup
-        eyebrow="About"
-        description="Version info, update channel, workspace profile, and the in-app user guide."
-      >
-        <AppProfileSection
-          features={features}
-          managed={managed}
-          source={source}
-          setPreset={setPreset}
-        />
-        <CollapsibleCard
-          id="version"
-          title="Application version"
-          defaultOpen={false}
-          badge={formatAppVersion(appVersion).label}
-        >
-          {(() => {
-            const v = formatAppVersion(appVersion);
-            return (
-              <>
-                <p>
-                  Installed release: <strong>{v.label}</strong>
-                </p>
-                <p className="muted small">
-                  {v.build !== null ? <>Build {v.build} · </> : null}
-                  {v.raw ? <>Version {v.raw} · </> : null}
-                  Data schema v{data.version}
-                </p>
-              </>
-            );
-          })()}
-        </CollapsibleCard>
-        <CollapsibleCard id="user-guide" title="User guide" defaultOpen={false}>
-          <p className="muted">
-            Step-by-step help for daily use, backups, recovery codes, and sync. Nothing leaves your device unless you
-            choose.
-          </p>
-          <div className="row" style={{ marginTop: 12 }}>
-            <Button
-              type="button"
-              variant="secondary"
-              icon={<IcHelpCircle size={17} />}
-              onClick={() => navigate('/guide')}
-            >
-              Open user guide
-            </Button>
-          </div>
-        </CollapsibleCard>
-        {features.updateCheck ? (
-          <>
-            <CollapsibleCard id="updates" title="Auto updates (GitHub Releases)" defaultOpen={false}>
-              <p className="muted">
-                When the packaged app launches, it checks GitHub Releases for a newer version. You can also check on demand below — a dialog will guide you through download and restart.
-              </p>
-              <div className="row" style={{ marginTop: 12 }}>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  icon={<IcRefresh size={17} />}
-                  onClick={() => setUpdaterOpen(true)}
+              <StaySignedInSection />
+              <AccountRecoverySection />
+              {isElectron ? (
+                <CollapsibleCard
+                  id="pin"
+                  title="PIN protection"
+                  badge={pinEnabled ? 'Enabled' : 'Disabled'}
                 >
-                  Check for updates
-                </Button>
-              </div>
-            </CollapsibleCard>
-
-            <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
-          </>
-        ) : null}
-      </SettingsGroup>
-    </div>
-  );
-}
-
-/**
- * Visual grouping wrapper for Settings cards. Renders a small "eyebrow"
- * heading + short description, then the cards as a flex column with a
- * tighter rhythm than the page-level default. The cards themselves keep
- * their CollapsibleCard styling — this is purely a structural overlay.
- *
- * Using a real <section> with a labelled <header> means assistive tech
- * announces "Account & security, section" before stepping into the
- * individual cards, which matches the visual hierarchy.
- */
-function SettingsGroup({
-  eyebrow,
-  description,
-  children,
-}: {
-  eyebrow: string;
-  description?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="settings-group" aria-label={eyebrow}>
-      <header className="settings-group__head">
-        <h2 className="settings-group__eyebrow">{eyebrow}</h2>
-        {description ? <p className="settings-group__desc">{description}</p> : null}
-      </header>
-      <div className="settings-group__body">{children}</div>
-    </section>
+                  <p className="muted">
+                    Adds a quick lock screen when Cadence starts and when you choose <em>Lock now</em>.
+                    Useful when you step away from your desk so a passer-by can&apos;t open the app and
+                    read 1:1 notes.
+                  </p>
+                  <p className="muted small">
+                    The PIN is independent of your account password. Your data file is already encrypted
+                    at rest with a key derived from the account password — the PIN is purely a UI barrier
+                    in front of the unlocked workspace.
+                  </p>
+                  <p className="muted small">Status: {pinEnabled ? 'Enabled' : 'Disabled'}</p>
+                  {pinEnabled ? (
+                    <div className="row" style={{ marginTop: 8 }}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        icon={<IcLock size={17} />}
+                        onClick={() => lockSession()}
+                      >
+                        Lock now
+                      </Button>
+                      <span className="muted small">
+                        Returns you to the PIN screen without quitting the app.
+                      </span>
+                    </div>
+                  ) : null}
+                  {!pinEnabled ? (
+                    <form
+                      className="row"
+                      style={{ marginTop: 10, flexDirection: 'column', alignItems: 'stretch' }}
+                      onSubmit={async (e: FormEvent) => {
+                        e.preventDefault();
+                        const a = newPin.trim();
+                        const b = newPin2.trim();
+                        if (a.length < 4 || a !== b) {
+                          toast.showError(
+                            'Invalid PIN',
+                            'It must be at least 4 characters and both fields must match.',
+                          );
+                          return;
+                        }
+                        const r = await window.cadence?.authSetPin?.({ pin: a });
+                        if (r?.ok) {
+                          setNewPin('');
+                          setNewPin2('');
+                          await refreshSession();
+                          toast.showSuccess(
+                            'PIN saved',
+                            'It\u2019ll appear at next launch or when you click \u201cLock now\u201d. Forgot it later? Reset from the lock screen with your account password.',
+                          );
+                        } else {
+                          toast.showError('Could not save PIN', r?.error);
+                        }
+                      }}
+                    >
+                      <input
+                        className="input"
+                        type="password"
+                        placeholder="New PIN"
+                        value={newPin}
+                        onChange={(e) => setNewPin(e.target.value)}
+                      />
+                      <input
+                        className="input"
+                        type="password"
+                        placeholder="Confirm PIN"
+                        value={newPin2}
+                        onChange={(e) => setNewPin2(e.target.value)}
+                      />
+                      <Button type="submit" variant="primary" icon={<IcLock size={17} />}>
+                        Create PIN
+                      </Button>
+                    </form>
+                  ) : (
+                    <form
+                      className="row"
+                      style={{ marginTop: 10, flexDirection: 'column', alignItems: 'stretch' }}
+                      onSubmit={async (e: FormEvent) => {
+                        e.preventDefault();
+                        const r = await window.cadence?.authClear?.({ pin: clearPin.trim() });
+                        if (r?.ok) {
+                          setClearPin('');
+                          await refreshSession();
+                          toast.showSuccess(
+                            'PIN removed',
+                            'The lock screen will no longer appear at launch.',
+                          );
+                        } else {
+                          toast.showError('Incorrect PIN', r?.error);
+                        }
+                      }}
+                    >
+                      <input
+                        className="input"
+                        type="password"
+                        placeholder="Current PIN (to remove)"
+                        value={clearPin}
+                        onChange={(e) => setClearPin(e.target.value)}
+                      />
+                      <Button type="submit" variant="danger" icon={<IcTrash size={17} />}>
+                        Remove PIN protection
+                      </Button>
+                    </form>
+                  )}
+                </CollapsibleCard>
+              ) : null}
+            </>
+          ),
+        },
+        {
+          id: 'data',
+          content: (
+            <>
+              <BackupsRecoverySection
+                canExport={features.dataExport}
+                importBusy={importBusy}
+                onSetImportBusy={setImportBusy}
+                onExportJson={() => void exportJson()}
+                onExportPortableZip={() => void exportPortableZip()}
+                onExportFullBundle={() => void exportFullBundle()}
+                onImportBackup={() => fileRef.current?.click()}
+                onMergeImport={() => mergeFileRef.current?.click()}
+                onImportFolder={() => void importFullBundle()}
+                fileInput={
+                  <>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept="application/json,.json,application/zip,.zip"
+                      hidden
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!f) return;
+                        await importBackupFile(f);
+                      }}
+                    />
+                    <input
+                      ref={mergeFileRef}
+                      type="file"
+                      accept="application/json,.json,application/zip,.zip"
+                      hidden
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!f) return;
+                        await mergeImportFile(f);
+                      }}
+                    />
+                  </>
+                }
+              />
+              <StorageCacheSection />
+            </>
+          ),
+        },
+        {
+          id: 'integrations',
+          content: (
+            <>
+              {features.ai ? <AISettingsSection /> : null}
+              <CollapsibleCard id="reminders" title="Reminders" defaultOpen={false}>
+                <RemindersSettingsSection />
+              </CollapsibleCard>
+            </>
+          ),
+        },
+        {
+          id: 'about',
+          content: (
+            <>
+              <AppProfileSection
+                features={features}
+                managed={managed}
+                source={source}
+                setPreset={setPreset}
+              />
+              <CollapsibleCard
+                id="version"
+                title="Application version"
+                defaultOpen={false}
+                badge={formatAppVersion(appVersion).label}
+              >
+                {(() => {
+                  const v = formatAppVersion(appVersion);
+                  return (
+                    <>
+                      <p>
+                        Installed release: <strong>{v.label}</strong>
+                      </p>
+                      <p className="muted small">
+                        {v.build !== null ? <>Build {v.build} · </> : null}
+                        {v.raw ? <>Version {v.raw} · </> : null}
+                        Data schema v{data.version}
+                      </p>
+                    </>
+                  );
+                })()}
+              </CollapsibleCard>
+              <CollapsibleCard id="user-guide" title="User guide" defaultOpen={false}>
+                <p className="muted">
+                  Step-by-step help for daily use, backups, recovery codes, and sync. Nothing leaves
+                  your device unless you choose.
+                </p>
+                <div className="row" style={{ marginTop: 12 }}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    icon={<IcHelpCircle size={17} />}
+                    onClick={() => navigate('/guide')}
+                  >
+                    Open user guide
+                  </Button>
+                </div>
+              </CollapsibleCard>
+              {features.updateCheck ? (
+                <>
+                  <CollapsibleCard
+                    id="updates"
+                    title="Auto updates (GitHub Releases)"
+                    defaultOpen={false}
+                  >
+                    <p className="muted">
+                      When the packaged app launches, it checks GitHub Releases for a newer version.
+                      You can also check on demand below — a dialog will guide you through download
+                      and restart.
+                    </p>
+                    <div className="row" style={{ marginTop: 12 }}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        icon={<IcRefresh size={17} />}
+                        onClick={() => setUpdaterOpen(true)}
+                      >
+                        Check for updates
+                      </Button>
+                    </div>
+                  </CollapsibleCard>
+                  <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
+                </>
+              ) : null}
+            </>
+          ),
+        },
+      ]}
+    />
   );
 }
 

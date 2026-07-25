@@ -160,14 +160,11 @@ export function NotesVersionHistoryPanel({
                       editorKey={`${noteId}-${previewRevision.id}`}
                       value={previewBody}
                       valueFormat={previewFormat}
-                      editing={false}
-                      onEditingChange={() => {}}
                       editable={false}
                       minHeight={240}
                       attachmentScope={{ documentKind: 'note', documentId: noteId }}
                       attachmentUserId={attachmentUserId}
-                      previewHint="Read-only preview of this saved version"
-                      showModeToggle={false}
+                      chromeHint="Read-only preview of this saved version"
                       className="notes-version-history__preview-pane"
                     />
                   </>

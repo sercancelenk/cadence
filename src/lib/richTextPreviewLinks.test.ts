@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   actOnRichTextPreviewLink,
   findRichTextPreviewLink,
+  handleRichTextEditableLinkClick,
   handleRichTextPreviewLinkClick,
   isSafeRichTextPreviewHref,
+  richTextEditableLinkAction,
   richTextPreviewLinkAction,
 } from './richTextPreviewLinks';
 
@@ -21,10 +23,28 @@ describe('richTextPreviewLinks', () => {
     expect(findRichTextPreviewLink(root)).toBeNull();
   });
 
-  it('opens or copies based on modifier keys', () => {
+  it('read-only: opens or copies based on modifier keys', () => {
     expect(richTextPreviewLinkAction({ metaKey: false, ctrlKey: false })).toBe('open');
     expect(richTextPreviewLinkAction({ metaKey: true, ctrlKey: false })).toBe('copy');
     expect(richTextPreviewLinkAction({ metaKey: false, ctrlKey: true })).toBe('copy');
+  });
+
+  it('editable: plain click is caret; mod opens; mod+shift copies', () => {
+    expect(
+      richTextEditableLinkAction({ metaKey: false, ctrlKey: false, shiftKey: false }),
+    ).toBeNull();
+    expect(
+      richTextEditableLinkAction({ metaKey: true, ctrlKey: false, shiftKey: false }),
+    ).toBe('open');
+    expect(
+      richTextEditableLinkAction({ metaKey: false, ctrlKey: true, shiftKey: false }),
+    ).toBe('open');
+    expect(
+      richTextEditableLinkAction({ metaKey: true, ctrlKey: false, shiftKey: true }),
+    ).toBe('copy');
+    expect(
+      richTextEditableLinkAction({ metaKey: false, ctrlKey: true, shiftKey: true }),
+    ).toBe('copy');
   });
 
   it('opens external links in a new window', async () => {
@@ -80,6 +100,7 @@ describe('richTextPreviewLinks', () => {
       stopPropagation: () => {},
       metaKey: false,
       ctrlKey: false,
+      shiftKey: false,
     };
     await expect(handleRichTextPreviewLinkClick(event)).resolves.toBe(false);
   });
@@ -95,10 +116,68 @@ describe('richTextPreviewLinks', () => {
       stopPropagation: vi.fn(),
       metaKey: false,
       ctrlKey: false,
+      shiftKey: false,
     };
     await expect(handleRichTextPreviewLinkClick(event)).resolves.toBe(true);
     expect(event.preventDefault).toHaveBeenCalled();
     expect(open).toHaveBeenCalledWith('https://example.com/docs', '_blank', 'noopener,noreferrer');
     open.mockRestore();
+  });
+
+  it('handleRichTextEditableLinkClick ignores plain clicks', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const anchor = document.createElement('a');
+    anchor.href = 'https://example.com/docs';
+    const event = {
+      target: anchor,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+    };
+    await expect(handleRichTextEditableLinkClick(event)).resolves.toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it('handleRichTextEditableLinkClick opens on modifier click', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const anchor = document.createElement('a');
+    anchor.href = 'https://example.com/docs';
+    const event = {
+      target: anchor,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+    };
+    await expect(handleRichTextEditableLinkClick(event)).resolves.toBe(true);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith('https://example.com/docs', '_blank', 'noopener,noreferrer');
+    open.mockRestore();
+  });
+
+  it('handleRichTextEditableLinkClick copies on modifier+shift', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const anchor = document.createElement('a');
+    anchor.href = 'https://example.com/docs';
+    const event = {
+      target: anchor,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: true,
+    };
+    await expect(handleRichTextEditableLinkClick(event)).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledWith('https://example.com/docs');
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+    vi.unstubAllGlobals();
   });
 });

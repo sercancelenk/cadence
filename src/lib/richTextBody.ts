@@ -38,6 +38,16 @@ export function richTextPayloadIsEmpty(payload: RichTextPayload): boolean {
   );
 }
 
+/** True when persisted body fields have no structural content (image-only counts). */
+export function richBodyFieldsIsEmpty(fields: RichTextBodyFields): boolean {
+  const raw = fields.body?.trim() ?? '';
+  if (!raw) return true;
+  return (
+    canonicalDocSignature(raw, fields.bodyFormat) ===
+    canonicalDocSignature(EMPTY_RICH_DOC, 'prosemirror')
+  );
+}
+
 /**
  * Map editor payload → persisted body fields.
  * Image-only / table-only docs have empty plainText but must still save.

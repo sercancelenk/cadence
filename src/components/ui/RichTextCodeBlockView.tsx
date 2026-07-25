@@ -30,10 +30,11 @@ export function RichTextCodeBlockView({
   const isMermaid = isMermaidLanguage(language);
   const editable = editor.isEditable;
   const attrCollapsed = Boolean(node.attrs.collapsed);
-  // Preview mode cannot persist attrs — keep a local mirror for expand/collapse.
+  // Read-only cannot persist attrs — keep a local mirror for expand/collapse.
   const [previewCollapsed, setPreviewCollapsed] = useState(attrCollapsed);
-  // Prefer Source while editing so users can type Mermaid DSL before previewing.
-  const [mode, setMode] = useState<MermaidMode>(editable ? 'source' : 'preview');
+  // Always-edit notes open Mermaid as the diagram (former preview affordance);
+  // switch to Source only when the user wants to edit the DSL.
+  const [mode, setMode] = useState<MermaidMode>('preview');
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
@@ -46,14 +47,12 @@ export function RichTextCodeBlockView({
     setPreviewCollapsed(attrCollapsed);
   }, [attrCollapsed]);
 
+  // Leaving Mermaid: drop back to source (plain code). Entering Mermaid via the
+  // language picker sets Source in onChange so the user can type DSL; existing
+  // Mermaid blocks keep the initial Preview default (diagram-first).
   useEffect(() => {
     if (!isMermaid) setMode('source');
   }, [isMermaid]);
-
-  // Preview → Edit: return Mermaid to Source so the DSL is editable immediately.
-  useEffect(() => {
-    if (editable && isMermaid) setMode('source');
-  }, [editable, isMermaid]);
 
   const collapsed = editable ? attrCollapsed : previewCollapsed;
 
@@ -113,6 +112,8 @@ export function RichTextCodeBlockView({
     }, 280);
     return () => {
       window.clearTimeout(timer);
+      // Invalidate in-flight renders so stale completions cannot setState.
+      renderGen.current += 1;
     };
   }, [showMermaidPreview, source]);
 

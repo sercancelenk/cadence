@@ -18,9 +18,8 @@ type Props = {
   defaultGroupId?: string;
   /**
    * When the extractor is launched from a specific note, every task
-   * we create gets a `sourceNoteId` pointing back at it. The note
-   * then surfaces a "Tasks from this note" backlink panel and each
-   * task gets a clickable 📝 chip in the row view.
+   * we create gets a `sourceNoteId` (and a `noteTodoLinks` join row).
+   * Both sides surface the link via shared EntityLinkPills.
    */
   sourceNoteId?: string;
   /**

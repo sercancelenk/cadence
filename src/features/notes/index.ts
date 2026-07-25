@@ -1,5 +1,4 @@
 export { noteDisplayTitle, noteSidebarPreview, deriveStoredTitleFromPlainText } from './noteDisplay';
-export { NoteBacklinks, type NoteBacklinksProps } from './NoteBacklinks';
 export { NotesBodyEditor, type NotesBodyEditorProps } from './NotesBodyEditor';
 export { NotesListRow, type NotesListRowProps } from './NotesListRow';
 export { NotesListContextMenu, type NotesListContextMenuProps } from './NotesListContextMenu';

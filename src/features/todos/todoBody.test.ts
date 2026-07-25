@@ -106,6 +106,24 @@ describe('todoHasBody', () => {
     expect(todoHasBody(todo({ bodyPlainText: 'notes' }))).toBe(true);
     expect(todoHasBody(todo({ body: '# Title', bodyFormat: 'markdown' }))).toBe(true);
   });
+
+  it('is true for image-only prosemirror bodies', () => {
+    const body = JSON.stringify({
+      type: 'doc',
+      content: [
+        {
+          type: 'image',
+          attrs: {
+            src: 'cadence-attachment://todo-abc-111111111111',
+            attachmentId: 'todo-abc-111111111111',
+          },
+        },
+      ],
+    });
+    expect(todoHasBody(todo({ body, bodyFormat: 'prosemirror', bodyPlainText: undefined }))).toBe(
+      true,
+    );
+  });
 });
 
 describe('itemToBodyFields', () => {
@@ -145,6 +163,26 @@ describe('todoBodyPatchFromFields', () => {
       body: '{"type":"doc"}',
       bodyFormat: 'prosemirror' as const,
       bodyPlainText: 'Hello',
+    };
+    expect(todoBodyPatchFromFields(fields)).toEqual(fields);
+  });
+
+  it('persists image-only bodies even when plain text is empty', () => {
+    const fields = {
+      body: JSON.stringify({
+        type: 'doc',
+        content: [
+          {
+            type: 'image',
+            attrs: {
+              src: 'cadence-attachment://todo-abc-111111111111',
+              attachmentId: 'todo-abc-111111111111',
+            },
+          },
+        ],
+      }),
+      bodyFormat: 'prosemirror' as const,
+      bodyPlainText: undefined,
     };
     expect(todoBodyPatchFromFields(fields)).toEqual(fields);
   });

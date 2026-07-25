@@ -13,6 +13,12 @@ import { canonicalDocSignature } from '../../lib/richTextBody';
 import { applyCodeBlockLanguage } from '../../lib/richTextCodeBlock';
 import { createRichTextExtensions, isSafeEditorLinkUrl } from '../../lib/richTextEditorExtensions';
 import {
+  decidePendingExternalFlush,
+  shouldClearPendingOnPropsEcho,
+} from '../../lib/richTextExternalSync';
+import { createSlashCommandExtension } from '../../lib/richTextSlashCommand';
+import { RichTextBubbleToolbar } from './RichTextBubbleToolbar';
+import {
   attachmentUri,
   parseAttachmentId,
   type RichTextAttachmentScope,
@@ -43,6 +49,10 @@ import {
   serializeRichNodesToClipboardPlainText,
   writeRichClipboard,
 } from '../../lib/richTextClipboard';
+import {
+  handleRichTextEditableLinkClick,
+  handleRichTextPreviewLinkClick,
+} from '../../lib/richTextPreviewLinks';
 import { RichTextImageLightbox } from './RichTextImageLightbox';
 import { RichTextFindController } from './RichTextFindController';
 import { Tooltip } from './Tooltip';
@@ -74,13 +84,16 @@ export type RichTextEditorProps = {
   stickyToolbar?: boolean;
   /** When set, the toolbar renders into this element (e.g. sticky chrome above the editor). */
   toolbarMountEl?: HTMLElement | null;
-  /** Called when the user presses Escape while editing (e.g. switch to preview). */
-  onRequestPreview?: () => void;
   /** Fired when local edits are pending vs flushed to `onChange`. */
   onSaveStateChange?: (state: 'idle' | 'pending' | 'saved') => void;
-  /** Focus the editor once when it becomes editable (e.g. new note in edit mode). */
+  /** Focus the editor once when it becomes editable (e.g. new note). */
   autoFocus?: boolean;
   onAutoFocusHandled?: () => void;
+  /**
+   * Opt-in: when provided, the selection bubble shows “Create task”.
+   * Notes wire this; todos/people/utilities omit it (no UI change).
+   */
+  onCreateTaskFromSelection?: (title: string) => void;
 };
 
 function contentKey(
@@ -210,9 +223,9 @@ export function RichTextEditor({
   attachmentUserId,
   stickyToolbar = false,
   toolbarMountEl = null,
-  onRequestPreview,
   onSaveStateChange,
   autoFocus = false,
+  onCreateTaskFromSelection,
   onAutoFocusHandled,
 }: RichTextEditorProps) {
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
@@ -239,8 +252,6 @@ export function RichTextEditor({
   onChangeRef.current = onChange;
   const onBlurRef = useRef(onBlur);
   onBlurRef.current = onBlur;
-  const onRequestPreviewRef = useRef(onRequestPreview);
-  onRequestPreviewRef.current = onRequestPreview;
   const onSaveStateChangeRef = useRef(onSaveStateChange);
   onSaveStateChangeRef.current = onSaveStateChange;
   const onAutoFocusHandledRef = useRef(onAutoFocusHandled);
@@ -266,6 +277,22 @@ export function RichTextEditor({
   const closeImageLightboxRef = useRef<() => void>(() => {});
   /** Suppress duplicate parent writes when mount/hydration normalizes JSON without edits. */
   const lastEmittedSig = useRef<string | null>(null);
+  /**
+   * External value skipped while focused / debounce-pending. Applied at the
+   * next blur/flush boundary so sync/restore cannot be dropped forever.
+   * `queuedAtLocalGen` ties the queue to `localEditGen` so a later local emit
+   * never gets silently reverted by a stale queued document.
+   */
+  const pendingExternalRef = useRef<{
+    externalKey: string;
+    value: RichTextDoc | string | null | undefined;
+    formatArg: RichTextBodyFormat | undefined;
+    queuedAtLocalGen: number;
+  } | null>(null);
+  /** Bumped when we actually emit onChange — used to drop stale queued externals. */
+  const localEditGen = useRef(0);
+  // hydrateAndTrack is declared below; ref avoids TDZ / circular hook deps.
+  const hydrateAndTrackRef = useRef<(ed: Editor, userId: string) => Promise<void>>(async () => {});
 
   const [charCount, setCharCount] = useState(0);
 
@@ -285,14 +312,20 @@ export function RichTextEditor({
   );
 
   const externalKey = contentKey(value, valueFormat);
+  const lastExternalKey = useRef(externalKey);
 
   const extensions = useMemo(
-    () => createRichTextExtensions(placeholder),
+    () => [...createRichTextExtensions(placeholder), createSlashCommandExtension()],
     [placeholder],
   );
 
   const syncBaselineFromEditor = useCallback((ed: Editor) => {
     lastEmittedSig.current = docSignatureFromEditor(ed);
+    setCharCount(ed.getText().length);
+  }, []);
+
+  /** Display-only attachment URL swaps — never treat live doc as already-emitted. */
+  const refreshEditorMetrics = useCallback((ed: Editor) => {
     setCharCount(ed.getText().length);
   }, []);
 
@@ -317,10 +350,13 @@ export function RichTextEditor({
       return;
     }
     lastEmittedSig.current = sig;
+    localEditGen.current += 1;
     onChangeRef.current?.(payload);
     onSaveStateChangeRef.current?.('saved');
     setCharCount(payload.plainText.length);
   }, []);
+
+  const flushPendingExternalRef = useRef<() => void>(() => {});
 
   const scheduleChange = useCallback(
     (ed: Editor) => {
@@ -329,18 +365,75 @@ export function RichTextEditor({
       const ms = debounceMsRef.current;
       if (ms <= 0) {
         flushChange(ed);
+        flushPendingExternalRef.current();
         return;
       }
       if (pendingTimer.current) clearTimeout(pendingTimer.current);
       pendingTimer.current = setTimeout(() => {
         pendingTimer.current = null;
         flushChange(ed);
+        flushPendingExternalRef.current();
       }, ms);
     },
     [flushChange],
   );
 
-  const flushPending = useCallback(() => {
+  const applyExternalDocument = useCallback(
+    (
+      ed: Editor,
+      nextValue: RichTextDoc | string | null | undefined,
+      nextFormat: RichTextBodyFormat | undefined,
+      nextKey: string,
+    ) => {
+      lastExternalKey.current = nextKey;
+      setExternalContentPreservingSelection(ed, resolveRichTextContent(nextValue, nextFormat));
+      // Baseline from the live editor after setContent (canonical pre-sig can
+      // diverge slightly from what ProseMirror materializes).
+      syncBaselineFromEditor(ed);
+      const uid = attachmentUserIdRef.current;
+      if (uid) {
+        void hydrateAndTrackRef.current(ed, uid).then(() => {
+          if (editorRef.current) refreshEditorMetrics(editorRef.current);
+        });
+      }
+    },
+    [refreshEditorMetrics, syncBaselineFromEditor],
+  );
+
+  const flushPendingExternal = useCallback(() => {
+    const pending = pendingExternalRef.current;
+    const ed = editorRef.current;
+    if (!pending || !ed) return;
+
+    const incomingSig = canonicalDocSignature(pending.value, pending.formatArg);
+    const liveSig = docSignatureFromEditor(ed);
+    const decision = decidePendingExternalFlush({
+      hasPending: true,
+      hasFocus: ed.view.hasFocus(),
+      hasPendingTimer: pendingTimer.current !== null,
+      incomingSig,
+      liveSig,
+      lastEmittedSig: lastEmittedSig.current,
+      queuedAtLocalGen: pending.queuedAtLocalGen,
+      localEditGen: localEditGen.current,
+    });
+
+    if (decision.action === 'wait') return;
+
+    pendingExternalRef.current = null;
+
+    if (decision.action === 'ack' || decision.action === 'drop-stale') {
+      // Ack the key so the same stale props do not re-queue forever; keep live.
+      lastExternalKey.current = pending.externalKey;
+      lastEmittedSig.current = liveSig;
+      return;
+    }
+
+    applyExternalDocument(ed, pending.value, pending.formatArg, pending.externalKey);
+  }, [applyExternalDocument]);
+  flushPendingExternalRef.current = flushPendingExternal;
+
+  const flushLocalPending = useCallback(() => {
     if (pendingTimer.current) {
       clearTimeout(pendingTimer.current);
       pendingTimer.current = null;
@@ -349,13 +442,21 @@ export function RichTextEditor({
     if (ed) flushChange(ed);
   }, [flushChange]);
 
+  const flushPending = useCallback(() => {
+    flushLocalPending();
+    flushPendingExternal();
+  }, [flushLocalPending, flushPendingExternal]);
+
   useEffect(() => {
     return () => {
-      flushPending();
+      // Unmount: persist local edits only — never apply queued external docs
+      // into an editor that is tearing down.
+      flushLocalPending();
+      pendingExternalRef.current = null;
       releaseAttachmentBlobUrls(attachmentIdsRef.current);
       attachmentIdsRef.current.clear();
     };
-  }, [flushPending]);
+  }, [flushLocalPending]);
 
   useEffect(() => {
     const onBeforeSync = () => flushPending();
@@ -454,14 +555,24 @@ export function RichTextEditor({
     [],
   );
 
-  const handleEditorImageClick = useCallback(
+  /**
+   * Always-edit: mod-click opens links / mod+shift copies; double-click images.
+   * Read-only: plain-click opens links / mod copies; single-click images lightbox.
+   */
+  const handleEditorClickCapture = useCallback(
     (event: MouseEvent) => {
-      if (editableRef.current) return;
+      if (editableRef.current) {
+        void handleRichTextEditableLinkClick(event);
+        return;
+      }
       const img = findRichTextEditorImage(event.target);
-      if (!img) return;
-      event.preventDefault();
-      event.stopPropagation();
-      void openImageLightbox(img);
+      if (img) {
+        event.preventDefault();
+        event.stopPropagation();
+        void openImageLightbox(img);
+        return;
+      }
+      void handleRichTextPreviewLinkClick(event);
     },
     [openImageLightbox],
   );
@@ -484,6 +595,7 @@ export function RichTextEditor({
       attachmentIdsRef.current.add(id);
     }
   }, []);
+  hydrateAndTrackRef.current = hydrateAndTrack;
 
   const editor = useEditor({
     extensions,
@@ -515,11 +627,6 @@ export function RichTextEditor({
         if (event.key === 'Escape' && imageLightboxOpenRef.current) {
           event.preventDefault();
           closeImageLightboxRef.current();
-          return true;
-        }
-        if (event.key === 'Escape' && editableRef.current && onRequestPreviewRef.current) {
-          event.preventDefault();
-          onRequestPreviewRef.current();
           return true;
         }
         return false;
@@ -601,7 +708,9 @@ export function RichTextEditor({
       editorRef.current = ed;
       if (!transaction.docChanged) return;
       if (transaction.getMeta(HYDRATION_TX_META)) {
-        syncBaselineFromEditor(ed);
+        // Attachment display-URL swaps only — never advance the emit baseline
+        // (async hydration can race with typed edits already debounced).
+        refreshEditorMetrics(ed);
         return;
       }
       if (!editableRef.current) {
@@ -616,7 +725,9 @@ export function RichTextEditor({
       tryAutoFocus(ed);
       void fetchRichTextAttachmentUserId(attachmentUserIdRef.current).then((uid) => {
         attachmentUserIdRef.current = uid;
-        void hydrateAndTrack(ed, uid).then(() => syncBaselineFromEditor(ed));
+        void hydrateAndTrackRef.current(ed, uid).then(() => {
+          if (editorRef.current) refreshEditorMetrics(editorRef.current);
+        });
       });
     },
     onBlur: () => {
@@ -627,7 +738,6 @@ export function RichTextEditor({
 
   editorRef.current = editor;
 
-  const lastExternalKey = useRef(externalKey);
   useEffect(() => {
     if (!editor) return;
     if (externalKey === lastExternalKey.current) return;
@@ -639,30 +749,44 @@ export function RichTextEditor({
     if (incomingSig === lastEmittedSig.current || incomingSig === liveSig) {
       lastExternalKey.current = externalKey;
       lastEmittedSig.current = liveSig;
+      const pending = pendingExternalRef.current;
+      if (pending) {
+        const pendingSig = canonicalDocSignature(pending.value, pending.formatArg);
+        if (
+          shouldClearPendingOnPropsEcho({
+            hasPending: true,
+            pendingSig,
+            incomingSig,
+            liveSig,
+            queuedAtLocalGen: pending.queuedAtLocalGen,
+            localEditGen: localEditGen.current,
+          })
+        ) {
+          pendingExternalRef.current = null;
+        }
+      }
       return;
     }
 
     // Parent props lag local typing (debounced onChange) or body/format split —
     // never clobber focused/pending editor state with stale empty content.
+    // Queue the latest external value and apply it after blur/flush.
     if (
       incomingSig !== liveSig &&
       (editor.view.hasFocus() || pendingTimer.current !== null)
     ) {
+      pendingExternalRef.current = {
+        externalKey,
+        value,
+        formatArg,
+        queuedAtLocalGen: localEditGen.current,
+      };
       return;
     }
 
-    lastExternalKey.current = externalKey;
-    lastEmittedSig.current = incomingSig;
-    setExternalContentPreservingSelection(
-      editor,
-      resolveRichTextContent(value, formatArg),
-    );
-    syncBaselineFromEditor(editor);
-    const uid = attachmentUserIdRef.current;
-    if (uid) {
-      void hydrateAndTrack(editor, uid).then(() => syncBaselineFromEditor(editor));
-    }
-  }, [editor, externalKey, value, formatArg, hydrateAndTrack, syncBaselineFromEditor]);
+    pendingExternalRef.current = null;
+    applyExternalDocument(editor, value, formatArg, externalKey);
+  }, [editor, externalKey, value, formatArg, applyExternalDocument]);
 
   useEffect(() => {
     if (!editor) return;
@@ -692,20 +816,24 @@ export function RichTextEditor({
       if (cancelled) return;
       attachmentUserIdRef.current = uid;
       if (editor) {
-        void hydrateAndTrack(editor, uid).then(() => syncBaselineFromEditor(editor));
+        void hydrateAndTrack(editor, uid).then(() => {
+          if (editorRef.current) refreshEditorMetrics(editorRef.current);
+        });
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [attachmentUserId, editor, hydrateAndTrack, syncBaselineFromEditor]);
+  }, [attachmentUserId, editor, hydrateAndTrack, refreshEditorMetrics]);
 
   useEffect(() => {
     if (!editor) return;
     const uid = attachmentUserIdRef.current;
     if (!uid) return;
-    void hydrateAndTrack(editor, uid).then(() => syncBaselineFromEditor(editor));
-  }, [editor, externalKey, hydrateAndTrack, syncBaselineFromEditor]);
+    void hydrateAndTrack(editor, uid).then(() => {
+      if (editorRef.current) refreshEditorMetrics(editorRef.current);
+    });
+  }, [editor, externalKey, hydrateAndTrack, refreshEditorMetrics]);
 
   const overSoft = showSizeWarning && isRichTextOverSoftLimit(charCount);
   const overHard = charCount > RICH_TEXT_HARD_CHAR_LIMIT;
@@ -723,7 +851,7 @@ export function RichTextEditor({
     <div
       className={`rich-editor${stickyToolbar ? ' rich-editor--sticky-toolbar' : ''}${className ? ` ${className}` : ''}`}
       style={{ '--rich-editor-min-h': `${minHeight}px` } as CSSProperties}
-      onClickCapture={handleEditorImageClick}
+      onClickCapture={handleEditorClickCapture}
       onDoubleClickCapture={handleEditorImageDoubleClick}
     >
       {toolbarNode && !toolbarMountEl ? toolbarNode : null}
@@ -761,6 +889,12 @@ export function RichTextEditor({
         />
       ) : null}
       <EditorContent editor={editor} className="rich-editor__surface" />
+      {editor && editable ? (
+        <RichTextBubbleToolbar
+          editor={editor}
+          onCreateTaskFromSelection={onCreateTaskFromSelection}
+        />
+      ) : null}
       {imageLightbox ? (
         <RichTextImageLightbox
           src={imageLightbox.src}

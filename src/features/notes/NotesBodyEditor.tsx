@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { EntityLinkPills } from '../../components/ui/EntityLinkPills';
 import { EntityLinkPicker } from '../../components/ui/EntityLinkPicker';
-import { NoteBacklinks } from './NoteBacklinks';
 import { RichTextDocumentPane } from '../../components/ui/RichTextDocumentPane';
 import type { RichTextPayload } from '../../lib/richText';
 import type { RichTextBodyFormat } from '../../lib/richText';
@@ -19,8 +18,6 @@ export type NotesBodyEditorProps = {
   editorBody: RichTextDoc | string;
   editorBodyFormat: RichTextBodyFormat | 'auto';
   editorReady: boolean;
-  bodyEditing: boolean;
-  onBodyEditingChange: (editing: boolean) => void;
   editorAutoFocus?: boolean;
   onEditorAutoFocusHandled?: () => void;
   onChangeBody: (payload: RichTextPayload) => void;
@@ -31,6 +28,8 @@ export type NotesBodyEditorProps = {
   onOpenTask: (taskId: string) => void;
   onLinkTodo?: (todoId: string) => void;
   onUnlinkTodo?: (todoId: string) => void;
+  /** Selection bubble → create Cadence todo (does not mutate note body). */
+  onCreateTaskFromSelection?: (title: string) => void;
 };
 
 export function NotesBodyEditor({
@@ -38,8 +37,6 @@ export function NotesBodyEditor({
   editorBody,
   editorBodyFormat,
   editorReady,
-  bodyEditing,
-  onBodyEditingChange,
   editorAutoFocus = false,
   onEditorAutoFocusHandled,
   onChangeBody,
@@ -50,6 +47,7 @@ export function NotesBodyEditor({
   onOpenTask,
   onLinkTodo,
   onUnlinkTodo,
+  onCreateTaskFromSelection,
 }: NotesBodyEditorProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -98,25 +96,15 @@ export function NotesBodyEditor({
         editorKey={noteId}
         value={editorBody}
         valueFormat={editorBodyFormat}
-        editing={bodyEditing}
-        onEditingChange={onBodyEditingChange}
-        autoFocusEditor={editorAutoFocus}
-        onEditorAutoFocusHandled={onEditorAutoFocusHandled}
         onChange={onChangeBody}
         editable={editorReady}
+        autoFocusEditor={editorAutoFocus}
+        onEditorAutoFocusHandled={onEditorAutoFocusHandled}
         placeholder="Write your note…"
         minHeight={360}
         attachmentScope={{ documentKind: 'note', documentId: noteId }}
         attachmentUserId={attachmentUserId}
-        previewHint="Use Edit to change this note · Click images to enlarge · Click links to open · ⌘/Ctrl+click to copy"
-      />
-
-      <NoteBacklinks
-        noteId={noteId}
-        todoItems={todoItems}
-        todoGroups={todoGroups}
-        noteTodoLinks={noteTodoLinks}
-        onOpenTask={onOpenTask}
+        onCreateTaskFromSelection={onCreateTaskFromSelection}
       />
 
       {onLinkTodo ? (

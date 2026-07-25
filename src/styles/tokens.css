@@ -53,6 +53,12 @@
   --font: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
     Helvetica, Arial, sans-serif;
   --font-feature: 'ss01', 'ss02';
+  /* Appearance prefs (AppearanceProvider) — device-local, not AppData.
+     --ui-scale: shell + main page chrome (lists, toolbars); tip tap counter-zooms.
+     --editor-font-*: rich-text note/document bodies only. */
+  --ui-scale: 1;
+  --editor-font-size: 15px;
+  --editor-font-family: var(--font);
   --topbar-h: 56px;
   --mobile-tabbar-h: 58px;
   --sidebar-w: 280px;

@@ -61,7 +61,6 @@ export function useNotesEditor(
   const [decrypted, setDecrypted] = useState<
     ({ noteId: string } & RichTextBodyFields) | null
   >(null);
-  const [bodyEditing, setBodyEditing] = useState(false);
   const [editorAutoFocus, setEditorAutoFocus] = useState(false);
   const lastSelectedIdRef = useRef<string | null>(null);
   const encryptGenByNote = useRef(new Map<string, number>());
@@ -181,7 +180,6 @@ export function useNotesEditor(
   useEffect(() => {
     if (!selected?.id) {
       lastSelectedIdRef.current = null;
-      setBodyEditing(false);
       setEditorAutoFocus(false);
       return;
     }
@@ -191,22 +189,15 @@ export function useNotesEditor(
     lastSelectedIdRef.current = selected.id;
 
     if (intentId === selected.id) {
-      setBodyEditing(true);
       setEditorAutoFocus(true);
       if (createNoteEditIntentRef) createNoteEditIntentRef.current = null;
       return;
     }
 
     if (selectionChanged) {
-      setBodyEditing(false);
       setEditorAutoFocus(false);
     }
   }, [selected?.id, createNoteEditIntentRef]);
-
-  const openBodyEditor = useCallback((withFocus = false) => {
-    setBodyEditing(true);
-    setEditorAutoFocus(withFocus);
-  }, []);
 
   const clearEditorAutoFocus = useCallback(() => {
     setEditorAutoFocus(false);
@@ -300,11 +291,10 @@ export function useNotesEditor(
 
   const hideSelected = async () => {
     if (!selected || !selected.locked) return;
-    setBodyEditing(false);
     // Flush the debounced editor buffer AND encrypt the pending locked body
-    // before dropping the session key. Otherwise the editor's unmount flush
-    // (triggered by setBodyEditing(false)) fires onChangeBody after unlock.clear(),
-    // which bails with no key — silently losing up to one debounce of edits.
+    // before dropping the session key / unmounting into NotesLockedView.
+    // Order is critical: unlock.clear() before flush would drop up to one
+    // debounce of edits (editor onChangeBody bails with no key).
     await runBeforeFlushHooks();
     setDecrypted(null);
     unlock.clear();
@@ -313,9 +303,6 @@ export function useNotesEditor(
   return {
     decrypted,
     setDecrypted,
-    bodyEditing,
-    setBodyEditing,
-    openBodyEditor,
     editorAutoFocus,
     clearEditorAutoFocus,
     decryptedForSelected,

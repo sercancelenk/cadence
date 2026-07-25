@@ -19,6 +19,25 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/*
+ * Appearance → "App & menus" scale.
+ * Zooms shell chrome AND the main page column (notes list, toolbars, settings…)
+ * so in-page UI grows with the control. TipTap body is counter-zoomed in
+ * richtext.css so "Editor size/font" stay independent.
+ */
+.topbar,
+.app-sidebar,
+.mobile-tabbar,
+.quick-fab,
+.back-to-top-fab,
+.main,
+/* Portaled above the shell — still part of “App & menus”. */
+.cmdp,
+/* Body-portaled AppModal panels (not the full-screen backdrop). */
+.app-modal-backdrop > .app-modal {
+  zoom: var(--ui-scale, 1);
+}
+
 a {
   color: var(--accent);
 }

@@ -1,4 +1,4 @@
-/** Find the nearest anchor in a rich-text preview surface. */
+/** Find the nearest anchor in a rich-text surface. */
 export function findRichTextPreviewLink(target: EventTarget | null): HTMLAnchorElement | null {
   if (!(target instanceof Element)) return null;
   const anchor = target.closest('a[href]');
@@ -9,7 +9,7 @@ export type RichTextPreviewLinkAction = 'open' | 'copy';
 
 const SAFE_PREVIEW_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 
-/** Only http(s) and mailto links are opened or copied from note preview. */
+/** Only http(s) and mailto links are opened or copied from note surfaces. */
 export function isSafeRichTextPreviewHref(href: string): boolean {
   try {
     const url = new URL(href);
@@ -19,12 +19,27 @@ export function isSafeRichTextPreviewHref(href: string): boolean {
   }
 }
 
-/** Modifier-click copies; plain click opens in the system browser. */
+/**
+ * Read-only surface (e.g. version history): plain click opens; modifier copies.
+ */
 export function richTextPreviewLinkAction(event: {
   metaKey: boolean;
   ctrlKey: boolean;
 }): RichTextPreviewLinkAction {
   return event.metaKey || event.ctrlKey ? 'copy' : 'open';
+}
+
+/**
+ * Editable surface: plain click leaves caret placement to the editor.
+ * Modifier opens; modifier+Shift copies (preserves former preview affordances).
+ */
+export function richTextEditableLinkAction(event: {
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+}): RichTextPreviewLinkAction | null {
+  if (!(event.metaKey || event.ctrlKey)) return null;
+  return event.shiftKey ? 'copy' : 'open';
 }
 
 export async function actOnRichTextPreviewLink(
@@ -45,9 +60,14 @@ export async function actOnRichTextPreviewLink(
   return true;
 }
 
-export async function handleRichTextPreviewLinkClick(
-  event: Pick<MouseEvent, 'target' | 'preventDefault' | 'stopPropagation' | 'metaKey' | 'ctrlKey'>,
+async function handleLinkClick(
+  event: Pick<
+    MouseEvent,
+    'target' | 'preventDefault' | 'stopPropagation' | 'metaKey' | 'ctrlKey' | 'shiftKey'
+  >,
+  action: RichTextPreviewLinkAction | null,
 ): Promise<boolean> {
+  if (!action) return false;
   const anchor = findRichTextPreviewLink(event.target);
   if (!anchor) return false;
 
@@ -57,5 +77,23 @@ export async function handleRichTextPreviewLinkClick(
   event.preventDefault();
   event.stopPropagation();
 
-  return actOnRichTextPreviewLink(href, richTextPreviewLinkAction(event));
+  return actOnRichTextPreviewLink(href, action);
+}
+
+export async function handleRichTextPreviewLinkClick(
+  event: Pick<
+    MouseEvent,
+    'target' | 'preventDefault' | 'stopPropagation' | 'metaKey' | 'ctrlKey' | 'shiftKey'
+  >,
+): Promise<boolean> {
+  return handleLinkClick(event, richTextPreviewLinkAction(event));
+}
+
+export async function handleRichTextEditableLinkClick(
+  event: Pick<
+    MouseEvent,
+    'target' | 'preventDefault' | 'stopPropagation' | 'metaKey' | 'ctrlKey' | 'shiftKey'
+  >,
+): Promise<boolean> {
+  return handleLinkClick(event, richTextEditableLinkAction(event));
 }

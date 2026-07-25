@@ -154,8 +154,8 @@ Reference implementations in:
 - **Sort modes (created/updated/completed)** — UI-only; does not mutate persisted `sortOrder`
 - **Rich-text (Tiptap / ProseMirror)** — legacy markdown bodies load unchanged until first edit; `bodyFormat` optional; sidecar attachments are additive (inline `data:image` in old markdown unaffected by orphan GC)
 - **Notes list stability** — editor mount no longer bumps `updatedAt` via no-op patch guard + onChange dedupe
-- **Notes preview/edit** — Preview/Edit tabs on note body; toolbar only in edit mode; double-click to edit
-- **Editor UX (shared pane)** — `RichTextDocumentPane`: sticky Preview/Edit tabs, sticky toolbar, Esc → preview, autosave indicator (Saving… / Saved), ⌘B/⌘I/⌘Z hints
+- **Notes always-edit** — unlocked notes open editable (no Preview/Edit tabs); toolbar + autosave chrome always available
+- **Editor UX (shared pane)** — `RichTextDocumentPane`: sticky toolbar, autosave indicator (Saving… / Saved), ⌘B/⌘I/⌘Z hints; ⌘/Ctrl+click links; double-click images
 - **Utilities → Document** — sidebar section with standalone scratch document (`utilityDocument` in workspace JSON); not a note or todo
 - **Utilities → JSON / YAML** — CodeMirror editor with folding, validation, pretty-print, side-by-side diff (Before/After buffers), JSON-only compact/stringify; autosaved as `utilityStructuredText`
 - **Global search → todos** — palette deep-links with `?focus=`; filters relax so the row is visible
@@ -172,8 +172,8 @@ Reference implementations in:
 | **Architecture (Phase B0)** | `src/providers/`, `src/core/model/`, `src/core/actions/`; root re-export shims (zero runtime impact) |
 | **Architecture (Phase B2, partial)** | `src/features/todos/` — row, section, toolbar, hooks; `TodosPage` ~317 lines |
 | **Architecture (Phase B2, notes)** | `src/features/notes/` — sidebar, editor, lock dialogs, hooks; `NotesPage` ~207 lines |
-| **Notes UX** | Preview/Edit mode on note body; toolbar hidden until Edit |
-| **Editor UX** | Shared `RichTextDocumentPane`; Esc → preview; sticky tabs + toolbar; save status |
+| **Notes UX** | Always-edit note body (Apple Notes-style); no Preview/Edit toggle |
+| **Editor UX** | Shared `RichTextDocumentPane`; sticky toolbar; save status; mod-click links |
 | **Utilities** | Sidebar **Utilities** section; **Document** scratch pad; **JSON / YAML** editor with Edit/Diff, folding, format/validate, JSON compact/stringify |
 | **Production hardening (Phase F)** | fsync refusal; before-quit renderer flush; sandbox; CDNC1 envelope; IPC policy guard; crash reporting init; `usePersistStatus` / selector migration (Notes, Todos, shell); `STORAGE_PREFIX` fix; manual smoke: restart persist + backup restore **verified 2026-06-04** |
 | **Cross-device docs** | [docs/LAN-SYNC.md](./LAN-SYNC.md) — offline encrypted-backup transfer + merge |

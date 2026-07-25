@@ -8,6 +8,7 @@ import {
   parseBodyFormat,
   plainTextFromBodyFields,
   richBodyFieldsFromPayload,
+  richBodyFieldsIsEmpty,
   richTextPayloadIsEmpty,
   richTextPayloadToBodyFields,
   prepareStoredRichBodyForDisplay,
@@ -130,6 +131,32 @@ describe('richTextPayloadToBodyFields', () => {
   it('drops empty plain text', () => {
     const fields = richTextPayloadToBodyFields({ doc: EMPTY_RICH_DOC, plainText: '   ' });
     expect(fields.bodyPlainText).toBeUndefined();
+  });
+});
+
+describe('richBodyFieldsIsEmpty', () => {
+  it('is false for image-only prosemirror bodies', () => {
+    const doc = {
+      type: 'doc' as const,
+      content: [
+        {
+          type: 'image' as const,
+          attrs: {
+            src: 'cadence-attachment://note-abc-111111111111',
+            attachmentId: 'note-abc-111111111111',
+          },
+        },
+      ],
+    };
+    const fields = richBodyFieldsFromPayload({ doc, plainText: '' });
+    expect(richBodyFieldsIsEmpty(fields)).toBe(false);
+  });
+
+  it('is true for empty / whitespace bodies', () => {
+    expect(richBodyFieldsIsEmpty({ body: '', bodyFormat: undefined })).toBe(true);
+    expect(
+      richBodyFieldsIsEmpty(richBodyFieldsFromPayload({ doc: EMPTY_RICH_DOC, plainText: '' })),
+    ).toBe(true);
   });
 });
 

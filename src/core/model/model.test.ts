@@ -399,7 +399,7 @@ describe('shapeOfData — last-known-good fingerprint', () => {
 
 /**
  * `sourceNoteId` is the cross-link that lets a todo show a 📝 backlink
- * chip and a note show a "Tasks from this note" panel. The migration
+ * chip and a note show linked EntityLinkPills. The migration
  * has to preserve it through a normalize round-trip without leaking
  * empty strings or non-string junk into the persisted file (any of
  * those would corrupt the backlinks panel's filter).

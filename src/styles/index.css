@@ -1,4 +1,5 @@
 /* Cadence styles — modular entry (replaces monolithic app.css) */
+@import 'tippy.js/dist/tippy.css';
 @import './tokens.css';
 @import './base.css';
 @import './toast.css';

@@ -801,7 +801,7 @@
   }
 }
 
-/* Shared Preview/Edit pane (Notes body + Utilities document). */
+/* Shared always-edit pane (Notes body + Utilities document). */
 .rich-doc-pane {
   display: flex;
   flex-direction: column;
@@ -824,6 +824,16 @@
 
 .rich-doc-pane__header {
   flex-shrink: 0;
+}
+
+.rich-doc-pane__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding: 4px 0 8px;
+  min-height: 28px;
 }
 
 .rich-doc-pane__mode {
@@ -868,13 +878,12 @@
 }
 
 .rich-doc-pane__kbd-hint {
-  margin-left: auto;
   font-size: 11.5px;
   letter-spacing: -0.01em;
 }
 
 .rich-doc-pane__save {
-  margin-left: 8px;
+  margin-left: 4px;
   font-size: 11.5px;
   font-weight: 600;
   color: var(--muted);
@@ -920,6 +929,11 @@
 
 .rich-doc-pane__surface--preview .rich-editor__surface .tiptap a {
   cursor: pointer;
+}
+
+/* Always-edit: plain click places the caret; modifier-click opens (see chrome hint). */
+.rich-doc-pane__surface:not(.rich-doc-pane__surface--preview) .rich-editor__surface .tiptap a {
+  cursor: text;
 }
 
 .rich-doc-pane__loading {

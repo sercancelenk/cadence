@@ -13,4 +13,15 @@ export {
   type PersistError,
 } from './AppDataContext';
 export { NotesUnlockProvider, useNotesUnlock } from './NotesUnlockContext';
-export { ThemeProvider, useTheme, type ThemeMode } from './ThemeContext';
+export {
+  ThemeProvider,
+  AppearanceProvider,
+  useAppearance,
+  useTheme,
+  type AppearancePrefs,
+  type EditorFontFamily,
+  type EditorFontSize,
+  type ThemeMode,
+  type ThemePreference,
+  type UiScale,
+} from './ThemeContext';

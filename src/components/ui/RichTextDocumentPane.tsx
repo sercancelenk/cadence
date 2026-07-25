@@ -1,52 +1,54 @@
 import { useEffect, useRef, useState } from 'react';
-import { IcCheck, IcPencil } from '../icons';
 import { RichTextEditor } from './RichTextEditor';
-import { Tooltip } from './Tooltip';
 import type { RichTextPayload } from '../../lib/richText';
 import type { RichTextBodyFormat } from '../../lib/richText';
 import type { RichTextDoc } from '../../lib/richText';
 import type { RichTextAttachmentScope } from '../../lib/richTextAttachmentUri';
-import { handleRichTextPreviewLinkClick } from '../../lib/richTextPreviewLinks';
 
 export type RichTextDocumentPaneProps = {
   editorKey?: string;
   value: RichTextDoc | string;
   valueFormat?: RichTextBodyFormat | 'auto';
-  editing: boolean;
-  onEditingChange: (editing: boolean) => void;
   onChange?: (payload: RichTextPayload) => void;
+  /** When false, read-only (version history). Default true — always-edit, no mode tabs. */
   editable?: boolean;
   placeholder?: string;
   minHeight?: number;
   attachmentScope?: RichTextAttachmentScope;
   attachmentUserId?: string;
-  /** Shown beside mode tabs in preview mode. */
-  previewHint?: string;
-  /** When false, hide Preview/Edit tabs (read-only surfaces like version history). */
-  showModeToggle?: boolean;
+  /** Shown in the chrome row (gesture tips or read-only label). */
+  chromeHint?: string;
   className?: string;
-  /** Focus the editor surface once when entering edit mode (e.g. new note). */
+  /** Focus the editor surface once when mounted editable (e.g. new note). */
   autoFocusEditor?: boolean;
   onEditorAutoFocusHandled?: () => void;
+  /** Opt-in bubble “Create task” — notes only; other panes leave undefined. */
+  onCreateTaskFromSelection?: (title: string) => void;
 };
 
+const EDITABLE_CHROME_HINT =
+  'Type / for blocks · Select text for format bubble · Double-click images · ⌘/Ctrl+click links';
+
+/**
+ * Shared note/document chrome: always-edit when unlocked, with sticky toolbar
+ * and save indicator. Read-only surfaces (version history) pass editable={false}.
+ * There is no Preview/Edit mode toggle — TipTap is already WYSIWYG.
+ */
 export function RichTextDocumentPane({
   editorKey = 'default',
   value,
   valueFormat = 'auto',
-  editing,
-  onEditingChange,
   onChange,
   editable = true,
   placeholder = 'Write here…',
   minHeight = 360,
   attachmentScope,
   attachmentUserId,
-  previewHint = 'Use Edit to change this note · Click images to enlarge · Click links to open · ⌘/Ctrl+click to copy',
-  showModeToggle = true,
+  chromeHint,
   className = '',
   autoFocusEditor = false,
   onEditorAutoFocusHandled,
+  onCreateTaskFromSelection,
 }: RichTextDocumentPaneProps) {
   const [saveState, setSaveState] = useState<'idle' | 'pending' | 'saved'>('idle');
   const [toolbarMountEl, setToolbarMountEl] = useState<HTMLElement | null>(null);
@@ -59,8 +61,8 @@ export function RichTextDocumentPane({
   }, []);
 
   useEffect(() => {
-    if (!editing) setToolbarMountEl(null);
-  }, [editing]);
+    if (!editable) setToolbarMountEl(null);
+  }, [editable]);
 
   const handleSaveStateChange = (state: 'idle' | 'pending' | 'saved') => {
     setSaveState(state);
@@ -73,74 +75,34 @@ export function RichTextDocumentPane({
   const saveLabel =
     saveState === 'pending' ? 'Saving…' : saveState === 'saved' ? 'Saved' : null;
 
-  const onPreviewSurfaceClick = (event: React.MouseEvent) => {
-    if (editing) return;
-    void handleRichTextPreviewLinkClick(event);
-  };
+  const hint = chromeHint ?? (editable ? EDITABLE_CHROME_HINT : undefined);
 
   return (
     <div className={`rich-doc-pane${className ? ` ${className}` : ''}`}>
       <div className="rich-doc-pane__chrome">
-        {showModeToggle ? (
-          <div className="rich-doc-pane__mode" role="tablist" aria-label="Document mode">
-            <Tooltip label="Preview — read-only view of this note" placement="bottom">
-              <button
-                type="button"
-                className={`rich-doc-pane__mode-tab${!editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
-                role="tab"
-                aria-selected={!editing}
-                onClick={() => onEditingChange(false)}
-              >
-                <IcCheck size={14} />
-                <span>Preview</span>
-              </button>
-            </Tooltip>
-            <Tooltip
-              label={editable ? 'Edit — change title and body' : 'Unlock this note to edit'}
-              placement="bottom"
+        <div className="rich-doc-pane__status" aria-label={editable ? 'Editor' : 'Read-only'}>
+          {editable ? (
+            <span className="rich-doc-pane__kbd-hint muted small">
+              / blocks · ⌘B bold · ⌘I italic · ⌘Z undo
+            </span>
+          ) : null}
+          {hint ? <span className="rich-doc-pane__hint muted small">{hint}</span> : null}
+          {editable && saveLabel ? (
+            <span
+              className={`rich-doc-pane__save${saveState === 'pending' ? ' rich-doc-pane__save--pending' : ''}`}
+              role="status"
+              aria-live="polite"
             >
-              <button
-                type="button"
-                className={`rich-doc-pane__mode-tab${editing ? ' rich-doc-pane__mode-tab--active' : ''}`}
-                role="tab"
-                aria-selected={editing}
-                disabled={!editable}
-                onClick={() => {
-                  if (editable) onEditingChange(true);
-                }}
-              >
-                <IcPencil size={14} />
-                <span>Edit</span>
-              </button>
-            </Tooltip>
-            {!editing && previewHint ? (
-              <span className="rich-doc-pane__hint muted small">{previewHint}</span>
-            ) : null}
-            {editing ? (
-              <span className="rich-doc-pane__kbd-hint muted small">
-                ⌘B bold · ⌘I italic · ⌘Z undo · Esc preview
-              </span>
-            ) : null}
-            {editing && saveLabel ? (
-              <span
-                className={`rich-doc-pane__save${saveState === 'pending' ? ' rich-doc-pane__save--pending' : ''}`}
-                role="status"
-                aria-live="polite"
-              >
-                {saveLabel}
-              </span>
-            ) : null}
-          </div>
-        ) : previewHint ? (
-          <p className="rich-doc-pane__hint muted small">{previewHint}</p>
-        ) : null}
-        {editing ? (
+              {saveLabel}
+            </span>
+          ) : null}
+        </div>
+        {editable ? (
           <div ref={setToolbarMountEl} className="rich-doc-pane__toolbar-host" />
         ) : null}
       </div>
       <div
-        className={`rich-doc-pane__surface${editing ? '' : ' rich-doc-pane__surface--preview'}`}
-        onClickCapture={onPreviewSurfaceClick}
+        className={`rich-doc-pane__surface${editable ? '' : ' rich-doc-pane__surface--preview'}`}
       >
         <RichTextEditor
           key={editorKey}
@@ -148,16 +110,16 @@ export function RichTextDocumentPane({
           valueFormat={valueFormat}
           onChange={onChange}
           placeholder={placeholder}
-          minHeight={editing ? minHeight : Math.min(minHeight, 120)}
-          editable={editable && editing}
-          toolbar={editing}
-          toolbarMountEl={editing ? toolbarMountEl : null}
-          onRequestPreview={editing ? () => onEditingChange(false) : undefined}
-          onSaveStateChange={editing ? handleSaveStateChange : undefined}
+          minHeight={editable ? minHeight : Math.min(minHeight, 120)}
+          editable={editable}
+          toolbar={editable}
+          toolbarMountEl={editable ? toolbarMountEl : null}
+          onSaveStateChange={editable ? handleSaveStateChange : undefined}
           attachmentScope={attachmentScope}
           attachmentUserId={attachmentUserId}
           autoFocus={autoFocusEditor}
           onAutoFocusHandled={onEditorAutoFocusHandled}
+          onCreateTaskFromSelection={onCreateTaskFromSelection}
         />
       </div>
     </div>

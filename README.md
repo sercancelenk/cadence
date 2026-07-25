@@ -57,7 +57,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 ### Notes — resizable sidebar, sort modes, Markdown toolbar
 
-![Notes page with resizable sidebar, sort dropdown, Write/Preview tabs and Markdown preview](docs/screenshots/notes.png)
+![Notes page with resizable sidebar, sort dropdown, and always-editable rich-text note](docs/screenshots/notes.png)
 
 > Two-pane macOS-Notes-style view with **Active · Archived** in the sidebar. Drag the divider to resize (220–560 px). Five sort modes plus drag-reorder inside the pinned tier. Notes open in *Preview* by default; switching to *Write* reveals a full Markdown formatting toolbar. Optional per-note passphrase lockbox.
 
@@ -87,7 +87,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 | | |
 |---|---|
-| 📝 **Notes** | macOS-Notes-style two-pane view, **resizable sidebar** (220–560 px), preview-by-default with a one-click flip into a Markdown editor + formatting toolbar (B / I / S / H1–H3 / lists / link / inline code / code block / divider, with `⌘B` / `⌘I` / `⌘K` shortcuts). Five sort modes plus drag-to-reorder inside the pinned tier. **Active \| Archived** segment to shelve notes without deleting. Optional per-note passphrase lockbox. |
+| 📝 **Notes** | macOS-Notes-style two-pane view, **resizable sidebar** (220–560 px), always-editable rich-text surface (no Preview/Edit toggle) with formatting toolbar (B / I / S / H1–H3 / lists / link / inline code / code block / divider, with `⌘B` / `⌘I` / `⌘K` shortcuts). Double-click images to enlarge; ⌘/Ctrl+click links to open. Five sort modes plus drag-to-reorder inside the pinned tier. **Active \| Archived** segment to shelve notes without deleting. Optional per-note passphrase lockbox. |
 | ✅ **To-dos** | Lists grouped by project, each with its own priority (Urgent / High / Normal / Low) and per-row **status** (To do / In progress / Done / Cancelled). Optional **Markdown details** per task (Notes-grade editor). Sort by Manual / Priority / Due date / Status (Kanban order). Filter by status. **Active \| Archived** for tasks and lists. Drag items between groups and within. Recurring reminders (daily / weekly / monthly) fire as desktop notifications. Hide / show closed, archive, search (title **and** details), bulk ops. |
 | 📅 **Agenda** | Unified Today / This-week / Overdue view combining reminders + due tasks + personal to-dos. Lives offline; never asks for calendar permission. |
 | 🎯 **Planning** | Personal Eisenhower matrix — drag tasks into Do first / Schedule / Delegate / Eliminate by urgency and importance. |
@@ -331,7 +331,7 @@ Nothing is sent off-device; the chart is rendered as inline SVG.
 
 Sidebar **Utilities** — workspace tools that are not notes, todos, or team items:
 
-- **Document** (`/utilities/document`) — a standalone rich-text scratch pad with the same Preview/Edit chrome as notes (sticky tabs, Esc → preview, autosave indicator). Persisted as `utilityDocument` in your workspace JSON.
+- **Document** (`/utilities/document`) — a standalone rich-text scratch pad with the same always-edit chrome as notes (sticky toolbar, autosave indicator). Persisted as `utilityDocument` in your workspace JSON.
 - **JSON / YAML** (`/utilities/structured`) — a lazy-loaded CodeMirror editor for config and payload review:
   - **Edit** — paste JSON or YAML, fold nested blocks, format (pretty-print), validate inline, copy, undo/redo.
   - **Diff** — compare **Before** and **After** buffers side-by-side with merge highlighting (autosaved as `content` + `diffContent`).

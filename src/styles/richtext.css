@@ -118,8 +118,11 @@
   padding: 14px 16px;
   outline: none;
   color: var(--text);
-  font-size: 15px;
+  font-family: var(--editor-font-family, var(--font));
+  font-size: var(--editor-font-size, 15px);
   line-height: 1.35;
+  /* Undo `.main { zoom: var(--ui-scale) }` so editor size ≠ app chrome scale. */
+  zoom: calc(1 / var(--ui-scale, 1));
 }
 .rich-editor__surface .tiptap:focus {
   outline: none;
@@ -132,11 +135,11 @@
   pointer-events: none;
 }
 
-/* ProseMirror typography inside the editor */
+/* ProseMirror typography — em so headings track --editor-font-size */
 .rich-editor__prose h1,
-.rich-editor__surface .tiptap h1 { font-size: 1.45rem; margin: 0.6em 0 0.35em; font-weight: 700; }
-.rich-editor__surface .tiptap h2 { font-size: 1.25rem; margin: 0.55em 0 0.3em; font-weight: 700; }
-.rich-editor__surface .tiptap h3 { font-size: 1.1rem; margin: 0.5em 0 0.25em; font-weight: 700; }
+.rich-editor__surface .tiptap h1 { font-size: 1.45em; margin: 0.6em 0 0.35em; font-weight: 700; }
+.rich-editor__surface .tiptap h2 { font-size: 1.25em; margin: 0.55em 0 0.3em; font-weight: 700; }
+.rich-editor__surface .tiptap h3 { font-size: 1.1em; margin: 0.5em 0 0.25em; font-weight: 700; }
 .rich-editor__surface .tiptap p { margin: 0.12em 0; }
 .rich-editor__surface .tiptap ul,
 .rich-editor__surface .tiptap ol { margin: 0.12em 0; padding-left: 1.4em; }
@@ -964,4 +967,172 @@
   background: color-mix(in srgb, #f59e0b 72%, transparent);
   box-shadow: 0 0 0 1px #f59e0b;
   border-radius: 2px;
+}
+
+/* Slash command menu (/) — portaled to body; zoom here (not via `.main` ancestry). */
+.rich-slash-menu {
+  zoom: var(--ui-scale, 1);
+  min-width: 220px;
+  max-width: 300px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--modal-surface, var(--panel));
+  box-shadow: var(--modal-shadow, var(--shadow-md));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rich-slash-menu__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.rich-slash-menu__item:hover,
+.rich-slash-menu__item.is-active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.rich-slash-menu__title {
+  font-size: 13px;
+  font-weight: 650;
+}
+.rich-slash-menu__hint {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.rich-slash-menu__empty {
+  padding: 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.tippy-box[data-theme~='cadence-slash'] {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.tippy-box[data-theme~='cadence-slash'] .tippy-content {
+  padding: 0;
+}
+
+/* Tippy shell for selection bubble — no default dark tooltip chrome. */
+.tippy-box[data-theme~='cadence-bubble'] {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.tippy-box[data-theme~='cadence-bubble'] .tippy-content {
+  padding: 0;
+}
+.tippy-box[data-theme~='cadence-bubble'] > .tippy-svg-arrow,
+.tippy-box[data-theme~='cadence-bubble'] > .tippy-arrow {
+  display: none;
+}
+
+/* Selection bubble toolbar — portaled to body; match App & menus scale. */
+.rich-bubble-menu {
+  zoom: var(--ui-scale, 1);
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong, var(--border));
+  background: var(--modal-surface, var(--panel));
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+}
+.rich-bubble-menu__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.rich-bubble-menu__btn:hover {
+  background: var(--panel-hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+.rich-bubble-menu__btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+}
+.rich-bubble-menu__btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-2, var(--accent));
+}
+.rich-bubble-menu__sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
+  flex: 0 0 auto;
+  align-self: center;
+}
+.rich-bubble-menu__btn--task {
+  padding: 0 10px;
+  font-weight: 600;
+  color: var(--accent-2, var(--accent));
+}
+.rich-bubble-menu__btn--task:hover {
+  background: var(--accent-soft);
+  color: var(--accent-2, var(--accent));
+}
+.rich-bubble-menu__btn--task svg {
+  flex: 0 0 auto;
+  opacity: 0.92;
+}
+.rich-bubble-menu__link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: min(360px, 80vw);
+  padding: 2px;
+}
+.rich-bubble-menu__link-input {
+  flex: 1 1 160px;
+  min-width: 140px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg, var(--panel));
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+.rich-bubble-menu__link-input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
+}
+.rich-bubble-menu__link-error {
+  flex: 1 0 100%;
+  padding: 0 4px;
+  color: var(--danger, #b42318);
+  font-size: 11.5px;
+  line-height: 1.3;
 }

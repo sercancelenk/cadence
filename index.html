@@ -7,6 +7,73 @@
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#f5f5f5" media="(prefers-color-scheme: light)" />
+    <!-- Pre-paint theme/scale so light/system users do not flash dark defaults. -->
+    <script>
+      (function () {
+        try {
+          var root = document.documentElement;
+          var raw = localStorage.getItem('cadence.appearance.v1');
+          var themePref = 'dark';
+          var uiScale = 100;
+          var editorFontSize = 15;
+          var editorFontFamily = 'default';
+          if (raw) {
+            var parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') {
+              if (parsed.theme === 'system' || parsed.theme === 'dark' || parsed.theme === 'light') {
+                themePref = parsed.theme;
+              }
+              if (parsed.uiScale === 90 || parsed.uiScale === 100 || parsed.uiScale === 110 || parsed.uiScale === 125) {
+                uiScale = parsed.uiScale;
+              }
+              if (
+                parsed.editorFontSize === 14 ||
+                parsed.editorFontSize === 15 ||
+                parsed.editorFontSize === 16 ||
+                parsed.editorFontSize === 18
+              ) {
+                editorFontSize = parsed.editorFontSize;
+              }
+              if (
+                parsed.editorFontFamily === 'default' ||
+                parsed.editorFontFamily === 'system' ||
+                parsed.editorFontFamily === 'serif' ||
+                parsed.editorFontFamily === 'mono'
+              ) {
+                editorFontFamily = parsed.editorFontFamily;
+              }
+            }
+          } else {
+            var legacy = localStorage.getItem('cadence-theme');
+            if (legacy === 'light' || legacy === 'dark') themePref = legacy;
+          }
+          var resolved = themePref;
+          if (themePref === 'system') {
+            resolved =
+              window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          }
+          root.setAttribute('data-theme', resolved);
+          root.style.setProperty('--ui-scale', String(uiScale / 100));
+          root.style.setProperty('--editor-font-size', editorFontSize + 'px');
+          var fontCss = 'var(--font)';
+          if (editorFontFamily === 'system') {
+            fontCss =
+              'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+          } else if (editorFontFamily === 'serif') {
+            fontCss =
+              'Iowan Old Style, "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif';
+          } else if (editorFontFamily === 'mono') {
+            fontCss =
+              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+          }
+          root.style.setProperty('--editor-font-family', fontCss);
+        } catch (e) {
+          /* keep hardcoded dark fallback */
+        }
+      })();
+    </script>
 
     <!-- PWA -->
     <link rel="manifest" href="manifest.webmanifest" />

@@ -11,26 +11,33 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import {
-  plainTextFromBodyFields,
+  richBodyFieldsIsEmpty,
   richTextPayloadToBodyFields,
   type RichTextBodyFields,
 } from '../lib/richTextBody';
 import { PATH_LOGIN, PATH_NOTES, PATH_REGISTER, PATH_TODOS } from '../lib/routes';
 import { AutoResizeTextarea } from './ui/AutoResizeTextarea';
+import {
+  QUICK_ADD_MENU_EVENT,
+  QUICK_ADD_OPEN_EVENT,
+  type QuickAddMode,
+  type QuickAddOpenDetail,
+} from '../lib/quickAddEvents';
 import { IcListTodo, IcPlus, IcStickyNote, IcX } from './icons';
 
 const RichTextEditor = lazy(() =>
   import('./ui/RichTextEditor').then((m) => ({ default: m.RichTextEditor })),
 );
 
-type Mode = 'task' | 'note';
+type Mode = QuickAddMode;
 
 function emptyBodyFields(): RichTextBodyFields {
   return { body: '', bodyFormat: undefined, bodyPlainText: undefined };
 }
 
 function todoBodyExtras(fields: RichTextBodyFields) {
-  if (!plainTextFromBodyFields(fields).trim()) return undefined;
+  // Image-only / table-only docs have empty plainText but must still save.
+  if (richBodyFieldsIsEmpty(fields)) return undefined;
   return {
     body: fields.body,
     bodyFormat: fields.bodyFormat,
@@ -50,6 +57,8 @@ export function QuickAddFab() {
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [mode, setMode] = useState<Mode | null>(null);
+  const modeRef = useRef<Mode | null>(null);
+  modeRef.current = mode;
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   const onAuthPage =
@@ -71,6 +80,28 @@ export function QuickAddFab() {
       document.removeEventListener('keydown', onKey);
     };
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (onAuthPage) return;
+    const onOpenDialog = (e: Event) => {
+      const detail = (e as CustomEvent<QuickAddOpenDetail>).detail;
+      if (detail?.mode !== 'task' && detail?.mode !== 'note') return;
+      // Never replace an in-progress draft from ⌘K / external open.
+      if (modeRef.current) return;
+      setMenuOpen(false);
+      setMode(detail.mode);
+    };
+    const onOpenMenu = () => {
+      if (modeRef.current) return;
+      setMenuOpen(true);
+    };
+    window.addEventListener(QUICK_ADD_OPEN_EVENT, onOpenDialog);
+    window.addEventListener(QUICK_ADD_MENU_EVENT, onOpenMenu);
+    return () => {
+      window.removeEventListener(QUICK_ADD_OPEN_EVENT, onOpenDialog);
+      window.removeEventListener(QUICK_ADD_MENU_EVENT, onOpenMenu);
+    };
+  }, [onAuthPage]);
 
   if (onAuthPage) return null;
 
@@ -136,7 +167,7 @@ const LAST_LIST_KEY = 'cadence.quickadd.lastList';
 const NEW_LIST_TOKEN = '__new__';
 
 function QuickAddDialog({ mode, onClose }: DialogProps) {
-  const { data, addTodoGroup, addTodoItem, addNote, patchNote } = useAppData();
+  const { data, addTodoGroup, addTodoItem, addNote, patchNote, removeNote } = useAppData();
   const { user } = useAccount();
   const navigate = useNavigate();
 
@@ -162,29 +193,71 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
   const [newListName, setNewListName] = useState('');
   const [creatingList, setCreatingList] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const provisionalNoteIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (mode !== 'note' || noteId) return;
-    setNoteId(addNote());
+    const id = addNote();
+    provisionalNoteIdRef.current = id;
+    setNoteId(id);
   }, [mode, noteId, addNote]);
+
+  const sweepPristineProvisionalNote = () => {
+    // Cancel / teardown of a never-submitted note should not leave an empty row.
+    const provisionalId = provisionalNoteIdRef.current;
+    if (
+      mode !== 'note' ||
+      !provisionalId ||
+      title.trim() ||
+      !richBodyFieldsIsEmpty(bodyFields)
+    ) {
+      return;
+    }
+    const note = data.notes.find((n) => n.id === provisionalId);
+    const stillPristine =
+      note &&
+      !(note.title ?? '').trim() &&
+      richBodyFieldsIsEmpty({
+        body: note.body ?? '',
+        bodyFormat: note.bodyFormat,
+        bodyPlainText: note.bodyPlainText,
+      });
+    if (stillPristine) {
+      removeNote(provisionalId);
+      provisionalNoteIdRef.current = null;
+    }
+  };
+  const sweepPristineRef = useRef(sweepPristineProvisionalNote);
+  sweepPristineRef.current = sweepPristineProvisionalNote;
+
+  const closeDialog = () => {
+    sweepPristineProvisionalNote();
+    onClose();
+  };
+  const closeDialogRef = useRef(closeDialog);
+  closeDialogRef.current = closeDialog;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') closeDialogRef.current();
     };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      // Route/auth teardown must not leave an empty provisional note behind.
+      sweepPristineRef.current();
+    };
+  }, []);
 
   const taskTargetReady =
     creatingList ? newListName.trim().length > 0 : !!groupId && groupId !== NEW_LIST_TOKEN;
 
-  const bodyPlain = plainTextFromBodyFields(bodyFields);
+  const bodyHasContent = !richBodyFieldsIsEmpty(bodyFields);
 
   const canSubmit =
     mode === 'task'
       ? title.trim().length > 0 && taskTargetReady
-      : title.trim().length > 0 || !!bodyPlain;
+      : title.trim().length > 0 || bodyHasContent;
 
   const attachmentUserId = user?.id ?? 'anonymous';
 
@@ -205,10 +278,11 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
       return;
     }
     const id = noteId ?? addNote();
+    provisionalNoteIdRef.current = null;
     const notePatch: Parameters<typeof patchNote>[1] = {
       title: title.trim() || 'Untitled',
     };
-    if (bodyPlain) {
+    if (bodyHasContent) {
       notePatch.body = bodyFields.body;
       notePatch.bodyFormat = bodyFields.bodyFormat;
       notePatch.bodyPlainText = bodyFields.bodyPlainText;
@@ -221,7 +295,7 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
   const isTask = mode === 'task';
 
   return (
-    <div className="quick-add-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+    <div className="quick-add-backdrop" role="dialog" aria-modal="true" onClick={closeDialog}>
       <form
         className="quick-add-dialog"
         onClick={(e) => e.stopPropagation()}
@@ -232,7 +306,7 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
             {isTask ? <IcListTodo size={18} /> : <IcStickyNote size={18} />}
           </span>
           <h2 className="quick-add-dialog__title">{isTask ? 'New task' : 'New note'}</h2>
-          <button type="button" className="quick-add-dialog__close" aria-label="Close" title="Close" onClick={onClose}>
+          <button type="button" className="quick-add-dialog__close" aria-label="Close" title="Close" onClick={closeDialog}>
             <IcX size={18} />
           </button>
         </header>
@@ -252,7 +326,7 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
                   ariaLabel="Task title"
                   onChange={setTitle}
                   onSubmit={() => submit()}
-                  onCancel={onClose}
+                  onCancel={closeDialog}
                 />
               </label>
               <div className="quick-add-dialog__field">
@@ -383,7 +457,7 @@ function QuickAddDialog({ mode, onClose }: DialogProps) {
             <span />
           )}
           <div className="app-modal__actions">
-            <button type="button" className="app-modal__btn-cancel" onClick={onClose}>
+            <button type="button" className="app-modal__btn-cancel" onClick={closeDialog}>
               Cancel
             </button>
             <button type="submit" className="app-modal__btn-confirm" disabled={!canSubmit}>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import { RichTextDocumentPane } from '../components/ui/RichTextDocumentPane';
@@ -16,8 +16,6 @@ export function UtilitiesDocumentPage() {
 
   const body = doc?.body ?? '';
   const bodyFormat: RichTextBodyFormat | 'auto' = doc?.bodyFormat ?? 'auto';
-
-  const [editing, setEditing] = useState(true);
 
   useEffect(() => {
     prefetchRichTextEditor();
@@ -65,15 +63,12 @@ export function UtilitiesDocumentPage() {
         editorKey={UTILITY_DOC_ID}
         value={body}
         valueFormat={bodyFormat}
-        editing={editing}
-        onEditingChange={setEditing}
         onChange={onChange}
         placeholder="Draft ideas, paste snippets, plan before you commit to a note…"
         minHeight={420}
         attachmentScope={{ documentKind: 'utility', documentId: UTILITY_DOC_ID }}
         attachmentUserId={attachmentUserId}
       />
-
     </div>
   );
 }

@@ -29,12 +29,13 @@ import {
   useNotesViewMode,
   useSidebarResize,
 } from '../features/notes';
-import { moveNoteToGroup } from '../core/actions';
+import { addTodoItem as appendTodoItem, moveNoteToGroup } from '../core/actions';
 import { isAIConfigured } from '../lib/ai';
 import { useFeatures } from '../lib/features';
 import { useNotesUnlock } from '../lib/NotesUnlockContext';
 import { purgeNoteRevisionHistory } from '../lib/noteRevision/noteRevisionStore';
 import { runBeforeFlushHooks } from '../lib/pendingSaveFlush';
+import { defaultTodoGroupId } from '../lib/todoGroupPick';
 import type { AppData } from '../model';
 
 const AITaskExtractorDialog = lazy(() =>
@@ -43,15 +44,28 @@ const AITaskExtractorDialog = lazy(() =>
 
 /**
  * macOS-Notes-style two-pane view. Left rail lists every note (title +
- * preview); right pane is a rich-text editor for the selected note.
+ * snippet); right pane is an always-editable rich-text surface for the
+ * selected note (no Preview/Edit mode toggle).
  *
  * Lock model, strict per-note unlock UX, and crypto invariants are
  * documented in `useNotesLock` and the original NotesPage design — see
  * `docs/HEALTH-CHECK-AND-ROADMAP.md` (B2 notes module).
  */
 export function NotesPage() {
-  const { addNote, addNoteGroup, updateNoteGroup, removeNoteGroup, patchNote, replaceNote, removeNote, setNotesLock, update, flushPendingSave, linkNoteTodo, unlinkNoteTodo } =
-    useAppDataActions();
+  const {
+    addNote,
+    addNoteGroup,
+    updateNoteGroup,
+    removeNoteGroup,
+    patchNote,
+    replaceNote,
+    removeNote,
+    setNotesLock,
+    update,
+    flushPendingSave,
+    linkNoteTodo,
+    unlinkNoteTodo,
+  } = useAppDataActions();
   const notesWorkspace = useAppDataSelector(
     (d) => ({
       notes: d.notes,
@@ -142,8 +156,6 @@ export function NotesPage() {
   const {
     decrypted,
     setDecrypted,
-    bodyEditing,
-    setBodyEditing,
     editorAutoFocus,
     clearEditorAutoFocus,
     decryptedForSelected,
@@ -218,10 +230,9 @@ export function NotesPage() {
     (id: string) => {
       pendingSelectNoteIdRef.current = null;
       createNoteEditIntentRef.current = null;
-      setBodyEditing(false);
       setSelectedId(id);
     },
-    [setBodyEditing, setSelectedId],
+    [setSelectedId],
   );
 
   const onNoteClick = (id: string, event: React.MouseEvent) => {
@@ -232,6 +243,29 @@ export function NotesPage() {
       selectPrimaryNote,
     );
   };
+
+  const onCreateTaskFromSelection = useCallback(
+    (title: string) => {
+      if (!selected) return;
+      const groupId = defaultTodoGroupId(notesWorkspace.todoGroups);
+      if (!groupId) {
+        toast.showWarning(
+          'No to-do list',
+          'Create a list first, then create a task from the note.',
+        );
+        return;
+      }
+      const applied = update((data) =>
+        appendTodoItem(data, groupId, title, { sourceNoteId: selected.id }),
+      );
+      if (!applied) {
+        toast.showWarning('Could not create task', 'Saving is temporarily blocked.');
+        return;
+      }
+      toast.showSuccess('Task created', title);
+    },
+    [notesWorkspace.todoGroups, selected, toast, update],
+  );
 
   const onNoteContextMenu = (id: string, event: React.MouseEvent) => {
     event.preventDefault();
@@ -451,8 +485,6 @@ export function NotesPage() {
                 editorBody={editorBody}
                 editorBodyFormat={editorBodyFormat}
                 editorReady={editorReady}
-                bodyEditing={bodyEditing}
-                onBodyEditingChange={setBodyEditing}
                 editorAutoFocus={editorAutoFocus}
                 onEditorAutoFocusHandled={clearEditorAutoFocus}
                 onChangeBody={onChangeBody}
@@ -465,6 +497,7 @@ export function NotesPage() {
                 }}
                 onLinkTodo={(todoId) => linkNoteTodo(selected.id, todoId)}
                 onUnlinkTodo={(todoId) => unlinkNoteTodo(selected.id, todoId)}
+                onCreateTaskFromSelection={onCreateTaskFromSelection}
               />
             )}
           </>

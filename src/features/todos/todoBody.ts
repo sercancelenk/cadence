@@ -1,5 +1,6 @@
 import {
   plainTextFromBodyFields,
+  richBodyFieldsIsEmpty,
   type RichTextBodyFields,
 } from '../../lib/richTextBody';
 import type { TodoItem } from '../../model';
@@ -44,13 +45,19 @@ export function itemToBodyFields(
 }
 
 export function todoHasBody(item: Pick<TodoItem, 'body' | 'bodyFormat' | 'bodyPlainText'>): boolean {
-  return !!plainTextFromBodyFields(item).trim();
+  if (plainTextFromBodyFields(item).trim()) return true;
+  return !richBodyFieldsIsEmpty({
+    body: item.body ?? '',
+    bodyFormat: item.bodyFormat,
+    bodyPlainText: item.bodyPlainText,
+  });
 }
 
 export function todoBodyPatchFromFields(
   fields: RichTextBodyFields,
 ): Partial<Pick<TodoItem, 'body' | 'bodyFormat' | 'bodyPlainText'>> {
-  if (!plainTextFromBodyFields(fields).trim()) {
+  // Image-only / table-only docs have empty plainText but must still save.
+  if (richBodyFieldsIsEmpty(fields)) {
     return { body: '' };
   }
   return {

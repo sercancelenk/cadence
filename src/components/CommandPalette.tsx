@@ -22,6 +22,7 @@ import { plainTextFromBodyFields } from '../lib/richTextBody';
 import { teamBase, teamPeople, teamPersonWorkspacePath } from '../lib/teamPaths';
 import type { Item, Note, Person, Team, TodoItem } from '../model';
 import { isNoteArchived, isTodoItemArchived } from '../model';
+import { openQuickAdd, openQuickAddMenu } from '../lib/quickAddEvents';
 import {
   IcArrowRight,
   IcBraces,
@@ -33,6 +34,7 @@ import {
   IcHome,
   IcListTodo,
   IcLock,
+  IcPlus,
   IcSettings,
   IcSliders,
   IcStickyNote,
@@ -43,7 +45,7 @@ import {
 
 type Command = {
   id: string;
-  group: 'Navigate' | 'Teams' | 'People' | 'Items' | 'To-dos' | 'Notes' | 'Help';
+  group: 'Create' | 'Navigate' | 'Teams' | 'People' | 'Items' | 'To-dos' | 'Notes' | 'Help';
   label: string;
   hint?: string;
   /**
@@ -256,6 +258,33 @@ function buildCommands(
   navigate: ReturnType<typeof useNavigate>,
 ): Command[] {
   const cmds: Command[] = [
+    {
+      id: 'create-note',
+      group: 'Create',
+      label: 'New note',
+      hint: 'Quick-add dialog',
+      searchText: 'create write',
+      icon: <IcStickyNote size={16} />,
+      run: () => openQuickAdd('note'),
+    },
+    {
+      id: 'create-task',
+      group: 'Create',
+      label: 'New task',
+      hint: 'Quick-add dialog',
+      searchText: 'create todo',
+      icon: <IcListTodo size={16} />,
+      run: () => openQuickAdd('task'),
+    },
+    {
+      id: 'create-quick-add',
+      group: 'Create',
+      label: 'Open quick add menu',
+      hint: 'Floating + menu',
+      searchText: 'fab create',
+      icon: <IcPlus size={16} />,
+      run: () => openQuickAddMenu(),
+    },
     {
       id: 'nav-home',
       group: 'Navigate',
