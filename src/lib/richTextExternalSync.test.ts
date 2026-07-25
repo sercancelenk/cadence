@@ -16,12 +16,15 @@ describe('decidePendingExternalFlush', () => {
     localEditGen: 3,
   };
 
-  it('waits while focused or debounce-pending', () => {
+  it('waits while focused, debounce-pending, or nothing queued', () => {
     expect(
       decidePendingExternalFlush({ ...base, hasFocus: true }).action,
     ).toBe('wait');
     expect(
       decidePendingExternalFlush({ ...base, hasPendingTimer: true }).action,
+    ).toBe('wait');
+    expect(
+      decidePendingExternalFlush({ ...base, hasPending: false }).action,
     ).toBe('wait');
   });
 
@@ -86,6 +89,16 @@ describe('shouldClearPendingOnPropsEcho', () => {
     expect(
       shouldClearPendingOnPropsEcho({
         hasPending: true,
+        pendingSig: 'live-match',
+        incomingSig: 'other',
+        liveSig: 'live-match',
+        queuedAtLocalGen: 5,
+        localEditGen: 5,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearPendingOnPropsEcho({
+        hasPending: true,
         pendingSig: 'remote',
         incomingSig: 'local',
         liveSig: 'local',
@@ -93,5 +106,18 @@ describe('shouldClearPendingOnPropsEcho', () => {
         localEditGen: 5,
       }),
     ).toBe(true);
+  });
+
+  it('does nothing when there is no pending external', () => {
+    expect(
+      shouldClearPendingOnPropsEcho({
+        hasPending: false,
+        pendingSig: 'remote',
+        incomingSig: 'local',
+        liveSig: 'local',
+        queuedAtLocalGen: 1,
+        localEditGen: 1,
+      }),
+    ).toBe(false);
   });
 });

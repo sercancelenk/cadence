@@ -1,17 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  APPEARANCE_STORAGE_KEY,
   DEFAULT_APPEARANCE,
+  LEGACY_THEME_STORAGE_KEY,
+  applyAppearanceToDocument,
   editorFontFamilyToCss,
+  hasUnrecognizedKnownAppearanceFields,
   normalizeAppearancePrefs,
   parseAppearancePrefs,
   parseAppearanceStorage,
+  prefersDarkColorScheme,
+  readAppearanceFromStorage,
+  readAppearanceStorage,
   resolveThemeMode,
   serializeAppearancePrefs,
   uiScaleToCssFactor,
   editorFontSizeToCss,
+  writeAppearanceToStorage,
 } from './appearancePrefs';
 
 describe('appearancePrefs', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+    document.documentElement.removeAttribute('data-theme');
+    document.documentElement.style.removeProperty('--ui-scale');
+    document.documentElement.style.removeProperty('--editor-font-size');
+    document.documentElement.style.removeProperty('--editor-font-family');
+  });
+
   it('defaults when input is null/invalid', () => {
     expect(parseAppearancePrefs(null, null)).toEqual(DEFAULT_APPEARANCE);
     expect(parseAppearancePrefs('{', null)).toEqual(DEFAULT_APPEARANCE);
@@ -108,6 +125,74 @@ describe('appearancePrefs', () => {
     expect(uiScaleToCssFactor(90)).toBe('0.9');
     expect(editorFontSizeToCss(15)).toBe('15px');
     expect(editorFontFamilyToCss('default')).toBe('var(--font)');
+    expect(editorFontFamilyToCss('system')).toContain('system-ui');
+    expect(editorFontFamilyToCss('serif')).toContain('Georgia');
     expect(editorFontFamilyToCss('mono')).toContain('monospace');
+  });
+
+  it('detects unrecognized known-field values for forward-compat hold', () => {
+    expect(hasUnrecognizedKnownAppearanceFields({ theme: 'neon' })).toBe(true);
+    expect(hasUnrecognizedKnownAppearanceFields({ editorFontSize: 20 })).toBe(true);
+    expect(hasUnrecognizedKnownAppearanceFields({ editorFontFamily: 'comic' })).toBe(true);
+    expect(hasUnrecognizedKnownAppearanceFields({ theme: 'dark', uiScale: 100 })).toBe(false);
+  });
+
+  it('reads matchMedia for system preference and applies document CSS vars', () => {
+    const matchMedia = vi.fn().mockReturnValue({ matches: false });
+    vi.stubGlobal('matchMedia', matchMedia);
+    expect(prefersDarkColorScheme()).toBe(false);
+    matchMedia.mockReturnValue({ matches: true });
+    expect(prefersDarkColorScheme()).toBe(true);
+    matchMedia.mockImplementation(() => {
+      throw new Error('no media');
+    });
+    expect(prefersDarkColorScheme()).toBe(true);
+
+    applyAppearanceToDocument({
+      theme: 'light',
+      uiScale: 110,
+      editorFontSize: 16,
+      editorFontFamily: 'serif',
+    });
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1.1');
+    expect(document.documentElement.style.getPropertyValue('--editor-font-size')).toBe('16px');
+  });
+
+  it('reads and writes localStorage with legacy theme mirror', () => {
+    localStorage.clear();
+    expect(readAppearanceStorage().persistPolicy).toBe('migrate-legacy');
+    writeAppearanceToStorage(
+      {
+        theme: 'system',
+        uiScale: 125,
+        editorFontSize: 14,
+        editorFontFamily: 'mono',
+      },
+      true,
+      { future: 1 },
+    );
+    expect(localStorage.getItem(APPEARANCE_STORAGE_KEY)).toContain('"uiScale":125');
+    expect(localStorage.getItem(LEGACY_THEME_STORAGE_KEY)).toBe('dark');
+    expect(readAppearanceFromStorage().uiScale).toBe(125);
+    expect(readAppearanceStorage().extras).toEqual({ future: 1 });
+  });
+});
+
+describe('appearancePrefs storage edge cases', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it('returns ephemeral when localStorage throws on read', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => undefined,
+      removeItem: () => undefined,
+    });
+    expect(readAppearanceStorage().persistPolicy).toBe('ephemeral');
   });
 });

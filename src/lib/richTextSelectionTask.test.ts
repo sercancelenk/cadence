@@ -43,6 +43,12 @@ describe('taskTitleFromEditorSelection', () => {
     );
   });
 
+  it('hard-truncates when there is no usable word boundary', () => {
+    const solid = 'x'.repeat(RICH_TEXT_TASK_TITLE_MAX + 40);
+    const title = taskTitleFromEditorSelection(fakeEditor(solid));
+    expect(title).toBe('x'.repeat(RICH_TEXT_TASK_TITLE_MAX));
+  });
+
   it('returns null when from === to even if empty flag is false', () => {
     const editor: SelectionTextSource = {
       state: {
