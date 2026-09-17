@@ -21,7 +21,49 @@ function isCatastrophicEmptyOverwrite(previous, next) {
   return materialContentCount(previous) >= 1 && materialContentCount(next) === 0;
 }
 
+/**
+ * Length of every array-valued collection on the workspace, keyed by field.
+ *
+ * Enumerated from the object rather than from a hard-coded list on purpose:
+ * `notes`, `todoItems` and `items` are only the sharded collections, while a
+ * workspace also carries `teams`, `people`, `todoGroups`, `noteGroups`,
+ * `utilityStructuredTabs` and whatever a later version adds. Losing all of a
+ * user's teams is a loss whether or not this file was updated to know the word
+ * "teams".
+ */
+function collectionCounts(d) {
+  /** @type {Record<string, number>} */
+  const counts = {};
+  if (!d || typeof d !== 'object') return counts;
+  for (const [key, value] of Object.entries(d)) {
+    if (Array.isArray(value)) counts[key] = value.length;
+  }
+  return counts;
+}
+
+/**
+ * True when any collection has fewer entities than before.
+ *
+ * Deliberately per-collection rather than on the total: losing 40 notes while
+ * gaining 40 todos leaves the total unchanged but is still a loss worth
+ * snapshotting. A collection that disappears entirely (present as an array
+ * before, gone or no longer an array now) counts as shrinking to zero. An
+ * unknown previous shape counts as a shrink, so a caller that cannot prove the
+ * workspace grew always errs towards taking a backup.
+ */
+function contentShapeShrank(previous, next) {
+  if (!previous) return true;
+  const before = collectionCounts(previous);
+  const after = collectionCounts(next);
+  for (const [key, count] of Object.entries(before)) {
+    if ((after[key] ?? 0) < count) return true;
+  }
+  return false;
+}
+
 module.exports = {
   materialContentCount,
   isCatastrophicEmptyOverwrite,
+  collectionCounts,
+  contentShapeShrank,
 };

@@ -344,50 +344,69 @@
   min-height: 0;
 }
 
-/* `<li>` wrapper around the list-item button. We attach drag-and-drop
-   handlers to the row so the manual reorder works even when the user
-   grabs the row outside the inner button hit area. */
+/* `<li>` wrapper around the drag handle + list-item button. Drop targets
+   live on the <li>; the grip is the only drag source (see NotesListRow).
+
+   Do NOT put `content-visibility: auto` on this row — Chromium's layout/
+   paint containment from that property breaks HTML5 dragover hit-testing. */
 .notes-page__list-row {
   position: relative;
-}
-
-.notes-page__list-row[draggable='true'] .notes-page__list-item {
-  cursor: grab;
-}
-
-.notes-page__list-row[draggable='true']:active .notes-page__list-item {
-  cursor: grabbing;
 }
 
 .notes-page__list-row--dragging .notes-page__list-item {
   opacity: 0.45;
 }
 
-/* Sky-blue underline that shows where the dragged row will land. We use
-   ::after so we don't disturb the row's existing border-bottom. */
+/* Sky-blue line that shows where the dragged row will land. Top edge =
+   insert before; bottom edge = insert after. Kept inside the row box so
+   it stays visible regardless of overflow clipping on the scroll parent. */
 .notes-page__list-row--drop-target::after {
   content: '';
   position: absolute;
   left: 8px;
   right: 8px;
-  bottom: -1px;
   height: 2px;
   background: var(--accent);
   border-radius: 1px;
   pointer-events: none;
 }
 
-/* Grip handle shown only in "Manual" sort mode. It's a visual affordance
-   — the actual drag area is the whole row. */
+.notes-page__list-row--drop-before::after {
+  top: 0;
+  bottom: auto;
+}
+
+.notes-page__list-row--drop-after::after,
+.notes-page__list-row--drop-target:not(.notes-page__list-row--drop-before)::after {
+  top: auto;
+  bottom: 0;
+}
+
+/* Real HTML5 drag source (not a decoration). Must receive pointer events —
+   a previous `pointer-events: none` + draggable <li> under a <button> meant
+   Chromium never started a drag at all. */
 .notes-page__drag-handle {
   position: absolute;
+  z-index: 1;
   top: 50%;
   left: 4px;
   transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 28px;
   color: var(--muted);
   opacity: 0.55;
-  pointer-events: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-drag: element;
+  touch-action: none;
   transition: opacity 0.16s ease, color 0.16s ease;
+}
+
+.notes-page__drag-handle:active {
+  cursor: grabbing;
 }
 
 .notes-page__list-row:hover .notes-page__drag-handle {
@@ -395,22 +414,26 @@
   color: var(--text);
 }
 
-/* In manual mode the row's grip absorbs the leftmost 18px; shift the item
-   padding so the title doesn't sit on top of the handle. */
-.notes-page__list-row[draggable='true'] .notes-page__list-item {
-  padding-left: 26px;
+.notes-page__drag-handle--subtle {
+  opacity: 0.25;
+}
+
+.notes-page__list-row:hover .notes-page__drag-handle--subtle {
+  opacity: 0.55;
 }
 
 .notes-page__list-item {
   width: 100%;
-  /* Include padding inside the 100% so the button never exceeds its grid column. */
+  /* Include padding inside the 100% so the button never exceeds its grid column.
+     Left gutter (26px) clears the drag grip that sits at `left: 4px`. Nested
+     rows override to a denser 22px further down — still clears the grip. */
   box-sizing: border-box;
   min-width: 0;
   text-align: left;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--border);
-  padding: 12px 16px;
+  padding: 12px 16px 12px 26px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -2448,14 +2471,6 @@
 .notes-page__list > .notes-page__list-row > .notes-page__list-item {
   padding-top: 11px;
   padding-bottom: 11px;
-}
-
-.notes-page__drag-handle--subtle {
-  opacity: 0.25;
-}
-
-.notes-page__list-row:hover .notes-page__drag-handle--subtle {
-  opacity: 0.55;
 }
 
 .notes-page__list-item--bulk-selected,

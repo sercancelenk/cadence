@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import { NavLink, useMatch } from 'react-router-dom';
 import {
   IcCalendar,
@@ -39,7 +40,12 @@ const linkCls = ({ isActive }: { isActive: boolean }) => `app-sidebar__link${isA
 
 type Props = { collapsed: boolean };
 
-export function AppSidebar({ collapsed }: Props) {
+/**
+ * `memo` because the sidebar sits next to the editor in the app shell: without
+ * it, every parent render re-runs the badge scans over every note and todo.
+ * Its only prop is a boolean, so the comparison is always cheap.
+ */
+export const AppSidebar = memo(function AppSidebar({ collapsed }: Props) {
   const mobileWeb = useMobileWeb();
   const m = useMatch({ path: '/teams/:teamId/*', end: false });
   const teamId = m?.params.teamId;
@@ -68,7 +74,11 @@ export function AppSidebar({ collapsed }: Props) {
   //   the user reported). Showing it in the sidebar means the user sees
   //   the warning even before they click into the page.
   // - Notes: locked vs unlocked split, again only when relevant.
-  const todoSummary = (() => {
+  //
+  // Both scans are keyed on the array references, so a keystroke in the editor
+  // (which replaces one note object and therefore the `notes` array) re-counts
+  // notes but leaves the todo counts alone.
+  const todoSummary = useMemo(() => {
     const totalGroups = sidebarData.todoGroups.length;
     const archivedGroups = sidebarData.todoGroups.filter((g) => g.archived).length;
     const openTodos = sidebarData.todoItems.filter(
@@ -76,12 +86,17 @@ export function AppSidebar({ collapsed }: Props) {
     ).length;
     const allArchived = totalGroups > 0 && archivedGroups === totalGroups;
     return { openTodos, allArchived, archivedGroups, totalGroups };
-  })();
-  const notesSummary = (() => {
-    const total = sidebarData.notes.filter((n) => n.archived !== true).length;
-    const locked = sidebarData.notes.filter((n) => n.locked && n.archived !== true).length;
+  }, [sidebarData.todoGroups, sidebarData.todoItems]);
+  const notesSummary = useMemo(() => {
+    let total = 0;
+    let locked = 0;
+    for (const n of sidebarData.notes) {
+      if (n.archived === true) continue;
+      total += 1;
+      if (n.locked) locked += 1;
+    }
     return { total, locked };
-  })();
+  }, [sidebarData.notes]);
 
   return (
     <aside className="app-sidebar" aria-label="Main navigation">
@@ -269,4 +284,4 @@ export function AppSidebar({ collapsed }: Props) {
       <AppSidebarFooter collapsed={collapsed} />
     </aside>
   );
-}
+});

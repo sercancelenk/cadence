@@ -83,9 +83,10 @@ export type TodoTaskRowProps = {
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   onDragStart: (itemId: string) => void;
-  onDragOver: (itemId: string) => void;
-  onDrop: (itemId: string) => void;
+  onDragOver: (itemId: string, placement: 'before' | 'after') => void;
+  onDrop: (itemId: string, placement: 'before' | 'after') => void;
   onDragEnd: () => void;
+  dropPlacement?: 'before' | 'after';
 };
 
 export function TodoTaskRow({
@@ -112,6 +113,7 @@ export function TodoTaskRow({
   onDragOver,
   onDrop,
   onDragEnd,
+  dropPlacement = 'before',
 }: TodoTaskRowProps) {
   const [editing, setEditing] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -266,19 +268,33 @@ export function TodoTaskRow({
       }${item.status === 'in_progress' ? ' todos-row--wip' : ''}${
         isArchived ? ' todos-row--archived-item' : ''
       }${item.priority ? ` todos-row--prio-${item.priority}` : ''}${isDragSrc ? ' todos-row--dragging' : ''}${isDropTgt ? ' todos-row--drop-target' : ''}${
+        isDropTgt && dropPlacement === 'before' ? ' todos-row--drop-before' : ''
+      }${isDropTgt && dropPlacement === 'after' ? ' todos-row--drop-after' : ''}${
         isFocused ? ' todos-row--focused' : ''
       }${allowDrag ? ' todos-row--manual' : ''}`}
       style={ringStyle(item.groupId)}
+      onDragEnter={(e) => {
+        if (!allowDrag) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const mid = e.currentTarget.getBoundingClientRect();
+        const placement = e.clientY < mid.top + mid.height / 2 ? 'before' : 'after';
+        onDragOver(item.id, placement);
+      }}
       onDragOver={(e) => {
         if (!allowDrag) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
-        onDragOver(item.id);
+        const mid = e.currentTarget.getBoundingClientRect();
+        const placement = e.clientY < mid.top + mid.height / 2 ? 'before' : 'after';
+        onDragOver(item.id, placement);
       }}
       onDrop={(e) => {
         if (!allowDrag) return;
         e.preventDefault();
-        onDrop(item.id);
+        const mid = e.currentTarget.getBoundingClientRect();
+        const placement = e.clientY < mid.top + mid.height / 2 ? 'before' : 'after';
+        onDrop(item.id, placement);
       }}
     >
       {allowDrag ? (

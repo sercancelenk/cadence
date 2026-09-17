@@ -30,6 +30,7 @@ import type {
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
 import { AppearanceSettingsSection } from '../components/settings/AppearanceSettingsSection';
 import { PreferencesShell } from '../components/settings/PreferencesShell';
+import { SaveDiagnosticsSection } from '../components/settings/SaveDiagnosticsSection';
 import { RecoveryCodesPanel } from '../components/RecoveryCodesPanel';
 import { prepareForRemoteApply } from '../lib/syncApplyGuard';
 import { estimateWorkspaceStorage } from '../lib/workspaceStorageStats';
@@ -598,6 +599,7 @@ export function Settings() {
                 }
               />
               <StorageCacheSection />
+              <SaveDiagnosticsSection />
             </>
           ),
         },

@@ -1,4 +1,5 @@
-import { FormEvent, lazy, Suspense, useMemo } from 'react';
+import { FormEvent, lazy, Suspense, useMemo, useRef, useState } from 'react';
+import { beforeItemIdAfterReorder, type DropPlacement } from '../../lib/listReorder';
 import { IcChevronDown, IcGrip, IcPlus, IcStar } from '../../components/icons';
 import { useConfirm } from '../../components/ui/ConfirmProvider';
 import type { EntityLinkPillItem } from '../../components/ui/EntityLinkPills';
@@ -47,7 +48,7 @@ export type TodoListSectionCallbacks = {
   ) => void;
   toggleTodoItem: (id: string) => void;
   removeTodoItem: (id: string) => void;
-  reorderTodoItem: (itemId: string, groupId: string, targetId: string) => void;
+  reorderTodoItem: (itemId: string, groupId: string, beforeItemId: string | null) => void;
   updateTodoGroup: (id: string, patch: Partial<Pick<TodoGroup, 'name' | 'pinned' | 'archived'>>) => void;
   updateTodoGroupPriority: (id: string, priority: Priority | undefined) => void;
   moveTodoGroup: (id: string, dir: 'up' | 'down') => void;
@@ -150,6 +151,15 @@ export function TodoListSection(props: TodoListSectionProps) {
     [noteTitleById],
   );
 
+  // Stamp the source id in a ref at dragstart (not only from props after paint).
+  // Drop must not depend on React having committed `dragItemId` / `dragGroupId`.
+  const dragItemIdRef = useRef(dragItemId);
+  dragItemIdRef.current = dragItemId;
+  const dragGroupIdRef = useRef(dragGroupId);
+  dragGroupIdRef.current = dragGroupId;
+  const dropPlacementRef = useRef<DropPlacement>('before');
+  const [dropPlacement, setDropPlacement] = useState<DropPlacement>('before');
+
   const archivedView = itemsViewMode === 'archived';
   if (archivedView && list.length === 0) return null;
 
@@ -160,6 +170,15 @@ export function TodoListSection(props: TodoListSectionProps) {
 
   const active = matchedList.filter((x) => isTodoOpen(x.status));
   const closed = matchedList.filter((x) => !isTodoOpen(x.status));
+  // The whole group, not the rows that survived the search / status filter:
+  // `reorderTodoItem` positions the task among *every* peer in the group, so
+  // the order handed to it has to describe that same list. Computing against
+  // the visible subset resolves "dropped after the last visible row" to
+  // "append to the group", which parks the task behind tasks the filter is
+  // hiding — the user drops it below one row and it lands three rows further
+  // down as soon as they clear the search. Drag is only offered in manual sort
+  // mode, where `list` is already in `sortOrder`.
+  const draggableIds = list.map((it) => it.id);
   const totalActive = list.filter((x) => isTodoOpen(x.status)).length;
   const totalClosed = list.filter((x) => !isTodoOpen(x.status)).length;
   const sectionOpen = isSectionOpen(sectionOpenMap, g.id);
@@ -191,6 +210,7 @@ export function TodoListSection(props: TodoListSectionProps) {
     allowDrag: allowDrag && !archivedView,
     isDragSrc: allowDrag && dragItemId === it.id,
     isDropTgt: allowDrag && dropItemTargetId === it.id && dragItemId !== it.id,
+    dropPlacement,
     linkedNotes: linkedNotesFor(it.id),
     notePickerOptions: notePickerOptions.filter(
       (n) => !noteIdsLinkedToTodo(noteTodoLinks, it.id).includes(n.id),
@@ -205,17 +225,42 @@ export function TodoListSection(props: TodoListSectionProps) {
       actions.updateTodoItem(id, patch),
     onToggle: actions.toggleTodoItem,
     onRemove: actions.removeTodoItem,
-    onDragStart: allowDrag ? onItemDragStart : () => {},
-    onDragOver: allowDrag ? onItemDragOver : () => {},
+    onDragStart: allowDrag
+      ? (id: string) => {
+          dragItemIdRef.current = id;
+          onItemDragStart(id);
+        }
+      : () => {},
+    onDragOver: allowDrag
+      ? (targetId: string, placement: DropPlacement) => {
+          dropPlacementRef.current = placement;
+          setDropPlacement((prev) => (prev === placement ? prev : placement));
+          onItemDragOver(targetId);
+        }
+      : () => {},
     onDrop: allowDrag
-      ? (targetId: string) => {
-          if (dragItemId && dragItemId !== targetId) {
-            actions.reorderTodoItem(dragItemId, g.id, targetId);
+      ? (targetId: string, placement: DropPlacement) => {
+          const sourceId = dragItemIdRef.current;
+          if (sourceId && sourceId !== targetId) {
+            const beforeId = beforeItemIdAfterReorder(
+              draggableIds,
+              sourceId,
+              targetId,
+              placement || dropPlacementRef.current,
+            );
+            if (beforeId !== undefined) {
+              actions.reorderTodoItem(sourceId, g.id, beforeId);
+            }
           }
           onItemDragEnd();
         }
       : () => {},
-    onDragEnd: allowDrag ? onItemDragEnd : () => {},
+    onDragEnd: allowDrag
+      ? () => {
+          dragItemIdRef.current = null;
+          onItemDragEnd();
+        }
+      : () => {},
   });
 
   return (
@@ -224,7 +269,8 @@ export function TodoListSection(props: TodoListSectionProps) {
         g.archived ? ' todos-section--archived' : ''
       }${isDragSrc ? ' todos-section--dragging' : ''}${isDropTgt ? ' todos-section--drop-target' : ''}`}
       onDragOver={(e) => {
-        if (!dragGroupId || dragGroupId === g.id) return;
+        const sourceId = dragGroupIdRef.current;
+        if (!sourceId || sourceId === g.id) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         onGroupDropTarget(g.id);
@@ -235,9 +281,10 @@ export function TodoListSection(props: TodoListSectionProps) {
         }
       }}
       onDrop={(e) => {
-        if (!dragGroupId || dragGroupId === g.id) return;
+        const sourceId = dragGroupIdRef.current;
+        if (!sourceId || sourceId === g.id) return;
         e.preventDefault();
-        actions.reorderTodoGroup(dragGroupId, g.id);
+        actions.reorderTodoGroup(sourceId, g.id);
         onGroupDragEnd();
       }}
     >
@@ -251,9 +298,13 @@ export function TodoListSection(props: TodoListSectionProps) {
           onDragStart={(e) => {
             e.dataTransfer.effectAllowed = 'move';
             e.dataTransfer.setData('text/x-todo-group', g.id);
+            dragGroupIdRef.current = g.id;
             onGroupDragStart(g.id);
           }}
-          onDragEnd={onGroupDragEnd}
+          onDragEnd={() => {
+            dragGroupIdRef.current = null;
+            onGroupDragEnd();
+          }}
           onClick={(e) => e.preventDefault()}
         >
           <IcGrip size={16} />

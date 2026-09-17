@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { EntityLinkPills } from '../../components/ui/EntityLinkPills';
 import { EntityLinkPicker } from '../../components/ui/EntityLinkPicker';
 import { RichTextDocumentPane } from '../../components/ui/RichTextDocumentPane';
@@ -20,7 +20,7 @@ export type NotesBodyEditorProps = {
   editorReady: boolean;
   editorAutoFocus?: boolean;
   onEditorAutoFocusHandled?: () => void;
-  onChangeBody: (payload: RichTextPayload) => void;
+  onChangeBody: (payload: RichTextPayload, noteId: string) => void;
   attachmentUserId: string;
   todoItems: TodoItem[];
   todoGroups: TodoGroup[];
@@ -32,7 +32,17 @@ export type NotesBodyEditorProps = {
   onCreateTaskFromSelection?: (title: string) => void;
 };
 
-export function NotesBodyEditor({
+/**
+ * `memo` keeps this pane out of the notes page's unrelated re-renders — version
+ * history, dialogs, bulk selection — which would otherwise re-render the editor
+ * tree and re-derive the linked-todo lists on every one of them.
+ *
+ * It does not skip renders caused by typing: `editorBody` is read from the
+ * workspace copy of the note, so each autosave flush changes it. Removing that
+ * cost means keeping the body out of this pane's props while its own editor is
+ * the source of truth, not tuning the memo.
+ */
+export const NotesBodyEditor = memo(function NotesBodyEditor({
   noteId,
   editorBody,
   editorBodyFormat,
@@ -50,6 +60,17 @@ export function NotesBodyEditor({
   onCreateTaskFromSelection,
 }: NotesBodyEditorProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  /**
+   * Binds the note this editor is showing to its own flushes. The editor is
+   * keyed by note id, so the instance being torn down on a note switch never
+   * sees a later render — it keeps this closure, and its unmount flush lands
+   * on the note the text was actually typed into.
+   */
+  const onChangeBodyForNote = useCallback(
+    (payload: RichTextPayload) => onChangeBody(payload, noteId),
+    [onChangeBody, noteId],
+  );
 
   const linkedTodoIds = useMemo(
     () => new Set(todoIdsLinkedToNote(noteTodoLinks, noteId)),
@@ -96,7 +117,7 @@ export function NotesBodyEditor({
         editorKey={noteId}
         value={editorBody}
         valueFormat={editorBodyFormat}
-        onChange={onChangeBody}
+        onChange={onChangeBodyForNote}
         editable={editorReady}
         autoFocusEditor={editorAutoFocus}
         onEditorAutoFocusHandled={onEditorAutoFocusHandled}
@@ -121,4 +142,4 @@ export function NotesBodyEditor({
       ) : null}
     </div>
   );
-}
+});

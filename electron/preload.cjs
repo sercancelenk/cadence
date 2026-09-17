@@ -42,6 +42,10 @@ const api = {
   revealInOS: (payload) => ipcRenderer.invoke('data:revealInOS', payload),
   cacheStats: () => ipcRenderer.invoke('cache:stats'),
   clearChromiumCache: () => ipcRenderer.invoke('cache:clearChromium'),
+  saveDiagnosticsGet: () => ipcRenderer.invoke('saveDiagnostics:get'),
+  saveDiagnosticsSetEnabled: (payload) =>
+    ipcRenderer.invoke('saveDiagnostics:setEnabled', payload),
+  saveDiagnosticsClear: () => ipcRenderer.invoke('saveDiagnostics:clear'),
   onSaveError: (cb) => {
     const listener = (_evt, payload) => {
       try { cb(payload); } catch (err) { console.error('[cadence] save error handler threw', err); }

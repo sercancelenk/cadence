@@ -326,3 +326,157 @@ describe('noteBodyPatchIsNoOp — field equality branches', () => {
     ).toBe(false);
   });
 });
+
+describe('single canonical signature per editor flush', () => {
+  const doc = {
+    type: 'doc' as const,
+    content: [{ type: 'paragraph' as const, content: [{ type: 'text' as const, text: 'Hello' }] }],
+  };
+
+  it('uses the signature the editor already computed', () => {
+    const withSignature = {
+      doc,
+      plainText: 'Hello',
+      docSignature: canonicalDocSignature(doc, 'prosemirror'),
+    };
+    const withoutSignature = { doc, plainText: 'Hello' };
+
+    expect(richBodyFieldsFromPayload(withSignature)).toEqual(
+      richBodyFieldsFromPayload(withoutSignature),
+    );
+    expect(richTextPayloadToBodyFields(withSignature)).toEqual(
+      richTextPayloadToBodyFields(withoutSignature),
+    );
+    expect(richTextPayloadIsEmpty(withSignature)).toBe(richTextPayloadIsEmpty(withoutSignature));
+  });
+
+  it('still detects an empty document through the precomputed signature', () => {
+    expect(
+      richTextPayloadIsEmpty({
+        doc: EMPTY_RICH_DOC,
+        plainText: '',
+        docSignature: canonicalDocSignature(EMPTY_RICH_DOC, 'prosemirror'),
+      }),
+    ).toBe(true);
+    expect(
+      richBodyFieldsFromPayload({
+        doc: EMPTY_RICH_DOC,
+        plainText: '',
+        docSignature: canonicalDocSignature(EMPTY_RICH_DOC, 'prosemirror'),
+      }),
+    ).toEqual({ body: '', bodyFormat: undefined, bodyPlainText: undefined });
+  });
+
+  it('never blanks a document because the cached signature claims it is empty', () => {
+    // A producer that hands over a stale or hand-built signature must not be
+    // able to clear a body that still has text in it — that is the one verdict
+    // here that destroys user content. Persisting the empty-doc JSON (which is
+    // not the empty string) is the same loss, so the body must equal the
+    // honest document, not merely be non-empty.
+    const lying = {
+      doc,
+      plainText: 'Hello',
+      docSignature: canonicalDocSignature(EMPTY_RICH_DOC, 'prosemirror'),
+    };
+    const honest = canonicalDocSignature(doc, 'prosemirror');
+
+    expect(richTextPayloadIsEmpty(lying)).toBe(false);
+    expect(richBodyFieldsFromPayload(lying).body).toBe(honest);
+    expect(richTextPayloadToBodyFields(lying).body).toBe(honest);
+    expect(richBodyFieldsFromPayload(lying).bodyPlainText).toBe('Hello');
+  });
+
+  it('ignores a cached signature that names a different document', () => {
+    const other = {
+      type: 'doc' as const,
+      content: [{ type: 'paragraph' as const, content: [{ type: 'text' as const, text: 'Other' }] }],
+    };
+    const mismatched = {
+      doc,
+      plainText: 'Hello',
+      docSignature: canonicalDocSignature(other, 'prosemirror'),
+    };
+    const honest = canonicalDocSignature(doc, 'prosemirror');
+    expect(richBodyFieldsFromPayload(mismatched).body).toBe(honest);
+    expect(richTextPayloadToBodyFields(mismatched).body).toBe(honest);
+  });
+
+  it('nextBodyIsCanonical gives the same answer as the full comparison', () => {
+    const current = { body: serializeRichDoc(doc), bodyFormat: 'prosemirror' as const };
+    const unchanged = richBodyFieldsFromPayload({ doc, plainText: 'Hello' });
+    const changed = richBodyFieldsFromPayload({
+      doc: {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Hello world' }] }],
+      },
+      plainText: 'Hello world',
+    });
+
+    for (const next of [unchanged, changed]) {
+      expect(noteBodyPatchIsNoOp(current, next, { nextBodyIsCanonical: true })).toBe(
+        noteBodyPatchIsNoOp(current, next),
+      );
+    }
+    expect(noteBodyPatchIsNoOp(current, unchanged, { nextBodyIsCanonical: true })).toBe(true);
+    expect(noteBodyPatchIsNoOp(current, changed, { nextBodyIsCanonical: true })).toBe(false);
+  });
+
+  /**
+   * The shortcut compares a body normalized once (the payload's signature)
+   * against a stored body normalized again on the way in. Attachment
+   * normalization has to be a fixed point for those to line up — otherwise an
+   * edit to a note holding an image reads as unchanged and is never saved.
+   */
+  it('holds for a document with an attachment, whose src is rewritten on storage', () => {
+    const withImage = {
+      type: 'doc' as const,
+      content: [
+        { type: 'image' as const, attrs: { src: 'cadence-attachment://att-1' } },
+        { type: 'paragraph' as const, content: [{ type: 'text' as const, text: 'Caption' }] },
+      ],
+    };
+    const stored = richBodyFieldsFromPayload({ doc: withImage, plainText: 'Caption' });
+    expect(canonicalDocSignature(stored.body, 'prosemirror')).toBe(stored.body);
+
+    const current = { body: stored.body, bodyFormat: 'prosemirror' as const };
+    const edited = richBodyFieldsFromPayload({
+      doc: {
+        ...withImage,
+        content: [
+          withImage.content[0]!,
+          { type: 'paragraph', content: [{ type: 'text', text: 'New caption' }] },
+        ],
+      },
+      plainText: 'New caption',
+    });
+
+    expect(noteBodyPatchIsNoOp(current, stored, { nextBodyIsCanonical: true })).toBe(true);
+    expect(noteBodyPatchIsNoOp(current, edited, { nextBodyIsCanonical: true })).toBe(false);
+  });
+
+  it('ignores the canonical shortcut for non-prosemirror bodies', () => {
+    // A markdown body is not its own canonical form; the flag must not make us
+    // compare a markdown string against a serialized doc.
+    const markdown = { body: '# Title', bodyFormat: 'markdown' as const };
+    expect(noteBodyPatchIsNoOp(markdown, { ...markdown, bodyPlainText: 'x' }, {
+      nextBodyIsCanonical: true,
+    })).toBe(true);
+  });
+
+  it('treats a legacy markdown body and its prosemirror form as unchanged', () => {
+    const markdownCurrent = { body: 'Hello', bodyFormat: 'markdown' as const };
+    const next = richBodyFieldsFromPayload({
+      doc: canonicalDocFromMarkdown('Hello'),
+      plainText: 'Hello',
+    });
+
+    expect(noteBodyPatchIsNoOp(markdownCurrent, next, { nextBodyIsCanonical: true })).toBe(
+      noteBodyPatchIsNoOp(markdownCurrent, next),
+    );
+  });
+});
+
+/** Round-trips markdown through the importer the editor uses. */
+function canonicalDocFromMarkdown(markdown: string) {
+  return JSON.parse(canonicalDocSignature(markdown, 'markdown'));
+}

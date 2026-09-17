@@ -18,6 +18,13 @@ import type { NoteRevisionTrigger } from '../../lib/noteRevision/types';
 import { registerBeforeFlushHook, runBeforeFlushHooks } from '../../lib/pendingSaveFlush';
 import { deriveStoredTitleFromPlainText } from './noteDisplay';
 
+/**
+ * How many previously selected notes stay eligible to receive a late flush.
+ * Bounded because each entry pins a full note body in memory, and a flush that
+ * has not arrived within this many switches is never going to.
+ */
+const FLUSH_TARGET_HISTORY = 8;
+
 export type NoteRevisionCapture = (
   prev: Note,
   next: Note,
@@ -68,6 +75,36 @@ export function useNotesEditor(
   const latestBodyFieldsRef = useRef<({ noteId: string } & RichTextBodyFields) | null>(null);
   const pendingLockedNoteRef = useRef<Note | null>(null);
   const selectedRef = useRef(selected);
+  /**
+   * Notes selected earlier in this session, oldest first.
+   *
+   * The body editor is keyed by note id, so switching notes unmounts it — and
+   * its cleanup flushes the debounced buffer *after* this render has already
+   * pointed `selectedRef` at the new note. That flush still carries the old
+   * note's text, so the old note has to stay reachable to receive it.
+   *
+   * The flush arrives from a passive effect cleanup. React normally drains
+   * those before the next commit, but nothing in the contract promises it, so
+   * two quick switches can leave the first note's flush still queued while the
+   * selection has already moved on twice. Remembering only the immediately
+   * previous note would drop that edit; a short history cannot.
+   */
+  const recentlySelectedRef = useRef(new Map<string, Note>());
+  if (selectedRef.current?.id !== selected?.id) {
+    const leaving = selectedRef.current;
+    if (leaving) {
+      const recent = recentlySelectedRef.current;
+      // Re-inserted rather than updated in place so the map stays ordered
+      // oldest-first and eviction always drops the least recent note.
+      recent.delete(leaving.id);
+      recent.set(leaving.id, leaving);
+      while (recent.size > FLUSH_TARGET_HISTORY) {
+        const oldest = recent.keys().next().value;
+        if (oldest === undefined) break;
+        recent.delete(oldest);
+      }
+    }
+  }
   selectedRef.current = selected;
   // Kept in a ref so the encrypt callbacks below don't need it in their
   // dependency arrays (which would re-register the flush hook on every render).
@@ -213,12 +250,42 @@ export function useNotesEditor(
     return noteSnapshotFromNote(note);
   }, []);
 
-  const onChangeBody = (payload: RichTextPayload) => {
+  /**
+   * The note a flush belongs to.
+   *
+   * An editor that tags its flush with a note id is authoritative: that is the
+   * document the user was typing into, whatever has been selected since. An id
+   * matching neither the current note nor one selected recently is dropped —
+   * losing the last few hundred milliseconds of typing is recoverable, writing
+   * it over a different note is not.
+   */
+  const noteForFlush = useCallback((noteId?: string): Note | null => {
+    const current = selectedRef.current;
+    if (!noteId) return current;
+    if (current?.id === noteId) return current;
+    const recent = recentlySelectedRef.current.get(noteId);
+    if (recent) return recent;
+    // No known way to reach this, but a discarded edit must never be invisible:
+    // this is the only trace a field report would have to go on.
+    console.error('[cadence] dropped editor flush for unreachable note', noteId);
+    return null;
+  }, []);
+
+  /**
+   * Stable across renders so the editor subtree can be memoized, which is why
+   * the note comes from `noteForFlush` rather than a closure: by the time an
+   * unmounting editor flushes, the render that replaced it has already moved
+   * the selection on.
+   */
+  const onChangeBody = useCallback((payload: RichTextPayload, flushedNoteId?: string) => {
+    const selected = noteForFlush(flushedNoteId);
     if (!selected) return;
     const fields = richBodyFieldsFromPayload(payload);
     const derivedTitle = deriveStoredTitleFromPlainText(payload.plainText);
     const titleChanged = (selected.title ?? '') !== derivedTitle;
-    if (noteBodyPatchIsNoOp(selected, fields) && !titleChanged) return;
+    if (noteBodyPatchIsNoOp(selected, fields, { nextBodyIsCanonical: true }) && !titleChanged) {
+      return;
+    }
     latestBodyFieldsRef.current = { noteId: selected.id, ...fields };
     const prev = selected;
     if (!selected.locked) {
@@ -233,7 +300,14 @@ export function useNotesEditor(
     }
     const key = unlock.read();
     if (!key) {
-      setDecrypted(null);
+      // Keep the plaintext and the pending refs so a later flush (quit, unlock)
+      // can retry. Clearing `decrypted` would set editorBody to '' for a locked
+      // note — and if this flush belongs to a *previous* locked note, it would
+      // blank the note currently on screen. The user must be told the last
+      // keystrokes are not on disk yet, or they will close the window thinking
+      // they are.
+      pendingLockedNoteRef.current = selected;
+      onEncryptErrorRef.current?.(ENCRYPT_FAIL_MESSAGE);
       return;
     }
     setDecrypted({ noteId: selected.id, ...fields });
@@ -287,7 +361,7 @@ export function useNotesEditor(
       rememberRevisionNote(nextNote);
       captureRevision?.(prev, nextNote, 'autosave');
     })();
-  };
+  }, [captureRevision, noteForFlush, patchNote, rememberRevisionNote, unlock, update]);
 
   const hideSelected = async () => {
     if (!selected || !selected.locked) return;

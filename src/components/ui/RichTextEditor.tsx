@@ -6,6 +6,7 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { RichTextBodyFormat, RichTextDoc, RichTextPayload } from '../../lib/richText';
 import {
   isRichTextOverSoftLimit,
+  serializeRichDoc,
   RICH_TEXT_HARD_CHAR_LIMIT,
   RICH_TEXT_SOFT_CHAR_LIMIT,
 } from '../../lib/richText';
@@ -17,6 +18,8 @@ import {
   shouldClearPendingOnPropsEcho,
 } from '../../lib/richTextExternalSync';
 import { createSlashCommandExtension } from '../../lib/richTextSlashCommand';
+import { readRichTextToolbarState } from '../../lib/richTextToolbarState';
+import { useEditorToolbarState } from '../../hooks/useEditorToolbarState';
 import { RichTextBubbleToolbar } from './RichTextBubbleToolbar';
 import {
   attachmentUri,
@@ -107,15 +110,19 @@ function contentKey(
   return canonicalDocSignature(value, formatArg);
 }
 
+/** Used by the external-sync paths, which compare against incoming props. */
 function docSignatureFromEditor(ed: Editor): string {
   return canonicalDocSignature(ed.getJSON() as RichTextDoc, 'prosemirror');
 }
 
-function payloadFromEditor(ed: Editor): RichTextPayload {
-  return {
-    doc: normalizeDocAttachmentsForStorage(ed.getJSON() as RichTextDoc),
-    plainText: ed.getText(),
-  };
+/**
+ * One pass over the open document per flush: read it, normalize attachments,
+ * serialize once. The signature doubles as the change detector here and as the
+ * persisted body downstream, so nothing re-derives it.
+ */
+function payloadFromEditor(ed: Editor): RichTextPayload & { docSignature: string } {
+  const doc = normalizeDocAttachmentsForStorage(ed.getJSON() as RichTextDoc);
+  return { doc, plainText: ed.getText(), docSignature: serializeRichDoc(doc) };
 }
 
 const HYDRATION_TX_META = 'cadenceHydration';
@@ -344,7 +351,7 @@ export function RichTextEditor({
 
   const flushChange = useCallback((ed: Editor) => {
     const payload = payloadFromEditor(ed);
-    const sig = docSignatureFromEditor(ed);
+    const sig = payload.docSignature;
     if (sig === lastEmittedSig.current) {
       onSaveStateChangeRef.current?.('idle');
       return;
@@ -913,22 +920,8 @@ type ToolbarProps = {
   onInsertImageFile: (file: Blob | File, alt?: string) => Promise<void>;
 };
 
-/** Re-render toolbar when selection/format changes so active states stay accurate. */
-function useToolbarRefresh(editor: Editor) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const bump = () => setTick((t) => t + 1);
-    editor.on('selectionUpdate', bump);
-    editor.on('transaction', bump);
-    return () => {
-      editor.off('selectionUpdate', bump);
-      editor.off('transaction', bump);
-    };
-  }, [editor]);
-}
-
 function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) {
-  useToolbarRefresh(editor);
+  const active = useEditorToolbarState(editor, readRichTextToolbarState);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -939,7 +932,7 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
   const linkInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
 
-  const inTable = editor.isActive('table');
+  const inTable = active.inTable;
 
   const run = useCallback((fn: () => boolean) => {
     fn();
@@ -1043,42 +1036,42 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
       <ToolbarGroup label="Style">
         <ToolbarButton
           title="Bold (⌘B)"
-          active={editor.isActive('bold')}
+          active={active.bold}
           onClick={() => run(() => editor.chain().focus().toggleBold().run())}
         >
           B
         </ToolbarButton>
         <ToolbarButton
           title="Italic (⌘I)"
-          active={editor.isActive('italic')}
+          active={active.italic}
           onClick={() => run(() => editor.chain().focus().toggleItalic().run())}
         >
           <em>I</em>
         </ToolbarButton>
         <ToolbarButton
           title="Underline (⌘U)"
-          active={editor.isActive('underline')}
+          active={active.underline}
           onClick={() => run(() => editor.chain().focus().toggleUnderline().run())}
         >
           <span className="rich-editor__u">U</span>
         </ToolbarButton>
         <ToolbarButton
           title="Strikethrough"
-          active={editor.isActive('strike')}
+          active={active.strike}
           onClick={() => run(() => editor.chain().focus().toggleStrike().run())}
         >
           <s>S</s>
         </ToolbarButton>
         <ToolbarButton
           title="Highlight"
-          active={editor.isActive('highlight')}
+          active={active.highlight}
           onClick={() => run(() => editor.chain().focus().toggleHighlight().run())}
         >
           HL
         </ToolbarButton>
         <ToolbarButton
           title="Inline code"
-          active={editor.isActive('code')}
+          active={active.code}
           onClick={() => run(() => editor.chain().focus().toggleCode().run())}
         >
           {'</>'}
@@ -1096,35 +1089,35 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
       <ToolbarGroup label="Structure">
         <ToolbarButton
           title="Paragraph"
-          active={editor.isActive('paragraph')}
+          active={active.paragraph}
           onClick={() => run(() => editor.chain().focus().setParagraph().run())}
         >
           ¶
         </ToolbarButton>
         <ToolbarButton
           title="Heading 1"
-          active={editor.isActive('heading', { level: 1 })}
+          active={active.heading1}
           onClick={() => run(() => editor.chain().focus().toggleHeading({ level: 1 }).run())}
         >
           H1
         </ToolbarButton>
         <ToolbarButton
           title="Heading 2"
-          active={editor.isActive('heading', { level: 2 })}
+          active={active.heading2}
           onClick={() => run(() => editor.chain().focus().toggleHeading({ level: 2 }).run())}
         >
           H2
         </ToolbarButton>
         <ToolbarButton
           title="Heading 3"
-          active={editor.isActive('heading', { level: 3 })}
+          active={active.heading3}
           onClick={() => run(() => editor.chain().focus().toggleHeading({ level: 3 }).run())}
         >
           H3
         </ToolbarButton>
         <ToolbarButton
           title="Blockquote"
-          active={editor.isActive('blockquote')}
+          active={active.blockquote}
           onClick={() => run(() => editor.chain().focus().toggleBlockquote().run())}
         >
           ❝
@@ -1134,21 +1127,21 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
       <ToolbarGroup label="Lists">
         <ToolbarButton
           title="Bullet list"
-          active={editor.isActive('bulletList')}
+          active={active.bulletList}
           onClick={() => run(() => editor.chain().focus().toggleBulletList().run())}
         >
           •
         </ToolbarButton>
         <ToolbarButton
           title="Numbered list"
-          active={editor.isActive('orderedList')}
+          active={active.orderedList}
           onClick={() => run(() => editor.chain().focus().toggleOrderedList().run())}
         >
           1.
         </ToolbarButton>
         <ToolbarButton
           title="Checkbox list"
-          active={editor.isActive('taskList')}
+          active={active.taskList}
           onClick={() => run(() => editor.chain().focus().toggleTaskList().run())}
         >
           ☐
@@ -1158,7 +1151,7 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
       <ToolbarGroup label="Insert">
         <ToolbarButton
           title="Code block"
-          active={editor.isActive('codeBlock') && !editor.isActive('codeBlock', { language: 'mermaid' })}
+          active={active.codeBlock && !active.mermaidBlock}
           onClick={() =>
             run(() => {
               if (editor.isActive('codeBlock', { language: 'mermaid' })) {
@@ -1176,7 +1169,7 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
         </ToolbarButton>
         <ToolbarButton
           title="Mermaid diagram"
-          active={editor.isActive('codeBlock', { language: 'mermaid' })}
+          active={active.mermaidBlock}
           onClick={() =>
             run(() => {
               if (editor.isActive('codeBlock', { language: 'mermaid' })) {
@@ -1194,12 +1187,12 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
         >
           ―
         </ToolbarButton>
-        <ToolbarButton title="Add link" active={editor.isActive('link')} onClick={openLinkEditor}>
+        <ToolbarButton title="Add link" active={active.link} onClick={openLinkEditor}>
           Link
         </ToolbarButton>
         <ToolbarButton
           title="Remove link"
-          disabled={!editor.isActive('link')}
+          disabled={!active.link}
           onClick={() => run(() => editor.chain().focus().unsetLink().run())}
         >
           Unlink
@@ -1268,14 +1261,14 @@ function RichTextToolbar({ editor, onNotice, onInsertImageFile }: ToolbarProps) 
       <ToolbarGroup label="History">
         <ToolbarButton
           title="Undo (⌘Z)"
-          disabled={!editor.can().chain().focus().undo().run()}
+          disabled={!active.canUndo}
           onClick={() => run(() => editor.chain().focus().undo().run())}
         >
           ↶
         </ToolbarButton>
         <ToolbarButton
           title="Redo (⌘⇧Z)"
-          disabled={!editor.can().chain().focus().redo().run()}
+          disabled={!active.canRedo}
           onClick={() => run(() => editor.chain().focus().redo().run())}
         >
           ↷

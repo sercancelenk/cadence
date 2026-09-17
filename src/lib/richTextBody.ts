@@ -21,10 +21,35 @@ export type RichTextBodyFields = {
   bodyPlainText?: string;
 };
 
+/**
+ * Canonical signature of the empty document.
+ *
+ * A module-level constant rather than a call per comparison: it is the same
+ * string every time, and the emptiness check runs on every editor flush.
+ */
+const EMPTY_DOC_SIGNATURE = canonicalDocSignature(EMPTY_RICH_DOC, 'prosemirror');
+
+/**
+ * Canonical body string for persistence.
+ *
+ * Always derived from `doc`. `payload.docSignature` is a flush-side hint the
+ * editor uses to skip no-op compares; it is not a source of truth. Trusting it
+ * here would let a stale or hand-built signature persist empty ProseMirror
+ * JSON (or any other stand-in) while `doc` still holds the user's text.
+ */
+function payloadSignature(payload: RichTextPayload): string {
+  return canonicalDocSignature(payload.doc, 'prosemirror');
+}
+
+/** Whether this payload's document has no structural content. */
+function payloadIsEmptyDoc(payload: RichTextPayload): boolean {
+  return payloadSignature(payload) === EMPTY_DOC_SIGNATURE;
+}
+
 export function richTextPayloadToBodyFields(payload: RichTextPayload): RichTextBodyFields {
   const plain = payload.plainText.trim();
   return {
-    body: serializeRichDoc(payload.doc),
+    body: payloadSignature(payload),
     bodyFormat: 'prosemirror',
     bodyPlainText: plain || undefined,
   };
@@ -32,20 +57,14 @@ export function richTextPayloadToBodyFields(payload: RichTextPayload): RichTextB
 
 /** True when the doc is structurally empty (no images, tables, or text). */
 export function richTextPayloadIsEmpty(payload: RichTextPayload): boolean {
-  return (
-    canonicalDocSignature(payload.doc, 'prosemirror') ===
-    canonicalDocSignature(EMPTY_RICH_DOC, 'prosemirror')
-  );
+  return payloadIsEmptyDoc(payload);
 }
 
 /** True when persisted body fields have no structural content (image-only counts). */
 export function richBodyFieldsIsEmpty(fields: RichTextBodyFields): boolean {
   const raw = fields.body?.trim() ?? '';
   if (!raw) return true;
-  return (
-    canonicalDocSignature(raw, fields.bodyFormat) ===
-    canonicalDocSignature(EMPTY_RICH_DOC, 'prosemirror')
-  );
+  return canonicalDocSignature(raw, fields.bodyFormat) === EMPTY_DOC_SIGNATURE;
 }
 
 /**
@@ -53,10 +72,11 @@ export function richBodyFieldsIsEmpty(fields: RichTextBodyFields): boolean {
  * Image-only / table-only docs have empty plainText but must still save.
  */
 export function richBodyFieldsFromPayload(payload: RichTextPayload): RichTextBodyFields {
-  if (richTextPayloadIsEmpty(payload)) {
+  if (payloadIsEmptyDoc(payload)) {
     return { body: '', bodyFormat: undefined, bodyPlainText: undefined };
   }
-  return richTextPayloadToBodyFields(payload);
+  const plain = payload.plainText.trim();
+  return { body: payloadSignature(payload), bodyFormat: 'prosemirror', bodyPlainText: plain || undefined };
 }
 
 export function emptyRichBodyFields(): RichTextBodyFields {
@@ -124,10 +144,22 @@ function canonicalBodyKey(fields: {
   return canonicalDocSignature(fields.body ?? '', fields.bodyFormat);
 }
 
-/** True when a body patch would not change stored content — skip to avoid bumping `updatedAt`. */
+/**
+ * True when a body patch would not change stored content — skip to avoid
+ * bumping `updatedAt`.
+ *
+ * Compares canonical forms rather than raw strings, so a legacy markdown body
+ * and its ProseMirror equivalent count as unchanged, while the same visible
+ * text with a new image or table does not.
+ *
+ * `nextBodyIsCanonical` lets the editor path say "this body already is the
+ * canonical serialization" (which `richBodyFieldsFromPayload` guarantees) and
+ * skip one parse + normalize + serialize of the open document.
+ */
 export function noteBodyPatchIsNoOp(
   current: { body?: string; bodyFormat?: RichTextBodyFormat; bodyPlainText?: string },
   next: RichTextBodyFields,
+  { nextBodyIsCanonical = false }: { nextBodyIsCanonical?: boolean } = {},
 ): boolean {
   if (
     (current.body ?? '') === (next.body ?? '') &&
@@ -137,14 +169,11 @@ export function noteBodyPatchIsNoOp(
     return true;
   }
 
-  const curPlain = extractPlainText(
-    resolveRichTextContent(current.body ?? '', current.bodyFormat),
-  ).trim();
-  const nextPlain = extractPlainText(resolveRichTextContent(next.body ?? '', next.bodyFormat)).trim();
-  if (curPlain !== nextPlain) return false;
-
-  // Same visible text but different JSON (e.g. image/table added) must still persist.
-  return canonicalBodyKey(current) === canonicalBodyKey(next);
+  const nextKey =
+    nextBodyIsCanonical && next.bodyFormat === 'prosemirror'
+      ? (next.body ?? '')
+      : canonicalBodyKey(next);
+  return canonicalBodyKey(current) === nextKey;
 }
 
 /** Append AI / external plain text to an existing task or note body. */

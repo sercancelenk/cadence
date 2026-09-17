@@ -267,6 +267,10 @@
   padding: 0;
 }
 
+/* Do NOT put `content-visibility: auto` on `.todos-row`. The row is the
+   setDragImage source and the drop target for HTML5 reorder; Chromium's
+   layout/paint containment from that property breaks dragover hit-testing
+   and the drag ghost, so the list stops accepting drops. */
 .todos-row {
   display: flex;
   align-items: flex-start;

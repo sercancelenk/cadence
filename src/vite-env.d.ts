@@ -119,6 +119,33 @@ export type CacheClearResult =
   | { ok: false; error: string }
   | { ok: true; chromiumBytes: number; chromiumBreakdown: CacheBreakdownEntry[] };
 
+/** One stage of the main-process save path, in milliseconds. */
+export type SaveTimingStage = { stage: string; ms: number };
+
+export type SaveTimingSample = {
+  label: string;
+  at: string;
+  totalMs: number;
+  stages: SaveTimingStage[];
+  meta?: Record<string, unknown>;
+};
+
+export type SaveTimingPercentiles = { p50: number; p95: number; max: number };
+
+export type SaveTimingSummary = {
+  enabled: boolean;
+  sampleCount: number;
+  totalMs: SaveTimingPercentiles;
+  stages: ({ stage: string } & SaveTimingPercentiles)[];
+};
+
+export type SaveDiagnostics = {
+  ok: true;
+  enabled: boolean;
+  summary: SaveTimingSummary;
+  samples: SaveTimingSample[];
+};
+
 interface ImportMetaEnv {
   /** "1" when the bundle is built for the PWA (GitHub Pages) target. */
   readonly CADENCE_PWA?: string;
@@ -186,6 +213,9 @@ interface CadenceApi {
       backupMirrorRunNow?: (data: unknown) => Promise<DailyBackupMirrorStatus>;
       cacheStats?: () => Promise<CacheStats>;
       clearChromiumCache?: () => Promise<CacheClearResult>;
+      saveDiagnosticsGet?: () => Promise<SaveDiagnostics>;
+      saveDiagnosticsSetEnabled?: (payload: { enabled: boolean }) => Promise<SaveDiagnostics>;
+      saveDiagnosticsClear?: () => Promise<SaveDiagnostics>;
       onSaveError?: (cb: (event: SaveError) => void) => () => void;
       onRemoteUpdated?: (cb: (event: { writeGeneration?: number }) => void) => () => void;
       showNotification: (opts: { title?: string; body?: string }) => Promise<boolean>;

@@ -1131,7 +1131,12 @@
   outline-offset: -2px;
 }
 
-.todos-row--drop-target {
+.todos-row--drop-target.todos-row--drop-before {
+  box-shadow: 0 3px 0 0 var(--accent) inset;
+}
+
+.todos-row--drop-target.todos-row--drop-after,
+.todos-row--drop-target:not(.todos-row--drop-before) {
   box-shadow: 0 -3px 0 0 var(--accent) inset;
 }
 

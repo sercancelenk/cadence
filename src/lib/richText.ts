@@ -26,6 +26,15 @@ export type RichTextBodyFormat = 'markdown' | 'prosemirror';
 export type RichTextPayload = {
   doc: RichTextDoc;
   plainText: string;
+  /**
+   * Canonical serialization of `doc`, when the producer already had it.
+   *
+   * The editor computes this once per flush to decide whether anything
+   * changed; every consumer downstream would otherwise re-derive the same
+   * string from the same document. Optional so hand-built payloads stay valid
+   * — consumers fall back to computing it.
+   */
+  docSignature?: string;
 };
 
 /**

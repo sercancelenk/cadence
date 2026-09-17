@@ -1,4 +1,13 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useConfirm } from '../components/ui/ConfirmProvider';
 import { useToast } from '../components/ui/Toast';
@@ -28,6 +37,7 @@ import {
   useNotesSort,
   useNotesViewMode,
   useSidebarResize,
+  type NoteRevisionCapture,
 } from '../features/notes';
 import { addTodoItem as appendTodoItem, moveNoteToGroup } from '../core/actions';
 import { isAIConfigured } from '../lib/ai';
@@ -123,7 +133,15 @@ export function NotesPage() {
   const pendingSelectNoteIdRef = useRef<string | null>(null);
   const createNoteEditIntentRef = useRef<string | null>(null);
 
-  const { sortMode, setSortMode, notes } = useNotesSort(visibleNotes, user?.id);
+  // The note being worked on keeps its place in the sidebar until the user
+  // moves to another one, so typing does not drag it up the list. Selection is
+  // resolved from the sorted list below, so this can only ever trail it —
+  // harmless in itself, because at that point the held snapshot equals the live
+  // note and the order does not change. What matters is that the hold is
+  // engaged before the user can type into the newly selected note; see the
+  // layout effect below.
+  const [heldSortNoteId, setHeldSortNoteId] = useState<string | null>(null);
+  const { sortMode, setSortMode, notes } = useNotesSort(visibleNotes, user?.id, heldSortNoteId);
   const orderedNoteIds = useMemo(() => flatSidebarNoteIds(groups, notes), [groups, notes]);
   const bulkSelection = useNotesBulkSelection(orderedNoteIds);
   const { selectedId, setSelectedId, selected } = useNotesSelection(
@@ -138,14 +156,29 @@ export function NotesPage() {
     pendingSelectNoteIdRef,
   );
 
+  // Layout, not passive: a passive effect runs *after* paint, which leaves a
+  // window where the new note is on screen and selectable but not yet held.
+  // A keystroke landing in that window bumps `updatedAt` with the old note
+  // still held, and the row the user just clicked jumps up the sidebar under
+  // "Last updated" / "Title". Committing the hold before paint closes it.
+  useLayoutEffect(() => {
+    setHeldSortNoteId(selectedId);
+  }, [selectedId]);
+
   const toast = useToast();
   const revisionCaptureRef = useRef<ReturnType<typeof useNoteRevisionCapture> | null>(null);
+  // Goes through the ref, so a stable identity here keeps `onChangeBody` — and
+  // with it the memoized editor — stable too.
+  const captureRevisionViaRef = useCallback<NoteRevisionCapture>(
+    (...args) => revisionCaptureRef.current?.captureAfterSave(...args),
+    [],
+  );
   const editorState = useNotesEditor(
     selected,
     patchNote,
     update,
     unlock,
-    (...args) => revisionCaptureRef.current?.captureAfterSave(...args),
+    captureRevisionViaRef,
     createNoteEditIntentRef,
     (message) => toast.showError('Locked note not saved', message),
   );
@@ -202,7 +235,7 @@ export function NotesPage() {
   const { sidebarCollapsed, toggleSidebar, expandSidebar, collapseSidebar } =
     useNotesSidebarCollapse(user?.id ?? '');
 
-  const dnd = useNotesSidebarDnD(sortMode, notes, update);
+  const dnd = useNotesSidebarDnD(sortMode, notes, update, setSortMode);
 
   // Once the new note lands in workspace data, force selection and expand its list.
   useEffect(() => {
@@ -214,17 +247,22 @@ export function NotesPage() {
     if (selectedId !== pendingId) setSelectedId(pendingId);
   }, [notesWorkspace.notes, selectedId, setSelectedId, expandGroup]);
 
-  const onCreate = (groupId?: string) => {
-    const id = addNote(groupId);
-    setViewMode('active');
-    setDecrypted(null);
-    bulkSelection.clearBulk();
-    setListContextMenu(null);
-    pendingSelectNoteIdRef.current = id;
-    createNoteEditIntentRef.current = id;
-    setSelectedId(id);
-    if (groupId) expandGroup(groupId);
-  };
+  const clearBulk = bulkSelection.clearBulk;
+
+  const onCreate = useCallback(
+    (groupId?: string) => {
+      const id = addNote(groupId);
+      setViewMode('active');
+      setDecrypted(null);
+      clearBulk();
+      setListContextMenu(null);
+      pendingSelectNoteIdRef.current = id;
+      createNoteEditIntentRef.current = id;
+      setSelectedId(id);
+      if (groupId) expandGroup(groupId);
+    },
+    [addNote, clearBulk, expandGroup, setDecrypted, setSelectedId, setViewMode],
+  );
 
   const selectPrimaryNote = useCallback(
     (id: string) => {
@@ -235,18 +273,25 @@ export function NotesPage() {
     [setSelectedId],
   );
 
-  const onNoteClick = (id: string, event: React.MouseEvent) => {
-    bulkSelection.handleNoteClick(
-      id,
-      { shiftKey: event.shiftKey, metaKey: event.metaKey || event.ctrlKey },
-      selectedId,
-      selectPrimaryNote,
-    );
-  };
+  const handleNoteClick = bulkSelection.handleNoteClick;
+
+  const onNoteClick = useCallback(
+    (id: string, event: React.MouseEvent) => {
+      handleNoteClick(
+        id,
+        { shiftKey: event.shiftKey, metaKey: event.metaKey || event.ctrlKey },
+        selectedId,
+        selectPrimaryNote,
+      );
+    },
+    [handleNoteClick, selectPrimaryNote, selectedId],
+  );
+
+  const selectedNoteId = selected?.id;
 
   const onCreateTaskFromSelection = useCallback(
     (title: string) => {
-      if (!selected) return;
+      if (!selectedNoteId) return;
       const groupId = defaultTodoGroupId(notesWorkspace.todoGroups);
       if (!groupId) {
         toast.showWarning(
@@ -256,7 +301,7 @@ export function NotesPage() {
         return;
       }
       const applied = update((data) =>
-        appendTodoItem(data, groupId, title, { sourceNoteId: selected.id }),
+        appendTodoItem(data, groupId, title, { sourceNoteId: selectedNoteId }),
       );
       if (!applied) {
         toast.showWarning('Could not create task', 'Saving is temporarily blocked.');
@@ -264,15 +309,43 @@ export function NotesPage() {
       }
       toast.showSuccess('Task created', title);
     },
-    [notesWorkspace.todoGroups, selected, toast, update],
+    [notesWorkspace.todoGroups, selectedNoteId, toast, update],
   );
 
-  const onNoteContextMenu = (id: string, event: React.MouseEvent) => {
-    event.preventDefault();
-    const noteIds = bulkSelection.prepareContextMenu(id);
-    selectPrimaryNote(id);
-    setListContextMenu({ x: event.clientX, y: event.clientY, noteIds });
-  };
+  // The editor pane is memoized, so its handlers must keep their identity
+  // across the re-renders a keystroke causes elsewhere on the page.
+  const onOpenTask = useCallback(
+    (taskId: string) => {
+      navigate(`/todos?focus=${encodeURIComponent(taskId)}`);
+    },
+    [navigate],
+  );
+
+  const onLinkSelectedNoteTodo = useCallback(
+    (todoId: string) => {
+      if (selectedNoteId) linkNoteTodo(selectedNoteId, todoId);
+    },
+    [linkNoteTodo, selectedNoteId],
+  );
+
+  const onUnlinkSelectedNoteTodo = useCallback(
+    (todoId: string) => {
+      if (selectedNoteId) unlinkNoteTodo(selectedNoteId, todoId);
+    },
+    [selectedNoteId, unlinkNoteTodo],
+  );
+
+  const prepareContextMenu = bulkSelection.prepareContextMenu;
+
+  const onNoteContextMenu = useCallback(
+    (id: string, event: React.MouseEvent) => {
+      event.preventDefault();
+      const noteIds = prepareContextMenu(id);
+      selectPrimaryNote(id);
+      setListContextMenu({ x: event.clientX, y: event.clientY, noteIds });
+    },
+    [prepareContextMenu, selectPrimaryNote],
+  );
 
   const onBulkPin = useCallback(
     (noteIds: string[]) => {
@@ -335,18 +408,27 @@ export function NotesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode]);
 
-  const onCreateGroup = (name: string) => {
-    const id = addNoteGroup(name);
-    expandGroup(id);
-  };
+  const onCreateGroup = useCallback(
+    (name: string) => {
+      const id = addNoteGroup(name);
+      expandGroup(id);
+    },
+    [addNoteGroup, expandGroup],
+  );
 
-  const onRenameGroup = (groupId: string, name: string) => {
-    updateNoteGroup(groupId, { name });
-  };
+  const onRenameGroup = useCallback(
+    (groupId: string, name: string) => {
+      updateNoteGroup(groupId, { name });
+    },
+    [updateNoteGroup],
+  );
 
-  const onRemoveGroup = (groupId: string) => {
-    removeNoteGroup(groupId);
-  };
+  const onRemoveGroup = useCallback(
+    (groupId: string) => {
+      removeNoteGroup(groupId);
+    },
+    [removeNoteGroup],
+  );
 
   const onTogglePinned = () => {
     if (!selected) return;
@@ -402,9 +484,11 @@ export function NotesPage() {
         decrypted={decrypted}
         draggingId={dnd.draggingId}
         dropTargetId={dnd.dropTargetId}
+        dropPlacement={dnd.dropPlacement}
         dropTargetGroupId={dnd.dropTargetGroupId}
         onNoteDragStart={dnd.onNoteDragStart}
         onNoteDragOver={dnd.onNoteDragOver}
+        onNoteDragEnter={dnd.onNoteDragEnter}
         onNoteDrop={dnd.onNoteDrop}
         onGroupDragOver={dnd.onGroupDragOver}
         onGroupDrop={dnd.onGroupDrop}
@@ -492,11 +576,9 @@ export function NotesPage() {
                 todoItems={notesWorkspace.todoItems}
                 todoGroups={notesWorkspace.todoGroups}
                 noteTodoLinks={notesWorkspace.noteTodoLinks}
-                onOpenTask={(taskId) => {
-                  navigate(`/todos?focus=${encodeURIComponent(taskId)}`);
-                }}
-                onLinkTodo={(todoId) => linkNoteTodo(selected.id, todoId)}
-                onUnlinkTodo={(todoId) => unlinkNoteTodo(selected.id, todoId)}
+                onOpenTask={onOpenTask}
+                onLinkTodo={onLinkSelectedNoteTodo}
+                onUnlinkTodo={onUnlinkSelectedNoteTodo}
                 onCreateTaskFromSelection={onCreateTaskFromSelection}
               />
             )}

@@ -33,7 +33,7 @@ export {
 export { NotesVersionHistoryPanel, type NotesVersionHistoryPanelProps } from './NotesVersionHistoryPanel';
 export { useNoteRevisionCapture } from './useNoteRevisionCapture';
 export { useNoteVersionHistory } from './useNoteVersionHistory';
-export { useNotesEditor } from './useNotesEditor';
+export { useNotesEditor, type NoteRevisionCapture } from './useNotesEditor';
 export { useNoteGroupExpand } from './useNoteGroupExpand';
 export { useNotesLock } from './useNotesLock';
 export { useNotesSidebarDnD } from './useNotesSidebarDnD';

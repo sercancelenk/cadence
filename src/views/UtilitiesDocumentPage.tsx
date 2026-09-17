@@ -39,7 +39,7 @@ export function UtilitiesDocumentPage() {
       bodyFormat: doc?.bodyFormat,
       bodyPlainText: doc?.bodyPlainText,
     };
-    if (noteBodyPatchIsNoOp(prev, fields)) {
+    if (noteBodyPatchIsNoOp(prev, fields, { nextBodyIsCanonical: true })) {
       return;
     }
     patchUtilityDocument(fields);

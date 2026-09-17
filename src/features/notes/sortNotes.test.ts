@@ -99,6 +99,78 @@ describe('sortNotes', () => {
     expect(after.map((n) => n.id)).toEqual(['a', 'b', 'c']);
   });
 
+  describe('held note', () => {
+    it('keeps the edited note in place while its updatedAt climbs', () => {
+      const notes = [
+        note('editing', { updatedAt: '2026-01-01' }),
+        note('newer', { updatedAt: '2026-05-01' }),
+      ];
+      const held = notes[0]!;
+      const afterTyping = [{ ...held, updatedAt: '2099-12-31' }, notes[1]!];
+
+      expect(sortNotes(afterTyping, 'updated').map((n) => n.id)).toEqual(['editing', 'newer']);
+      expect(sortNotes(afterTyping, 'updated', held).map((n) => n.id)).toEqual([
+        'newer',
+        'editing',
+      ]);
+    });
+
+    it('keeps the edited note in place while its title changes', () => {
+      const held = note('editing', { title: 'Zebra' });
+      const notes = [{ ...held, title: 'Aardvark' }, note('other', { title: 'Mango' })];
+
+      expect(sortNotes(notes, 'title').map((n) => n.id)).toEqual(['editing', 'other']);
+      expect(sortNotes(notes, 'title', held).map((n) => n.id)).toEqual(['other', 'editing']);
+    });
+
+    it('releases the note as soon as it is no longer held', () => {
+      const notes = [
+        note('editing', { updatedAt: '2099-12-31' }),
+        note('newer', { updatedAt: '2026-05-01' }),
+      ];
+      expect(sortNotes(notes, 'updated', null).map((n) => n.id)).toEqual(['editing', 'newer']);
+    });
+
+    it('still moves the note when the user pins it', () => {
+      const held = note('editing', { updatedAt: '2026-01-01' });
+      const notes = [note('newer', { updatedAt: '2026-05-01' }), { ...held, pinned: true }];
+
+      expect(sortNotes(notes, 'updated', held).map((n) => n.id)).toEqual(['editing', 'newer']);
+    });
+
+    it('ignores a held note that is not in the list', () => {
+      const notes = [note('a', { updatedAt: '2026-05-01' }), note('b', { updatedAt: '2026-01-01' })];
+      expect(sortNotes(notes, 'updated', note('ghost')).map((n) => n.id)).toEqual(['a', 'b']);
+    });
+
+    it('applies a manual drag of the held note instead of its pre-drag position', () => {
+      // The selected note is always held, so a drag has to win over the
+      // snapshot or manual reordering silently snaps back.
+      const held = note('a', { sortOrder: 0, createdAt: '2026-01-01' });
+      const beforeDrag = [
+        held,
+        note('b', { sortOrder: 1, createdAt: '2026-01-02' }),
+        note('c', { sortOrder: 2, createdAt: '2026-01-03' }),
+      ];
+      expect(sortNotes(beforeDrag, 'manual', held).map((n) => n.id)).toEqual(['a', 'b', 'c']);
+
+      // Drag 'c' above the held 'a': the whole tier is re-stamped 0..n.
+      const afterDrag = [
+        { ...held, sortOrder: 1 },
+        note('b', { sortOrder: 2, createdAt: '2026-01-02' }),
+        note('c', { sortOrder: 0, createdAt: '2026-01-03' }),
+      ];
+      expect(sortNotes(afterDrag, 'manual', held).map((n) => n.id)).toEqual(['c', 'a', 'b']);
+    });
+
+    it('reads created order live, since createdAt cannot drift while typing', () => {
+      const held = note('editing', { createdAt: '2020-01-01' });
+      const notes = [note('other', { createdAt: '2026-01-01' }), { ...held, createdAt: '2099-01-01' }];
+
+      expect(sortNotes(notes, 'created', held).map((n) => n.id)).toEqual(['editing', 'other']);
+    });
+  });
+
   it('breaks equal/absent sortOrder ties deterministically by createdAt then id', () => {
     const sorted = sortNotes(
       [

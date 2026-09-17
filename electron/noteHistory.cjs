@@ -9,6 +9,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+const { cloneTreeSync } = require('./persistence/sidecarSnapshot.cjs');
+const { writeAllSync } = require('./persistence/writeAllSync.cjs');
+
 const NOTE_HISTORY_DIRNAME = 'note-history';
 const INDEX_VERSION = 1;
 const REVISION_RETENTION_MAX = 40;
@@ -98,7 +101,7 @@ function writeJsonAtomic(filePath, value) {
   // note revision the user believed was saved.
   const fd = fs.openSync(tmp, 'w');
   try {
-    fs.writeSync(fd, JSON.stringify(value, null, 2), 0, 'utf8');
+    writeAllSync(fs, fd, JSON.stringify(value, null, 2));
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
@@ -352,7 +355,9 @@ function snapshotNoteHistoryForUser(userId, label, ts) {
     const backupsRoot = path.join(resolveUserData(), 'backups', userId);
     fs.mkdirSync(backupsRoot, { recursive: true });
     const targetDir = path.join(backupsRoot, `note-history-${label}-${ts}`);
-    fs.cpSync(srcDir, targetDir, { recursive: true });
+    // Hardlinked, not copied: revisions are only ever written via
+    // `writeJsonAtomic` (tmp + rename), so links never see later edits.
+    cloneTreeSync(fs, path, srcDir, targetDir);
     return targetDir;
   } catch (err) {
     console.warn('[cadence] note-history snapshot failed (continuing)', err);
@@ -386,7 +391,22 @@ function mergeNoteHistoryNoteDir(destNoteDir, srcNoteDir) {
     const srcRev = path.join(srcNoteDir, `${meta.id}.json`);
     const destRev = path.join(destNoteDir, `${meta.id}.json`);
     if (!fs.existsSync(srcRev)) continue;
-    fs.copyFileSync(srcRev, destRev);
+    // Via tmp + rename: a revision file can already exist here without being
+    // in the index (a prune whose unlink failed), and it is hardlinked into
+    // every note-history snapshot. `copyFileSync` truncates in place, which
+    // would rewrite those snapshots; a rename only moves the directory entry.
+    const tmp = `${destRev}.merge.tmp`;
+    try {
+      fs.copyFileSync(srcRev, tmp);
+      fs.renameSync(tmp, destRev);
+    } catch (err) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* never created, or already gone */
+      }
+      throw err;
+    }
     destIndex.revisions.push(meta);
     known.add(meta.id);
   }

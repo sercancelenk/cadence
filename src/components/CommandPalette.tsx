@@ -1,7 +1,24 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAppData } from '../AppDataContext';
+import { useAppDataSelector } from '../AppDataContext';
 import { kindLabel } from '../lib/labels';
+import {
+  buildSnippet,
+  foldForSearch,
+  groupBy,
+  labelMatchesTokens,
+  matchCommands,
+  submittedCommand,
+  tokenizeQuery,
+} from '../lib/commandPaletteSearch';
 import {
   PATH_AGENDA,
   PATH_ANALYTICS,
@@ -19,8 +36,8 @@ import {
   PATH_UTILITIES_TOOLS,
 } from '../lib/routes';
 import { plainTextFromBodyFields } from '../lib/richTextBody';
-import { teamBase, teamPeople, teamPersonWorkspacePath } from '../lib/teamPaths';
-import type { Item, Note, Person, Team, TodoItem } from '../model';
+import { teamBase, teamPeople, teamPersonWorkspacePath, withItemFocus } from '../lib/teamPaths';
+import type { AppData, Item, Note, Person, Team, TodoItem } from '../model';
 import { isNoteArchived, isTodoItemArchived } from '../model';
 import { openQuickAdd, openQuickAddMenu } from '../lib/quickAddEvents';
 import {
@@ -76,45 +93,20 @@ export const CMD_PALETTE_OPEN_EVENT = 'cmdp:open';
  * Global ⌘K palette. Listens for Cmd/Ctrl+K and fuzzy-searches across
  * navigation targets, teams, people, items and to-dos.
  *
- * Implementation notes:
- *  - Mounted at the root so the keyboard shortcut works from any page.
- *  - When closed, renders nothing (zero overhead while idle).
- *  - Filtering is plain substring (case-insensitive) for predictability.
+ * This outer shell deliberately holds nothing but the open flag and the
+ * shortcut listener: it is mounted at the app root, so anything it subscribed
+ * to would re-render on every keystroke typed anywhere in the app. The index
+ * and the workspace subscription live in the dialog, which only exists while
+ * the palette is open.
  */
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [cursor, setCursor] = useState(0);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const navigate = useNavigate();
-  const { data } = useAppData();
-
-  const commands = useMemo<Command[]>(() => buildCommands(data, navigate), [data, navigate]);
-
-  /**
-   * Tokenise the query on whitespace and require EVERY token to appear
-   * somewhere in the haystack. That way "alice rollout" finds a note
-   * containing both words even if they're separated by paragraphs, and
-   * "  test " (with stray spaces) doesn't mysteriously return zero.
-   */
-  const tokens = useMemo(() => {
-    return query
-      .trim()
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((t) => t.length > 0);
-  }, [query]);
-
-  const filtered = useMemo(() => {
-    if (tokens.length === 0) return commands.slice(0, 50);
-    const matches: Command[] = [];
-    for (const c of commands) {
-      const hay = `${c.label} ${c.group} ${c.hint ?? ''} ${c.searchText ?? ''}`.toLowerCase();
-      if (tokens.every((t) => hay.includes(t))) matches.push(c);
-    }
-    return matches.slice(0, 50);
-  }, [commands, tokens]);
+  // Read by the keydown listener, which is registered once. Kept in a ref
+  // rather than resolved inside a `setOpen` updater: updaters must be pure, and
+  // React may run them during a later render phase (or twice under StrictMode),
+  // where `preventDefault()` is a no-op or fires more than once.
+  const openRef = useRef(open);
+  openRef.current = open;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -124,7 +116,7 @@ export function CommandPalette() {
         setOpen((v) => !v);
         return;
       }
-      if (e.key === 'Escape' && open) {
+      if (e.key === 'Escape' && openRef.current) {
         e.preventDefault();
         setOpen(false);
       }
@@ -141,33 +133,66 @@ export function CommandPalette() {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener(CMD_PALETTE_OPEN_EVENT, onOpenRequest);
     };
-  }, [open]);
+  }, []);
+
+  const close = useCallback(() => setOpen(false), []);
+  if (!open) return null;
+  return <CommandPaletteDialog onClose={close} />;
+}
+
+function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
+  const [query, setQuery] = useState('');
+  const [cursor, setCursor] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const navigate = useNavigate();
+  const indexData = useAppDataSelector(selectPaletteData, paletteDataUnchanged);
+
+  const commands = useMemo<Command[]>(
+    () => buildCommands(indexData, navigate),
+    [indexData, navigate],
+  );
+
+  // Typing stays responsive on large workspaces: the input paints with the new
+  // character while the (potentially thousands of rows) match runs against the
+  // slightly stale query.
+  const deferredQuery = useDeferredValue(query);
+  const tokens = useMemo(() => tokenizeQuery(deferredQuery), [deferredQuery]);
+  const filtered = useMemo(() => matchCommands(commands, tokens), [commands, tokens]);
 
   useEffect(() => {
-    if (open) {
-      setQuery('');
-      setCursor(0);
-      setTimeout(() => inputRef.current?.focus(), 10);
-    }
-  }, [open]);
+    const id = setTimeout(() => inputRef.current?.focus(), 10);
+    return () => clearTimeout(id);
+  }, []);
 
+  // Keyed on the query, not on `filtered`: the index is rebuilt whenever any
+  // workspace collection changes, and a background mutation (reminder tick,
+  // sync apply) must not yank the highlight back to the first row while the
+  // user is arrowing through results. Clamp when the list shrinks so a stale
+  // cursor cannot sit past the last row (Enter would then be a silent no-op).
   useEffect(() => {
     setCursor(0);
-  }, [query]);
+  }, [deferredQuery]);
 
-  if (!open) return null;
+  useEffect(() => {
+    setCursor((c) => Math.max(0, Math.min(c, Math.max(filtered.length - 1, 0))));
+  }, [filtered.length]);
 
   const groups = groupBy(filtered, (c) => c.group);
+  const indexByCommand = new Map(filtered.map((c, i) => [c, i]));
 
-  function runAt(idx: number) {
-    const c = filtered[idx];
+  function runCommand(c: Command | undefined) {
     if (!c) return;
     c.run();
-    setOpen(false);
+    onClose();
+  }
+
+  function runSelected() {
+    runCommand(submittedCommand(commands, { query, deferredQuery, filtered, cursor }));
   }
 
   return (
-    <div className="cmdp" role="dialog" aria-modal="true" aria-label="Command palette" onClick={() => setOpen(false)}>
+    <div className="cmdp" role="dialog" aria-modal="true" aria-label="Command palette" onClick={onClose}>
       <div className="cmdp__panel" onClick={(e) => e.stopPropagation()}>
         <div className="cmdp__input-wrap">
           <input
@@ -180,13 +205,14 @@ export function CommandPalette() {
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') {
                 e.preventDefault();
-                setCursor((c) => Math.min(c + 1, filtered.length - 1));
+                // `Math.max(0, …)` for the empty list, where `length - 1` is -1.
+                setCursor((c) => Math.max(0, Math.min(c + 1, filtered.length - 1)));
               } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 setCursor((c) => Math.max(c - 1, 0));
               } else if (e.key === 'Enter') {
                 e.preventDefault();
-                runAt(cursor);
+                runSelected();
               }
             }}
           />
@@ -200,15 +226,12 @@ export function CommandPalette() {
               <div className="cmdp__group" key={group}>
                 <div className="cmdp__group-label">{group}</div>
                 {list.map((c) => {
-                  const idx = filtered.indexOf(c);
+                  const idx = indexByCommand.get(c) ?? 0;
                   // Only build a snippet when there's actually a body/content
                   // hit — if the query is already visible in the label / hint
                   // showing the snippet underneath is just noise.
-                  const labelHit = tokens.some((t) =>
-                    `${c.label} ${c.hint ?? ''}`.toLowerCase().includes(t),
-                  );
                   const snippet =
-                    tokens.length > 0 && c.searchText && !labelHit
+                    tokens.length > 0 && c.searchText && !labelMatchesTokens(c, tokens)
                       ? buildSnippet(c.searchText, tokens)
                       : null;
                   return (
@@ -219,7 +242,7 @@ export function CommandPalette() {
                       aria-selected={idx === cursor}
                       className={`cmdp__row${idx === cursor ? ' cmdp__row--active' : ''}`}
                       onMouseEnter={() => setCursor(idx)}
-                      onClick={() => runAt(idx)}
+                      onClick={() => runCommand(c)}
                     >
                       <span className="cmdp__icon">{c.icon}</span>
                       <div className="cmdp__main">
@@ -253,10 +276,44 @@ export function CommandPalette() {
   );
 }
 
-function buildCommands(
-  data: ReturnType<typeof useAppData>['data'],
+/** The only collections the palette indexes. */
+export type PaletteData = {
+  teams: Team[];
+  people: Person[];
+  items: Item[];
+  todoItems: TodoItem[];
+  notes: Note[];
+};
+
+function selectPaletteData(d: AppData): PaletteData {
+  return {
+    teams: d.teams,
+    people: d.people,
+    items: d.items,
+    todoItems: d.todoItems,
+    notes: d.notes,
+  };
+}
+
+function paletteDataUnchanged(a: PaletteData, b: PaletteData): boolean {
+  return (
+    a.teams === b.teams &&
+    a.people === b.people &&
+    a.items === b.items &&
+    a.todoItems === b.todoItems &&
+    a.notes === b.notes
+  );
+}
+
+export function buildCommands(
+  data: PaletteData,
   navigate: ReturnType<typeof useNavigate>,
 ): Command[] {
+  // Resolving a person's team (and an item's person, then that person's team)
+  // with `find` is O(items × people); with thousands of rows that lookup, not
+  // the matching, dominates index build time.
+  const teamById = new Map(data.teams.map((t) => [t.id, t]));
+  const personById = new Map(data.people.map((p) => [p.id, p]));
   const cmds: Command[] = [
     {
       id: 'create-note',
@@ -387,7 +444,7 @@ function buildCommands(
     },
   ];
 
-  for (const t of data.teams as Team[]) {
+  for (const t of data.teams) {
     cmds.push({
       id: `team-${t.id}`,
       group: 'Teams',
@@ -405,8 +462,8 @@ function buildCommands(
     });
   }
 
-  for (const p of data.people as Person[]) {
-    const team = data.teams.find((t) => t.id === p.teamId);
+  for (const p of data.people) {
+    const team = teamById.get(p.teamId);
     cmds.push({
       id: `person-${p.id}`,
       group: 'People',
@@ -421,10 +478,10 @@ function buildCommands(
     });
   }
 
-  for (const it of data.items as Item[]) {
+  for (const it of data.items) {
     if (!it.title) continue;
-    const person = data.people.find((p) => p.id === it.personId);
-    const team = person ? data.teams.find((t) => t.id === person.teamId) : undefined;
+    const person = personById.get(it.personId);
+    const team = person ? teamById.get(person.teamId) : undefined;
     if (!person || !team) continue;
     cmds.push({
       id: `item-${it.id}`,
@@ -433,11 +490,15 @@ function buildCommands(
       hint: `${kindLabel(it.kind)} · ${team.name} · ${person.name}`,
       searchText: it.body,
       icon: <IcListTodo size={16} />,
-      run: () => navigate(teamPersonWorkspacePath(team.id, person)),
+      // `?focus=` is what makes the person's workspace expand and scroll to the
+      // matched item. Without it the hit lands on the page and the user has to
+      // find the row themselves — which, on a long agenda, reads as the search
+      // simply not having worked.
+      run: () => navigate(withItemFocus(teamPersonWorkspacePath(team.id, person), it.id)),
     });
   }
 
-  for (const t of data.todoItems as TodoItem[]) {
+  for (const t of data.todoItems) {
     if (isTodoItemArchived(t)) continue;
     const bodyPlain = (plainTextFromBodyFields(t) || t.body || '').trim();
     const title = (t.title || '').trim();
@@ -474,7 +535,7 @@ function buildCommands(
   // that note on mount and strips the query so a refresh doesn't keep
   // re-selecting. To-do hits use /todos?focus=<id> for the same deep-link
   // scroll + highlight behaviour TodosPage already implements for backlinks.
-  for (const n of data.notes as Note[]) {
+  for (const n of data.notes) {
     if (isNoteArchived(n)) continue;
     const title = (n.title || '').trim();
     if (!title && n.locked) continue; // nothing to search/show
@@ -499,61 +560,38 @@ function buildCommands(
  * are no tokens (initial open) we just return the plain string for the
  * zero-allocation common case.
  */
-function highlight(text: string, tokens: string[]): ReactNode {
+function highlight(text: string, tokens: readonly string[]): ReactNode {
   if (!text || tokens.length === 0) return text;
-  const escaped = tokens.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const re = new RegExp(`(${escaped.join('|')})`, 'gi');
-  const parts = text.split(re);
-  return parts.map((p, i) =>
-    // `split` with a capturing group yields [non-match, match, non-match, …]
-    // so odd indices are the highlighted chunks.
-    i % 2 === 1 ? (
-      <mark key={i} className="cmdp__mark">
-        {p}
-      </mark>
-    ) : (
-      p
-    ),
-  );
-}
-
-/**
- * Pull a short, single-line excerpt out of `body` around the first
- * matching token. Multi-line markdown gets flattened to single spaces so
- * the snippet renders cleanly on one row; we trim to ~140 chars of
- * context (≈ 60 chars on each side of the match) and prepend / append an
- * ellipsis when we sliced into the middle of the body.
- */
-function buildSnippet(body: string, tokens: string[]): string | null {
-  const flat = body.replace(/\s+/g, ' ').trim();
-  if (!flat) return null;
-  const lower = flat.toLowerCase();
-  let bestIdx = -1;
-  let bestLen = 0;
-  for (const t of tokens) {
-    const i = lower.indexOf(t);
-    // Prefer the leftmost hit, but bias slightly towards longer tokens
-    // when they tie — gives more meaningful context than a 1-char "a".
-    if (i !== -1 && (bestIdx === -1 || i < bestIdx || (i === bestIdx && t.length > bestLen))) {
-      bestIdx = i;
-      bestLen = t.length;
+  // Located with the same fold the matcher uses, so a row found via "istanbul"
+  // also highlights the "İstanbul" that matched. A case-insensitive RegExp
+  // cannot: ECMAScript canonicalisation keeps U+0130 distinct from `i`, so the
+  // row would render with no mark at all. The fold is length-preserving, which
+  // is what makes these indices valid in the original text.
+  const hay = foldForSearch(text);
+  const ranges: [number, number][] = [];
+  for (const token of tokens) {
+    for (let i = hay.indexOf(token); i !== -1; i = hay.indexOf(token, i + token.length)) {
+      ranges.push([i, i + token.length]);
     }
   }
-  if (bestIdx === -1) return null;
-  const CONTEXT = 60;
-  const start = Math.max(0, bestIdx - CONTEXT);
-  const end = Math.min(flat.length, bestIdx + bestLen + CONTEXT);
-  const prefix = start > 0 ? '… ' : '';
-  const suffix = end < flat.length ? ' …' : '';
-  return `${prefix}${flat.slice(start, end)}${suffix}`;
+  if (ranges.length === 0) return text;
+  ranges.sort((a, b) => a[0] - b[0]);
+
+  const parts: ReactNode[] = [];
+  let at = 0;
+  for (const [start, end] of ranges) {
+    // Tokens can overlap ("ali" and "alice"); keep the union, never re-emit.
+    if (end <= at) continue;
+    const from = Math.max(start, at);
+    if (from > at) parts.push(text.slice(at, from));
+    parts.push(
+      <mark key={from} className="cmdp__mark">
+        {text.slice(from, end)}
+      </mark>,
+    );
+    at = end;
+  }
+  if (at < text.length) parts.push(text.slice(at));
+  return parts;
 }
 
-function groupBy<T, K extends string>(items: T[], key: (item: T) => K): [K, T[]][] {
-  const map = new Map<K, T[]>();
-  for (const it of items) {
-    const k = key(it);
-    if (!map.has(k)) map.set(k, []);
-    map.get(k)!.push(it);
-  }
-  return Array.from(map.entries());
-}

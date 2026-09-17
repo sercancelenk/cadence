@@ -16,9 +16,11 @@ export type NotesListRowProps = {
   nested?: boolean;
   isDragging: boolean;
   isDropTarget: boolean;
-  onDragStart: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
-  onDragOver: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
-  onDrop: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
+  dropPlacement?: 'before' | 'after';
+  onDragStart: (e: React.DragEvent<HTMLElement>, noteId: string) => void;
+  onDragOver: (e: React.DragEvent<HTMLElement>, noteId: string) => void;
+  onDragEnter?: (e: React.DragEvent<HTMLElement>, noteId: string) => void;
+  onDrop: (e: React.DragEvent<HTMLElement>, noteId: string) => void;
   onDragEnd: () => void;
 };
 
@@ -38,8 +40,10 @@ export const NotesListRow = memo(function NotesListRow({
   nested = false,
   isDragging,
   isDropTarget,
+  dropPlacement = 'before',
   onDragStart,
   onDragOver,
+  onDragEnter,
   onDrop,
   onDragEnd,
 }: NotesListRowProps) {
@@ -50,9 +54,12 @@ export const NotesListRow = memo(function NotesListRow({
 
   const liClass = [
     'notes-page__list-row',
+    isManual ? 'notes-page__list-row--manual' : '',
     nested ? 'notes-page__list-row--nested' : '',
     isDragging ? 'notes-page__list-row--dragging' : '',
     isDropTarget ? 'notes-page__list-row--drop-target' : '',
+    isDropTarget && dropPlacement === 'before' ? 'notes-page__list-row--drop-before' : '',
+    isDropTarget && dropPlacement === 'after' ? 'notes-page__list-row--drop-after' : '',
     n.archived ? 'notes-page__list-row--archived' : '',
   ]
     .filter(Boolean)
@@ -60,9 +67,13 @@ export const NotesListRow = memo(function NotesListRow({
 
   useEffect(() => {
     if (selectedId !== n.id && !bulkSelected) return;
-    requestAnimationFrame(() => {
+    // Cancelled on cleanup: arrowing quickly through the list queues one frame
+    // per row, and a row that has already been unselected (or unmounted by a
+    // filter change) must not scroll the list out from under the current one.
+    const frame = requestAnimationFrame(() => {
       listItemRef.current?.scrollIntoView({ block: 'nearest' });
     });
+    return () => cancelAnimationFrame(frame);
   }, [selectedId, bulkSelected, n.id]);
 
   const inBulk = bulkSelected;
@@ -79,29 +90,46 @@ export const NotesListRow = memo(function NotesListRow({
   return (
     <li
       className={liClass}
-      draggable
-      onDragStart={(e) => onDragStart(e, n.id)}
+      onDragEnter={(e) => (onDragEnter ?? onDragOver)(e, n.id)}
       onDragOver={(e) => onDragOver(e, n.id)}
       onDrop={(e) => onDrop(e, n.id)}
-      onDragEnd={onDragEnd}
     >
+      {/*
+        The grip is the ONLY drag source. The row used to set `draggable` on
+        the <li> while a <button> covered the whole hit area and the grip had
+        `pointer-events: none` — Chromium never starts an HTML5 drag from
+        inside a button, so reorder looked dead. Mirror the todos pattern:
+        a real draggable handle beside a click-only button.
+      */}
+      <span
+        className={`notes-page__drag-handle${isManual ? '' : ' notes-page__drag-handle--subtle'}`}
+        draggable
+        aria-hidden
+        title={isManual ? 'Drag to reorder' : 'Drag to move to another list'}
+        onDragStart={(e) => {
+          onDragStart(e, n.id);
+          const row = e.currentTarget.parentElement;
+          if (row) {
+            try {
+              e.dataTransfer.setDragImage(row, 24, 16);
+            } catch {
+              /* setDragImage is best-effort */
+            }
+          }
+        }}
+        onDragEnd={onDragEnd}
+      >
+        <IcGrip size={12} />
+      </span>
       <button
         ref={listItemRef}
         type="button"
         data-note-id={n.id}
         className={itemClass}
+        draggable={false}
         onClick={(e) => onNoteClick(n.id, e)}
         onContextMenu={(e) => onNoteContextMenu(n.id, e)}
       >
-        {isManual ? (
-          <span className="notes-page__drag-handle" aria-hidden title="Drag to reorder">
-            <IcGrip size={12} />
-          </span>
-        ) : (
-          <span className="notes-page__drag-handle notes-page__drag-handle--subtle" aria-hidden title="Drag to move">
-            <IcGrip size={12} />
-          </span>
-        )}
         <div className="notes-page__list-title">
           {n.pinned ? <span className="notes-page__pin" aria-hidden>★</span> : null}
           <span>{title}</span>

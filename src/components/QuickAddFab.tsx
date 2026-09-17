@@ -15,7 +15,13 @@ import {
   richTextPayloadToBodyFields,
   type RichTextBodyFields,
 } from '../lib/richTextBody';
-import { PATH_LOGIN, PATH_NOTES, PATH_REGISTER, PATH_TODOS } from '../lib/routes';
+import {
+  PATH_LOGIN,
+  PATH_NOTES,
+  PATH_REGISTER,
+  PATH_SETTINGS,
+  PATH_TODOS,
+} from '../lib/routes';
 import { AutoResizeTextarea } from './ui/AutoResizeTextarea';
 import {
   QUICK_ADD_MENU_EVENT,
@@ -63,6 +69,9 @@ export function QuickAddFab() {
 
   const onAuthPage =
     location.pathname.startsWith(PATH_LOGIN) || location.pathname.startsWith(PATH_REGISTER);
+  // Settings is a fill-height pane with its own scroller — the FAB covers
+  // the bottom of the detail body (PIN / Storage actions) for no benefit.
+  const onSettingsPage = location.pathname.startsWith(PATH_SETTINGS);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -103,7 +112,7 @@ export function QuickAddFab() {
     };
   }, [onAuthPage]);
 
-  if (onAuthPage) return null;
+  if (onAuthPage || onSettingsPage) return null;
 
   const openMode = (m: Mode) => {
     setMode(m);

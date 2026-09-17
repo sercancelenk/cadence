@@ -40,6 +40,7 @@ const {
   shell,
   session,
   safeStorage,
+  utilityProcess,
 } = require('electron');
 
 const crypto = require('crypto');
@@ -86,6 +87,37 @@ const {
   isValidSnapshotPayload,
 } = require('./persistence/writeGeneration.cjs');
 const { isCatastrophicEmptyOverwrite } = require('./persistence/dataIntegrity.cjs');
+const { decidePreSaveSnapshot } = require('./persistence/snapshotPolicy.cjs');
+const { linkOrCopyFileSync } = require('./persistence/sidecarSnapshot.cjs');
+const {
+  captureFileFingerprints,
+  fingerprintsUnchanged,
+  unchangedPaths,
+} = require('./persistence/committedState.cjs');
+const {
+  setSaveTimingsEnabled,
+  isSaveTimingsEnabled,
+  createSaveTimer,
+  summarizeSaveTimings,
+  readSaveTimings,
+  clearSaveTimings,
+} = require('./persistence/saveTimings.cjs');
+const { createDurableJsonWriter } = require('./persistence/durableWrite.cjs');
+const { writeAllSync } = require('./persistence/writeAllSync.cjs');
+const { createStagedWriter } = require('./persistence/stagedWrite.cjs');
+const { stageWriteBatch, commitWriteBatch } = require('./persistence/writeBatch.cjs');
+const {
+  isAsyncPersistEnabled,
+  createPersistBridge,
+} = require('./persistence/persistBridge.cjs');
+const {
+  isEncryptedEnvelope,
+  isEncryptedFile,
+  encryptPayload,
+  decryptPayload,
+  encryptBuffer,
+  decryptBuffer,
+} = require('./persistence/dataEnvelope.cjs');
 const { unwrapStoredWorkspace, wrapCommitEnvelope } = require('./persistence/commitEnvelope.cjs');
 const {
   splitWorkspaceForMonthlyShards,
@@ -99,6 +131,7 @@ const {
   baseCoreForShardMerge,
   countShardableEntities,
   shardRoundTripMatches,
+  unionShardEntities,
   isMonthlyShardBackupFilename,
   resolveBackupSetBasePath,
   mergeWorkspaceFromBackupParts,
@@ -133,6 +166,94 @@ const {
   maybeRunDailyBackupMirror,
   DEFAULT_KEEP_DAYS: DAILY_BACKUP_KEEP_DAYS,
 } = require('./dailyBackupMirror.cjs');
+
+/** Atomic + fsync'd JSON write. See persistence/durableWrite.cjs for the why. */
+const writeJsonText = createDurableJsonWriter({ fs, path });
+
+/**
+ * The same durable write, split so the expensive half can run elsewhere.
+ * See persistence/stagedWrite.cjs — only `commit` makes bytes visible, and it
+ * is only ever called from this process.
+ */
+const stagedWriter = createStagedWriter({ fs, path });
+
+/**
+ * Workspace saves are the one place where this process does hundreds of
+ * milliseconds of synchronous crypto and fsync work. Because the main process
+ * is also the one routing keyboard events to the renderer, that work is felt
+ * directly as typing lag. Behind `CADENCE_ASYNC_PERSIST=1` the encrypt / write
+ * / fsync / verify half moves to a utility process; the guards, the write
+ * generation and the final rename all stay here.
+ *
+ * Off by default. When on and anything at all goes wrong with the child, the
+ * save is written in-process exactly as it always has been.
+ */
+let persistBridge = null;
+
+function getPersistBridge() {
+  if (!isAsyncPersistEnabled(process.env)) return null;
+  if (!persistBridge) {
+    persistBridge = createPersistBridge({
+      fork: () => utilityProcess.fork(path.join(__dirname, 'persistence', 'persistWorker.cjs')),
+    });
+  }
+  return persistBridge;
+}
+
+/**
+ * Bumped by every write that reached the commit stage, per user.
+ *
+ * An out-of-process batch is staged against the workspace as it was when the
+ * save started. If anything else writes for that user in the meantime — a
+ * synchronous exit flush, a restore, an import — the staged bytes are stale
+ * and committing them would undo the newer write. Comparing this counter
+ * before the rename is what makes that impossible.
+ */
+const writeEpochByUser = new Map();
+
+function bumpWriteEpoch(userId) {
+  writeEpochByUser.set(userId, (writeEpochByUser.get(userId) ?? 0) + 1);
+}
+
+/** Namespaces one save's tmp files so overlapping batches never share a path. */
+let writeTokenCounter = 0;
+
+/**
+ * Users whose workspace is currently being restored after a failed write.
+ * Guards `rollbackToPreSaveState` against recursing into itself when the
+ * rollback write fails for the same reason the original write did.
+ */
+const rollingBackUsers = new Set();
+
+/**
+ * Delete staged tmp files no save will ever commit.
+ *
+ * A worker that dies between the fsync and the reply leaves its tmp behind.
+ * It is inert — nothing reads a `.tmp` — but without a sweep they accumulate,
+ * and each one is a full copy of the workspace. Only files from a previous run
+ * are touched: an in-flight batch is minutes younger than this check.
+ */
+function sweepOrphanStagedWrites() {
+  try {
+    const userData = app.getPath('userData');
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    for (const name of fs.readdirSync(userData)) {
+      if (!/\.tmp$/.test(name) || !name.startsWith(`${DATA_FILE_PREFIX}-data-`)) continue;
+      const orphan = path.join(userData, name);
+      // Per-file: one leftover that vanishes between the listing and the stat
+      // must not abandon the rest of the sweep, or a single racing entry would
+      // strand every other orphan — each a full copy of the workspace.
+      try {
+        if (fs.statSync(orphan).mtimeMs > cutoff) continue;
+        fs.unlinkSync(orphan);
+      } catch (err) {
+        console.warn('[cadence] could not remove staged write leftover', orphan, err);
+      }
+    }
+  } catch (err) {
+    console.warn('[cadence] could not sweep staged write leftovers', err);
+  }
+}
 
 /** Reject IPC saves larger than this cap (defence against OOM). */
 const MAX_SAVE_PAYLOAD_BYTES = 25 * 1024 * 1024;
@@ -386,6 +507,51 @@ function listMonthlyShardPathsForUser(userId) {
   }));
 }
 
+/** Every file that makes up this user's workspace on disk. */
+function workspaceFilePathsForUser(userId) {
+  return [
+    dataPathForUser(userId),
+    ...listMonthlyShardPathsForUser(userId).map(({ path: shardPath }) => shardPath),
+  ];
+}
+
+/**
+ * What this process last wrote AND verified, per user:
+ * `{ workspace, writeGeneration, fingerprints, keyFingerprint }`.
+ *
+ * Only ever set after a successful post-save verification, and cleared before
+ * each write, so a failed or partial save always falls back to reading disk.
+ * See persistence/committedState.cjs for why a stat is enough to trust it.
+ */
+const lastCommittedByUser = new Map();
+
+/**
+ * Identifies the key the committed record's files were encrypted under.
+ * `null` for a plaintext account, which is itself a distinguishing value.
+ */
+function dataKeyFingerprint(userId) {
+  const key = dataKeys.get(userId);
+  return key ? crypto.createHash('sha256').update(key).digest('hex') : null;
+}
+
+/**
+ * The committed record for `userId`, but only when the files on disk are
+ * provably the ones it describes. Returns null whenever anything is uncertain,
+ * which sends the caller to the full read + decrypt + parse path.
+ */
+function committedStateIfUnchanged(userId) {
+  const committed = lastCommittedByUser.get(userId);
+  if (!committed) return null;
+  // The record describes bytes written under one specific key. A password
+  // change or a recovery derives a new one, and every file it describes then
+  // holds ciphertext the current key cannot read — including the shards a save
+  // would otherwise skip as "unchanged" and leave behind under the old key.
+  if (committed.keyFingerprint !== dataKeyFingerprint(userId)) return null;
+  return fingerprintsUnchanged(fs, committed.fingerprints, workspaceFilePathsForUser(userId))
+    ? committed
+    : null;
+}
+
 /** Sum bytes of the base data file plus every monthly shard. */
 function userDataFilesBytes(userId) {
   let bytes = fileSizeBytes(dataPathForUser(userId));
@@ -448,11 +614,18 @@ function readSingleWorkspaceFileResult(userId, filePath) {
   }
 }
 
-function writeEncryptedObject(userId, filePath, obj) {
+/** Encrypt (when a key is loaded) and durably write an already-serialized document. */
+function writeEncryptedText(userId, filePath, json) {
   const key = dataKeys.get(userId);
-  const json = JSON.stringify(obj);
-  const out = key ? encryptPayload(json, key) : json;
-  return writeJsonText(filePath, out);
+  return writeJsonText(filePath, key ? encryptPayload(json, key) : json);
+}
+
+function sha256Hex(text) {
+  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function writeEncryptedObject(userId, filePath, obj) {
+  return writeEncryptedText(userId, filePath, JSON.stringify(obj));
 }
 
 function writeMetaPathForUser(userId) {
@@ -514,13 +687,40 @@ function readStoredWriteGeneration(userId) {
  * with the workspace bytes; the `.meta.json` sidecar is a read cache only.
  */
 function commitUserData(userId, payload, options = {}) {
-  const meta = readWriteMeta(writeMetaPathForUser(userId), fs);
-  const fileGen = readStoredWriteGeneration(userId);
-  const currentGeneration = Math.max(meta.generation, fileGen);
-  const nextGeneration = currentGeneration + 1;
-
+  const nextGeneration = nextWriteGeneration(userId);
   const r = writeUserData(userId, payload, { ...options, writeGeneration: nextGeneration });
-  if (!r.ok) return r;
+  return finishCommit(userId, nextGeneration, r);
+}
+
+/** `commitUserData` over the async write path. See `writeUserDataAsync`. */
+async function commitUserDataAsync(userId, payload, options = {}) {
+  const nextGeneration = nextWriteGeneration(userId);
+  const r = await writeUserDataAsync(userId, payload, {
+    ...options,
+    writeGeneration: nextGeneration,
+  });
+  return finishCommit(userId, nextGeneration, r);
+}
+
+/** The generation the workspace on disk is at right now. */
+function currentWriteGeneration(userId) {
+  const meta = readWriteMeta(writeMetaPathForUser(userId), fs);
+  // Reading the generation back out of the data file means decrypting it.
+  // When the files are provably the ones we wrote, we already know the answer.
+  const committed = committedStateIfUnchanged(userId);
+  const fileGen =
+    committed && typeof committed.writeGeneration === 'number'
+      ? committed.writeGeneration
+      : readStoredWriteGeneration(userId);
+  return Math.max(meta.generation, fileGen);
+}
+
+function nextWriteGeneration(userId) {
+  return currentWriteGeneration(userId) + 1;
+}
+
+function finishCommit(userId, nextGeneration, writeResult) {
+  if (!writeResult.ok) return writeResult;
 
   const metaOk = writeWriteMeta(userId, nextGeneration);
   if (!metaOk) {
@@ -737,8 +937,10 @@ function snapshotAttachmentsForUser(userId, label, ts) {
     fs.mkdirSync(dir, { recursive: true });
     const targetDir = path.join(dir, `attachments-${label}-${ts}`);
     fs.mkdirSync(targetDir, { recursive: true });
+    // Hardlinked, not copied: attachments are only ever replaced via
+    // tmp+rename, so the link keeps the bytes this snapshot saw.
     for (const name of files) {
-      fs.copyFileSync(path.join(srcDir, name), path.join(targetDir, name));
+      linkOrCopyFileSync(fs, path.join(srcDir, name), path.join(targetDir, name));
     }
     return targetDir;
   } catch (err) {
@@ -754,7 +956,26 @@ function restoreAttachmentsFromBackupDir(userId, backupAttDir) {
   let restored = 0;
   for (const name of fs.readdirSync(backupAttDir)) {
     if (!name.endsWith('.cadenc') && !name.endsWith('.bin')) continue;
-    fs.copyFileSync(path.join(backupAttDir, name), path.join(liveDir, name));
+    // Copied through a tmp and renamed, never straight onto the live path.
+    // `copyFileSync` truncates its destination in place, and snapshots
+    // hardlink the live attachment (see persistence/sidecarSnapshot.cjs), so a
+    // direct copy would rewrite the bytes *inside* every snapshot still
+    // pointing at the file being replaced — restoring one backup would quietly
+    // rewrite the others. A rename swaps the directory entry instead and
+    // leaves those snapshots holding exactly what they always held.
+    const live = path.join(liveDir, name);
+    const tmp = `${live}.restore.tmp`;
+    try {
+      fs.copyFileSync(path.join(backupAttDir, name), tmp);
+      fs.renameSync(tmp, live);
+    } catch (err) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* never created, or already gone */
+      }
+      throw err;
+    }
     restored += 1;
   }
   return { ok: true, restored };
@@ -1124,96 +1345,6 @@ function deriveDataKey(password, encSaltHex) {
  */
 const dataKeys = new Map();
 
-const DATA_FILE_MAGIC = 'LDMN1';
-
-/** Returns true when the buffer/string starts with our encrypted-file magic. */
-function isEncryptedFile(text) {
-  if (typeof text !== 'string') return false;
-  const t = text.trimStart();
-  if (!t.startsWith('{')) return false;
-  try {
-    const o = JSON.parse(t);
-    return o && o.magic === DATA_FILE_MAGIC && typeof o.iv === 'string' && typeof o.ct === 'string';
-  } catch {
-    return false;
-  }
-}
-
-/** AES-256-GCM encrypt → returns the on-disk JSON envelope as a string. */
-function encryptPayload(plainText, key) {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const ct = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return JSON.stringify({
-    magic: DATA_FILE_MAGIC,
-    v: 1,
-    alg: 'AES-256-GCM',
-    iv: iv.toString('base64'),
-    tag: tag.toString('base64'),
-    ct: ct.toString('base64'),
-  });
-}
-
-/** AES-256-GCM decrypt → returns the original UTF-8 string or null on auth failure. */
-function decryptPayload(envelope, key) {
-  try {
-    const o = JSON.parse(envelope);
-    if (!o || o.magic !== DATA_FILE_MAGIC) return null;
-    const iv = Buffer.from(o.iv, 'base64');
-    const tag = Buffer.from(o.tag, 'base64');
-    const ct = Buffer.from(o.ct, 'base64');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(tag);
-    const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
-    return pt.toString('utf8');
-  } catch {
-    return null;
-  }
-}
-
-/** AES-256-GCM encrypt binary → same on-disk envelope as data file, with `binary: true`. */
-function encryptBuffer(buffer, key) {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const ct = Buffer.concat([cipher.update(buffer), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return JSON.stringify({
-    magic: DATA_FILE_MAGIC,
-    v: 1,
-    alg: 'AES-256-GCM',
-    binary: true,
-    iv: iv.toString('base64'),
-    tag: tag.toString('base64'),
-    ct: ct.toString('base64'),
-  });
-}
-
-/** Decrypt binary envelope → Buffer or null. */
-function decryptBuffer(envelopeText, key) {
-  try {
-    const o = JSON.parse(envelopeText);
-    if (!o || o.magic !== DATA_FILE_MAGIC) return null;
-    const iv = Buffer.from(o.iv, 'base64');
-    const tag = Buffer.from(o.tag, 'base64');
-    const ct = Buffer.from(o.ct, 'base64');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(ct), decipher.final()]);
-  } catch {
-    return null;
-  }
-}
-
-function isEncryptedEnvelope(text) {
-  try {
-    const o = JSON.parse(text);
-    return o && o.magic === DATA_FILE_MAGIC && typeof o.iv === 'string' && typeof o.ct === 'string';
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Atomic binary write (same durability guarantees as `writeJsonText`).
  */
@@ -1223,7 +1354,7 @@ function writeBinaryFile(filePath, buffer) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const fd = fs.openSync(tmp, 'w');
     try {
-      fs.writeSync(fd, buffer, 0, buffer.length);
+      writeAllSync(fs, fd, buffer);
       // A failed fsync means the bytes may not have reached stable storage. For
       // an attachment binary that is silent corruption after a crash, so let it
       // throw and abort the write rather than promoting a possibly-truncated
@@ -1362,6 +1493,23 @@ function readUserDataResult(userId) {
   const mergedCounts = countShardableEntities(merged);
   const baseCounts = countShardableEntities(baseWorkspace);
 
+  // A month we could not read is a month whose notes and tasks are missing from
+  // `merged`. Every save writes the full monolithic workspace to the base file,
+  // so the base is a superset and can stand in — but only if it is actually
+  // there. When it is missing or holds no bulk of its own, nothing on disk can
+  // supply that month, and serving the partial workspace would do more than
+  // show the user a hole: the next autosave would write that shape back and
+  // unlink the very shard the entities are still sitting in. Fail the read
+  // instead, which is what makes every writer refuse.
+  if (shardReadFailures > 0 && !(baseCounts.total > 0 && baseCounts.total >= mergedCounts.total)) {
+    console.error('[cadence] refusing to serve a partial workspace — monthly shard unreadable', {
+      shardReadFailures,
+      mergedTotal: mergedCounts.total,
+      baseTotal: baseCounts.total,
+    });
+    return { ok: false, reason: 'io', encrypted: anyEncrypted };
+  }
+
   let data = merged;
   if (mergedCounts.total < baseCounts.total && baseCounts.total > 0) {
     console.warn('[cadence] shard merge incomplete — serving full base file bulk', {
@@ -1396,7 +1544,31 @@ function readUserData(userId) {
  *  - Best-effort: any I/O error is logged but never blocks the live write.
  *  - We keep at most `BACKUPS_KEEP_MAX` files per user (FIFO), to bound disk.
  */
-function snapshotCurrentDataFile(userId, label = 'pre-write') {
+/**
+ * When each user last had a snapshot written, so `decidePreSaveSnapshot` can
+ * time-bucket routine autosaves. Process-local: a restart snapshots on launch
+ * anyway, which reseeds this.
+ */
+const lastSnapshotAtByUser = new Map();
+
+/**
+ * The serialized size of the workspace each user's last snapshot captured, so
+ * `decidePreSaveSnapshot` can measure a deletion that was spread over many
+ * throttled saves instead of only the step between two of them.
+ *
+ * Absent whenever the last snapshot came from a lifecycle event that had no
+ * size to record — see `contentBytesShrankSinceSnapshot` for why that is the
+ * one case where an unknown baseline must not force a snapshot.
+ */
+const lastSnapshotBytesByUser = new Map();
+
+/**
+ * @param {string} userId
+ * @param {string} [label]
+ * @param {number | null} [contentBytes] serialized size of the workspace being
+ *   snapshotted, when the caller knows it
+ */
+function snapshotCurrentDataFile(userId, label = 'pre-write', contentBytes = null) {
   try {
     const dir = backupsDirForUser(userId);
     fs.mkdirSync(dir, { recursive: true });
@@ -1428,6 +1600,17 @@ function snapshotCurrentDataFile(userId, label = 'pre-write') {
     snapshotAttachmentsForUser(userId, label, ts);
     snapshotNoteHistoryForUser(userId, label, ts);
     pruneBackups(dir);
+    // Any snapshot — launch, login, restore, autosave — restarts the
+    // pre-save throttle window.
+    lastSnapshotAtByUser.set(userId, Date.now());
+    if (typeof contentBytes === 'number' && Number.isFinite(contentBytes)) {
+      lastSnapshotBytesByUser.set(userId, contentBytes);
+    } else {
+      // A lifecycle snapshot whose size we never measured. Clearing rather
+      // than keeping the previous number is what stops a stale baseline from
+      // suppressing a later cumulative-shrink snapshot.
+      lastSnapshotBytesByUser.delete(userId);
+    }
     return path.join(dir, `data-${label}-${ts}.json`);
   } catch (err) {
     console.warn('[cadence] snapshot failed (continuing)', err);
@@ -1533,48 +1716,228 @@ function pruneBackups(dir) {
  *      irrevocably overwrite the encrypted file with that single character's
  *      worth of state.
  */
-function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writeGeneration = null } = {}) {
+function writeUserData(userId, payload, options = {}) {
+  const prepared = prepareUserDataWrite(userId, payload, options);
+  if (!prepared.ok) return prepared.result;
+
+  const { plan } = prepared;
+  return finishUserDataWrite(plan, stageWriteBatchInProcess(plan, userId));
+}
+
+/** Encrypt, write, fsync and verify a plan's documents without leaving this process. */
+function stageWriteBatchInProcess(plan, userId) {
+  return stageWriteBatch({
+    documents: plan.documents,
+    token: plan.token,
+    writer: stagedWriter,
+    readText: (filePath) => fs.readFileSync(filePath, 'utf8'),
+    ...encryptionForUser(userId),
+  });
+}
+
+/**
+ * Does the worker's answer describe exactly the batch it was handed?
+ *
+ * The reply is what this process turns into `rename()` calls, so it is checked
+ * against the plan before any of it is acted on. A short, reordered or
+ * unfamiliar answer would commit a subset of the batch while
+ * `finishUserDataWrite` recorded the whole of it as durable — and the shards
+ * that subset skipped would then look "unchanged" to every later save and
+ * never be written again. That is silent data loss, so anything unexpected is
+ * treated exactly like a worker that never answered at all.
+ */
+function workerStageMatchesPlan(staged, documents, token) {
+  if (!Array.isArray(staged) || staged.length !== documents.length) return false;
+  return documents.every(
+    (doc, i) => staged[i]?.path === doc.path && staged[i]?.tmp === `${doc.path}.${token}.tmp`,
+  );
+}
+
+/**
+ * `writeUserData`, with the encrypt / write / fsync / verify half handed to the
+ * persistence utility process. Identical guards, identical result shape; the
+ * only difference is which process burns the CPU and blocks on fsync.
+ *
+ * Falls back to the fully in-process write whenever the worker is unavailable,
+ * and refuses to commit stale bytes if another writer got there first while
+ * the batch was in flight.
+ */
+async function writeUserDataAsync(userId, payload, options = {}) {
+  const bridge = getPersistBridge();
+  if (!bridge) return writeUserData(userId, payload, options);
+
+  const prepared = prepareUserDataWrite(userId, payload, options);
+  if (!prepared.ok) return prepared.result;
+
+  const { plan } = prepared;
+  const key = dataKeys.get(userId);
+  // Distinct from `plan.token`, which the in-process fallback below uses: a
+  // child killed for timing out may still be writing, and the retry must not
+  // reuse a path it could still be holding open.
+  const workerToken = `${plan.token}w`;
+  const batch = await bridge.runBatch({
+    documents: plan.documents,
+    keyHex: key ? Buffer.from(key).toString('hex') : null,
+    token: workerToken,
+  });
+
+  /**
+   * Tmp files the child may have left behind. It never renames anything, so
+   * these are inert either way — but each one is a full copy of the workspace,
+   * and a session that keeps timing out would pile them up until the next
+   * launch swept them.
+   */
+  const discardWorkerStage = () => {
+    for (const doc of plan.documents) stagedWriter.discard(`${doc.path}.${workerToken}.tmp`);
+  };
+
+  // Somebody else wrote for this user while we were staging — an exit flush, a
+  // restore, an import. Our bytes, and every guard `prepareUserDataWrite` ran
+  // against the workspace as it was, describe an older state; committing them
+  // would undo the newer write. Checked before the worker's answer is even
+  // looked at, because the in-process fallback below would commit exactly the
+  // same stale bytes. The renderer resyncs on `write-conflict` and retries.
+  if ((writeEpochByUser.get(userId) ?? 0) !== plan.epoch) {
+    // Deliberately not `batch.staged`: the reply is untrusted here exactly as
+    // it is below, and the tmp paths the child was told to use are the ones
+    // that need removing. Following a reply that named something else would
+    // leave a full copy of the workspace on disk under the real name.
+    discardWorkerStage();
+    console.warn('[cadence] discarding staged save — another writer committed first', { userId });
+    return {
+      ok: false,
+      reason: 'write-conflict',
+      // Without the current generation the renderer blocks persistence and has
+      // no value to resync to, so every later edit is dropped until relaunch.
+      writeGeneration: currentWriteGeneration(userId),
+      error:
+        'Another save updated your data file before this one finished (for example cloud sync or a second app instance). Reload from disk or pull the latest snapshot, then retry your edits.',
+    };
+  }
+
+  // A batch that genuinely failed carries a `failure` and is a real error to
+  // report. Everything else — the worker never answered, or answered with
+  // something that is not the batch we sent — falls back to the in-process
+  // write, which is always safe because nothing has been committed yet.
+  const usable = batch.ok
+    ? workerStageMatchesPlan(batch.staged, plan.documents, workerToken)
+    : batch.reason !== 'unavailable' && !!batch.failure;
+
+  if (!usable) {
+    if (batch.ok) {
+      console.error('[cadence] persistence worker returned an unexpected batch; saving in-process');
+    }
+    discardWorkerStage();
+    return finishUserDataWrite(plan, stageWriteBatchInProcess(plan, userId));
+  }
+
+  return finishUserDataWrite(plan, batch);
+}
+
+/** The encrypt/decrypt pair for a user, or nothing at all for a plaintext account. */
+function encryptionForUser(userId) {
+  const key = dataKeys.get(userId);
+  if (!key) return {};
+  return {
+    encrypt: (json) => encryptPayload(json, key),
+    decrypt: (text) => decryptPayload(text, key),
+  };
+}
+
+/**
+ * Run every guard, decide what has to be written, and serialize it — without
+ * changing a single byte on disk.
+ *
+ * Returns either a rejection to hand straight back to the caller, or a plan the
+ * write phase can execute in this process or in the worker.
+ *
+ * @returns {{ ok: false; result: object } | { ok: true; plan: object }}
+ */
+function prepareUserDataWrite(
+  userId,
+  payload,
+  {
+    allowOverwriteUnreadable = false,
+    writeGeneration = null,
+    saveTimer = null,
+    // The 25 MB cap exists to stop a renderer IPC payload from exhausting
+    // memory, so only the renderer save path opts in. Restore, import-bundle,
+    // rollback, legacy migration and password rotation must never be capped:
+    // they are the paths a user with an oversized workspace needs in order to
+    // get their data back, and refusing them would lock the data away.
+    enforcePayloadSizeCap = false,
+    // Routine autosave only. The caller must have just read the on-disk
+    // workspace (so a shrink can be detected) before opting in; every other
+    // caller keeps the unconditional snapshot.
+    throttlePreSaveSnapshot = false,
+    // The workspace currently on disk, as read by the caller in this same
+    // tick. Used for shrink detection, for rollback, and — only when
+    // `onDiskAlreadyValidated` is set — in place of re-reading the file.
+    previousWorkspace = null,
+    onDiskAlreadyValidated = false,
+  } = {},
+) {
   const file = dataPathForUser(userId);
+  const reject = (result) => ({ ok: false, result });
+
+  // Captured before invalidating: tells us which shard files are provably
+  // untouched and what content they already hold, so identical shards can be
+  // left alone instead of re-encrypted and re-fsync'd.
+  const committedBeforeWrite = committedStateIfUnchanged(userId);
+  // Anything written from here on invalidates the committed record: if this
+  // save fails partway, the next one must go back to reading disk.
+  lastCommittedByUser.delete(userId);
 
   if (isFutureDataVersion(payload)) {
     console.error('[cadence] refusing to write future data version', {
       userId,
       version: payload && typeof payload === 'object' ? payload.version : undefined,
     });
-    return {
+    return reject({
       ok: false,
       reason: 'unsupported-version',
       error:
         'This workspace was saved by a newer version of Cadence. Update the app before saving changes.',
-    };
+    });
   }
 
   if (fs.existsSync(file) && !allowOverwriteUnreadable) {
-    const existing = readUserDataResult(userId);
     // Any unreadable on-disk file (key, parse, io, …) must block overwrite.
     // Restore/import pass allowOverwriteUnreadable after an explicit user action.
-    if (!existing.ok) {
-      console.error(
-        '[cadence] refusing to overwrite unreadable data file',
-        { userId, reason: existing.reason },
-      );
-      return {
-        ok: false,
-        error:
-          existing.reason === 'no-key' || existing.reason === 'bad-key'
-            ? 'A data file already exists for this account but cannot be decrypted with the current session key. Refusing to overwrite. Use Settings → Backups & Recovery to inspect or restore your data.'
-            : 'A data file already exists for this account but cannot be read. Refusing to overwrite. Use Settings → Backups & Recovery to inspect or restore your data.',
-        reason: existing.reason ?? 'unreadable',
-      };
+    //
+    // `onDiskAlreadyValidated` lets a caller that just read this exact file
+    // hand the content over instead of paying for a second read+decrypt of the
+    // whole workspace. It is only honoured together with the content itself,
+    // so an unset or stale flag falls back to reading.
+    let existingData;
+    if (onDiskAlreadyValidated && previousWorkspace) {
+      existingData = previousWorkspace;
+    } else {
+      const existing = readUserDataResult(userId);
+      if (!existing.ok) {
+        console.error(
+          '[cadence] refusing to overwrite unreadable data file',
+          { userId, reason: existing.reason },
+        );
+        return reject({
+          ok: false,
+          error:
+            existing.reason === 'no-key' || existing.reason === 'bad-key'
+              ? 'A data file already exists for this account but cannot be decrypted with the current session key. Refusing to overwrite. Use Settings → Backups & Recovery to inspect or restore your data.'
+              : 'A data file already exists for this account but cannot be read. Refusing to overwrite. Use Settings → Backups & Recovery to inspect or restore your data.',
+          reason: existing.reason ?? 'unreadable',
+        });
+      }
+      existingData = existing.data;
     }
-    if (existing.data && isFutureDataVersion(existing.data)) {
+    if (existingData && isFutureDataVersion(existingData)) {
       console.error('[cadence] refusing to overwrite newer-version workspace on disk', { userId });
-      return {
+      return reject({
         ok: false,
         reason: 'unsupported-version',
         error:
           'This workspace was saved by a newer version of Cadence. Update the app before saving changes.',
-      };
+      });
     }
   }
 
@@ -1593,98 +1956,319 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
         '[cadence] refusing to write data: account is encrypted but no in-memory key',
         { userId, allowOverwriteUnreadable },
       );
-      return {
+      return reject({
         ok: false,
         reason: 'no-key',
         error:
           'Your session is locked: the encryption key is no longer in memory. Please sign in again and retry.',
-      };
+      });
     }
   }
-
-  const preSaveSnapshot = snapshotCurrentDataFile(userId, 'pre-save');
-
-  const rollbackPreSaveSnapshot = (snapshotPath) => {
-    if (!snapshotPath) return;
-    try {
-      const rollback = loadWorkspaceFromBackupSet(userId, snapshotPath);
-      if (rollback.ok) {
-        commitUserData(userId, rollback.workspace, { allowOverwriteUnreadable: true });
-      }
-    } catch (err) {
-      console.warn('[cadence] pre-save rollback failed', err);
-    }
-  };
 
   const hadShards = listMonthlyShardPathsForUser(userId).length > 0;
   const { baseWorkspace, shards } = splitWorkspaceForMonthlyShards(
     payload && typeof payload === 'object' ? payload : {},
     { retainBaseBulk: true },
   );
-  const willHaveShards = Object.keys(shards).length > 0;
-  if (!hadShards && willHaveShards) {
-    snapshotCurrentDataFile(userId, 'pre-monthly-layout');
+
+  // Serialize every document exactly once. The base file keeps the full
+  // monolithic workspace (older builds read only that file), so its JSON is
+  // also the payload-size measurement used by the 25 MB cap — no throwaway
+  // `JSON.stringify` of the same data just to count bytes.
+  const baseBody =
+    writeGeneration != null ? wrapCommitEnvelope(writeGeneration, baseWorkspace) : baseWorkspace;
+  const baseJson = JSON.stringify(baseBody);
+  const baseBytes = Buffer.byteLength(baseJson, 'utf8');
+
+  // A month whose entities did not change serializes to the same bytes. When
+  // its file is also provably untouched since we last wrote and verified it,
+  // rewriting it would buy nothing and cost an encrypt plus two fsyncs. Editing
+  // one note in the current month therefore stops rewriting every past month.
+  const untouchedFiles = committedBeforeWrite
+    ? unchangedPaths(fs, committedBeforeWrite.fingerprints)
+    : new Set();
+  const priorShardDigests = committedBeforeWrite?.shardDigests ?? new Map();
+
+  const shardDocuments = Object.entries(shards).map(([monthKey, partial]) => {
+    const shardPath = monthlyShardPathForUser(userId, monthKey);
+    const json = JSON.stringify(wrapShardPayload(monthKey, partial));
+    const digest = sha256Hex(json);
+    return {
+      monthKey,
+      path: shardPath,
+      json,
+      digest,
+      unchanged: untouchedFiles.has(shardPath) && priorShardDigests.get(shardPath) === digest,
+    };
+  });
+
+  // Checked before anything is snapshotted or written so an oversized
+  // workspace costs nothing but the serialization.
+  if (enforcePayloadSizeCap && baseBytes > MAX_SAVE_PAYLOAD_BYTES) {
+    return reject({
+      ok: false,
+      reason: 'too-large',
+      error: 'Workspace exceeds 25 MB. Compact attachments or archive old items before saving.',
+    });
   }
 
-  // Write the base workspace first so a mid-save crash never leaves shards
-  // ahead of an outdated (or missing) base file.
-  const body =
-    writeGeneration != null ? wrapCommitEnvelope(writeGeneration, baseWorkspace) : baseWorkspace;
-  const writeResult = writeEncryptedObject(userId, file, body);
-  if (!writeResult.ok) {
+  // Split integrity: the month buckets together must still hold every
+  // shardable entity the payload came in with. This is a pure in-memory check
+  // on data we already have, so it belongs here — before the first byte is
+  // written — rather than after the commit, where the only remedy left is to
+  // roll the whole workspace back from a snapshot.
+  if (!shardRoundTripMatches(payload, unionShardEntities(shards))) {
+    console.error('[cadence] refusing to write: monthly split dropped entities', { userId });
+    return reject({
+      ok: false,
+      reason: 'verify-failed',
+      error:
+        'Save verification failed: the monthly split did not account for every note or task, so nothing on disk was changed. Retry the save, or open Settings → Backups & Recovery if it keeps happening.',
+    });
+  }
+  saveTimer?.stage('serialize');
+
+  // The size of what is on disk right now — which is also the size of what a
+  // snapshot taken here would hold.
+  const onDiskContentBytes = committedBeforeWrite?.baseBytes ?? null;
+  const snapshotDecision = throttlePreSaveSnapshot
+    ? decidePreSaveSnapshot({
+        nowMs: Date.now(),
+        lastSnapshotAtMs: lastSnapshotAtByUser.get(userId) ?? null,
+        previousWorkspace,
+        nextWorkspace: payload,
+        // Counting entities cannot see a body being emptied, and todo / item
+        // bodies have no revision history to fall back on. The serialized size
+        // of the last verified write is recorded precisely so this comparison
+        // costs nothing.
+        previousContentBytes: onDiskContentBytes,
+        nextContentBytes: baseBytes,
+        snapshotContentBytes: lastSnapshotBytesByUser.get(userId) ?? null,
+      })
+    : { snapshot: true, reason: 'unconditional' };
+  const preSaveSnapshot = snapshotDecision.snapshot
+    ? // Falls back to the outgoing size when the on-disk one is unknown: it is
+      // one save's worth off at most, which keeps the cumulative baseline
+      // usable instead of discarding it.
+      snapshotCurrentDataFile(userId, 'pre-save', onDiskContentBytes ?? baseBytes)
+    : null;
+  // A lifecycle snapshot records no size, and a snapshot of a workspace that
+  // is not on disk yet writes nothing at all — both leave the cumulative
+  // baseline unset. Without a seed it would stay unset for as long as the
+  // throttle holds, and the erasing it exists to catch would go unnoticed for
+  // exactly as long. The state this save is about to replace is what the last
+  // snapshot holds, so it is the right thing to measure against.
+  if (!lastSnapshotBytesByUser.has(userId)) {
+    lastSnapshotBytesByUser.set(userId, onDiskContentBytes ?? baseBytes);
+  }
+  saveTimer?.stage('snapshot');
+
+  /**
+   * Put the workspace back the way it was when this write started.
+   *
+   * Prefers the snapshot this save just took; when the snapshot was throttled
+   * away, falls back to the workspace the caller read moments ago. The
+   * in-memory copy is the same content the snapshot would have held, so a
+   * throttled save is no less recoverable than an unthrottled one.
+   *
+   * A rollback is itself a write, so it can fail for the very reason that made
+   * the original write fail (a full disk, a revoked permission) and ask to roll
+   * itself back. `rollingBackUsers` makes the second request a no-op: one
+   * attempt, then report the failure and leave the disk alone. Without it a
+   * persistently failing device turns every save into an unbounded recursion
+   * that would hang the main process.
+   */
+  const rollbackToPreSaveState = () => {
+    if (rollingBackUsers.has(userId)) {
+      console.warn('[cadence] rollback already in progress; not retrying', { userId });
+      return;
+    }
+    rollingBackUsers.add(userId);
+    try {
+      if (preSaveSnapshot) {
+        const rollback = loadWorkspaceFromBackupSet(userId, preSaveSnapshot);
+        if (rollback.ok) {
+          commitUserData(userId, rollback.workspace, { allowOverwriteUnreadable: true });
+          return;
+        }
+      }
+      if (previousWorkspace) {
+        commitUserData(userId, previousWorkspace, { allowOverwriteUnreadable: true });
+      }
+    } catch (err) {
+      console.warn('[cadence] pre-save rollback failed', err);
+    } finally {
+      rollingBackUsers.delete(userId);
+    }
+  };
+
+  const willHaveShards = shardDocuments.length > 0;
+  if (!hadShards && willHaveShards) {
+    // Same on-disk state as the pre-save snapshot above, so it carries the
+    // same baseline rather than clearing it.
+    snapshotCurrentDataFile(userId, 'pre-monthly-layout', onDiskContentBytes ?? baseBytes);
+  }
+
+  return {
+    ok: true,
+    plan: {
+      userId,
+      payload,
+      file,
+      baseJson,
+      baseBytes,
+      shards,
+      shardDocuments,
+      writeGeneration,
+      saveTimer,
+      rollbackToPreSaveState,
+      // The base workspace is staged first so a partially committed batch
+      // never leaves shards ahead of an outdated (or missing) base file.
+      documents: [
+        { path: file, json: baseJson },
+        ...shardDocuments.filter((doc) => !doc.unchanged).map(({ path: p, json }) => ({ path: p, json })),
+      ],
+      token: `m${Date.now().toString(36)}-${(writeTokenCounter += 1).toString(36)}`,
+      epoch: writeEpochByUser.get(userId) ?? 0,
+      // The key these bytes are sealed under. Recorded here rather than read
+      // back after the commit so the committed record always describes the key
+      // the files actually hold, even if the session ends mid-save.
+      keyFingerprint: dataKeyFingerprint(userId),
+    },
+  };
+}
+
+/**
+ * Make a staged batch visible and confirm the save as a whole.
+ *
+ * Verification is two independent guarantees, and neither one needs the whole
+ * workspace read back, decrypted, parsed and merged — both have already run by
+ * the time anything becomes visible:
+ *
+ *   1. Durability — `stageWriteBatch` read every staged file back off disk and
+ *      compared its decrypted plaintext byte-for-byte with what it was handed,
+ *      before any of it became visible. Renaming does not touch the bytes, so
+ *      checking before the rename is at least as strong as checking after it,
+ *      and it means a mismatch never becomes visible in the first place.
+ *      Shards this save skipped are covered by `unchangedPaths`, which proved
+ *      they still hold previously verified content.
+ *   2. Split integrity — `prepareUserDataWrite` compared the payload against
+ *      the union of the shard buckets, the same id-set check the old full
+ *      re-read performed, in memory and before the first byte was written.
+ *
+ * What is left here is the commit itself, which is why the only failure path
+ * below is a rename that did not complete.
+ */
+function finishUserDataWrite(plan, staged) {
+  const {
+    userId,
+    payload,
+    file,
+    baseBytes,
+    shards,
+    shardDocuments,
+    writeGeneration,
+    saveTimer,
+    rollbackToPreSaveState,
+  } = plan;
+
+  if (!staged.ok) {
+    const { failure } = staged;
+    console.error('[cadence] workspace write failed', {
+      userId,
+      failedFile: failure.path ? path.basename(failure.path) : undefined,
+      reason: failure.reason,
+    });
+    // No rollback: staging writes only tmp files, so a failure here leaves the
+    // workspace byte-identical to before the save. Rewriting it from a
+    // snapshot would be a real write done for no reason.
     return {
       ok: false,
-      reason: writeResult.reason ?? 'io',
+      reason: failure.reason ?? 'io',
       error:
-        writeResult.error ??
-        'I/O error while writing data file.',
+        failure.reason === 'verify-failed'
+          ? 'Save verification failed: the bytes written did not read back as written, so nothing on disk was changed. Retry the save, or open Settings → Backups & Recovery if it keeps happening.'
+          : failure.error || 'I/O error while writing data file.',
     };
   }
 
-  const writtenMonths = new Set();
-  for (const [monthKey, partial] of Object.entries(shards)) {
-    const shardBody = wrapShardPayload(monthKey, partial);
-    const shardPath = monthlyShardPathForUser(userId, monthKey);
-    const shardWrite = writeEncryptedObject(userId, shardPath, shardBody);
-    if (!shardWrite.ok) {
-      console.error('[cadence] monthly shard write failed', {
-        userId,
-        monthKey,
-        reason: shardWrite.reason,
-        error: shardWrite.error,
-      });
-      rollbackPreSaveSnapshot(preSaveSnapshot);
-      return {
-        ok: false,
-        reason: shardWrite.reason ?? 'io',
-        error: 'I/O error while writing monthly archive shard.',
-      };
-    }
-    writtenMonths.add(monthKey);
+  // Everything from the snapshot mark to here is the encrypt / write / fsync /
+  // read-back-verify half, whichever process ran it.
+  saveTimer?.stage('encrypt-write');
+
+  bumpWriteEpoch(userId);
+  const committed = commitWriteBatch(staged.staged, stagedWriter);
+  if (!committed.ok) {
+    console.error('[cadence] failed to commit workspace write', {
+      userId,
+      failedFile: path.basename(committed.failure.path),
+    });
+    rollbackToPreSaveState();
+    return {
+      ok: false,
+      reason: committed.failure.reason ?? 'io',
+      error: 'I/O error while writing data file.',
+    };
   }
 
+  // A month that no longer holds any entity must stop contributing to the
+  // merge. Unlink is the normal outcome; when the file cannot be removed — a
+  // Windows share violation from a sync client or antivirus, a permission that
+  // was revoked — it is emptied instead, because the read path treats shards as
+  // canonical and a stale one would resurrect every item the user just deleted.
+  // The old post-save re-read caught this by comparing the merged workspace
+  // against the payload. Staged verification only sees the files this save
+  // wrote, so the case is checked here explicitly.
+  const strandedMonths = [];
   for (const { monthKey, path: shardPath } of listMonthlyShardPathsForUser(userId)) {
     if (Object.prototype.hasOwnProperty.call(shards, monthKey)) continue;
     try {
       fs.unlinkSync(shardPath);
+      continue;
     } catch (err) {
       console.warn('[cadence] failed to remove empty monthly shard', shardPath, err);
     }
+    const emptied = writeEncryptedObject(
+      userId,
+      shardPath,
+      wrapShardPayload(monthKey, { notes: [], todoItems: [], items: [] }),
+    );
+    if (!emptied.ok) strandedMonths.push(monthKey);
   }
 
-  const verify = readUserDataResult(userId);
-  if (!verify.ok || !verify.data || !shardRoundTripMatches(payload, verify.data)) {
-    console.error('[cadence] post-save verification failed', {
-      userId,
-      verifyOk: verify.ok,
-    });
-    rollbackPreSaveSnapshot(preSaveSnapshot);
+  if (strandedMonths.length) {
+    console.error('[cadence] stale monthly shards left on disk', { userId, months: strandedMonths });
+    rollbackToPreSaveState();
     return {
       ok: false,
       reason: 'verify-failed',
       error:
-        'Save verification failed: re-read workspace does not match what was written. Your previous files were snapshotted — use Settings → Backups & Recovery to restore.',
+        'Save verification failed: an archived month could not be cleared, so deleted items would come back on the next load. Your previous files were snapshotted — use Settings → Backups & Recovery to restore.',
     };
+  }
+
+  saveTimer?.stage('commit');
+
+  // Verified: record what is on disk so the next save can prove the files are
+  // untouched with a stat instead of re-reading and decrypting all of them.
+  //
+  // Unless the session ended while this save was in flight — a logout or a
+  // password change between staging and commit. The record holds a decrypted
+  // workspace, which must not outlive the key that protects it, and a record
+  // sealed under a key that is gone could never be trusted by a later save
+  // anyway. Dropping it costs one full read on the next save and nothing else.
+  if (plan.keyFingerprint === dataKeyFingerprint(userId)) {
+    lastCommittedByUser.set(userId, {
+      workspace: payload,
+      writeGeneration,
+      baseBytes,
+      keyFingerprint: plan.keyFingerprint,
+      fingerprints: captureFileFingerprints(fs, [
+        file,
+        ...shardDocuments.map(({ path: shardPath }) => shardPath),
+      ]),
+      shardDigests: new Map(shardDocuments.map((doc) => [doc.path, doc.digest])),
+    });
   }
 
   setImmediate(() => {
@@ -1695,85 +2279,6 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false, writ
     }
   });
   return { ok: true };
-}
-
-/**
- * Atomic, durable write of a UTF-8 string to `filePath`.
- *
- * Why this much ceremony for a single write?
- *   - Naïve `writeFileSync` returns when the bytes are queued in the kernel
- *     page cache, NOT when they have been persisted to the underlying
- *     storage. On macOS/Linux that delay can be 5–30 seconds.
- *   - A power loss, kernel panic, or forced reboot in that window will lose
- *     the "successful" write — exactly the failure mode the user wants to
- *     avoid ("notlarım kaybolmasın").
- *
- * What we do instead:
- *   1. Write the new content to a sibling `.tmp` file with an explicit
- *      fd open/write/fsync/close cycle. `fsync(fd)` blocks until the bytes
- *      are on durable storage.
- *   2. Atomically rename the tmp file over the target. POSIX guarantees the
- *      directory entry update is atomic, so a crash mid-rename leaves either
- *      the old file or the new file — never a torn one.
- *   3. fsync the containing directory so the rename itself survives a
- *      crash. (No-op / not supported on Windows; we swallow that error.)
- */
-function writeJsonText(filePath, text) {
-  const fail = (reason, error) => ({ ok: false, reason, error });
-  let tmp;
-  try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    tmp = `${filePath}.tmp`;
-    const fd = fs.openSync(tmp, 'w');
-    let fileFsyncOk = true;
-    try {
-      fs.writeSync(fd, text, 0, 'utf8');
-      try {
-        fs.fsyncSync(fd);
-      } catch (err) {
-        console.error('[cadence] fsync(file) failed — refusing to commit', filePath, err);
-        fileFsyncOk = false;
-      }
-    } finally {
-      fs.closeSync(fd);
-    }
-    if (!fileFsyncOk) {
-      try {
-        fs.unlinkSync(tmp);
-      } catch {
-        /* ignore */
-      }
-      return fail(
-        'durability',
-        'Could not confirm your data reached durable storage. Retry the save; your previous file is unchanged.',
-      );
-    }
-    fs.renameSync(tmp, filePath);
-    tmp = null;
-    try {
-      const dirFd = fs.openSync(path.dirname(filePath), 'r');
-      try {
-        fs.fsyncSync(dirFd);
-      } finally {
-        fs.closeSync(dirFd);
-      }
-    } catch {
-      // Some platforms (Windows) don't allow fsync on directory fds.
-      // The rename itself is still atomic; we just don't get the extra
-      // crash guarantee for the directory entry.
-    }
-    return { ok: true };
-  } catch (err) {
-    if (tmp) {
-      try {
-        fs.unlinkSync(tmp);
-      } catch {
-        /* ignore */
-      }
-    }
-    console.error('[cadence] failed to write', filePath, err);
-    return fail('io', 'I/O error while writing data file.');
-  }
 }
 
 function readAuth() {
@@ -2310,6 +2815,9 @@ function finishAppQuit() {
   markQuitting();
   destroyTray();
   stopReminderSync();
+  // Anything the worker had staged is a tmp file nobody will ever commit; the
+  // renderer's synchronous flush has already written the authoritative bytes.
+  persistBridge?.dispose();
   app.quit();
 }
 
@@ -2356,9 +2864,73 @@ function measurePayloadBytes(payload) {
  * Shared save path for async IPC and synchronous flush-on-quit.
  * @returns {{ ok: true; writeGeneration?: number } | { ok: false; reason?: string; error?: string; writeGeneration?: number }}
  */
-function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRenderer = true } = {}) {
+function executeDataSave(payload, expectedUid, expectedGeneration, options = {}) {
+  const prepared = prepareDataSave(payload, expectedUid, expectedGeneration, options);
+  if (!prepared.ok) return prepared.result;
+
+  const { context } = prepared;
+  return finishDataSave(
+    context,
+    payload,
+    commitUserData(context.uid, payload, context.commitOptions),
+  );
+}
+
+/**
+ * `executeDataSave` with the write handed to the persistence worker.
+ *
+ * Only ever reached from the async `data:save` IPC handler, and only when
+ * `CADENCE_ASYNC_PERSIST=1`. The synchronous flush on quit deliberately keeps
+ * using `executeDataSave`: at exit there is no time left to wait on a child
+ * process, and a save that has not returned yet is a save that can be lost.
+ */
+async function executeDataSaveAsync(payload, expectedUid, expectedGeneration, options = {}) {
+  const prepared = prepareDataSave(payload, expectedUid, expectedGeneration, options);
+  if (!prepared.ok) return prepared.result;
+
+  const { context } = prepared;
+  return finishDataSave(
+    context,
+    payload,
+    await commitUserDataAsync(context.uid, payload, context.commitOptions),
+  );
+}
+
+/**
+ * Saves for one account run one at a time.
+ *
+ * The synchronous path got this for free from the main process being
+ * single-threaded. Once a save can await a child process, two overlapping
+ * saves would each read the workspace, each decide a write generation, and
+ * each stage bytes against a workspace the other is about to change.
+ */
+const saveQueueByUser = new Map();
+
+function enqueueUserSave(userId, run) {
+  const previous = saveQueueByUser.get(userId) ?? Promise.resolve();
+  const next = previous.then(run, run);
+  // Keep the chain alive on failure, and drop the entry once it drains so a
+  // long session does not retain one settled promise per account forever. Only
+  // the tail clears itself: a save queued behind this one has already replaced
+  // the entry and must stay there for the next caller to chain onto.
+  const tail = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  saveQueueByUser.set(userId, tail);
+  void tail.then(() => {
+    if (saveQueueByUser.get(userId) === tail) saveQueueByUser.delete(userId);
+  });
+  return next;
+}
+
+/** @returns {{ ok: false; result: object } | { ok: true; context: object }} */
+function prepareDataSave(payload, expectedUid, expectedGeneration, { notifyRenderer = true } = {}) {
+  const reject = (result) => ({ ok: false, result });
   const uid = readSessionUserId();
-  if (!uid) return { ok: false, reason: 'no-session' };
+  if (!uid) return reject({ ok: false, reason: 'no-session' });
+
+  const saveTimer = createSaveTimer(notifyRenderer ? 'data:save' : 'data:flushSync');
 
   // Structural guard: never let a malformed payload (null, an array, a missing
   // version, or an object with none of the expected collections) overwrite a
@@ -2367,22 +2939,18 @@ function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRende
   // left untouched and the renderer is told to resync.
   if (!isValidSnapshotPayload(payload)) {
     console.warn('[cadence] refusing data:save — payload is not a valid workspace snapshot');
-    return {
+    return reject({
       ok: false,
       reason: 'invalid-payload',
       error:
         'The workspace snapshot was malformed and was not saved. Your existing data on disk is unchanged.',
-    };
+    });
   }
 
-  if (measurePayloadBytes(payload) > MAX_SAVE_PAYLOAD_BYTES) {
-    return {
-      ok: false,
-      reason: 'too-large',
-      error: 'Workspace exceeds 25 MB. Compact attachments or archive old items before saving.',
-    };
-  }
-
+  // The 25 MB cap is enforced by `writeUserData` via `enforcePayloadSizeCap`
+  // below, measured on the exact JSON it is about to write. Measuring it here
+  // would stringify the whole workspace a second time and throw the result
+  // away.
   if (typeof expectedUid === 'string' && expectedUid && expectedUid !== uid) {
     console.warn(
       '[cadence] refusing data:save — session changed underneath the renderer',
@@ -2397,19 +2965,30 @@ function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRende
     if (notifyRenderer && mainWindow) {
       try { mainWindow.webContents.send('data:saveError', rejected); } catch { /* ignore */ }
     }
-    return rejected;
+    return reject(rejected);
   }
+
+  // One stat-based check answers three questions that each used to cost a full
+  // read + decrypt + parse of the workspace: the current write generation, the
+  // content the empty-overwrite guard compares against, and whether the
+  // on-disk file is readable at all. Null means "not provable" and every
+  // consumer below falls back to reading disk.
+  const committed = committedStateIfUnchanged(uid);
 
   const metaPath = writeMetaPathForUser(uid);
   const meta = readWriteMeta(metaPath, fs);
-  const resolvedGeneration = Math.max(meta.generation, readStoredWriteGeneration(uid));
+  const storedGeneration =
+    committed && typeof committed.writeGeneration === 'number'
+      ? committed.writeGeneration
+      : readStoredWriteGeneration(uid);
+  const resolvedGeneration = Math.max(meta.generation, storedGeneration);
 
   if (workspaceImportLockUid && workspaceImportLockUid === uid) {
-    return {
+    return reject({
       ok: false,
       reason: 'import-in-progress',
       writeGeneration: resolvedGeneration,
-    };
+    });
   }
 
   if (!canCommitWriteGeneration(expectedGeneration, resolvedGeneration)) {
@@ -2427,15 +3006,22 @@ function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRende
     };
     // Stale renderer saves lose the race quietly — the IPC response carries
     // the current generation so the client can resync without alarming the user.
-    return conflict;
+    return reject(conflict);
   }
 
   // Last line of defence: never let an empty scaffold overwrite a populated
   // workspace via normal autosave. Restore/import call commitUserData with
   // allowOverwriteUnreadable and bypass this path. Unreadable on-disk files
   // are refused by writeUserData; this guard must fail closed on exceptions.
+  //
+  // The workspace read here is reused below: it tells the snapshot policy
+  // whether this save shrinks anything, and it is the rollback source if the
+  // write fails partway through.
+  let existingWorkspace = null;
   try {
-    const existingResult = readUserDataResult(uid);
+    const existingResult = committed
+      ? { ok: true, data: committed.workspace }
+      : readUserDataResult(uid);
     if (!existingResult.ok) {
       // writeUserData will also refuse; surface early with a clear reason.
       const rejected = {
@@ -2448,9 +3034,10 @@ function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRende
       if (notifyRenderer && mainWindow) {
         try { mainWindow.webContents.send('data:saveError', rejected); } catch { /* ignore */ }
       }
-      return rejected;
+      return reject(rejected);
     }
-    const existing = existingResult.data;
+    existingWorkspace = existingResult.data ?? null;
+    const existing = existingWorkspace;
     if (existing && isCatastrophicEmptyOverwrite(existing, payload)) {
       console.warn('[cadence] refusing data:save — catastrophic empty overwrite', {
         uid,
@@ -2467,8 +3054,9 @@ function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRende
       if (notifyRenderer && mainWindow) {
         try { mainWindow.webContents.send('data:saveError', rejected); } catch { /* ignore */ }
       }
-      return rejected;
+      return reject(rejected);
     }
+    saveTimer.stage('empty-guard');
   } catch (err) {
     console.error('[cadence] empty-overwrite guard failed closed', err);
     const rejected = {
@@ -2481,10 +3069,36 @@ function executeDataSave(payload, expectedUid, expectedGeneration, { notifyRende
     if (notifyRenderer && mainWindow) {
       try { mainWindow.webContents.send('data:saveError', rejected); } catch { /* ignore */ }
     }
-    return rejected;
+    return reject(rejected);
   }
 
-  const r = commitUserData(uid, payload);
+  return {
+    ok: true,
+    context: {
+      uid,
+      saveTimer,
+      notifyRenderer,
+      // The on-disk file was just read (or proven untouched) above, so
+      // `writeUserData` does not need to read it a second time to decide
+      // whether it is safe to overwrite.
+      commitOptions: {
+        saveTimer,
+        enforcePayloadSizeCap: true,
+        throttlePreSaveSnapshot: true,
+        previousWorkspace: existingWorkspace,
+        onDiskAlreadyValidated: true,
+      },
+    },
+  };
+}
+
+function finishDataSave({ uid, saveTimer, notifyRenderer }, payload, r) {
+  saveTimer.done({
+    ok: r.ok,
+    reason: r.ok ? undefined : r.reason,
+    notes: Array.isArray(payload?.notes) ? payload.notes.length : 0,
+    todoItems: Array.isArray(payload?.todoItems) ? payload.todoItems.length : 0,
+  });
   if (!r.ok && notifyRenderer && mainWindow) {
     try { mainWindow.webContents.send('data:saveError', r); } catch { /* ignore */ }
   }
@@ -2664,10 +3278,24 @@ ipcMain.handle('data:load', () => {
 });
 
 ipcMain.handle('data:save', (_evt, payload, expectedUid, expectedGeneration) => {
-  return executeDataSave(payload, expectedUid, expectedGeneration);
+  if (!isAsyncPersistEnabled(process.env)) {
+    return executeDataSave(payload, expectedUid, expectedGeneration);
+  }
+  // The session may have gone by the time this runs; queueing per account
+  // keeps two saves for the same user from staging against each other.
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, reason: 'no-session' };
+  return enqueueUserSave(uid, () =>
+    executeDataSaveAsync(payload, expectedUid, expectedGeneration),
+  );
 });
 
-/** Synchronous flush used by renderer `pagehide` / update install (blocks until fsync). */
+/**
+ * Synchronous flush used by renderer `pagehide` / update install (blocks until
+ * fsync). Always takes the in-process path: at exit there is no time left to
+ * wait on a child process. Any batch the worker is still staging is dropped
+ * rather than committed — see the epoch check in `writeUserDataAsync`.
+ */
 ipcMain.on('data:flushSync', (event, { payload, expectedUid, expectedGeneration } = {}) => {
   event.returnValue = executeDataSave(payload, expectedUid, expectedGeneration, { notifyRenderer: false });
 });
@@ -3144,6 +3772,28 @@ function chromiumCacheDirs() {
     'blob_storage',
   ].map((rel) => ({ label: rel, abs: path.join(root, rel) }));
 }
+
+/**
+ * Save-path diagnostics. Off by default and never persisted: the user turns it
+ * on in Settings, reproduces the slowness, reads the numbers, and turns it off.
+ * Timings are stage durations only — no workspace content is exposed.
+ */
+ipcMain.handle('saveDiagnostics:get', () => ({
+  ok: true,
+  enabled: isSaveTimingsEnabled(),
+  summary: summarizeSaveTimings(),
+  samples: readSaveTimings(),
+}));
+
+ipcMain.handle('saveDiagnostics:setEnabled', (_evt, payload) => {
+  const enabled = setSaveTimingsEnabled(payload?.enabled);
+  return { ok: true, enabled, summary: summarizeSaveTimings(), samples: readSaveTimings() };
+});
+
+ipcMain.handle('saveDiagnostics:clear', () => {
+  clearSaveTimings();
+  return { ok: true, enabled: isSaveTimingsEnabled(), summary: summarizeSaveTimings(), samples: [] };
+});
 
 ipcMain.handle('cache:stats', () => {
   try {
@@ -4285,6 +4935,8 @@ ipcMain.handle('account:logout', () => {
   const uid = readSessionUserId();
   if (uid) {
     dataKeys.delete(uid);
+    // Holds a decrypted workspace; it must not outlive the key.
+    lastCommittedByUser.delete(uid);
     pendingRecoveryEnvelopes.delete(uid);
     // Explicit logout means "don't auto-resume next time". Clearing the
     // cached key here is what makes Logout actually feel like a logout
@@ -4508,6 +5160,8 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
   const loaded = readUserDataResult(u.id);
   if (!loaded.ok) {
     dataKeys.delete(u.id);
+    // Holds a decrypted workspace; it must not outlive the key.
+    lastCommittedByUser.delete(u.id);
     if (loaded.reason === 'bad-key') {
       return {
         ok: false,
@@ -5092,6 +5746,8 @@ app.whenReady().then(() => {
   } catch (err) {
     console.warn('[cadence] launch snapshot failed', err);
   }
+
+  sweepOrphanStagedWrites();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

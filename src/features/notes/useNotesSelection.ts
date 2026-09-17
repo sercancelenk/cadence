@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MutableRefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import type { Note } from '../../model';
 import type { NoteSortMode, NoteViewMode } from './notePreferences';
 import {
@@ -22,21 +22,46 @@ export function useNotesSelection(
 ) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  /** Stands in when the caller owns no ref, so the handover below always works. */
+  const ownPendingSelectRef = useRef<string | null>(null);
+  const pendingSelectRef = pendingSelectNoteIdRef ?? ownPendingSelectRef;
+
+  /**
+   * `?id=` (a global-search hit) and `?focus=` (a task backlink) both name a
+   * note to open.
+   *
+   * One effect handles both: as two, each would derive the next query from the
+   * same render's `searchParams`, so whichever `setSearchParams` landed second
+   * would put the other's parameter back.
+   */
   useEffect(() => {
-    const id = searchParams.get('id');
-    if (!id) return;
-    const target = allNotes.find((n) => n.id === id);
+    const deepLinkId = searchParams.get('id') ?? searchParams.get('focus');
+    if (!deepLinkId) return;
+
+    const target = allNotes.find((n) => n.id === deepLinkId);
+    // The workspace may still be loading. Keeping the query is what lets the
+    // link resolve on the render that brings the notes in — stripping it now
+    // would silently drop the note the user asked for.
+    if (!target && allNotes.length === 0) return;
+
     if (target) {
       if (target.archived && viewMode !== 'archived') {
         setViewMode('archived');
       }
-      setSelectedId(id);
+      // The selection-repair effect below runs in this same flush, and it sees
+      // `selectedId` as it was at render time — still null on a fresh mount. It
+      // would fall back to notes[0] and overwrite this, which is why the id is
+      // handed over as a pending selection: repair then converges on the
+      // deep-linked note, and the page expands its folder to reveal it.
+      pendingSelectRef.current = deepLinkId;
+      setSelectedId(deepLinkId);
     }
+
     const next = new URLSearchParams(searchParams);
     next.delete('id');
+    next.delete('focus');
     setSearchParams(next, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, allNotes, viewMode, setViewMode]);
+  }, [searchParams, setSearchParams, allNotes, viewMode, setViewMode, pendingSelectRef]);
 
   const [isNarrowViewport, setIsNarrowViewport] = useState(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return false;
@@ -52,7 +77,7 @@ export function useNotesSelection(
   }, []);
 
   useEffect(() => {
-    const pendingSelectId = pendingSelectNoteIdRef?.current ?? null;
+    const pendingSelectId = pendingSelectRef.current;
     const correction = resolveNotesSelectionCorrection(
       selectedId,
       pendingSelectId,
@@ -61,12 +86,8 @@ export function useNotesSelection(
       isNarrowViewport,
     );
 
-    if (
-      pendingSelectId &&
-      isPendingSelectionComplete(pendingSelectId, selectedId, notes, allNotes) &&
-      pendingSelectNoteIdRef
-    ) {
-      pendingSelectNoteIdRef.current = null;
+    if (pendingSelectId && isPendingSelectionComplete(pendingSelectId, selectedId, notes, allNotes)) {
+      pendingSelectRef.current = null;
     }
 
     if (correction.action === 'keep') return;
@@ -79,22 +100,7 @@ export function useNotesSelection(
       return;
     }
     setSelectedId(notes[0]?.id ?? null);
-  }, [notes, allNotes, selectedId, isNarrowViewport, pendingSelectNoteIdRef]);
-
-  useEffect(() => {
-    const focusId = searchParams.get('focus');
-    if (!focusId) return;
-    const target = allNotes.find((n) => n.id === focusId);
-    if (target) {
-      if (target.archived && viewMode !== 'archived') {
-        setViewMode('archived');
-      }
-      setSelectedId(focusId);
-    }
-    const next = new URLSearchParams(searchParams);
-    next.delete('focus');
-    setSearchParams(next, { replace: true });
-  }, [searchParams, allNotes, setSearchParams, viewMode, setViewMode]);
+  }, [notes, allNotes, selectedId, isNarrowViewport, pendingSelectRef]);
 
   useEffect(() => {
     if (!selectedId || sortMode !== 'opened') return;

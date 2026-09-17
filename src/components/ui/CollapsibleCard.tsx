@@ -63,7 +63,22 @@ export function CollapsibleCard({
       if (target !== id) return;
       setOpen(true);
       requestAnimationFrame(() => {
-        document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const el = document.getElementById(id);
+        if (!el) return;
+        // Settings scrolls inside `.preferences-shell__detail-body`, not
+        // `<main>` (main is overflow:hidden on that route). Prefer that
+        // scroller so deep links land correctly instead of no-oping.
+        const scroller = el.closest('.preferences-shell__detail-body');
+        if (scroller instanceof HTMLElement) {
+          const top =
+            el.getBoundingClientRect().top -
+            scroller.getBoundingClientRect().top +
+            scroller.scrollTop -
+            12;
+          scroller.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+          return;
+        }
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     };
     focusFromHash();

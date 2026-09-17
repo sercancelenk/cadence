@@ -1,22 +1,74 @@
-/* ─── Settings: Preferences shell (master–detail) ─────────────────── */
-.settings-page__head {
-  margin-bottom: 16px;
+/* ─── Settings: Preferences shell (master–detail) ───────────────────
+ *
+ * Root causes this file must keep fixed (measured, not guessed):
+ *
+ * 1. `.main--scroll` is a page scroller (`overflow: auto; display: block`).
+ *    The shell also wants an INNER scroller on `__detail-body`. Without
+ *    making main a flex column + `overflow: hidden` (same pattern as Notes /
+ *    Utilities), `height: 100%` on the shell fights `.page` padding and the
+ *    wrong ancestor eats the wheel.
+ *
+ * 2. `.page` padding is 40/48px. On a fill-height chrome route that steals
+ *    ~88px from the frame before any category content renders.
+ *
+ * 3. At ≤860px the frame stacks nav above detail. Default grid rows are
+ *    `auto / auto`, so a height-constrained frame gives the nav ~225px and
+ *    leaves the detail body at ~70px — content "scrolls" inside a postage
+ *    stamp. Rows must be `auto / minmax(0, 1fr)` and the nav must stop
+ *    consuming a vertical chunk (horizontal category chips).
+ *
+ * 4. `__detail-body` is a flex column scroller. Default `flex-shrink: 1` on
+ *    children + `.card--collapsible { overflow: hidden }` CRUSHES open cards
+ *    to a few pixels (measured: height 2px while scrollHeight stays hundreds).
+ *    Content looks clipped and `scrollHeight ≈ clientHeight` so no useful
+ *    vertical scrollbar appears. Children must be `flex-shrink: 0`.
+ */
+
+/* Fill the route shell; do not let <main> scroll — the detail body does.
+   Match a descendant shell (not only a direct child) so wrappers cannot
+   silently disable the fill-height contract. */
+.main--scroll:has(.preferences-shell) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-top: 0;
+  min-height: 0;
+}
+
+.preferences-shell.page {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+  width: 100%;
+  max-width: none;
+  /* Tight chrome padding — the old 40/48 `.page` values starved the frame. */
+  padding: 12px 16px 16px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.settings-page__head,
+.preferences-shell__head {
+  margin-bottom: 10px;
   flex-shrink: 0;
+}
+
+.preferences-shell__head h1 {
+  font-size: 1.35rem;
 }
 
 .preferences-shell {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 100%;
-  max-width: none;
 }
 
 .preferences-shell__frame {
   display: grid;
   grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 0;
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   border: 1px solid var(--border);
   border-radius: var(--modal-radius, 16px);
@@ -30,6 +82,7 @@
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  min-width: 0;
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 55%, var(--panel));
   padding: 12px 10px;
@@ -58,6 +111,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   min-height: 0;
+  flex: 1 1 0;
   padding: 2px;
 }
 
@@ -111,6 +165,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background: var(--bg);
 }
 
@@ -140,34 +195,106 @@
 }
 
 .preferences-shell__detail-body {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 14px 20px 28px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
+/* Never let flex crush cards inside the scroller — see root cause #4. */
+.preferences-shell__detail-body > * {
+  flex-shrink: 0;
+  min-height: min-content;
+}
+
 .preferences-shell__detail-body > .card {
   margin-top: 0;
 }
 
+/* Hash deep-links (`#recovery-codes`) scroll the card into the detail pane,
+   not the outer <main> (which no longer scrolls on this route). */
+.preferences-shell__detail-body .card--collapsible,
+.preferences-shell__detail-body .card {
+  scroll-margin-top: 12px;
+}
+
 @media (max-width: 860px) {
+  .preferences-shell.page {
+    padding: 8px 10px 10px;
+  }
+
+  /* Page-level "Settings" title duplicates the detail chrome on a phone —
+     reclaim the vertical band for the category content. */
+  .preferences-shell__head {
+    display: none;
+  }
+
   .preferences-shell__frame {
     grid-template-columns: 1fr;
-    max-height: none;
+    /* Nav sizes to its chips; detail claims every leftover pixel. */
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
   }
 
   .preferences-shell__nav {
     border-right: 0;
     border-bottom: 1px solid var(--border);
-    max-height: 240px;
+    max-height: none;
+    padding: 8px 8px 10px;
+    gap: 8px;
+    /* Do not flex-grow — keep the chip row compact. */
+    flex: 0 0 auto;
+  }
+
+  .preferences-shell__search {
+    padding: 0;
+  }
+
+  .preferences-shell__list {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    gap: 6px;
+    flex: 0 0 auto;
+    min-height: 0;
+    padding: 0;
+    scrollbar-width: thin;
+  }
+
+  .preferences-shell__nav-item {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: 11rem;
+    padding: 8px 12px;
+    white-space: nowrap;
   }
 
   .preferences-shell__nav-hint {
     display: none;
+  }
+
+  .preferences-shell__detail-head {
+    padding: 12px 14px 10px;
+  }
+
+  .preferences-shell__detail-title {
+    font-size: 1.15rem;
+  }
+
+  .preferences-shell__detail-desc {
+    font-size: 12.5px;
+  }
+
+  .preferences-shell__detail-body {
+    padding: 12px 12px 24px;
   }
 }
 

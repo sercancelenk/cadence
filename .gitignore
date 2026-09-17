@@ -5,6 +5,8 @@ release
 
 # Test / mutation / CI scratch output (regenerated; never commit)
 .stryker-tmp/
+test-results/
+playwright-report/
 coverage/
 reports/
 .nyc_output/

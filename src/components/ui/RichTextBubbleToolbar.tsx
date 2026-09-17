@@ -1,9 +1,11 @@
 import type { Range } from '@tiptap/core';
 import { BubbleMenu, type Editor } from '@tiptap/react';
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useRef, useState, type MouseEvent } from 'react';
 import { IcListTodo } from '../icons';
 import { isSafeEditorLinkUrl } from '../../lib/richTextEditorExtensions';
 import { taskTitleFromEditorSelection } from '../../lib/richTextSelectionTask';
+import { readRichTextBubbleToolbarState } from '../../lib/richTextToolbarState';
+import { useEditorToolbarState } from '../../hooks/useEditorToolbarState';
 
 type Props = {
   editor: Editor;
@@ -19,20 +21,6 @@ function keepSelection(event: MouseEvent) {
   event.preventDefault();
 }
 
-/** Re-render mark active states on selection-only changes. */
-function useBubbleToolbarRefresh(editor: Editor) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const bump = () => setTick((t) => t + 1);
-    editor.on('selectionUpdate', bump);
-    editor.on('transaction', bump);
-    return () => {
-      editor.off('selectionUpdate', bump);
-      editor.off('transaction', bump);
-    };
-  }, [editor]);
-}
-
 /**
  * Selection bubble — compact marks while editing (always-edit notes).
  * Sticky toolbar remains for block inserts; this is the “selection first” path.
@@ -41,7 +29,7 @@ function useBubbleToolbarRefresh(editor: Editor) {
  * implement `window.prompt`, and a modal would steal focus / collapse the selection.
  */
 export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Props) {
-  useBubbleToolbarRefresh(editor);
+  const active = useEditorToolbarState(editor, readRichTextBubbleToolbarState);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -50,7 +38,6 @@ export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Pro
   const linkInputRef = useRef<HTMLInputElement | null>(null);
   /** Selection at Link-open time — restored on Apply so input focus cannot drop the range. */
   const linkRangeRef = useRef<Range | null>(null);
-  const taskTitle = onCreateTaskFromSelection ? taskTitleFromEditorSelection(editor) : null;
 
   const createTaskFromSelection = useCallback(() => {
     if (!editor.isEditable || !onCreateTaskFromSelection) return;
@@ -181,7 +168,7 @@ export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Pro
         <>
           <button
             type="button"
-            className={`rich-bubble-menu__btn${editor.isActive('bold') ? ' is-active' : ''}`}
+            className={`rich-bubble-menu__btn${active.bold ? ' is-active' : ''}`}
             title="Bold"
             onMouseDown={keepSelection}
             onClick={() => {
@@ -193,7 +180,7 @@ export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Pro
           </button>
           <button
             type="button"
-            className={`rich-bubble-menu__btn${editor.isActive('italic') ? ' is-active' : ''}`}
+            className={`rich-bubble-menu__btn${active.italic ? ' is-active' : ''}`}
             title="Italic"
             onMouseDown={keepSelection}
             onClick={() => {
@@ -205,7 +192,7 @@ export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Pro
           </button>
           <button
             type="button"
-            className={`rich-bubble-menu__btn${editor.isActive('underline') ? ' is-active' : ''}`}
+            className={`rich-bubble-menu__btn${active.underline ? ' is-active' : ''}`}
             title="Underline"
             onMouseDown={keepSelection}
             onClick={() => {
@@ -217,7 +204,7 @@ export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Pro
           </button>
           <button
             type="button"
-            className={`rich-bubble-menu__btn${editor.isActive('strike') ? ' is-active' : ''}`}
+            className={`rich-bubble-menu__btn${active.strike ? ' is-active' : ''}`}
             title="Strikethrough"
             onMouseDown={keepSelection}
             onClick={() => {
@@ -229,7 +216,7 @@ export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Pro
           </button>
           <button
             type="button"
-            className={`rich-bubble-menu__btn${editor.isActive('highlight') ? ' is-active' : ''}`}
+            className={`rich-bubble-menu__btn${active.highlight ? ' is-active' : ''}`}
             title="Highlight"
             onMouseDown={keepSelection}
             onClick={() => {
@@ -241,7 +228,7 @@ export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Pro
           </button>
           <button
             type="button"
-            className={`rich-bubble-menu__btn${editor.isActive('code') ? ' is-active' : ''}`}
+            className={`rich-bubble-menu__btn${active.code ? ' is-active' : ''}`}
             title="Inline code"
             onMouseDown={keepSelection}
             onClick={() => {
@@ -253,14 +240,14 @@ export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Pro
           </button>
           <button
             type="button"
-            className={`rich-bubble-menu__btn${editor.isActive('link') ? ' is-active' : ''}`}
+            className={`rich-bubble-menu__btn${active.link ? ' is-active' : ''}`}
             title="Link"
             onMouseDown={keepSelection}
             onClick={openLinkEditor}
           >
             Link
           </button>
-          {onCreateTaskFromSelection && taskTitle ? (
+          {onCreateTaskFromSelection && active.hasTaskTitle ? (
             <>
               <span className="rich-bubble-menu__sep" aria-hidden="true" />
               <button

@@ -261,6 +261,28 @@ function mergeMonthlyShardPartials(baseWorkspace, shardPartials) {
 }
 
 /**
+ * Flatten a split's shard buckets back into one set of bulk arrays.
+ *
+ * Lets the save path prove the split dropped nothing — `shardRoundTripMatches`
+ * against this is the same guarantee as re-reading every file from disk and
+ * merging it, without any I/O.
+ *
+ * @param {Record<string, { notes: unknown[]; todoItems: unknown[]; items: unknown[] }>} shards
+ */
+function unionShardEntities(shards) {
+  /** @type {Record<string, unknown[]>} */
+  const union = { notes: [], todoItems: [], items: [] };
+  for (const partial of Object.values(shards)) {
+    for (const key of SHARDABLE_KEYS) {
+      if (Array.isArray(partial[key]) && partial[key].length) {
+        union[key] = union[key].concat(partial[key]);
+      }
+    }
+  }
+  return union;
+}
+
+/**
  * Group rolling backup filenames that belong to the same snapshot set.
  * @param {string} filename
  */
@@ -354,6 +376,7 @@ module.exports = {
   countShardableEntities,
   shardableEntityIdSet,
   shardRoundTripMatches,
+  unionShardEntities,
   baseCoreForShardMerge,
   splitWorkspaceForMonthlyShards,
   unwrapShardPayload,

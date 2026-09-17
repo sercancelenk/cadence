@@ -1,125 +1,170 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { AppData, Note } from '../../model';
 import { moveNoteToGroup } from '../../core/actions';
+import {
+  dropPlacementFromPointer,
+  reorderIds,
+  type DropPlacement,
+} from '../../lib/listReorder';
 import type { NoteSortMode } from './notePreferences';
 
+/**
+ * Sidebar HTML5 drag-and-drop for notes.
+ *
+ * Drag identity lives in a ref as well as state so the first `dragover`
+ * events (before React commits) can still call `preventDefault` and keep
+ * the drop alive.
+ *
+ * Same-group drops always reorder by `sortOrder` and flip the sidebar into
+ * Manual sort — otherwise the default "Last updated" mode silently refuses
+ * the most common gesture and the list looks broken.
+ */
 export function useNotesSidebarDnD(
   sortMode: NoteSortMode,
   notes: Note[],
   update: (fn: (d: AppData) => AppData) => void,
+  setSortMode?: (mode: NoteSortMode) => void,
 ) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dropPlacement, setDropPlacement] = useState<DropPlacement>('before');
   const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
+  const draggingIdRef = useRef<string | null>(null);
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const sortModeRef = useRef(sortMode);
+  sortModeRef.current = sortMode;
+  const dropPlacementRef = useRef<DropPlacement>('before');
 
-  const onNoteDragStart = useCallback((e: React.DragEvent<HTMLLIElement>, noteId: string) => {
+  const clearDrag = useCallback(() => {
+    draggingIdRef.current = null;
+    setDraggingId(null);
+    setDropTargetId(null);
+    setDropPlacement('before');
+    dropPlacementRef.current = 'before';
+    setDropTargetGroupId(null);
+  }, []);
+
+  const onNoteDragStart = useCallback((e: React.DragEvent<HTMLElement>, noteId: string) => {
     e.dataTransfer.effectAllowed = 'move';
     try {
       e.dataTransfer.setData('text/plain', noteId);
     } catch {
       /* ignore */
     }
+    draggingIdRef.current = noteId;
     setDraggingId(noteId);
   }, []);
 
-  const onNoteDragOver = useCallback(
-    (e: React.DragEvent<HTMLLIElement>, noteId: string) => {
-      if (!draggingId || draggingId === noteId) return;
-      const dragged = notes.find((n) => n.id === draggingId);
-      const target = notes.find((n) => n.id === noteId);
-      if (!dragged || !target) return;
+  const acceptNoteDragOver = useCallback((e: React.DragEvent<HTMLElement>, noteId: string) => {
+    const currentDraggingId = draggingIdRef.current;
+    if (!currentDraggingId || currentDraggingId === noteId) return;
+    const list = notesRef.current;
+    const dragged = list.find((n) => n.id === currentDraggingId);
+    const target = list.find((n) => n.id === noteId);
+    if (!dragged || !target) return;
 
-      if (sortMode === 'manual' && !!dragged.pinned === !!target.pinned && dragged.groupId === target.groupId) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        setDropTargetGroupId(null);
-        if (dropTargetId !== noteId) setDropTargetId(noteId);
-        return;
-      }
+    const sameTier =
+      !!dragged.pinned === !!target.pinned && dragged.groupId === target.groupId;
 
-      if (dragged.groupId !== target.groupId) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        setDropTargetId(null);
-      }
-    },
-    [sortMode, draggingId, notes, dropTargetId],
-  );
-
-  const onNoteDrop = useCallback(
-    (e: React.DragEvent<HTMLLIElement>, noteId: string) => {
-      if (!draggingId || draggingId === noteId) return;
+    if (sameTier) {
       e.preventDefault();
-      const dragged = notes.find((n) => n.id === draggingId);
-      const target = notes.find((n) => n.id === noteId);
-      if (!dragged || !target) {
-        setDraggingId(null);
-        setDropTargetId(null);
-        setDropTargetGroupId(null);
-        return;
-      }
-
-      if (sortMode === 'manual' && !!dragged.pinned === !!target.pinned && dragged.groupId === target.groupId) {
-        const tier = notes.filter((n) => !!n.pinned === !!dragged.pinned && n.groupId === dragged.groupId);
-        const without = tier.filter((n) => n.id !== draggingId);
-        const insertAt = without.findIndex((n) => n.id === noteId);
-        const reordered = [...without.slice(0, insertAt), dragged, ...without.slice(insertAt)];
-        update((d) => ({
-          ...d,
-          notes: d.notes.map((n) => {
-            const idx = reordered.findIndex((r) => r.id === n.id);
-            return idx === -1 ? n : { ...n, sortOrder: idx };
-          }),
-        }));
-      } else if (dragged.groupId !== target.groupId) {
-        update((d) => moveNoteToGroup(d, draggingId, target.groupId));
-      }
-
-      setDraggingId(null);
-      setDropTargetId(null);
+      e.dataTransfer.dropEffect = 'move';
+      const placement = dropPlacementFromPointer(
+        e.clientY,
+        e.currentTarget.getBoundingClientRect(),
+      );
+      dropPlacementRef.current = placement;
       setDropTargetGroupId(null);
-    },
-    [sortMode, draggingId, notes, update],
-  );
+      setDropTargetId((prev) => (prev === noteId ? prev : noteId));
+      setDropPlacement((prev) => (prev === placement ? prev : placement));
+      return;
+    }
 
-  const onGroupDragOver = useCallback(
-    (e: React.DragEvent<HTMLLIElement>, groupId: string) => {
-      if (!draggingId) return;
+    if (dragged.groupId !== target.groupId) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
       setDropTargetId(null);
-      if (dropTargetGroupId !== groupId) setDropTargetGroupId(groupId);
+    }
+  }, []);
+
+  const onNoteDrop = useCallback(
+    (e: React.DragEvent<HTMLElement>, noteId: string) => {
+      const currentDraggingId = draggingIdRef.current;
+      if (!currentDraggingId || currentDraggingId === noteId) return;
+      e.preventDefault();
+      const list = notesRef.current;
+      const dragged = list.find((n) => n.id === currentDraggingId);
+      const target = list.find((n) => n.id === noteId);
+      if (!dragged || !target) {
+        clearDrag();
+        return;
+      }
+
+      const sameTier =
+        !!dragged.pinned === !!target.pinned && dragged.groupId === target.groupId;
+
+      if (sameTier) {
+        const placement =
+          dropPlacementRef.current ||
+          dropPlacementFromPointer(e.clientY, e.currentTarget.getBoundingClientRect());
+        const tier = list.filter(
+          (n) => !!n.pinned === !!dragged.pinned && n.groupId === dragged.groupId,
+        );
+        const tierIds = tier.map((n) => n.id);
+        const nextIds = reorderIds(tierIds, currentDraggingId, noteId, placement);
+        if (nextIds) {
+          const order = new Map(nextIds.map((id, idx) => [id, idx]));
+          update((d) => ({
+            ...d,
+            notes: d.notes.map((n) => {
+              const idx = order.get(n.id);
+              return idx === undefined ? n : { ...n, sortOrder: idx };
+            }),
+          }));
+          if (sortModeRef.current !== 'manual') {
+            setSortMode?.('manual');
+          }
+        }
+      } else if (dragged.groupId !== target.groupId) {
+        update((d) => moveNoteToGroup(d, currentDraggingId, target.groupId));
+      }
+
+      clearDrag();
     },
-    [draggingId, dropTargetGroupId],
+    [clearDrag, setSortMode, update],
   );
+
+  const onGroupDragOver = useCallback((e: React.DragEvent<HTMLLIElement>, groupId: string) => {
+    if (!draggingIdRef.current) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTargetId(null);
+    setDropTargetGroupId((prev) => (prev === groupId ? prev : groupId));
+  }, []);
 
   const onGroupDrop = useCallback(
     (e: React.DragEvent<HTMLLIElement>, groupId: string) => {
-      if (!draggingId) return;
+      const currentDraggingId = draggingIdRef.current;
+      if (!currentDraggingId) return;
       e.preventDefault();
-      update((d) => moveNoteToGroup(d, draggingId, groupId));
-      setDraggingId(null);
-      setDropTargetId(null);
-      setDropTargetGroupId(null);
+      update((d) => moveNoteToGroup(d, currentDraggingId, groupId));
+      clearDrag();
     },
-    [draggingId, update],
+    [clearDrag, update],
   );
-
-  const onDragEnd = useCallback(() => {
-    setDraggingId(null);
-    setDropTargetId(null);
-    setDropTargetGroupId(null);
-  }, []);
 
   return {
     draggingId,
     dropTargetId,
+    dropPlacement,
     dropTargetGroupId,
     onNoteDragStart,
-    onNoteDragOver,
+    onNoteDragOver: acceptNoteDragOver,
+    onNoteDragEnter: acceptNoteDragOver,
     onNoteDrop,
     onGroupDragOver,
     onGroupDrop,
-    onDragEnd,
+    onDragEnd: clearDrag,
   };
 }

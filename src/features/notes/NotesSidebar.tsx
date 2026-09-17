@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, memo, useMemo, useState } from 'react';
 import {
   IcChevronDown,
   IcChevronLeft,
@@ -45,17 +45,23 @@ export type NotesSidebarProps = {
   decrypted: ({ noteId: string } & RichTextBodyFields) | null;
   draggingId: string | null;
   dropTargetId: string | null;
+  dropPlacement?: 'before' | 'after';
   dropTargetGroupId: string | null;
-  onNoteDragStart: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
-  onNoteDragOver: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
-  onNoteDrop: (e: React.DragEvent<HTMLLIElement>, noteId: string) => void;
+  onNoteDragStart: (e: React.DragEvent<HTMLElement>, noteId: string) => void;
+  onNoteDragOver: (e: React.DragEvent<HTMLElement>, noteId: string) => void;
+  onNoteDragEnter?: (e: React.DragEvent<HTMLElement>, noteId: string) => void;
+  onNoteDrop: (e: React.DragEvent<HTMLElement>, noteId: string) => void;
   onGroupDragOver: (e: React.DragEvent<HTMLLIElement>, groupId: string) => void;
   onGroupDrop: (e: React.DragEvent<HTMLLIElement>, groupId: string) => void;
   onDragEnd: () => void;
   onCollapseSidebar?: () => void;
 };
 
-export function NotesSidebar({
+/**
+ * `memo` so page state that the list does not read — editor buffers, version
+ * history, dialogs — stops re-grouping and re-rendering every row.
+ */
+export const NotesSidebar = memo(function NotesSidebar({
   groups,
   notes,
   viewMode,
@@ -80,9 +86,11 @@ export function NotesSidebar({
   decrypted,
   draggingId,
   dropTargetId,
+  dropPlacement = 'before',
   dropTargetGroupId,
   onNoteDragStart,
   onNoteDragOver,
+  onNoteDragEnter,
   onNoteDrop,
   onGroupDragOver,
   onGroupDrop,
@@ -145,8 +153,10 @@ export function NotesSidebar({
       onNoteContextMenu,
       decrypted,
       isManual,
+      dropPlacement,
       onDragStart: onNoteDragStart,
       onDragOver: onNoteDragOver,
+      onDragEnter: onNoteDragEnter,
       onDrop: onNoteDrop,
       onDragEnd,
     }),
@@ -156,8 +166,10 @@ export function NotesSidebar({
       onNoteContextMenu,
       decrypted,
       isManual,
+      dropPlacement,
       onNoteDragStart,
       onNoteDragOver,
+      onNoteDragEnter,
       onNoteDrop,
       onDragEnd,
     ],
@@ -445,4 +457,4 @@ export function NotesSidebar({
       )}
     </aside>
   );
-}
+});
