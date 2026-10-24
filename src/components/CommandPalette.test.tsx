@@ -17,7 +17,7 @@ import type { PaletteData } from './CommandPalette';
 const AT = '2024-01-01T00:00:00.000Z';
 
 function paletteData(overrides: Partial<PaletteData> = {}): PaletteData {
-  return { teams: [], people: [], items: [], todoItems: [], notes: [], ...overrides };
+  return { teams: [], people: [], items: [], todoItems: [], notes: [], noteGroups: [], ...overrides };
 }
 
 const selectorCalls = { count: 0 };
@@ -304,5 +304,30 @@ describe('buildCommands', () => {
     );
 
     expect(commands.find((c) => c.id === 'note-n1')?.searchText).toBeUndefined();
+  });
+  it('leaves out notes whose list (or an enclosing list) is archived', () => {
+    const navigate = vi.fn();
+    const note = (id: string, groupId?: string) => ({
+      id,
+      title: `Note ${id}`,
+      locked: false,
+      body: '',
+      createdAt: AT,
+      updatedAt: AT,
+      ...(groupId ? { groupId } : {}),
+    });
+    const commands = buildCommands(
+      paletteData({
+        noteGroups: [
+          { id: 'g1', name: 'Archived', sortOrder: 0, createdAt: AT, archived: true },
+          { id: 'g2', name: 'Inside', sortOrder: 1, createdAt: AT, parentId: 'g1' },
+          { id: 'g3', name: 'Live', sortOrder: 2, createdAt: AT },
+        ],
+        notes: [note('a', 'g1'), note('b', 'g2'), note('c', 'g3'), note('d')],
+      }),
+      navigate,
+    );
+    const ids = commands.filter((c) => c.id.startsWith('note-')).map((c) => c.id);
+    expect(ids).toEqual(['note-c', 'note-d']);
   });
 });

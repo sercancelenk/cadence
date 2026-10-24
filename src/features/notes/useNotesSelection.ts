@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
-import type { Note } from '../../model';
+import type { Note, NoteGroup } from '../../model';
+import { isNoteEffectivelyArchived } from '../../model';
 import type { NoteSortMode, NoteViewMode } from './notePreferences';
 import {
   isPendingSelectionComplete,
@@ -19,6 +20,7 @@ export function useNotesSelection(
   viewMode: NoteViewMode,
   setViewMode: (mode: NoteViewMode) => void,
   pendingSelectNoteIdRef?: MutableRefObject<string | null>,
+  groups: NoteGroup[] = [],
 ) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -45,7 +47,7 @@ export function useNotesSelection(
     if (!target && allNotes.length === 0) return;
 
     if (target) {
-      if (target.archived && viewMode !== 'archived') {
+      if (isNoteEffectivelyArchived(target, groups) && viewMode !== 'archived') {
         setViewMode('archived');
       }
       // The selection-repair effect below runs in this same flush, and it sees
@@ -61,7 +63,7 @@ export function useNotesSelection(
     next.delete('id');
     next.delete('focus');
     setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams, allNotes, viewMode, setViewMode, pendingSelectRef]);
+  }, [searchParams, setSearchParams, allNotes, groups, viewMode, setViewMode, pendingSelectRef]);
 
   const [isNarrowViewport, setIsNarrowViewport] = useState(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return false;

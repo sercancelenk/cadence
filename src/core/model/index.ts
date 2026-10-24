@@ -370,6 +370,8 @@ export interface NoteGroup {
   pinned?: boolean;
   /** Archived groups are hidden from the active view by default. */
   archived?: boolean;
+  /** Enclosing list. Absent = root. Read defensively: see `noteGroupTree`. */
+  parentId?: string;
   createdAt: string;
 }
 
@@ -1350,6 +1352,9 @@ function parseNoteGroups(raw: unknown[]): NoteGroup[] {
       sortOrder: typeof g.sortOrder === 'number' ? g.sortOrder : i,
       pinned: g.pinned === true ? true : undefined,
       archived: g.archived === true ? true : undefined,
+      // Kept verbatim even when it dangles: the tree helpers treat a bad parent
+      // as root at read time, and a restore/sync can make it valid again.
+      parentId: typeof g.parentId === 'string' && g.parentId ? g.parentId : undefined,
       createdAt: typeof g.createdAt === 'string' ? g.createdAt : nowIso(),
     }));
 }
@@ -1701,3 +1706,5 @@ function ensureProfile(data: AppData): AppData {
   });
   return { ...data, profile, teams };
 }
+
+export * from './noteGroupTree';

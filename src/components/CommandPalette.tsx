@@ -37,8 +37,8 @@ import {
 } from '../lib/routes';
 import { plainTextFromBodyFields } from '../lib/richTextBody';
 import { teamBase, teamPeople, teamPersonWorkspacePath, withItemFocus } from '../lib/teamPaths';
-import type { AppData, Item, Note, Person, Team, TodoItem } from '../model';
-import { isNoteArchived, isTodoItemArchived } from '../model';
+import type { AppData, Item, Note, NoteGroup, Person, Team, TodoItem } from '../model';
+import { isNoteEffectivelyArchived, isTodoItemArchived } from '../model';
 import { openQuickAdd, openQuickAddMenu } from '../lib/quickAddEvents';
 import {
   IcArrowRight,
@@ -283,6 +283,7 @@ export type PaletteData = {
   items: Item[];
   todoItems: TodoItem[];
   notes: Note[];
+  noteGroups: NoteGroup[];
 };
 
 function selectPaletteData(d: AppData): PaletteData {
@@ -292,6 +293,7 @@ function selectPaletteData(d: AppData): PaletteData {
     items: d.items,
     todoItems: d.todoItems,
     notes: d.notes,
+    noteGroups: d.noteGroups,
   };
 }
 
@@ -301,7 +303,8 @@ function paletteDataUnchanged(a: PaletteData, b: PaletteData): boolean {
     a.people === b.people &&
     a.items === b.items &&
     a.todoItems === b.todoItems &&
-    a.notes === b.notes
+    a.notes === b.notes &&
+    a.noteGroups === b.noteGroups
   );
 }
 
@@ -536,7 +539,7 @@ export function buildCommands(
   // re-selecting. To-do hits use /todos?focus=<id> for the same deep-link
   // scroll + highlight behaviour TodosPage already implements for backlinks.
   for (const n of data.notes) {
-    if (isNoteArchived(n)) continue;
+    if (isNoteEffectivelyArchived(n, data.noteGroups)) continue;
     const title = (n.title || '').trim();
     if (!title && n.locked) continue; // nothing to search/show
     cmds.push({

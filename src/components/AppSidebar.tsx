@@ -17,6 +17,7 @@ import {
   IcUsers,
 } from './icons';
 import { useAppDataSelector } from '../AppDataContext';
+import { isNoteEffectivelyArchived } from '../model';
 import { brandIconUrl } from '../lib/appBranding';
 import { useMobileWeb } from '../lib/runtime';
 import {
@@ -55,12 +56,14 @@ export const AppSidebar = memo(function AppSidebar({ collapsed }: Props) {
       todoGroups: d.todoGroups,
       todoItems: d.todoItems,
       notes: d.notes,
+      noteGroups: d.noteGroups,
     }),
     (a, b) =>
       a.teams === b.teams &&
       a.todoGroups === b.todoGroups &&
       a.todoItems === b.todoItems &&
-      a.notes === b.notes,
+      a.notes === b.notes &&
+      a.noteGroups === b.noteGroups,
   );
   const team = teamId ? sidebarData.teams.find((t) => t.id === teamId) : undefined;
 
@@ -91,12 +94,12 @@ export const AppSidebar = memo(function AppSidebar({ collapsed }: Props) {
     let total = 0;
     let locked = 0;
     for (const n of sidebarData.notes) {
-      if (n.archived === true) continue;
+      if (isNoteEffectivelyArchived(n, sidebarData.noteGroups)) continue;
       total += 1;
       if (n.locked) locked += 1;
     }
     return { total, locked };
-  }, [sidebarData.notes]);
+  }, [sidebarData.notes, sidebarData.noteGroups]);
 
   return (
     <aside className="app-sidebar" aria-label="Main navigation">

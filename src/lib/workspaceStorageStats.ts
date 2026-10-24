@@ -1,5 +1,5 @@
 import type { AppData } from '../model';
-import { isNoteArchived, isTodoItemArchived } from '../model';
+import { isNoteEffectivelyArchived, isTodoItemArchived } from '../model';
 
 export type WorkspaceStorageBreakdown = {
   /** UTF-8 byte estimate of the full workspace JSON. */
@@ -37,8 +37,8 @@ function jsonBytes(value: unknown): number {
 
 /** Rough in-memory size estimate by domain — helps spot notes/todo body bloat. */
 export function estimateWorkspaceStorage(data: AppData): WorkspaceStorageBreakdown {
-  const activeNotes = data.notes.filter((n) => !isNoteArchived(n));
-  const archivedNotes = data.notes.filter((n) => isNoteArchived(n));
+  const activeNotes = data.notes.filter((n) => !isNoteEffectivelyArchived(n, data.noteGroups));
+  const archivedNotes = data.notes.filter((n) => isNoteEffectivelyArchived(n, data.noteGroups));
   const activeTodos = data.todoItems.filter((t) => !isTodoItemArchived(t));
   const archivedTodos = data.todoItems.filter((t) => isTodoItemArchived(t));
 

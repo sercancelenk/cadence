@@ -125,12 +125,12 @@ export function NotesPage() {
     [notesWorkspace.noteGroups],
   );
   const archivedCount = useMemo(
-    () => notesWorkspace.notes.filter((n) => n.archived === true).length,
-    [notesWorkspace.notes],
+    () => filterNotesForView(notesWorkspace.notes, 'archived', notesWorkspace.noteGroups).length,
+    [notesWorkspace.notes, notesWorkspace.noteGroups],
   );
   const visibleNotes = useMemo(
-    () => filterNotesForView(notesWorkspace.notes, viewMode),
-    [notesWorkspace.notes, viewMode],
+    () => filterNotesForView(notesWorkspace.notes, viewMode, notesWorkspace.noteGroups),
+    [notesWorkspace.notes, notesWorkspace.noteGroups, viewMode],
   );
 
   useEffect(() => {
@@ -161,6 +161,7 @@ export function NotesPage() {
     viewMode,
     setViewMode,
     pendingSelectNoteIdRef,
+    notesWorkspace.noteGroups,
   );
 
   // Layout, not passive: a passive effect runs *after* paint, which leaves a

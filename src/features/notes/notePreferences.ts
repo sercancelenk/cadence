@@ -1,4 +1,5 @@
-import type { Note } from '../../model';
+import type { Note, NoteGroup } from '../../model';
+import { isNoteEffectivelyArchived } from '../../model';
 
 export const PLACEHOLDER_TITLE = 'New note';
 
@@ -21,8 +22,12 @@ export function noteViewModeKey(userId: string) {
   return `${LS_NOTE_VIEW}:${userId}`;
 }
 
-export function filterNotesForView(notes: Note[], mode: NoteViewMode) {
-  return notes.filter((n) => (mode === 'archived' ? n.archived === true : n.archived !== true));
+/**
+ * Active / Archived lens. A note is archived by its own flag or because its
+ * list (or an enclosing list) is archived; pass `groups` to honour the latter.
+ */
+export function filterNotesForView(notes: Note[], mode: NoteViewMode, groups: NoteGroup[] = []) {
+  return notes.filter((n) => isNoteEffectivelyArchived(n, groups) === (mode === 'archived'));
 }
 
 /** Notes in the selected list, after the active/archived lens. */

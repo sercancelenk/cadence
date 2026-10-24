@@ -38,6 +38,11 @@ import {
   leaderPersonIdForTeam,
   skipLevelPersonIdForTeam,
   DEFAULT_STRUCTURED_CONTENT,
+  MAX_NOTE_GROUP_DEPTH,
+  effectiveParentId,
+  groupDepth,
+  groupDescendantIds,
+  groupSubtreeHeight,
 } from '../model';
 
 export function addTeam(data: AppData, name: string): AppData {
@@ -1247,7 +1252,15 @@ export function setNotesLock(data: AppData, lock: NotesLock | undefined): AppDat
   return { ...data, notesLock: lock };
 }
 
-export function addNoteGroup(data: AppData, name: string, id?: string): AppData {
+export function addNoteGroup(
+  data: AppData,
+  name: string,
+  id?: string,
+  parentId?: string,
+): AppData {
+  const parent = parentId ? data.noteGroups.find((g) => g.id === parentId) : undefined;
+  // Too deep to nest further: refuse rather than silently flatten the list.
+  if (parent && groupDepth(data.noteGroups, parent.id) + 1 > MAX_NOTE_GROUP_DEPTH) return data;
   const t = nowIso();
   const minOrder =
     data.noteGroups.length > 0 ? Math.min(...data.noteGroups.map((g) => g.sortOrder)) : 0;
@@ -1255,9 +1268,42 @@ export function addNoteGroup(data: AppData, name: string, id?: string): AppData 
     id: id ?? uuid(),
     name: name.trim() || 'New list',
     sortOrder: minOrder - 1,
+    ...(parent ? { parentId: parent.id } : {}),
     createdAt: t,
   };
   return { ...data, noteGroups: [...data.noteGroups, g] };
+}
+
+/**
+ * Re-parent a list (`newParentId` undefined = move to the root). Returns `data`
+ * unchanged when the move is a no-op or would break the tree: unknown ids, into
+ * itself or its own sub-lists, or deeper than {@link MAX_NOTE_GROUP_DEPTH}.
+ * Notes and every other list field are left alone.
+ */
+export function moveNoteGroup(
+  data: AppData,
+  groupId: string,
+  newParentId: string | undefined,
+): AppData {
+  const target = data.noteGroups.find((g) => g.id === groupId);
+  if (!target) return data;
+  if ((target.parentId ?? undefined) === newParentId) return data;
+  if (newParentId !== undefined) {
+    if (!data.noteGroups.some((g) => g.id === newParentId)) return data;
+    if (newParentId === groupId) return data;
+    if (groupDescendantIds(data.noteGroups, groupId).includes(newParentId)) return data;
+    const depth =
+      groupDepth(data.noteGroups, newParentId) + groupSubtreeHeight(data.noteGroups, groupId);
+    if (depth > MAX_NOTE_GROUP_DEPTH) return data;
+  }
+  return {
+    ...data,
+    noteGroups: data.noteGroups.map((g) => {
+      if (g.id !== groupId) return g;
+      const { parentId: _old, ...rest } = g;
+      return newParentId === undefined ? rest : { ...rest, parentId: newParentId };
+    }),
+  };
 }
 
 export function updateNoteGroup(
@@ -1281,10 +1327,21 @@ export function updateNoteGroup(
   };
 }
 
+/**
+ * Delete a list without deleting anything inside it: its sub-lists and notes
+ * move up to the deleted list's parent (root / ungrouped when it had none).
+ */
 export function removeNoteGroup(data: AppData, groupId: string): AppData {
-  const noteGroups = data.noteGroups.filter((g) => g.id !== groupId);
+  const parent = effectiveParentId(data.noteGroups, groupId);
+  const noteGroups = data.noteGroups
+    .filter((g) => g.id !== groupId)
+    .map((g) => {
+      if (g.parentId !== groupId) return g;
+      const { parentId: _old, ...rest } = g;
+      return parent === undefined ? rest : { ...rest, parentId: parent };
+    });
   const notes = data.notes.map((n) =>
-    n.groupId === groupId ? { ...n, groupId: undefined } : n,
+    n.groupId === groupId ? { ...n, groupId: parent } : n,
   );
   return { ...data, noteGroups, notes };
 }
