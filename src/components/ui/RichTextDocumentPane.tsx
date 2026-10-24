@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RichTextEditor } from './RichTextEditor';
 import type { RichTextPayload } from '../../lib/richText';
 import type { RichTextBodyFormat } from '../../lib/richText';
@@ -50,30 +50,11 @@ export function RichTextDocumentPane({
   onEditorAutoFocusHandled,
   onCreateTaskFromSelection,
 }: RichTextDocumentPaneProps) {
-  const [saveState, setSaveState] = useState<'idle' | 'pending' | 'saved'>('idle');
   const [toolbarMountEl, setToolbarMountEl] = useState<HTMLElement | null>(null);
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-    };
-  }, []);
 
   useEffect(() => {
     if (!editable) setToolbarMountEl(null);
   }, [editable]);
-
-  const handleSaveStateChange = (state: 'idle' | 'pending' | 'saved') => {
-    setSaveState(state);
-    if (state === 'saved') {
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-      savedTimer.current = setTimeout(() => setSaveState('idle'), 2000);
-    }
-  };
-
-  const saveLabel =
-    saveState === 'pending' ? 'Saving…' : saveState === 'saved' ? 'Saved' : null;
 
   const hint = chromeHint ?? (editable ? EDITABLE_CHROME_HINT : undefined);
 
@@ -87,15 +68,6 @@ export function RichTextDocumentPane({
             </span>
           ) : null}
           {hint ? <span className="rich-doc-pane__hint muted small">{hint}</span> : null}
-          {editable && saveLabel ? (
-            <span
-              className={`rich-doc-pane__save${saveState === 'pending' ? ' rich-doc-pane__save--pending' : ''}`}
-              role="status"
-              aria-live="polite"
-            >
-              {saveLabel}
-            </span>
-          ) : null}
         </div>
         {editable ? (
           <div ref={setToolbarMountEl} className="rich-doc-pane__toolbar-host" />
@@ -114,7 +86,6 @@ export function RichTextDocumentPane({
           editable={editable}
           toolbar={editable}
           toolbarMountEl={editable ? toolbarMountEl : null}
-          onSaveStateChange={editable ? handleSaveStateChange : undefined}
           attachmentScope={attachmentScope}
           attachmentUserId={attachmentUserId}
           autoFocus={autoFocusEditor}

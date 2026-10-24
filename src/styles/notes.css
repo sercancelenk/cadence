@@ -905,16 +905,7 @@
   letter-spacing: -0.01em;
 }
 
-.rich-doc-pane__save {
-  margin-left: 4px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--muted);
-}
 
-.rich-doc-pane__save--pending {
-  color: var(--accent);
-}
 
 .rich-doc-pane__surface {
   flex: 1;
