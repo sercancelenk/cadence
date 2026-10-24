@@ -484,9 +484,21 @@ export function updateUserProfile(
   };
 }
 
+/**
+ * `undefined` leaves a field unchanged; an empty string clears it. For
+ * `provider` that means `''` ("Disabled" / Remove) rather than `undefined`.
+ */
+export type AISettingsPatch = Partial<
+  Omit<AISettings, 'provider' | 'gatewayFormat' | 'authScheme'>
+> & {
+  provider?: AISettings['provider'] | '';
+  gatewayFormat?: AISettings['gatewayFormat'] | '';
+  authScheme?: AISettings['authScheme'] | '';
+};
+
 export function updateAISettings(
   data: AppData,
-  patch: Partial<AISettings>,
+  patch: AISettingsPatch,
 ): AppData {
   const current: AISettings = data.aiSettings ?? {};
   // Spread `current` first so forward-compat extras (unknown keys preserved by
@@ -507,6 +519,33 @@ export function updateAISettings(
           ? patch.model.trim()
           : undefined
         : current.model,
+    baseUrl:
+      patch.baseUrl !== undefined
+        ? patch.baseUrl.trim()
+          ? patch.baseUrl.trim()
+          : undefined
+        : current.baseUrl,
+    gatewayFormat:
+      patch.gatewayFormat !== undefined ? patch.gatewayFormat || undefined : current.gatewayFormat,
+    authHeader:
+      patch.authHeader !== undefined
+        ? patch.authHeader.trim()
+          ? patch.authHeader.trim()
+          : undefined
+        : current.authHeader,
+    authScheme: patch.authScheme !== undefined ? patch.authScheme || undefined : current.authScheme,
+    requestPath:
+      patch.requestPath !== undefined
+        ? patch.requestPath.trim()
+          ? patch.requestPath.trim()
+          : undefined
+        : current.requestPath,
+    extraHeaders:
+      patch.extraHeaders !== undefined
+        ? patch.extraHeaders.length
+          ? patch.extraHeaders
+          : undefined
+        : current.extraHeaders,
     systemPrompt:
       patch.systemPrompt !== undefined
         ? patch.systemPrompt.trim()

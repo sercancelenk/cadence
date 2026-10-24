@@ -14,7 +14,7 @@ type Props = {
   onClose: () => void;
   /** The task we are reasoning about. */
   task: { title: string; body?: string };
-  /** Optional callback when the user clicks "Save to notes". */
+  /** Optional callback when the user clicks "Save to task". */
   onAppendToBody?: (markdown: string) => void;
 };
 
@@ -226,7 +226,7 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
                 onAppendToBody?.(lastAssistant.content);
               }}
             >
-              Save to notes
+              Save to task
             </Button>
           ) : null}
         </div>
@@ -308,6 +308,7 @@ function providerLabel(p: string | undefined): string {
   if (p === 'anthropic') return 'Anthropic';
   if (p === 'openai') return 'OpenAI';
   if (p === 'gemini') return 'Google Gemini';
+  if (p === 'gateway') return 'your AI gateway';
   return 'your AI provider';
 }
 

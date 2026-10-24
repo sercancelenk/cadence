@@ -83,11 +83,11 @@ import {
   updateTodoGroup as updateTodoGroupFn,
   updateNoteGroup as updateNoteGroupFn,
   updateAISettings as updateAISettingsFn,
+  type AISettingsPatch,
   updateTodoItem as updateTodoItemFn,
   updateUserProfile as updateUserProfileFn,
 } from '../core/actions';
 import type {
-  AISettings,
   AppData,
   DataShape,
   Item,
@@ -227,7 +227,7 @@ type Api = {
     patch: Partial<Pick<UserProfile, 'displayName' | 'jobTitle' | 'department' | 'phone' | 'bio' | 'avatarDataUrl'>>,
   ) => void;
   toggleFavoriteTeam: (teamId: string) => void;
-  updateAISettings: (patch: Partial<AISettings>) => void;
+  updateAISettings: (patch: AISettingsPatch) => void;
   addItem: (
     personId: string,
     kind: ItemKind,

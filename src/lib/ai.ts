@@ -1,5 +1,6 @@
-import type { AIProvider, AISettings } from '../model';
+import type { AIProvider, AISettings, GatewayFormat } from '../model';
 import { AI_PROVIDER_OPTIONS } from '../model';
+import { normalizeGatewayBaseUrl, resolveGatewayRequest } from './aiGatewayUrl';
 
 /**
  * Tiny provider abstraction for the BYO-key AI assistant. We keep this
@@ -50,11 +51,21 @@ export type AskAIResult = {
 export class AIError extends Error {
   status?: number;
   provider?: AIProvider;
-  constructor(message: string, opts: { status?: number; provider?: AIProvider; cause?: unknown } = {}) {
+  /**
+   * Gateway failures only: a copy-pasteable description of the exchange (URL,
+   * header names with masked values, HTTP status, start of the body). It never
+   * contains an API key.
+   */
+  diagnostic?: string;
+  constructor(
+    message: string,
+    opts: { status?: number; provider?: AIProvider; cause?: unknown; diagnostic?: string } = {},
+  ) {
     super(message);
     this.name = 'AIError';
     this.status = opts.status;
     this.provider = opts.provider;
+    this.diagnostic = opts.diagnostic;
     if (opts.cause !== undefined) (this as unknown as { cause?: unknown }).cause = opts.cause;
   }
 }
@@ -63,10 +74,19 @@ export function defaultModel(provider: AIProvider): string {
   return AI_PROVIDER_OPTIONS.find((p) => p.value === provider)?.defaultModel ?? '';
 }
 
+/**
+ * A hosted provider needs a key. A custom gateway needs a valid base URL and a
+ * model name (it has no default model); its key is optional because a
+ * gateway on the local network may not require one.
+ */
 export function isAIConfigured(
   s: AISettings | undefined,
-): s is AISettings & { provider: AIProvider; apiKey: string } {
-  return !!s?.provider && !!s.apiKey;
+): s is AISettings & { provider: AIProvider } {
+  if (!s?.provider) return false;
+  if (s.provider === 'gateway') {
+    return !!s.baseUrl && normalizeGatewayBaseUrl(s.baseUrl).ok && !!s.model?.trim();
+  }
+  return !!s.apiKey;
 }
 
 const DEFAULT_SYSTEM = `You are an embedded coaching assistant inside a personal task manager called Cadence.
@@ -93,7 +113,8 @@ export async function askAI(input: AskAIInput): Promise<AskAIResult> {
   if (messages.length === 0) {
     throw new AIError('Nothing to ask — the conversation is empty.', { provider: settings.provider });
   }
-  const { provider, apiKey } = settings;
+  const { provider } = settings;
+  const apiKey = settings.apiKey ?? '';
   const model = settings.model?.trim() || defaultModel(provider);
   const system = (settings.systemPrompt?.trim() || input.fallbackSystem || DEFAULT_SYSTEM).slice(0, 4000);
   const maxTokens = Math.min(Math.max(input.maxOutputTokens ?? 800, 64), 4000);
@@ -105,6 +126,8 @@ export async function askAI(input: AskAIInput): Promise<AskAIResult> {
       return callOpenAI({ apiKey, model, system, messages, maxTokens, signal: input.signal });
     case 'gemini':
       return callGemini({ apiKey, model, system, messages, maxTokens, signal: input.signal });
+    case 'gateway':
+      return callGateway({ apiKey, model, system, messages, maxTokens, signal: input.signal }, settings);
     default:
       throw new AIError(`Unknown AI provider: ${String(provider)}`);
   }
@@ -119,42 +142,132 @@ type ProviderArgs = {
   signal?: AbortSignal;
 };
 
-async function callAnthropic({
-  apiKey,
-  model,
-  system,
-  messages,
-  maxTokens,
-  signal,
-}: ProviderArgs): Promise<AskAIResult> {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    signal,
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      // Anthropic requires this opt-in to allow direct browser calls.
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model,
-      system,
-      max_tokens: maxTokens,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
-    }),
+// ---------- wire formats -------------------------------------------------------
+//
+// Each format has a body builder and a response parser. The hosted providers
+// and the custom gateway share them, so a format behaves the same wherever it
+// is used.
+
+function chatBody(a: ProviderArgs): string {
+  return JSON.stringify({
+    model: a.model,
+    max_tokens: a.maxTokens,
+    messages: [
+      { role: 'system', content: a.system },
+      ...a.messages.map((m) => ({ role: m.role, content: m.content })),
+    ],
   });
-  if (!res.ok) throw await providerError('anthropic', res);
-  const json = (await res.json()) as {
+}
+
+function responsesBody(a: ProviderArgs): string {
+  return JSON.stringify({
+    model: a.model,
+    instructions: a.system,
+    input: a.messages.map((m) => ({ role: m.role, content: m.content })),
+    max_output_tokens: a.maxTokens,
+  });
+}
+
+function anthropicBody(a: ProviderArgs): string {
+  return JSON.stringify({
+    model: a.model,
+    system: a.system,
+    max_tokens: a.maxTokens,
+    messages: a.messages.map((m) => ({ role: m.role, content: m.content })),
+  });
+}
+
+function geminiBody(a: ProviderArgs): string {
+  // Gemini has no top-level "system" role; it uses `systemInstruction`. User and
+  // assistant turns go in `contents`.
+  return JSON.stringify({
+    systemInstruction: { role: 'system', parts: [{ text: a.system }] },
+    generationConfig: { maxOutputTokens: a.maxTokens, temperature: 0.5 },
+    contents: a.messages.map((m) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    })),
+  });
+}
+
+function parseJsonBody<T>(raw: string, provider: AIProvider): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new AIError(`${providerName(provider)} returned a response that is not JSON.`, { provider });
+  }
+}
+
+function emptyResponse(provider: AIProvider): AIError {
+  return new AIError(`${providerName(provider)} returned an empty response.`, { provider });
+}
+
+/** Parses an OpenAI `chat/completions` body. */
+function parseChatCompletion(raw: string, provider: AIProvider): AskAIResult {
+  const json = parseJsonBody<{
+    choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
+  }>(raw, provider);
+  const text = (json.choices?.[0]?.message?.content ?? '').trim();
+  const finishReason = json.choices?.[0]?.finish_reason;
+  if (!text && finishReason === 'length') {
+    // The model used its whole token budget without producing visible text
+    // (typical of reasoning models that spend tokens thinking first).
+    throw new AIError(
+      `${providerName(provider)} stopped at the token limit before writing an answer. Try again, or use a model that does not spend tokens on hidden reasoning.`,
+      { provider },
+    );
+  }
+  if (!text) throw emptyResponse(provider);
+  // OpenAI finish reasons: 'stop' | 'length' | 'content_filter' |
+  // 'tool_calls' | 'function_call'. Anything that isn't an explicit
+  // clean stop becomes 'other' — only 'length' lights up the
+  // Continue affordance.
+  const stopReason: AIStopReason =
+    finishReason === 'length' ? 'length' : finishReason === 'stop' ? 'stop' : 'other';
+  return { text, stopReason };
+}
+
+/** Parses an OpenAI `responses` body. */
+function parseResponses(raw: string, provider: AIProvider): AskAIResult {
+  const json = parseJsonBody<{
+    status?: string;
+    output_text?: unknown;
+    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
+    incomplete_details?: { reason?: string } | null;
+  }>(raw, provider);
+  const fromOutput = (json.output ?? [])
+    .filter((item) => item.type === 'message')
+    .flatMap((item) => item.content ?? [])
+    .filter((c) => c.type === 'output_text' && typeof c.text === 'string')
+    .map((c) => c.text!)
+    .join('\n')
+    .trim();
+  const text = fromOutput || (typeof json.output_text === 'string' ? json.output_text.trim() : '');
+  if (!text) throw emptyResponse(provider);
+  // Observed: `status: "completed"` on a clean finish. A cut-off reply is
+  // reported as `status: "incomplete"` with `incomplete_details.reason ===
+  // "max_output_tokens"` per OpenAI's documentation (not observed here).
+  const stopReason: AIStopReason =
+    json.status === 'completed'
+      ? 'stop'
+      : json.status === 'incomplete' && json.incomplete_details?.reason === 'max_output_tokens'
+        ? 'length'
+        : 'other';
+  return { text, stopReason };
+}
+
+/** Parses an Anthropic `messages` body. */
+function parseAnthropic(raw: string, provider: AIProvider): AskAIResult {
+  const json = parseJsonBody<{
     content?: Array<{ type: string; text?: string }>;
     stop_reason?: string;
-  };
+  }>(raw, provider);
   const text = (json.content ?? [])
     .filter((b) => b.type === 'text' && typeof b.text === 'string')
     .map((b) => b.text!)
     .join('\n')
     .trim();
-  if (!text) throw new AIError('Anthropic returned an empty response.', { provider: 'anthropic' });
+  if (!text) throw emptyResponse(provider);
   // Anthropic stop reasons: 'end_turn' | 'max_tokens' | 'stop_sequence' |
   // 'tool_use'. We only map 'max_tokens' to 'length'; 'stop_sequence' is
   // a clean stop driven by user-supplied stop strings.
@@ -167,104 +280,216 @@ async function callAnthropic({
   return { text, stopReason };
 }
 
-async function callOpenAI({
-  apiKey,
-  model,
-  system,
-  messages,
-  maxTokens,
-  signal,
-}: ProviderArgs): Promise<AskAIResult> {
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    signal,
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      messages: [
-        { role: 'system', content: system },
-        ...messages.map((m) => ({ role: m.role, content: m.content })),
-      ],
-    }),
-  });
-  if (!res.ok) throw await providerError('openai', res);
-  const json = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
-  };
-  const text = (json.choices?.[0]?.message?.content ?? '').trim();
-  if (!text) throw new AIError('OpenAI returned an empty response.', { provider: 'openai' });
-  const finishReason = json.choices?.[0]?.finish_reason;
-  // OpenAI finish reasons: 'stop' | 'length' | 'content_filter' |
-  // 'tool_calls' | 'function_call'. Anything that isn't an explicit
-  // clean stop becomes 'other' — only 'length' lights up the
-  // Continue affordance.
-  const stopReason: AIStopReason =
-    finishReason === 'length' ? 'length' : finishReason === 'stop' ? 'stop' : 'other';
-  return { text, stopReason };
-}
-
-async function callGemini({
-  apiKey,
-  model,
-  system,
-  messages,
-  maxTokens,
-  signal,
-}: ProviderArgs): Promise<AskAIResult> {
-  // Gemini doesn't have an explicit "system" role at the top level; it uses
-  // `systemInstruction`. We put user/assistant turns in `contents`.
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent` +
-    `?key=${encodeURIComponent(apiKey)}`;
-  const contents = messages.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
-  const res = await fetch(url, {
-    method: 'POST',
-    signal,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      systemInstruction: { role: 'system', parts: [{ text: system }] },
-      generationConfig: { maxOutputTokens: maxTokens, temperature: 0.5 },
-      contents,
-    }),
-  });
-  if (!res.ok) {
-    // Google retired the Gemini 1.x family from `v1beta` in late 2025. If the
-    // user is still pointing at one of those, return a targeted error so they
-    // know the fix is a model rename rather than something with their key.
-    if (res.status === 404 && /^gemini-1\.[05]/i.test(model)) {
-      throw new AIError(
-        `The model "${model}" is no longer served by Google's Gemini API (Gemini 1.x was retired). ` +
-          `Open Settings → AI Assistant and switch to "gemini-2.0-flash" (recommended) or any of the gemini-2.x / 2.5 models.`,
-        { status: 404, provider: 'gemini' },
-      );
-    }
-    throw await providerError('gemini', res);
-  }
-  const json = (await res.json()) as {
+/** Parses a Gemini `generateContent` body. */
+function parseGemini(raw: string, provider: AIProvider): AskAIResult {
+  const json = parseJsonBody<{
     candidates?: Array<{
       content?: { parts?: Array<{ text?: string }> };
       finishReason?: string;
     }>;
-  };
+  }>(raw, provider);
   const parts = json.candidates?.[0]?.content?.parts ?? [];
   const text = parts
     .map((p) => (typeof p.text === 'string' ? p.text : ''))
     .join('')
     .trim();
-  if (!text) throw new AIError('Gemini returned an empty response.', { provider: 'gemini' });
+  if (!text) throw emptyResponse(provider);
   // Gemini finish reasons: 'STOP' | 'MAX_TOKENS' | 'SAFETY' | 'RECITATION'
   // | 'OTHER' (and a few newer ones that we lump into 'other').
   const finishReason = json.candidates?.[0]?.finishReason;
   const stopReason: AIStopReason =
     finishReason === 'MAX_TOKENS' ? 'length' : finishReason === 'STOP' ? 'stop' : 'other';
   return { text, stopReason };
+}
+
+const GATEWAY_FORMATS: Record<
+  GatewayFormat,
+  { body: (a: ProviderArgs) => string; parse: (raw: string, provider: AIProvider) => AskAIResult }
+> = {
+  'openai-chat': { body: chatBody, parse: parseChatCompletion },
+  'openai-responses': { body: responsesBody, parse: parseResponses },
+  anthropic: { body: anthropicBody, parse: parseAnthropic },
+  gemini: { body: geminiBody, parse: parseGemini },
+};
+
+// ---------- hosted providers ---------------------------------------------------
+
+async function callAnthropic(a: ProviderArgs): Promise<AskAIResult> {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    signal: a.signal,
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': a.apiKey,
+      'anthropic-version': '2023-06-01',
+      // Anthropic requires this opt-in to allow direct browser calls.
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: anthropicBody(a),
+  });
+  if (!res.ok) throw await providerError('anthropic', res);
+  return parseAnthropic(await res.text(), 'anthropic');
+}
+
+async function callOpenAI(a: ProviderArgs): Promise<AskAIResult> {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    signal: a.signal,
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${a.apiKey}`,
+    },
+    body: chatBody(a),
+  });
+  if (!res.ok) throw await providerError('openai', res);
+  return parseChatCompletion(await res.text(), 'openai');
+}
+
+async function callGemini(a: ProviderArgs): Promise<AskAIResult> {
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(a.model)}:generateContent` +
+    `?key=${encodeURIComponent(a.apiKey)}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    signal: a.signal,
+    headers: { 'content-type': 'application/json' },
+    body: geminiBody(a),
+  });
+  if (!res.ok) {
+    // Google retired the Gemini 1.x family from `v1beta` in late 2025. If the
+    // user is still pointing at one of those, return a targeted error so they
+    // know the fix is a model rename rather than something with their key.
+    if (res.status === 404 && /^gemini-1\.[05]/i.test(a.model)) {
+      throw new AIError(
+        `The model "${a.model}" is no longer served by Google's Gemini API (Gemini 1.x was retired). ` +
+          `Open Settings → AI Assistant and switch to "gemini-2.0-flash" (recommended) or any of the gemini-2.x / 2.5 models.`,
+        { status: 404, provider: 'gemini' },
+      );
+    }
+    throw await providerError('gemini', res);
+  }
+  return parseGemini(await res.text(), 'gemini');
+}
+
+// ---------- custom gateway -----------------------------------------------------
+
+type GatewaySettings = Pick<
+  AISettings,
+  'baseUrl' | 'gatewayFormat' | 'authHeader' | 'authScheme' | 'extraHeaders' | 'requestPath'
+>;
+
+/** Header values that are safe to show as they are in a diagnostic. */
+const DIAGNOSTIC_PLAIN_HEADERS = new Set(['anthropic-version', 'accept', 'content-type']);
+
+/**
+ * Describes one gateway exchange for a bug report. Header names are kept, but
+ * their values are reduced to the first three characters and a length, so the
+ * API key (and any tenant token in an extra header) never appears.
+ */
+function gatewayDiagnostic(opts: {
+  format: GatewayFormat;
+  url: string;
+  headers: Record<string, string>;
+  via: 'desktop' | 'browser';
+  status?: number;
+  body?: string;
+  error?: string;
+}): string {
+  const lines = [`format: ${opts.format} (${opts.via})`, `POST ${opts.url}`];
+  const secrets: string[] = [];
+  for (const [name, value] of Object.entries(opts.headers)) {
+    const plain = DIAGNOSTIC_PLAIN_HEADERS.has(name.toLowerCase());
+    if (!plain) {
+      secrets.push(value);
+      // The bearer prefix is not secret but the token after it is.
+      const token = value.replace(/^Bearer\s+/i, '');
+      if (token !== value) secrets.push(token);
+    }
+    lines.push(`${name}: ${plain ? value : `<hidden, ${value.length} chars>`}`);
+  }
+  if (opts.status !== undefined) lines.push(`-> HTTP ${opts.status}`);
+  if (opts.error) lines.push(`-> ${opts.error}`);
+  if (opts.body !== undefined) {
+    // A gateway may echo the request back; never let a secret through that way.
+    let echoed = opts.body;
+    for (const secret of secrets) {
+      if (secret.length >= 4) echoed = echoed.split(secret).join('<hidden>');
+    }
+    const flat = echoed.replace(/\s+/g, ' ').trim();
+    lines.push(`body: ${flat.length > 300 ? `${flat.slice(0, 299)}…` : flat || '(empty)'}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Custom gateway (OmniRoute, LiteLLM, a company proxy, …). The wire format,
+ * auth header, extra headers and path come from the user's settings. In the
+ * desktop app the main process performs the HTTP call (no CSP/CORS, target
+ * re-validated, `ai` policy enforced there). In the web build the browser calls
+ * the gateway directly, which only works when the gateway sends CORS headers.
+ */
+async function callGateway(a: ProviderArgs, gw: GatewaySettings): Promise<AskAIResult> {
+  const format: GatewayFormat = gw.gatewayFormat ?? 'openai-chat';
+  const target = resolveGatewayRequest(gw, a.model, a.apiKey);
+  if (!target.ok) throw new AIError(target.error, { provider: 'gateway' });
+  const body = GATEWAY_FORMATS[format].body(a);
+  const bridge = typeof window !== 'undefined' ? window.cadence : undefined;
+  const via = bridge?.aiGatewayChat ? 'desktop' : 'browser';
+  const diag = (extra: { status?: number; body?: string; error?: string } = {}) =>
+    gatewayDiagnostic({ format, url: target.url, headers: target.headers, via, ...extra });
+
+  let status: number;
+  let text: string;
+  if (bridge?.aiGatewayChat) {
+    const requestId = globalThis.crypto.randomUUID();
+    const onAbort = () => void bridge.aiGatewayAbort?.(requestId);
+    if (a.signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
+    a.signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      const r = await bridge.aiGatewayChat({
+        requestId,
+        baseUrl: target.baseUrl,
+        path: target.path,
+        headers: target.headers,
+        body,
+      });
+      if (!r.ok) {
+        if ('aborted' in r && r.aborted) throw new DOMException('Request cancelled.', 'AbortError');
+        throw new AIError(r.error, { provider: 'gateway', diagnostic: diag({ error: r.error }) });
+      }
+      status = r.status;
+      text = r.text;
+    } finally {
+      a.signal?.removeEventListener('abort', onAbort);
+    }
+  } else {
+    try {
+      const res = await fetch(target.url, {
+        method: 'POST',
+        signal: a.signal,
+        headers: { 'content-type': 'application/json', ...target.headers },
+        body,
+      });
+      status = res.status;
+      text = await res.text();
+    } catch (err) {
+      if ((err as DOMException)?.name === 'AbortError') throw err;
+      throw new AIError(
+        'Could not reach the gateway. Check the URL, and that the gateway allows browser (CORS) requests.',
+        { provider: 'gateway', cause: err, diagnostic: diag({ error: (err as Error)?.message ?? String(err) }) },
+      );
+    }
+  }
+
+  if (status < 200 || status >= 300) {
+    throw statusError('gateway', status, text, diag({ status, body: text }));
+  }
+  try {
+    return GATEWAY_FORMATS[format].parse(text, 'gateway');
+  } catch (err) {
+    if (err instanceof AIError) err.diagnostic = diag({ status, body: text });
+    throw err;
+  }
 }
 
 async function providerError(provider: AIProvider, res: Response): Promise<AIError> {
@@ -274,6 +499,10 @@ async function providerError(provider: AIProvider, res: Response): Promise<AIErr
   } catch {
     raw = '';
   }
+  return statusError(provider, res.status, raw);
+}
+
+function statusError(provider: AIProvider, status: number, raw: string, diagnostic?: string): AIError {
   let detail = raw;
   try {
     const j = JSON.parse(raw) as Record<string, unknown>;
@@ -282,16 +511,40 @@ async function providerError(provider: AIProvider, res: Response): Promise<AIErr
   } catch {
     // raw stays as-is
   }
-  const friendly = friendlyStatus(res.status, provider);
+  const friendly = friendlyStatus(status, provider);
   const message = `${friendly} ${detail ? `— ${truncate(detail, 320)}` : ''}`.trim();
-  return new AIError(message, { status: res.status, provider });
+  return new AIError(message, { status, provider, diagnostic });
+}
+
+function providerName(provider: AIProvider): string {
+  return provider === 'anthropic'
+    ? 'Anthropic'
+    : provider === 'openai'
+      ? 'OpenAI'
+      : provider === 'gateway'
+        ? 'The gateway'
+        : 'Gemini';
 }
 
 function friendlyStatus(status: number, provider: AIProvider): string {
-  const name =
-    provider === 'anthropic' ? 'Anthropic' : provider === 'openai' ? 'OpenAI' : 'Gemini';
-  if (status === 401 || status === 403) return `${name} rejected the API key (HTTP ${status}).`;
-  if (status === 404) return `${name} could not find that model (HTTP 404). Check the model name in Settings.`;
+  const name = providerName(provider);
+  if (status === 401 || status === 403) {
+    // A gateway forwards to other providers, so the rejection may come from the
+    // provider behind the chosen model rather than from the gateway key.
+    if (provider === 'gateway') {
+      return `The gateway answered HTTP ${status}: either its API key or the provider behind this model refused the request. Try another model.`;
+    }
+    return `${name} rejected the API key (HTTP ${status}).`;
+  }
+  if (status === 404) {
+    if (provider === 'gateway') {
+      return 'The gateway answered HTTP 404: the model or the request path was not found. Check the model name, the base URL, the API format and the request path.';
+    }
+    return `${name} could not find that model (HTTP 404). Check the model name in Settings.`;
+  }
+  if (status === 405 && provider === 'gateway') {
+    return 'The gateway answered HTTP 405: it does not accept this request at this address. Check the API format, the base URL and the request path.';
+  }
   if (status === 429) return `${name} rate-limited the request (HTTP 429). Try again in a moment.`;
   if (status >= 500) return `${name} is having trouble (HTTP ${status}). Try again later.`;
   return `${name} request failed (HTTP ${status}).`;

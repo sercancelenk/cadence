@@ -8,12 +8,19 @@ import { useSession } from '../AuthContext';
 import { useToast } from '../components/ui/Toast';
 import { useConfirm } from '../components/ui/ConfirmProvider';
 import { AppModal, AppModalActions } from '../components/ui/AppModal';
-import { askAI, AIError, defaultModel } from '../lib/ai';
+import { askAI, AIError, defaultModel, isAIConfigured } from '../lib/ai';
+import {
+  formatHeaderLines,
+  gatewayFormatDefaults,
+  normalizeGatewayBaseUrl,
+  parseHeaderLines,
+  resolveGatewayRequest,
+} from '../lib/aiGatewayUrl';
 import { APP_SLUG } from '../lib/appBranding';
 import { formatAppVersion } from '../lib/appVersionLabel';
 import { resolveAppProfileLabel } from '../lib/appProfileLabel';
-import type { AIProvider } from '../model';
-import { AI_PROVIDER_OPTIONS, appDataToPersistJson, compactAppDataForPersist, normalizeData } from '../model';
+import type { AIProvider, GatewayAuthScheme, GatewayFormat } from '../model';
+import { AI_PROVIDER_OPTIONS, GATEWAY_FORMAT_OPTIONS, appDataToPersistJson, compactAppDataForPersist, normalizeData } from '../model';
 import {
   describeMergeSummary,
   mergeAppendWorkspace,
@@ -984,9 +991,20 @@ function AISettingsSection() {
   const [provider, setProvider] = useState<AIProvider | ''>(ai?.provider ?? '');
   const [apiKey, setApiKey] = useState(ai?.apiKey ?? '');
   const [model, setModel] = useState(ai?.model ?? '');
+  const [baseUrl, setBaseUrl] = useState(ai?.baseUrl ?? '');
+  const [gatewayFormat, setGatewayFormat] = useState<GatewayFormat>(ai?.gatewayFormat ?? 'openai-chat');
+  const [authHeader, setAuthHeader] = useState(ai?.authHeader ?? '');
+  const [authScheme, setAuthScheme] = useState<GatewayAuthScheme | ''>(ai?.authScheme ?? '');
+  const [requestPath, setRequestPath] = useState(ai?.requestPath ?? '');
+  const savedHeadersText = formatHeaderLines(ai?.extraHeaders);
+  const [headersText, setHeadersText] = useState(savedHeadersText);
   const [showKey, setShowKey] = useState(false);
   const [savedAt, setSavedAt] = useState<string>('');
-  const [testStatus, setTestStatus] = useState<{ kind: 'idle' | 'running' | 'ok' | 'error'; message?: string }>({
+  const [testStatus, setTestStatus] = useState<{
+    kind: 'idle' | 'running' | 'ok' | 'error';
+    message?: string;
+    diagnostic?: string;
+  }>({
     kind: 'idle',
   });
 
@@ -995,7 +1013,25 @@ function AISettingsSection() {
     setProvider(ai?.provider ?? '');
     setApiKey(ai?.apiKey ?? '');
     setModel(ai?.model ?? '');
-  }, [ai?.provider, ai?.apiKey, ai?.model]);
+    setBaseUrl(ai?.baseUrl ?? '');
+    setGatewayFormat(ai?.gatewayFormat ?? 'openai-chat');
+    setAuthHeader(ai?.authHeader ?? '');
+    setAuthScheme(ai?.authScheme ?? '');
+    setRequestPath(ai?.requestPath ?? '');
+    setHeadersText(savedHeadersText);
+  }, [
+    ai?.provider,
+    ai?.apiKey,
+    ai?.model,
+    ai?.baseUrl,
+    ai?.gatewayFormat,
+    ai?.authHeader,
+    ai?.authScheme,
+    ai?.requestPath,
+    // A string, not the array: normalizeData builds a new array on every load,
+    // which would reset unsaved drafts even when nothing changed.
+    savedHeadersText,
+  ]);
 
   const placeholderModel = useMemo(() => (provider ? defaultModel(provider) : ''), [provider]);
   const modelExamples = useMemo(
@@ -1005,17 +1041,60 @@ function AISettingsSection() {
   // Gemini 1.x was retired from v1beta in late 2025; surface a one-click fix
   // for users who still have the old name saved.
   const modelIsRetiredGemini = provider === 'gemini' && /^gemini-1\.[05]/i.test(model.trim());
+  const isGateway = provider === 'gateway';
+  const savedIsGateway = ai?.provider === 'gateway';
+  const gatewayUrl = isGateway ? normalizeGatewayBaseUrl(baseUrl) : null;
+  const parsedHeaders = isGateway ? parseHeaderLines(headersText) : null;
+  const gatewaySettings = {
+    baseUrl: gatewayUrl?.ok ? gatewayUrl.url : undefined,
+    gatewayFormat: gatewayFormat === 'openai-chat' ? undefined : gatewayFormat,
+    authHeader: authHeader.trim() || undefined,
+    authScheme: authScheme || undefined,
+    requestPath: requestPath.trim() || undefined,
+    extraHeaders: parsedHeaders?.ok && parsedHeaders.headers.length ? parsedHeaders.headers : undefined,
+  };
+  // Resolving the request here validates the whole gateway configuration (URL,
+  // path, header names and values) and gives the form a live preview.
+  const gatewayPreview = isGateway
+    ? resolveGatewayRequest(gatewaySettings, model.trim() || 'MODEL', apiKey.trim())
+    : null;
+  const gatewayDefaults = gatewayFormatDefaults(gatewayFormat);
+  const gatewayDirty =
+    isGateway &&
+    ((ai?.baseUrl ?? '') !== (gatewayUrl?.ok ? gatewayUrl.url : baseUrl.trim()) ||
+      (ai?.gatewayFormat ?? 'openai-chat') !== gatewayFormat ||
+      (ai?.authHeader ?? '') !== authHeader.trim() ||
+      (ai?.authScheme ?? '') !== authScheme ||
+      (ai?.requestPath ?? '') !== requestPath.trim() ||
+      savedHeadersText !== headersText.trim());
   const dirty =
     (ai?.provider ?? '') !== provider ||
     (ai?.apiKey ?? '') !== apiKey.trim() ||
-    (ai?.model ?? '') !== model.trim();
-  const canSave = !!provider && apiKey.trim().length >= 8;
+    (ai?.model ?? '') !== model.trim() ||
+    gatewayDirty;
+  // A gateway needs a valid configuration and a model (it has no default one);
+  // its key is optional. Hosted providers need a key.
+  const canSave = isGateway
+    ? !!gatewayPreview?.ok && !!parsedHeaders?.ok && model.trim().length > 0
+    : !!provider && apiKey.trim().length >= 8;
 
   const save = () => {
     updateAISettings({
-      provider: (provider || undefined) as AIProvider | undefined,
+      provider,
       apiKey: apiKey.trim(),
       model: model.trim(),
+      // Only touched for a gateway; another provider leaves any saved gateway
+      // configuration alone.
+      ...(isGateway && gatewayUrl?.ok && parsedHeaders?.ok
+        ? {
+            baseUrl: gatewayUrl.url,
+            gatewayFormat: gatewayFormat === 'openai-chat' ? '' : gatewayFormat,
+            authHeader: authHeader.trim(),
+            authScheme,
+            requestPath: requestPath.trim(),
+            extraHeaders: parsedHeaders.headers,
+          }
+        : {}),
     });
     setSavedAt(new Date().toLocaleTimeString());
     setTestStatus({ kind: 'idle' });
@@ -1024,24 +1103,42 @@ function AISettingsSection() {
   const remove = async () => {
     if (
       !(await confirm({
-        title: 'Remove API key?',
-        description: 'The stored API key will be removed from this device.',
+        title: savedIsGateway ? 'Remove gateway settings?' : 'Remove API key?',
+        description: savedIsGateway
+          ? 'The gateway URL, model and API key will be removed from this device.'
+          : 'The stored API key will be removed from this device.',
         confirmLabel: 'Remove',
         danger: true,
       }))
     ) {
       return;
     }
-    updateAISettings({ provider: undefined, apiKey: '', model: '', systemPrompt: '' });
+    updateAISettings({
+      provider: '',
+      apiKey: '',
+      model: '',
+      systemPrompt: '',
+      // Saved gateway settings are only cleared when a gateway is what is being
+      // removed, matching what the dialog above says.
+      ...(savedIsGateway
+        ? { baseUrl: '', gatewayFormat: '', authHeader: '', authScheme: '', requestPath: '', extraHeaders: [] }
+        : {}),
+    });
     setProvider('');
     setApiKey('');
     setModel('');
+    setBaseUrl('');
+    setGatewayFormat('openai-chat');
+    setAuthHeader('');
+    setAuthScheme('');
+    setRequestPath('');
+    setHeadersText('');
     setSavedAt('');
     setTestStatus({ kind: 'idle' });
   };
 
   const test = async () => {
-    if (!provider || apiKey.trim().length < 8) return;
+    if (!provider || !canSave) return;
     setTestStatus({ kind: 'running' });
     try {
       const result = await askAI({
@@ -1049,6 +1146,7 @@ function AISettingsSection() {
           provider: provider as AIProvider,
           apiKey: apiKey.trim(),
           model: model.trim(),
+          ...(isGateway ? gatewaySettings : {}),
         },
         messages: [
           {
@@ -1064,7 +1162,11 @@ function AISettingsSection() {
       });
     } catch (err) {
       const message = err instanceof AIError ? err.message : (err as Error)?.message ?? String(err);
-      setTestStatus({ kind: 'error', message });
+      setTestStatus({
+        kind: 'error',
+        message,
+        diagnostic: err instanceof AIError ? err.diagnostic : undefined,
+      });
     }
   };
 
@@ -1079,12 +1181,13 @@ function AISettingsSection() {
         </>
       }
       defaultOpen={false}
-      badge={ai?.apiKey ? `Configured · ${ai?.provider ?? ''}` : 'Not configured'}
+      badge={isAIConfigured(ai) ? `Configured · ${ai.provider}` : 'Not configured'}
     >
       <p className="muted">
         Each task gets an "Ask AI" button when you connect a provider here. The assistant uses your API key to suggest
         next steps for whatever you're working on. We never proxy these requests — they go straight from this device
-        to the provider you choose.
+        to the provider you choose. To use your own router or proxy (for example OmniRoute), pick "Custom gateway" and
+        enter its base URL.
       </p>
       <p className="muted small">
         {isDesktop
@@ -1108,8 +1211,142 @@ function AISettingsSection() {
         </select>
       </label>
 
+      {isGateway ? (
+        <label className="field">
+          <span>Base URL</span>
+          <input
+            className="input"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="http://localhost:20128/v1"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+          <span className="muted small" style={{ marginTop: 4, display: 'block' }}>
+            Include the version segment (usually <code>/v1</code>). Plain <code>http://</code> is only accepted for
+            localhost and private-network addresses; use <code>https://</code> for anything remote.
+            {isDesktop ? '' : ' In the web build the gateway must allow browser (CORS) requests.'}
+          </span>
+          {baseUrl.trim() && gatewayUrl && !gatewayUrl.ok ? (
+            <span className="small" style={{ marginTop: 4, display: 'block', color: 'var(--danger)' }}>
+              {gatewayUrl.error}
+            </span>
+          ) : null}
+        </label>
+      ) : null}
+
+      {isGateway ? (
+        <>
+          <label className="field">
+            <span>API format</span>
+            <select
+              className="input"
+              value={gatewayFormat}
+              onChange={(e) => setGatewayFormat(e.target.value as GatewayFormat)}
+            >
+              {GATEWAY_FORMAT_OPTIONS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            <span className="muted small" style={{ marginTop: 4, display: 'block' }}>
+              The request format your gateway expects. If you configure other coding tools against it, the provider
+              type they use (OpenAI-compatible, Anthropic, Gemini) tells you which one to pick.
+            </span>
+          </label>
+
+          <details className="field">
+            <summary className="small" style={{ cursor: 'pointer' }}>
+              Advanced: authentication, extra headers, request path
+            </summary>
+            <label className="field" style={{ marginTop: 8 }}>
+              <span>
+                Auth header <em className="muted">(default: {gatewayDefaults.authHeader})</em>
+              </span>
+              <input
+                className="input"
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder={gatewayDefaults.authHeader}
+                value={authHeader}
+                onChange={(e) => setAuthHeader(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>How the key is written</span>
+              <select
+                className="input"
+                value={authScheme}
+                onChange={(e) => setAuthScheme(e.target.value as GatewayAuthScheme | '')}
+              >
+                <option value="">Automatic (Bearer for Authorization, the key alone otherwise)</option>
+                <option value="bearer">Bearer &lt;key&gt;</option>
+                <option value="raw">The key alone</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>
+                Request path <em className="muted">(default: {gatewayDefaults.path})</em>
+              </span>
+              <input
+                className="input"
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder={gatewayDefaults.path}
+                value={requestPath}
+                onChange={(e) => setRequestPath(e.target.value)}
+              />
+              <span className="muted small" style={{ marginTop: 4, display: 'block' }}>
+                Appended to the base URL. <code>{'{model}'}</code> is replaced by the model name.
+              </span>
+            </label>
+            <label className="field">
+              <span>Extra headers</span>
+              <textarea
+                className="input"
+                rows={3}
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder={'x-tenant: my-team'}
+                value={headersText}
+                onChange={(e) => setHeadersText(e.target.value)}
+                style={{ fontFamily: 'var(--mono, monospace)' }}
+              />
+              <span className="muted small" style={{ marginTop: 4, display: 'block' }}>
+                One <code>Name: value</code> per line. Stored with your other settings, encrypted on desktop.
+              </span>
+            </label>
+          </details>
+
+          {parsedHeaders && !parsedHeaders.ok ? (
+            <span className="small" style={{ display: 'block', color: 'var(--danger)' }}>
+              {parsedHeaders.error}
+            </span>
+          ) : gatewayPreview && !gatewayPreview.ok && gatewayUrl?.ok ? (
+            <span className="small" style={{ display: 'block', color: 'var(--danger)' }}>
+              {gatewayPreview.error}
+            </span>
+          ) : gatewayPreview?.ok ? (
+            <span className="muted small" style={{ display: 'block', wordBreak: 'break-all' }}>
+              Requests go to <code>POST {gatewayPreview.url}</code>
+            </span>
+          ) : null}
+        </>
+      ) : null}
+
       <label className="field">
-        <span>API key</span>
+        <span>
+          API key {isGateway ? <em className="muted">(optional — leave empty if your gateway needs none)</em> : null}
+        </span>
         <div className="row" style={{ gap: 6 }}>
           <input
             className="input"
@@ -1137,7 +1374,9 @@ function AISettingsSection() {
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
-          placeholder={placeholderModel || 'Choose a provider first'}
+          placeholder={
+            isGateway ? 'Model name as your gateway lists it, e.g. if/kimi-k2-thinking' : placeholderModel || 'Choose a provider first'
+          }
           value={model}
           onChange={(e) => setModel(e.target.value)}
         />
@@ -1198,9 +1437,9 @@ function AISettingsSection() {
         >
           {testStatus.kind === 'running' ? 'Testing…' : 'Test connection'}
         </Button>
-        {ai?.apiKey ? (
+        {ai?.apiKey || ai?.provider === 'gateway' ? (
           <Button type="button" variant="ghost" icon={<IcTrash size={16} />} onClick={() => void remove()}>
-            Remove key
+            {isGateway ? 'Remove gateway' : 'Remove key'}
           </Button>
         ) : null}
         {savedAt ? <span className="muted small">Saved at {savedAt}</span> : null}
@@ -1227,6 +1466,29 @@ function AISettingsSection() {
         >
           {testStatus.message}
         </pre>
+      ) : null}
+      {testStatus.kind === 'error' && testStatus.diagnostic ? (
+        <details style={{ marginTop: 8 }}>
+          <summary className="small" style={{ cursor: 'pointer' }}>
+            Diagnostic details (header values and your key are hidden)
+          </summary>
+          <pre className="pre small" style={{ marginTop: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {testStatus.diagnostic}
+          </pre>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              try {
+                void navigator.clipboard.writeText(testStatus.diagnostic ?? '');
+              } catch {
+                // Clipboard unavailable (insecure context); the text above can be selected by hand.
+              }
+            }}
+          >
+            Copy diagnostic
+          </Button>
+        </details>
       ) : null}
     </CollapsibleCard>
   );

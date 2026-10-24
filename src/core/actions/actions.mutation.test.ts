@@ -632,6 +632,68 @@ describe('actions mutation — deterministic reducers', () => {
       expect(d.aiSettings).toBeUndefined();
     });
 
+    it('updateAISettings: an empty provider clears it, undefined leaves it', () => {
+      let d = updateAISettings(freshData(), { provider: 'gateway', baseUrl: 'http://localhost:20128/v1', model: 'm' });
+      d = updateAISettings(d, { provider: undefined, model: 'm2' });
+      expect(d.aiSettings?.provider).toBe('gateway');
+      d = updateAISettings(d, { provider: '', apiKey: '', model: '', baseUrl: '', systemPrompt: '' });
+      expect(d.aiSettings).toBeUndefined();
+    });
+
+    it('updateAISettings with a gateway patch leaves notes, todos and teams untouched', () => {
+      const base = freshData();
+      const d = updateAISettings(base, { provider: 'gateway', baseUrl: 'http://localhost:20128/v1', model: 'm' });
+      expect(d.notes).toBe(base.notes);
+      expect(d.todoItems).toBe(base.todoItems);
+      expect(d.todoGroups).toBe(base.todoGroups);
+      expect(d.teams).toBe(base.teams);
+    });
+
+    it('updateAISettings stores, preserves and clears the gateway fields', () => {
+      let d = updateAISettings(freshData(), {
+        provider: 'gateway',
+        baseUrl: 'https://gw.example.com/v1',
+        model: 'm',
+        gatewayFormat: 'gemini',
+        authHeader: ' x-goog-api-key ',
+        authScheme: 'raw',
+        requestPath: ' /models/{model}:generateContent ',
+        extraHeaders: [{ name: 'x-tenant', value: 't' }],
+      });
+      expect(d.aiSettings).toMatchObject({
+        gatewayFormat: 'gemini',
+        authHeader: 'x-goog-api-key',
+        authScheme: 'raw',
+        requestPath: '/models/{model}:generateContent',
+        extraHeaders: [{ name: 'x-tenant', value: 't' }],
+      });
+      // Untouched by a patch that does not mention them.
+      d = updateAISettings(d, { model: 'm2' });
+      expect(d.aiSettings).toMatchObject({ gatewayFormat: 'gemini', authScheme: 'raw', extraHeaders: [{ name: 'x-tenant', value: 't' }] });
+      // Empty values clear.
+      d = updateAISettings(d, { gatewayFormat: '', authHeader: ' ', authScheme: '', requestPath: '', extraHeaders: [] });
+      expect(d.aiSettings?.gatewayFormat).toBeUndefined();
+      expect(d.aiSettings?.authHeader).toBeUndefined();
+      expect(d.aiSettings?.authScheme).toBeUndefined();
+      expect(d.aiSettings?.requestPath).toBeUndefined();
+      expect(d.aiSettings?.extraHeaders).toBeUndefined();
+      expect(d.aiSettings?.baseUrl).toBe('https://gw.example.com/v1');
+    });
+
+    it('updateAISettings stores, preserves and clears baseUrl', () => {
+      let d = updateAISettings(freshData(), {
+        provider: 'gateway',
+        baseUrl: '  http://localhost:20128/v1 ',
+        model: 'm',
+      });
+      expect(d.aiSettings?.baseUrl).toBe('http://localhost:20128/v1');
+      // A patch that does not mention baseUrl leaves it alone.
+      d = updateAISettings(d, { model: 'm2' });
+      expect(d.aiSettings?.baseUrl).toBe('http://localhost:20128/v1');
+      d = updateAISettings(d, { baseUrl: '  ' });
+      expect(d.aiSettings?.baseUrl).toBeUndefined();
+    });
+
     it('patchUtilityStructuredText coerces language', () => {
       const base = freshData();
       let d = patchUtilityStructuredText(base, { content: '{}', language: 'yaml' });

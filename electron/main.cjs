@@ -140,6 +140,7 @@ const {
 } = require('./persistence/monthlyShards.cjs');
 const { initCrashReporting } = require('./crashReporting.cjs');
 const { requirePolicyFeature } = require('./ipc/policyGuard.cjs');
+const { createGatewayClient } = require('./aiGateway.cjs');
 const {
   sanitizeAttachmentId,
   collectReferencedAttachmentIdsFromPayload,
@@ -4078,6 +4079,19 @@ ipcMain.handle('data:importWorkspace', (_evt, payload) => {
     workspaceImportLockUid = null;
   }
 });
+
+// Custom AI gateway (OpenAI-compatible). The renderer builds the request body
+// and parses the reply; this process does the HTTP so the production CSP and
+// browser CORS rules do not apply, and enforces the `ai` policy flag here too.
+const aiGatewayClient = createGatewayClient({ fetch: (...args) => fetch(...args) });
+
+ipcMain.handle('ai:gatewayChat', async (_event, req) => {
+  const blocked = requirePolicyFeature('ai', isFeatureAllowed);
+  if (blocked) return blocked;
+  return aiGatewayClient.chat(req);
+});
+
+ipcMain.handle('ai:gatewayAbort', (_event, requestId) => aiGatewayClient.abort(requestId));
 
 ipcMain.handle('app:getVersion', () => app.getVersion());
 

@@ -174,6 +174,11 @@ Both are off by default. See [LAN-SYNC.md](./LAN-SYNC.md) and README for setup.
 **Settings → Integrations → AI assistant**
 
 - Bring your own API key (Anthropic, OpenAI, or Google Gemini).
+- Or point Cadence at **your own gateway or router** (for example OmniRoute, LiteLLM, Ollama or a company proxy): choose *Custom gateway* and enter its base URL (usually ending in `/v1`, e.g. `http://localhost:20128/v1`), the model name exactly as the gateway lists it, and an API key if it needs one.
+  - **API format** — pick what the gateway speaks: *OpenAI Chat Completions* (the default and most common), *OpenAI Responses*, *Anthropic Messages* or *Google Gemini*. Tools you already use against the gateway (Codex, OpenCode, …) usually tell you which provider type they use.
+  - **Advanced** — the header the key goes in (for example `api-key` or `x-api-key`), whether it is sent as `Bearer <key>` or on its own, extra headers such as a tenant id (one `Name: value` per line), and the request path if your gateway does not use the standard one (`{model}` is replaced by the model name). A line under the form shows the exact address requests go to.
+  - *Test connection* checks everything. If it fails, open **Diagnostic details**: it lists the address, header names (values hidden), the HTTP status and the start of the answer, and is safe to paste into a bug report or send to your gateway's administrator.
+  - Plain `http://` is accepted only for localhost and private-network addresses; use `https://` for anything remote. On the desktop app the request is made by Cadence itself, so the gateway does not need to allow browser (CORS) requests; in the web app it does.
 - **Task extractor** turns meeting notes into an ordered task list.
 - **Coaching** gives next actions on a single stuck task.
 - Leave the key blank — the rest of Cadence works identically.

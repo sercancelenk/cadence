@@ -467,5 +467,6 @@ function providerLabel(p: string | undefined): string {
   if (p === 'anthropic') return 'Anthropic';
   if (p === 'openai') return 'OpenAI';
   if (p === 'gemini') return 'Google Gemini';
+  if (p === 'gateway') return 'your AI gateway';
   return 'your AI provider';
 }

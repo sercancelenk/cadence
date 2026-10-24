@@ -1144,7 +1144,7 @@ describe('model constants and helpers — exact shapes', () => {
       'cancelled',
     ]);
     expect(PRIORITY_OPTIONS.map((o) => o.value)).toEqual(['urgent', 'high', 'normal', 'low']);
-    expect(AI_PROVIDER_OPTIONS.map((o) => o.value)).toEqual(['anthropic', 'openai', 'gemini']);
+    expect(AI_PROVIDER_OPTIONS.map((o) => o.value)).toEqual(['anthropic', 'openai', 'gemini', 'gateway']);
     expect(DATA_VERSION).toBe(3);
   });
 
@@ -1953,6 +1953,86 @@ describe('normalizeData — exhaustive parse/load/migration', () => {
     });
     expect(normalizeData({ ...baseV3(), aiSettings: { provider: 'bogus' } }).aiSettings).toBeUndefined();
     expect(normalizeData({ ...baseV3(), aiSettings: {} }).aiSettings).toBeUndefined();
+  });
+
+  it('round-trips gateway AI settings and keeps baseUrl trimmed', () => {
+    const n = normalizeData({
+      ...baseV3(),
+      aiSettings: { provider: 'gateway', baseUrl: '  http://localhost:20128/v1  ', model: 'if/kimi-k2-thinking' },
+    }).aiSettings;
+    expect(n).toMatchObject({
+      provider: 'gateway',
+      baseUrl: 'http://localhost:20128/v1',
+      model: 'if/kimi-k2-thinking',
+    });
+    expect(n?.apiKey).toBeUndefined();
+    // Idempotent: a second load changes nothing.
+    expect(normalizeData({ ...baseV3(), aiSettings: n }).aiSettings).toEqual(n);
+  });
+
+  it('keeps a baseUrl even when the provider value is unknown to this build', () => {
+    const n = normalizeData({
+      ...baseV3(),
+      aiSettings: { provider: 'from-the-future', baseUrl: 'https://gw.example.com/v1', apiKey: 'k' },
+    }).aiSettings;
+    expect(n?.provider).toBeUndefined();
+    expect(n?.baseUrl).toBe('https://gw.example.com/v1');
+    expect(n?.apiKey).toBe('k');
+  });
+
+  it('round-trips the gateway format, auth, path and extra headers', () => {
+    const n = normalizeData({
+      ...baseV3(),
+      aiSettings: {
+        provider: 'gateway',
+        baseUrl: 'https://gw.example.com/v1',
+        model: 'm',
+        gatewayFormat: 'anthropic',
+        authHeader: ' x-api-key ',
+        authScheme: 'raw',
+        requestPath: ' /messages ',
+        extraHeaders: [{ name: ' x-tenant ', value: 'team-42' }],
+      },
+    }).aiSettings;
+    expect(n).toMatchObject({
+      gatewayFormat: 'anthropic',
+      authHeader: 'x-api-key',
+      authScheme: 'raw',
+      requestPath: '/messages',
+      extraHeaders: [{ name: 'x-tenant', value: 'team-42' }],
+    });
+    expect(normalizeData({ ...baseV3(), aiSettings: n }).aiSettings).toEqual(n);
+  });
+
+  it('drops malformed gateway fields without losing the rest of the settings', () => {
+    const n = normalizeData({
+      ...baseV3(),
+      aiSettings: {
+        provider: 'gateway',
+        baseUrl: 'https://gw.example.com/v1',
+        model: 'm',
+        gatewayFormat: 'carrier-pigeon',
+        authScheme: 'telepathy',
+        extraHeaders: [{ name: 'ok', value: 'v' }, { name: '', value: 'x' }, { name: 'n' }, 'junk', null],
+      },
+    }).aiSettings;
+    expect(n?.gatewayFormat).toBeUndefined();
+    expect(n?.authScheme).toBeUndefined();
+    expect(n?.extraHeaders).toEqual([{ name: 'ok', value: 'v' }]);
+    expect(n).toMatchObject({ provider: 'gateway', baseUrl: 'https://gw.example.com/v1', model: 'm' });
+    expect(
+      normalizeData({ ...baseV3(), aiSettings: { provider: 'gateway', extraHeaders: 'nope' } }).aiSettings
+        ?.extraHeaders,
+    ).toBeUndefined();
+  });
+
+  it('loads pre-gateway AI settings unchanged (no baseUrl invented)', () => {
+    const n = normalizeData({
+      ...baseV3(),
+      aiSettings: { provider: 'anthropic', apiKey: 'k', model: 'm' },
+    }).aiSettings;
+    expect(n).toMatchObject({ provider: 'anthropic', apiKey: 'k', model: 'm' });
+    expect(n?.baseUrl).toBeUndefined();
   });
 
   it('parses profile displayName, avatar data URL, and trims optional fields', () => {

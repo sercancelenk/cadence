@@ -334,6 +334,24 @@ interface CadenceApi {
       }>;
       getAppVersion: () => Promise<string>;
       checkForUpdates: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
+      /**
+       * Custom-gateway AI request, performed by the main process (no CSP/CORS).
+       * Resolves with the raw HTTP status and body text, or `ok: false` for
+       * policy blocks, invalid URLs, network failures, timeouts and aborts.
+       */
+      aiGatewayChat?: (req: {
+        requestId: string;
+        baseUrl: string;
+        /** Path appended to `baseUrl`, e.g. `/chat/completions`. */
+        path: string;
+        /** Complete request headers, including authentication. */
+        headers: Record<string, string>;
+        body: string;
+      }) => Promise<
+        | { ok: true; status: number; text: string }
+        | { ok: false; error: string; aborted?: boolean; reason?: string }
+      >;
+      aiGatewayAbort?: (requestId: string) => Promise<boolean>;
       installUpdate: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
       onUpdaterEvent: (cb: (event: UpdaterEvent) => void) => () => void;
       authStatus: () => Promise<{ enabled: boolean }>;

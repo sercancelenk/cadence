@@ -111,6 +111,8 @@ const api = {
   backupRetentionSet: (request) => ipcRenderer.invoke('backupRetention:set', request),
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   checkForUpdates: () => ipcRenderer.invoke('app:checkUpdates'),
+  aiGatewayChat: (req) => ipcRenderer.invoke('ai:gatewayChat', req),
+  aiGatewayAbort: (requestId) => ipcRenderer.invoke('ai:gatewayAbort', requestId),
   installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
   onUpdaterEvent: (cb) => {
     const listener = (_evt, payload) => {

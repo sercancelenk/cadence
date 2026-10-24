@@ -272,7 +272,11 @@ export function isTodoItemArchived(item: Pick<TodoItem, 'archived'>): boolean {
 
 export const DATA_VERSION = 3 as const;
 
-export type AIProvider = 'anthropic' | 'openai' | 'gemini';
+/**
+ * `gateway` is any OpenAI-compatible HTTP gateway (OmniRoute, LiteLLM, Ollama,
+ * a self-hosted proxy, …) reached through `AISettings.baseUrl`.
+ */
+export type AIProvider = 'anthropic' | 'openai' | 'gemini' | 'gateway';
 
 export const AI_PROVIDER_OPTIONS: {
   value: AIProvider;
@@ -306,7 +310,40 @@ export const AI_PROVIDER_OPTIONS: {
     defaultModel: 'gemini-2.0-flash',
     modelExamples: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'],
   },
+  {
+    value: 'gateway',
+    label: 'Custom gateway',
+    // A gateway serves whatever models its operator configured, so there is
+    // no safe default: the user must name one.
+    defaultModel: '',
+    modelExamples: [],
+  },
 ];
+
+/**
+ * Wire format a custom gateway speaks. Absent = `openai-chat`.
+ *  - `openai-chat`      POST <base>/chat/completions
+ *  - `openai-responses` POST <base>/responses
+ *  - `anthropic`        POST <base>/messages
+ *  - `gemini`           POST <base>/models/<model>:generateContent
+ */
+export type GatewayFormat = 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
+
+export const GATEWAY_FORMAT_OPTIONS: { value: GatewayFormat; label: string }[] = [
+  { value: 'openai-chat', label: 'OpenAI Chat Completions' },
+  { value: 'openai-responses', label: 'OpenAI Responses' },
+  { value: 'anthropic', label: 'Anthropic Messages' },
+  { value: 'gemini', label: 'Google Gemini' },
+];
+
+/** How the API key is written into the auth header. Absent = automatic. */
+export type GatewayAuthScheme = 'bearer' | 'raw';
+
+/** One extra request header a gateway needs (e.g. a project or tenant id). */
+export interface GatewayHeader {
+  name: string;
+  value: string;
+}
 
 export interface AISettings {
   provider?: AIProvider;
@@ -314,6 +351,21 @@ export interface AISettings {
   apiKey?: string;
   /** Model identifier; falls back to the provider default when empty. */
   model?: string;
+  /**
+   * Base URL of an OpenAI-compatible gateway, including the version segment
+   * (e.g. `http://localhost:20128/v1`). Only used when `provider === 'gateway'`.
+   */
+  baseUrl?: string;
+  /** Gateway wire format; absent means `openai-chat`. Only for `provider === 'gateway'`. */
+  gatewayFormat?: GatewayFormat;
+  /** Auth header name; absent means the format's usual one (see `defaultAuthHeader`). */
+  authHeader?: string;
+  /** `bearer` writes `Bearer <key>`, `raw` writes the key alone; absent = automatic. */
+  authScheme?: GatewayAuthScheme;
+  /** Extra headers sent with every gateway request. */
+  extraHeaders?: GatewayHeader[];
+  /** Path appended to `baseUrl`, replacing the format default. `{model}` is the URL-encoded model. */
+  requestPath?: string;
   /** Optional override for system prompt. */
   systemPrompt?: string;
   /** Optional, remembered free-text hint for the "Extract tasks from notes" feature. */
@@ -1365,18 +1417,49 @@ export function shapeOfData(d: AppData | null | undefined): DataShape {
 function parseAISettings(raw: unknown): AISettings | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const o = raw as Record<string, unknown>;
-  const providers: AIProvider[] = ['anthropic', 'openai', 'gemini'];
+  const providers: AIProvider[] = ['anthropic', 'openai', 'gemini', 'gateway'];
   const provider =
     typeof o.provider === 'string' && providers.includes(o.provider as AIProvider)
       ? (o.provider as AIProvider)
       : undefined;
   const apiKey = typeof o.apiKey === 'string' && o.apiKey.trim() ? o.apiKey.trim() : undefined;
   const model = typeof o.model === 'string' && o.model.trim() ? o.model.trim() : undefined;
+  const baseUrl = typeof o.baseUrl === 'string' && o.baseUrl.trim() ? o.baseUrl.trim() : undefined;
+  const gatewayFormat = GATEWAY_FORMAT_OPTIONS.some((f) => f.value === o.gatewayFormat)
+    ? (o.gatewayFormat as GatewayFormat)
+    : undefined;
+  const authScheme: GatewayAuthScheme | undefined =
+    o.authScheme === 'bearer' || o.authScheme === 'raw' ? o.authScheme : undefined;
+  const authHeader = typeof o.authHeader === 'string' && o.authHeader.trim() ? o.authHeader.trim() : undefined;
+  const requestPath = typeof o.requestPath === 'string' && o.requestPath.trim() ? o.requestPath.trim() : undefined;
+  const extraHeaders = parseGatewayHeaders(o.extraHeaders);
   const systemPrompt = typeof o.systemPrompt === 'string' ? o.systemPrompt : undefined;
   const extractionGuidance =
     typeof o.extractionGuidance === 'string' ? o.extractionGuidance : undefined;
-  if (!provider && !apiKey && !model && !systemPrompt && !extractionGuidance) return undefined;
-  return withExtras(o, { provider, apiKey, model, systemPrompt, extractionGuidance });
+  if (
+    !provider && !apiKey && !model && !baseUrl && !gatewayFormat && !authHeader && !authScheme &&
+    !requestPath && !extraHeaders && !systemPrompt && !extractionGuidance
+  ) {
+    return undefined;
+  }
+  return withExtras(o, {
+    provider, apiKey, model, baseUrl, gatewayFormat, authHeader, authScheme, requestPath, extraHeaders,
+    systemPrompt, extractionGuidance,
+  });
+}
+
+/** Keeps well-formed `{ name, value }` string pairs; `undefined` when none remain. */
+function parseGatewayHeaders(raw: unknown): GatewayHeader[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: GatewayHeader[] = [];
+  for (const h of raw) {
+    if (!h || typeof h !== 'object') continue;
+    const { name, value } = h as Record<string, unknown>;
+    if (typeof name !== 'string' || typeof value !== 'string') continue;
+    if (!name.trim()) continue;
+    out.push({ name: name.trim(), value });
+  }
+  return out.length ? out : undefined;
 }
 
 /**
