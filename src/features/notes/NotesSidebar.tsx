@@ -1,19 +1,19 @@
-import { FormEvent, memo, useMemo, useState } from 'react';
+import { FormEvent, memo, useCallback, useMemo, useState } from 'react';
 import {
-  IcChevronDown,
   IcChevronLeft,
   IcFolder,
   IcKey,
   IcLockOff,
   IcPlus,
-  IcTrash,
   IcUpload,
 } from '../../components/icons';
 import { useConfirm } from '../../components/ui/ConfirmProvider';
 import type { Note, NoteGroup } from '../../model';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
 import { NotesIconButton } from './NotesIconButton';
+import { NotesGroupTree } from './NotesGroupTree';
 import { NotesListRow } from './NotesListRow';
+import { buildGroupForest, describeGroupDeletion } from './noteGroupForest';
 import {
   NOTE_VIEW_OPTIONS,
   SORT_OPTIONS,
@@ -23,7 +23,10 @@ import {
 
 export type NotesSidebarProps = {
   groups: NoteGroup[];
+  /** Notes in the current Active / Archived view. */
   notes: Note[];
+  /** Every note, for the delete-list confirmation counts. */
+  allNotes: Note[];
   viewMode: NoteViewMode;
   onViewModeChange: (mode: NoteViewMode) => void;
   archivedCount: number;
@@ -36,11 +39,14 @@ export type NotesSidebarProps = {
   onCreateNote: (groupId?: string) => void;
   /** Omit to hide "Open file" (no desktop bridge). */
   onOpenFile?: () => void;
-  onCreateGroup: (name: string) => void;
+  onCreateGroup: (name: string, parentId?: string) => void;
   onRenameGroup: (id: string, name: string) => void;
   onRemoveGroup: (id: string) => void;
+  onSetGroupArchived: (id: string, archived: boolean) => void;
+  onMoveGroup: (id: string, newParentId: string | undefined) => void;
   isGroupExpanded: (groupId: string) => boolean;
   onToggleGroup: (groupId: string) => void;
+  onExpandGroup: (groupId: string) => void;
   hasLock: boolean;
   hasRecovery: boolean;
   onOpenAddRecovery: () => void;
@@ -67,6 +73,7 @@ export type NotesSidebarProps = {
 export const NotesSidebar = memo(function NotesSidebar({
   groups,
   notes,
+  allNotes,
   viewMode,
   onViewModeChange,
   archivedCount,
@@ -81,8 +88,11 @@ export const NotesSidebar = memo(function NotesSidebar({
   onCreateGroup,
   onRenameGroup,
   onRemoveGroup,
+  onSetGroupArchived,
+  onMoveGroup,
   isGroupExpanded,
   onToggleGroup,
+  onExpandGroup,
   hasLock,
   hasRecovery,
   onOpenAddRecovery,
@@ -107,27 +117,11 @@ export const NotesSidebar = memo(function NotesSidebar({
 
   const [newListOpen, setNewListOpen] = useState(false);
   const [newListName, setNewListName] = useState('');
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState('');
 
-  const sortedGroups = useMemo(
-    () => [...groups].sort((a, b) => a.sortOrder - b.sortOrder),
-    [groups],
+  const forest = useMemo(
+    () => buildGroupForest({ groups, notes, viewMode }),
+    [groups, notes, viewMode],
   );
-
-  const { notesByGroup, ungroupedNotes } = useMemo(() => {
-    const byGroup = new Map<string, Note[]>();
-    for (const g of sortedGroups) byGroup.set(g.id, []);
-    const ungrouped: Note[] = [];
-    for (const n of notes) {
-      if (n.groupId && byGroup.has(n.groupId)) {
-        byGroup.get(n.groupId)!.push(n);
-      } else {
-        ungrouped.push(n);
-      }
-    }
-    return { notesByGroup: byGroup, ungroupedNotes: ungrouped };
-  }, [notes, sortedGroups]);
 
   const submitNewList = (e: FormEvent) => {
     e.preventDefault();
@@ -138,17 +132,22 @@ export const NotesSidebar = memo(function NotesSidebar({
     setNewListOpen(false);
   };
 
-  const submitRename = (e: FormEvent) => {
-    e.preventDefault();
-    if (!renamingId) return;
-    const name = renameValue.trim();
-    if (!name) return;
-    onRenameGroup(renamingId, name);
-    setRenamingId(null);
-    setRenameValue('');
-  };
+  const hasContent = forest.roots.length > 0 || forest.ungrouped.length > 0;
 
-  const hasContent = sortedGroups.length > 0 || notes.length > 0;
+  const requestDeleteGroup = useCallback(
+    async (groupId: string) => {
+      const group = groups.find((x) => x.id === groupId);
+      if (!group) return;
+      const accepted = await confirm({
+        title: `Delete “${group.name}”?`,
+        description: describeGroupDeletion(groups, allNotes, groupId).message,
+        confirmLabel: 'Delete list',
+        danger: true,
+      });
+      if (accepted) onRemoveGroup(groupId);
+    },
+    [confirm, groups, allNotes, onRemoveGroup],
+  );
 
   const rowProps = useMemo(
     () => ({
@@ -322,140 +321,37 @@ export const NotesSidebar = memo(function NotesSidebar({
         </div>
       ) : (
         <ul className="notes-page__list">
-          {sortedGroups.map((g) => {
-            const groupNotes = notesByGroup.get(g.id) ?? [];
-            const expanded = isGroupExpanded(g.id);
-            const isDropTarget = dropTargetGroupId === g.id;
-            const isRenaming = renamingId === g.id;
-            return (
-              <li
-                key={g.id}
-                className={[
-                  'notes-page__group-holder',
-                  expanded ? 'notes-page__group-holder--open' : '',
-                  isDropTarget ? 'notes-page__group-holder--drop-target' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                onDragOver={(e) => onGroupDragOver(e, g.id)}
-                onDrop={(e) => onGroupDrop(e, g.id)}
-              >
-                {isRenaming ? (
-                  <form className="notes-page__group-rename" onSubmit={submitRename}>
-                    <input
-                      className="input notes-page__group-input"
-                      value={renameValue}
-                      autoFocus
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Escape') {
-                          setRenamingId(null);
-                          setRenameValue('');
-                        }
-                      }}
-                      aria-label="Rename list"
-                    />
-                    <button type="submit" className="btn btn--primary btn--small" disabled={!renameValue.trim()}>
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--danger btn--small btn--icon"
-                      title="Delete list"
-                      aria-label="Delete list"
-                      onClick={async () => {
-                        const accepted = await confirm({
-                          title: `Delete “${g.name}”?`,
-                          description: 'Notes in this list will become ungrouped.',
-                          confirmLabel: 'Delete list',
-                          danger: true,
-                        });
-                        if (!accepted) return;
-                        onRemoveGroup(g.id);
-                        setRenamingId(null);
-                      }}
-                    >
-                      <IcTrash size={14} />
-                    </button>
-                  </form>
-                ) : (
-                  <div className="notes-page__group-head">
-                    <button
-                      type="button"
-                      className="notes-page__group-toggle"
-                      onClick={() => onToggleGroup(g.id)}
-                      onDoubleClick={() => {
-                        setRenamingId(g.id);
-                        setRenameValue(g.name);
-                      }}
-                      aria-expanded={expanded}
-                      title="Double-click to rename"
-                    >
-                      <span className={`notes-page__group-chev${expanded ? ' notes-page__group-chev--open' : ''}`}>
-                        <IcChevronDown size={14} />
-                      </span>
-                      <IcFolder size={16} className="notes-page__group-folder" aria-hidden />
-                      <span className="notes-page__group-name">{g.name}</span>
-                      <span className="notes-page__group-count">{groupNotes.length}</span>
-                    </button>
-                    {!archivedView ? (
-                      <button
-                        type="button"
-                        className="notes-page__group-add-note icon-btn"
-                        title={`Add note to ${g.name}`}
-                        aria-label={`Add note to ${g.name}`}
-                        onClick={() => onCreateNote(g.id)}
-                      >
-                        <IcPlus size={14} />
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="notes-page__group-delete icon-btn"
-                      title={`Delete ${g.name}`}
-                      aria-label={`Delete ${g.name}`}
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        const accepted = await confirm({
-                          title: `Delete “${g.name}”?`,
-                          description: 'Notes in this list will become ungrouped.',
-                          confirmLabel: 'Delete list',
-                          danger: true,
-                        });
-                        if (accepted) onRemoveGroup(g.id);
-                      }}
-                    >
-                      <IcTrash size={14} />
-                    </button>
-                  </div>
-                )}
-                {expanded ? (
-                  <ul className="notes-page__group-children" aria-label={`Notes in ${g.name}`}>
-                    {groupNotes.length === 0 ? (
-                      <li className="notes-page__group-empty muted small">
-                        Drop notes here or use + to add
-                      </li>
-                    ) : (
-                      groupNotes.map((n) => (
-                        <NotesListRow
-                          key={n.id}
-                          note={n}
-                          nested
-                          bulkSelected={bulkSelectedIds.has(n.id)}
-                          bulkSelectionSize={bulkSelectedIds.size}
-                          isDragging={draggingId === n.id}
-                          isDropTarget={dropTargetId === n.id}
-                          {...rowProps}
-                        />
-                      ))
-                    )}
-                  </ul>
-                ) : null}
-              </li>
-            );
-          })}
+          <NotesGroupTree
+            nodes={forest.roots}
+            allGroups={groups}
+            archivedView={archivedView}
+            isExpanded={isGroupExpanded}
+            onToggle={onToggleGroup}
+            onExpand={onExpandGroup}
+            renderNote={(n) => (
+              <NotesListRow
+                key={n.id}
+                note={n}
+                nested
+                bulkSelected={bulkSelectedIds.has(n.id)}
+                bulkSelectionSize={bulkSelectedIds.size}
+                isDragging={draggingId === n.id}
+                isDropTarget={dropTargetId === n.id}
+                {...rowProps}
+              />
+            )}
+            onCreateNote={onCreateNote}
+            onCreateSubGroup={(parentId, name) => onCreateGroup(name, parentId)}
+            onRename={onRenameGroup}
+            onSetArchived={onSetGroupArchived}
+            onMove={onMoveGroup}
+            onRequestDelete={(id) => void requestDeleteGroup(id)}
+            dropTargetGroupId={dropTargetGroupId}
+            onGroupDragOver={onGroupDragOver}
+            onGroupDrop={onGroupDrop}
+          />
 
-          {ungroupedNotes.map((n) => (
+          {forest.ungrouped.map((n) => (
             <NotesListRow
               key={n.id}
               note={n}

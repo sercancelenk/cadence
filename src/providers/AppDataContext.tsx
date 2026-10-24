@@ -28,6 +28,7 @@ import {
   addItem as addItemFn,
   addNote as addNoteFn,
   addNoteGroup as addNoteGroupFn,
+  moveNoteGroup as moveNoteGroupFn,
   addPerson as addPersonFn,
   addTeam as addTeamFn,
   addTodoGroup as addTodoGroupFn,
@@ -295,7 +296,8 @@ type Api = {
   linkNoteTodo: (noteId: string, todoId: string) => void;
   unlinkNoteTodo: (noteId: string, todoId: string) => void;
   addNote: (groupId?: string) => string;
-  addNoteGroup: (name: string) => string;
+  addNoteGroup: (name: string, parentId?: string) => string;
+  moveNoteGroup: (groupId: string, newParentId: string | undefined) => void;
   updateNoteGroup: (
     groupId: string,
     patch: Partial<Pick<NoteGroup, 'name' | 'sortOrder' | 'pinned' | 'archived'>>,
@@ -1396,11 +1398,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         update((x) => addNoteFn(x, id, groupId));
         return id;
       },
-      addNoteGroup: (name) => {
+      addNoteGroup: (name, parentId) => {
         const id = uuid();
-        update((x) => addNoteGroupFn(x, name, id));
+        update((x) => addNoteGroupFn(x, name, id, parentId));
         return id;
       },
+      moveNoteGroup: (groupId, newParentId) => update((x) => moveNoteGroupFn(x, groupId, newParentId)),
       updateNoteGroup: (groupId, patch) => update((x) => updateNoteGroupFn(x, groupId, patch)),
       removeNoteGroup: (groupId) => update((x) => removeNoteGroupFn(x, groupId)),
       replaceNote: (note) => update((x) => replaceNoteFn(x, note)),
@@ -1532,7 +1535,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       unlinkNoteTodo: (noteId: string, todoId: string) =>
         actionsBridgeRef.current.unlinkNoteTodo(noteId, todoId),
       addNote: (groupId?: string) => actionsBridgeRef.current.addNote(groupId),
-      addNoteGroup: (name: string) => actionsBridgeRef.current.addNoteGroup(name),
+      addNoteGroup: (name: string, parentId?: string) =>
+        actionsBridgeRef.current.addNoteGroup(name, parentId),
+      moveNoteGroup: (groupId: string, newParentId: string | undefined) =>
+        actionsBridgeRef.current.moveNoteGroup(groupId, newParentId),
       updateNoteGroup: (groupId: string, patch: Parameters<Api['updateNoteGroup']>[1]) =>
         actionsBridgeRef.current.updateNoteGroup(groupId, patch),
       removeNoteGroup: (groupId: string) => actionsBridgeRef.current.removeNoteGroup(groupId),

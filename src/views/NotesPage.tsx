@@ -71,6 +71,7 @@ export function NotesPage() {
   const {
     addNote,
     addNoteGroup,
+    moveNoteGroup,
     updateNoteGroup,
     removeNoteGroup,
     patchNote,
@@ -149,7 +150,7 @@ export function NotesPage() {
   // layout effect below.
   const [heldSortNoteId, setHeldSortNoteId] = useState<string | null>(null);
   const { sortMode, setSortMode, notes } = useNotesSort(visibleNotes, user?.id, heldSortNoteId);
-  const orderedNoteIds = useMemo(() => flatSidebarNoteIds(groups, notes), [groups, notes]);
+  const orderedNoteIds = useMemo(() => flatSidebarNoteIds(groups, notes, viewMode), [groups, notes, viewMode]);
   const bulkSelection = useNotesBulkSelection(orderedNoteIds);
   const { selectedId, setSelectedId, selected } = useNotesSelection(
     notes,
@@ -474,11 +475,34 @@ export function NotesPage() {
   }, [viewMode]);
 
   const onCreateGroup = useCallback(
-    (name: string) => {
-      const id = addNoteGroup(name);
+    (name: string, parentId?: string) => {
+      const id = addNoteGroup(name, parentId);
+      if (parentId) expandGroup(parentId);
       expandGroup(id);
     },
     [addNoteGroup, expandGroup],
+  );
+
+  const onSetGroupArchived = useCallback(
+    (groupId: string, archived: boolean) => {
+      updateNoteGroup(groupId, { archived });
+      const name = notesWorkspace.noteGroups.find((g) => g.id === groupId)?.name ?? 'List';
+      toast.showSuccess(
+        archived ? `“${name}” archived` : `“${name}” restored`,
+        archived
+          ? 'Its sub-lists and notes moved to Archived with it.'
+          : 'Everything is back where it was.',
+      );
+    },
+    [notesWorkspace.noteGroups, toast, updateNoteGroup],
+  );
+
+  const onMoveGroup = useCallback(
+    (groupId: string, newParentId: string | undefined) => {
+      moveNoteGroup(groupId, newParentId);
+      if (newParentId) expandGroup(newParentId);
+    },
+    [moveNoteGroup, expandGroup],
   );
 
   const onRenameGroup = useCallback(
@@ -531,6 +555,7 @@ export function NotesPage() {
       <NotesSidebar
         groups={groups}
         notes={notes}
+        allNotes={notesWorkspace.notes}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         archivedCount={archivedCount}
@@ -545,8 +570,11 @@ export function NotesPage() {
         onCreateGroup={onCreateGroup}
         onRenameGroup={onRenameGroup}
         onRemoveGroup={onRemoveGroup}
+        onSetGroupArchived={onSetGroupArchived}
+        onMoveGroup={onMoveGroup}
         isGroupExpanded={isExpanded}
         onToggleGroup={toggleExpanded}
+        onExpandGroup={expandGroup}
         hasLock={lock.hasLock}
         hasRecovery={lock.hasRecovery}
         onOpenAddRecovery={lock.openAddRecovery}

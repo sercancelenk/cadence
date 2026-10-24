@@ -2378,6 +2378,75 @@
   }
 }
 
+.notes-page__group-action {
+  flex-shrink: 0;
+  margin-right: 2px;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--muted);
+  transition:
+    opacity 140ms ease,
+    color 0.12s ease,
+    background 0.12s ease;
+}
+
+.notes-page__group-head:hover .notes-page__group-action,
+.notes-page__group-head:focus-within .notes-page__group-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.notes-page__group-action:hover {
+  color: var(--accent);
+}
+
+@media (hover: none) {
+  .notes-page__group-action {
+    opacity: 0.65;
+    pointer-events: auto;
+  }
+}
+
+/* Restore is the one action an archived list exists for — never hide it. */
+.notes-page__group-restore {
+  flex-shrink: 0;
+  margin-right: 2px;
+  color: var(--accent);
+}
+
+/* Context for a list shown outside its parent (Archived view): "Parent / Child". */
+.notes-page__group-path {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.notes-page__group-path::after {
+  content: ' /';
+}
+
+.notes-page__group-create {
+  position: relative;
+  margin-left: calc(var(--notes-tree-rail) + 8px);
+  padding: 6px 10px 6px 12px;
+}
+
+/* Sub-lists inside a list: indent under the parent rail; heads must not stack sticky. */
+.notes-page__group-children > .notes-page__group-holder {
+  margin-left: calc(var(--notes-tree-rail) + 4px);
+  border-bottom: none;
+}
+
+.notes-page__group-children .notes-page__group-head {
+  position: static;
+}
+
 /* Nested notes: clear tree indent + vertical rail (Linear / Finder-like) */
 .notes-page__group-children {
   list-style: none;
