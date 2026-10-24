@@ -17,6 +17,8 @@ export default defineConfig({
       include: ['src/lib/**', 'src/core/**'],
       exclude: [
         '**/*.test.*',
+        // Frozen on-disk workspaces written by past versions; data, not code.
+        '**/__fixtures__/**',
         '**/vite-env.d.ts',
         // Type-only modules — no runtime code to instrument.
         'src/lib/reminderDelivery/types.ts',
