@@ -32,7 +32,7 @@ A planner that doesn't ship your day to someone else's server. Four trade-offs w
 |---|---|
 | 🔒 **100% local-first** | Every keystroke is written to your machine, not to a server. Atomic `fsync`'ed writes, 50 rolling auto-snapshots, refuse-to-overwrite guard, in-app recovery UI. A power loss or kernel panic can't lose acknowledged data. |
 | 🛡️ **Encrypted at rest** | The desktop data file is wrapped in **AES-256-GCM** with a key derived from your account password via `scrypt`. Notes get an opt-in passphrase lockbox on top (PBKDF2-SHA-256, 200k iters → AES-256-GCM, non-extractable `CryptoKey`). |
-| 🤖 **AI is opt-in, BYO key** | Bring your own API key for **Anthropic Claude**, **OpenAI** or **Google Gemini**, or point Cadence at your own **gateway** (OmniRoute, LiteLLM, Ollama, a company proxy) in any of four API formats. Calls go directly from your device to the provider — no Cadence proxy, no telemetry. Off completely if you leave the key blank. |
+| 🤖 **AI is opt-in, BYO key** | Bring your own API key for **Anthropic Claude**, **OpenAI** or **Google Gemini**, or point Cadence at your own **gateway** (OmniRoute, LiteLLM, Ollama, a company proxy) in any of four API formats. Calls go directly from your device to the provider — no Cadence proxy, no telemetry. Off completely until you pick a provider. |
 | 📖 **Open source, no upsell** | The codebase is on GitHub under MIT. No accounts in the cloud, no premium tier, no waitlist. The desktop app auto-updates straight from GitHub Releases. |
 
 > **About the name** — Cadence is the new name for the project formerly called *Leeadman*. The desktop app auto-migrates legacy data on first launch (it copies `Leeadman/` → `Cadence/`, renaming the `leeadman-*` files to `cadence-*`; the legacy folder stays as a safety net). See [Migration notes](#migration-notes-from-leeadman) at the bottom if you're coming from a pre-rename build.
@@ -118,7 +118,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | 🪶 **Task extractor** | Drop a wall of meeting notes / brain dump → get a clean ordered task list back, ready to file into any project group. |
 | 🧭 **Coaching on a task** | One-line reframing + three concrete next actions ordered by leverage + one risk to avoid. Always under 200 words. Tunable system prompt in Settings. |
 | 🎛️ **Three providers, one switch** | Anthropic Claude, OpenAI ChatGPT, Google Gemini. One dropdown to swap. |
-| 🛑 **Off completely** | No key, no AI — the rest of the app behaves identically. AI is gated behind "is the key configured?", so an offline workspace is the default, not a degraded mode. |
+| 🛑 **Off completely** | No provider configured, no AI — the rest of the app behaves identically. AI is gated behind "is a provider configured?", so an offline workspace is the default, not a degraded mode. |
 
 ### Distribution
 
@@ -377,9 +377,9 @@ Every task row has an **Ask AI** button as soon as you connect a provider in *Se
 
 - **Bring your own key** — pick a provider, paste your API key, optionally override the model name. There is **no proxy**; calls go from this device straight to the provider you chose. The provider sees your task title/body but not your other data.
 - **Providers supported**
-  - **Anthropic Claude** — default `claude-3-5-sonnet-latest`. Suggested: `claude-3-5-sonnet-latest`, `claude-3-5-haiku-latest`, `claude-3-opus-latest`.
-  - **OpenAI ChatGPT** — default `gpt-4o-mini`. Suggested: `gpt-4o-mini`, `gpt-4o`, `gpt-4.1-mini`.
-  - **Google Gemini** — default `gemini-2.0-flash`. Suggested: `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-pro`. *(Gemini 1.x was retired from `v1beta` in late 2025 and returns HTTP 404; the Settings UI surfaces a one-click fix.)*
+  - **Anthropic Claude** — default `claude-sonnet-5-5`. Suggested: `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-opus-5-5`.
+  - **OpenAI ChatGPT** — default `gpt-5.4-mini`. Suggested: `gpt-5.4-mini`, `gpt-5.5`, `gpt-5.6`. *(`gpt-4o-mini`, `gpt-4o` and `gpt-4.1-mini` have an announced shutdown on 2027-01-14.)*
+  - **Google Gemini** — default `gemini-3.8-flash`. Suggested: `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`. *(Gemini 1.x and `gemini-2.0-flash` are retired and return HTTP 404; the Settings UI surfaces a one-click fix.)*
   - **Custom gateway** — your own router or proxy (OmniRoute, LiteLLM, Ollama, a company gateway). Enter its base URL, the model name and (if needed) an API key, then pick the **API format** it speaks: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Google Gemini. *Advanced* lets you set the auth header, how the key is written, extra headers and the request path. On desktop the request is made by the app itself (no CORS needed); plain `http://` is accepted only for localhost and private-network addresses. Failures offer copyable diagnostic details with secrets hidden.
 - **Test connection** button — sends a one-token round-trip so you can verify the key + model before relying on it during a real task.
 - **Follow-up turns** — keep chatting in the dialog (Enter sends, Shift+Enter for newlines). Markdown answers render with headings, lists, code blocks and tables.
@@ -1140,7 +1140,7 @@ Don't panic — your data is still on disk. Open *Settings → Backups & recover
 <details>
 <summary><strong>Gemini Test connection returns HTTP 404 with "model not found"</strong></summary>
 
-Google retired the Gemini 1.x family from the `v1beta` endpoint in late 2025. Open *Settings → AI Assistant*, click the inline **gemini-2.0-flash** suggestion (or any other current model from the list), Save, then run **Test connection** again. The current GA defaults are `gemini-2.0-flash` and `gemini-2.0-flash-lite`; `gemini-2.5-flash` / `gemini-2.5-pro` are higher quality but rate-limited on the free tier.
+Google retired the Gemini 1.x family in late 2025 and `gemini-2.0-flash` / `gemini-2.0-flash-lite` on 2026-06-01. Open *Settings → AI Assistant*, click the inline **gemini-3.8-flash** suggestion (or any other current model from the list), Save, then run **Test connection** again. Google limits the 2.5 models to users who already use them, so use the 3.x models for anything new.
 
 </details>
 

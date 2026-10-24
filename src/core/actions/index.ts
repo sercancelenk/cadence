@@ -489,11 +489,12 @@ export function updateUserProfile(
  * `provider` that means `''` ("Disabled" / Remove) rather than `undefined`.
  */
 export type AISettingsPatch = Partial<
-  Omit<AISettings, 'provider' | 'gatewayFormat' | 'authScheme'>
+  Omit<AISettings, 'provider' | 'gatewayFormat' | 'authScheme' | 'maxTokensField'>
 > & {
   provider?: AISettings['provider'] | '';
   gatewayFormat?: AISettings['gatewayFormat'] | '';
   authScheme?: AISettings['authScheme'] | '';
+  maxTokensField?: AISettings['maxTokensField'] | '';
 };
 
 export function updateAISettings(
@@ -534,6 +535,8 @@ export function updateAISettings(
           : undefined
         : current.authHeader,
     authScheme: patch.authScheme !== undefined ? patch.authScheme || undefined : current.authScheme,
+    maxTokensField:
+      patch.maxTokensField !== undefined ? patch.maxTokensField || undefined : current.maxTokensField,
     requestPath:
       patch.requestPath !== undefined
         ? patch.requestPath.trim()

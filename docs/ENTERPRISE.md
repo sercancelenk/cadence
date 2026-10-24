@@ -21,7 +21,8 @@ Cadence groups its outbound / data-leaving features into four flags:
 | Flag | What it gates | Why an admin might disable it |
 | --- | --- | --- |
 | `features.sync.cloud` | Google Drive sync (E2E-encrypted snapshots in the user's own Drive) | Prevent any cloud upload of company data |
-| `features.ai` | Bring-your-own-key AI assistant (calls OpenAI / Anthropic directly from the renderer) | Block company content from reaching LLM providers |
+| `features.ai` | Bring-your-own-key AI assistant (hosted providers or a user-defined gateway; the desktop app makes the request itself) | Block company content from reaching LLM providers |
+| `features.aiAllowedHosts` | Optional list of hosts AI requests may go to, e.g. `["api.openai.com", "*.corp.example.com"]`. `*.suffix` matches subdomains only. Absent = no host restriction. Present = restricted: entries are bare host names (no `https://`, port or path), the port is not part of the match, and a list with no valid entry allows nothing. Enforced in the desktop app's main process for every AI request (not in the web build) | Let employees use AI, but only through an approved gateway |
 | `features.dataExport` | "Export JSON" button in Settings → Backup | Block USB / personal-email exfiltration |
 | `features.updateCheck` | Periodic + manual GitHub Releases ping | Required only for fully air-gapped deployments |
 

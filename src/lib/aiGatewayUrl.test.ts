@@ -86,8 +86,17 @@ const PATH_CASES: Array<{ input: string; ok: boolean }> = [
   { input: 'https://evil.com/x', ok: false },
   { input: '/a/../b', ok: false },
   { input: '/./a', ok: false },
-  { input: '/a?x=1', ok: false },
+  { input: '/a?x=1', ok: true },
+  { input: '/models/m:generateContent?key=abc%2Fdef', ok: true },
+  { input: '/openai/deployments/d/chat/completions?api-version=2024-02-01', ok: true },
+  { input: '/a?x=1&y=2', ok: true },
   { input: '/a#f', ok: false },
+  { input: '/a?x=1#f', ok: false },
+  { input: '/a?x=a b', ok: false },
+  { input: '/a?x=a"b', ok: false },
+  { input: '/a?x=a?b', ok: false },
+  { input: '/a?', ok: true },
+  { input: '/%2e%2e/x?y=1', ok: false },
   { input: '/a b', ok: false },
   { input: '/a\\b', ok: false },
   { input: '/a"b', ok: false },
@@ -95,6 +104,9 @@ const PATH_CASES: Array<{ input: string; ok: boolean }> = [
   { input: '/a/%2E%2E/x', ok: false },
   { input: '/a/%2e/x', ok: false },
   { input: '/a/%zz/x', ok: false },
+  { input: '/a/%2e%2e%2fb', ok: false },
+  { input: '/a/x%2f..%2fb', ok: false },
+  { input: '/a/team%2Fmodel:generateContent', ok: true },
 ];
 
 const HEADER_CASES: Array<{ name: string; input: Record<string, string>; ok: boolean }> = [
@@ -211,6 +223,12 @@ describe('header lines', () => {
     });
   });
 
+  it('rejects the same header written twice with different case', () => {
+    const r = parseHeaderLines('X-Tenant: a\nx-tenant: b');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('Line 2');
+  });
+
   it('reports the offending line number', () => {
     const r = parseHeaderLines('x-a: 1\nnot a header\n');
     expect(r.ok).toBe(false);
@@ -223,5 +241,44 @@ describe('header lines', () => {
     expect(formatHeaderLines(headers)).toBe('x-a: 1\nx-b: two words');
     expect(parseHeaderLines(formatHeaderLines(headers))).toEqual({ ok: true, headers });
     expect(formatHeaderLines(undefined)).toBe('');
+  });
+});
+
+describe('resolveGatewayRequest: {apiKey}, query strings and no-auth', () => {
+  const s = { baseUrl: 'https://gw.example.com/v1beta' };
+
+  it('puts the URL-encoded key into the path and sends no auth header with authScheme none', () => {
+    const r = resolveGatewayRequest(
+      { ...s, requestPath: '/models/{model}:generateContent?key={apiKey}', authScheme: 'none' },
+      'gemini-2.0-flash',
+      'AIza/Sy+key',
+    );
+    expect(r).toMatchObject({
+      ok: true,
+      url: 'https://gw.example.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIza%2FSy%2Bkey',
+      path: '/models/gemini-2.0-flash:generateContent?key=AIza%2FSy%2Bkey',
+      headers: {},
+    });
+  });
+
+  it('refuses a path that needs the key when there is none', () => {
+    const r = resolveGatewayRequest({ ...s, requestPath: '/m?key={apiKey}' }, 'm', '');
+    expect(r.ok).toBe(false);
+  });
+
+  it('keeps a plain query string such as an API version', () => {
+    const r = resolveGatewayRequest(
+      { ...s, requestPath: '/openai/deployments/{model}/chat/completions?api-version=2024-02-01' },
+      'gpt-4',
+      'k',
+    );
+    expect(r.ok && r.url).toBe(
+      'https://gw.example.com/v1beta/openai/deployments/gpt-4/chat/completions?api-version=2024-02-01',
+    );
+  });
+
+  it('omits the auth header for authScheme none even when a key is set', () => {
+    const r = resolveGatewayRequest({ ...s, authScheme: 'none' }, 'm', 'k');
+    expect(r.ok && r.headers).toEqual({});
   });
 });

@@ -292,23 +292,26 @@ export const AI_PROVIDER_OPTIONS: {
   {
     value: 'anthropic',
     label: 'Anthropic Claude',
-    defaultModel: 'claude-3-5-sonnet-latest',
-    modelExamples: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest'],
+    // Checked against Anthropic's current model list on 2026-10-24.
+    defaultModel: 'claude-sonnet-5-5',
+    modelExamples: ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5'],
   },
   {
     value: 'openai',
     label: 'OpenAI ChatGPT',
-    defaultModel: 'gpt-4o-mini',
-    modelExamples: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+    // gpt-4o-mini, gpt-4o and gpt-4.1-mini carry a shutdown notice for 2027-01-14 in
+    // OpenAI's published API spec; the models below had none on 2026-10-24.
+    defaultModel: 'gpt-5.4-mini',
+    modelExamples: ['gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6'],
   },
   {
     value: 'gemini',
     label: 'Google Gemini',
-    // gemini-1.5-* was retired from v1beta in late 2025; default to the
-    // current GA flash model. Users who saved the old name will see a
-    // 404 — the error message now nudges them to update.
-    defaultModel: 'gemini-2.0-flash',
-    modelExamples: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+    // Gemini 1.x was retired in late 2025 and gemini-2.0-flash(-lite) was shut down on
+    // 2026-06-01 (Google's deprecations page). Users who saved an old name get a 404, and
+    // the error message tells them to switch. Checked on 2026-10-24.
+    defaultModel: 'gemini-3.8-flash',
+    modelExamples: ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'],
   },
   {
     value: 'gateway',
@@ -336,8 +339,13 @@ export const GATEWAY_FORMAT_OPTIONS: { value: GatewayFormat; label: string }[] =
   { value: 'gemini', label: 'Google Gemini' },
 ];
 
-/** How the API key is written into the auth header. Absent = automatic. */
-export type GatewayAuthScheme = 'bearer' | 'raw';
+/**
+ * How the API key is written into the auth header. Absent = automatic.
+ * `none` sends no auth header (the key travels in the request path via `{apiKey}`).
+ */
+export type GatewayTokenField = 'max_tokens' | 'max_completion_tokens';
+
+export type GatewayAuthScheme = 'bearer' | 'raw' | 'none';
 
 /** One extra request header a gateway needs (e.g. a project or tenant id). */
 export interface GatewayHeader {
@@ -362,9 +370,18 @@ export interface AISettings {
   authHeader?: string;
   /** `bearer` writes `Bearer <key>`, `raw` writes the key alone; absent = automatic. */
   authScheme?: GatewayAuthScheme;
+  /**
+   * Output-length field for the OpenAI Chat format; absent means `max_tokens`. OpenAI
+   * deprecated `max_tokens` and its reasoning models accept only `max_completion_tokens`.
+   */
+  maxTokensField?: GatewayTokenField;
   /** Extra headers sent with every gateway request. */
   extraHeaders?: GatewayHeader[];
-  /** Path appended to `baseUrl`, replacing the format default. `{model}` is the URL-encoded model. */
+  /**
+   * Path (optionally with a `?query`) appended to `baseUrl`, replacing the
+   * format default. `{model}` and `{apiKey}` are replaced by the URL-encoded
+   * model name and API key.
+   */
   requestPath?: string;
   /** Optional override for system prompt. */
   systemPrompt?: string;
@@ -1429,22 +1446,24 @@ function parseAISettings(raw: unknown): AISettings | undefined {
     ? (o.gatewayFormat as GatewayFormat)
     : undefined;
   const authScheme: GatewayAuthScheme | undefined =
-    o.authScheme === 'bearer' || o.authScheme === 'raw' ? o.authScheme : undefined;
+    o.authScheme === 'bearer' || o.authScheme === 'raw' || o.authScheme === 'none' ? o.authScheme : undefined;
   const authHeader = typeof o.authHeader === 'string' && o.authHeader.trim() ? o.authHeader.trim() : undefined;
   const requestPath = typeof o.requestPath === 'string' && o.requestPath.trim() ? o.requestPath.trim() : undefined;
+  const maxTokensField: GatewayTokenField | undefined =
+    o.maxTokensField === 'max_tokens' || o.maxTokensField === 'max_completion_tokens' ? o.maxTokensField : undefined;
   const extraHeaders = parseGatewayHeaders(o.extraHeaders);
   const systemPrompt = typeof o.systemPrompt === 'string' ? o.systemPrompt : undefined;
   const extractionGuidance =
     typeof o.extractionGuidance === 'string' ? o.extractionGuidance : undefined;
   if (
     !provider && !apiKey && !model && !baseUrl && !gatewayFormat && !authHeader && !authScheme &&
-    !requestPath && !extraHeaders && !systemPrompt && !extractionGuidance
+    !requestPath && !maxTokensField && !extraHeaders && !systemPrompt && !extractionGuidance
   ) {
     return undefined;
   }
   return withExtras(o, {
-    provider, apiKey, model, baseUrl, gatewayFormat, authHeader, authScheme, requestPath, extraHeaders,
-    systemPrompt, extractionGuidance,
+    provider, apiKey, model, baseUrl, gatewayFormat, authHeader, authScheme, requestPath, maxTokensField,
+    extraHeaders, systemPrompt, extractionGuidance,
   });
 }
 

@@ -76,21 +76,29 @@ function isDotSegment(seg: string): boolean {
   } catch {
     return true; // malformed escape: refuse rather than guess
   }
-  return decoded === '.' || decoded === '..';
+  // A decoded `%2f` can hide a dot segment inside one path segment (`%2e%2e%2fx`).
+  return decoded.split('/').some((part) => part === '.' || part === '..');
 }
 
 /**
- * A path appended to the (already validated) base URL. It must stay a plain
- * path: no query or fragment, no `..` segments, no backslashes, no scheme.
- * `{model}` is allowed as a placeholder and replaced before this runs.
+ * A path, optionally followed by a `?query`, appended to the (already
+ * validated) base URL. The path part must stay a plain path: no fragment, no
+ * `..` segments, no backslashes, no scheme. `{model}` and `{apiKey}` are
+ * replaced before this runs.
  */
 export function validateGatewayPath(raw: string): GatewayPathResult {
-  const path = raw.trim();
+  const full = raw.trim();
+  const q = full.indexOf('?');
+  const path = q === -1 ? full : full.slice(0, q);
+  const query = q === -1 ? '' : full.slice(q + 1);
   if (!path.startsWith('/') || path.startsWith('//')) {
     return { ok: false, error: 'The request path must start with a single "/", e.g. /chat/completions.' };
   }
-  if (/[?#\\\s]/.test(path)) {
-    return { ok: false, error: 'The request path must not contain "?", "#", "\\" or spaces.' };
+  if (/[#\\\s]/.test(path)) {
+    return { ok: false, error: 'The request path must not contain "#", "\\" or spaces.' };
+  }
+  if (query && (/[#\\\s]/.test(query) || !/^[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(query))) {
+    return { ok: false, error: 'The query string contains characters that are not allowed.' };
   }
   if (path.split('/').some(isDotSegment)) {
     return { ok: false, error: 'The request path must not contain "." or ".." segments.' };
@@ -98,7 +106,7 @@ export function validateGatewayPath(raw: string): GatewayPathResult {
   if (!/^[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(path)) {
     return { ok: false, error: 'The request path contains characters that are not allowed.' };
   }
-  return { ok: true, path };
+  return { ok: true, path: full };
 }
 
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
@@ -191,7 +199,13 @@ export function resolveGatewayRequest(
   if (!base.ok) return base;
   const defaults = gatewayFormatDefaults(settings.gatewayFormat ?? 'openai-chat');
 
-  const rawPath = (settings.requestPath?.trim() || defaults.path).replace(/\{model\}/g, encodeURIComponent(model));
+  const template = settings.requestPath?.trim() || defaults.path;
+  if (template.includes('{apiKey}') && !apiKey) {
+    return { ok: false, error: 'This request path puts the API key in the address, so an API key is required.' };
+  }
+  const rawPath = template
+    .replace(/\{model\}/g, encodeURIComponent(model))
+    .replace(/\{apiKey\}/g, encodeURIComponent(apiKey));
   const path = validateGatewayPath(rawPath);
   if (!path.ok) return path;
 
@@ -200,7 +214,7 @@ export function resolveGatewayRequest(
   const put = (name: string, value: string) => merged.set(name.toLowerCase(), [name, value]);
   for (const [n, v] of Object.entries(defaults.headers)) put(n, v);
   for (const h of settings.extraHeaders ?? []) put(h.name, h.value);
-  if (apiKey) {
+  if (apiKey && settings.authScheme !== 'none') {
     const scheme = settings.authScheme ?? (authHeader.toLowerCase() === 'authorization' ? 'bearer' : 'raw');
     put(authHeader, scheme === 'bearer' ? `Bearer ${apiKey}` : apiKey);
   }
@@ -225,6 +239,7 @@ export type HeaderLinesResult =
 /** One `Name: value` per line; blank lines are skipped. */
 export function parseHeaderLines(text: string): HeaderLinesResult {
   const headers: GatewayHeader[] = [];
+  const seen = new Set<string>();
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -233,7 +248,12 @@ export function parseHeaderLines(text: string): HeaderLinesResult {
     if (colon <= 0) {
       return { ok: false, error: `Line ${i + 1}: write each header as "Name: value".` };
     }
-    headers.push({ name: line.slice(0, colon).trim(), value: line.slice(colon + 1).trim() });
+    const name = line.slice(0, colon).trim();
+    if (seen.has(name.toLowerCase())) {
+      return { ok: false, error: `Line ${i + 1}: the "${name}" header appears twice (header names are not case-sensitive).` };
+    }
+    seen.add(name.toLowerCase());
+    headers.push({ name, value: line.slice(colon + 1).trim() });
   }
   return { ok: true, headers };
 }

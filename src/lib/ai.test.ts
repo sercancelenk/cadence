@@ -37,9 +37,9 @@ describe('isAIConfigured', () => {
 
 describe('defaultModel', () => {
   it('returns the default model for known providers', () => {
-    expect(defaultModel('openai')).toBe('gpt-4o-mini');
-    expect(defaultModel('anthropic')).toBe('claude-3-5-sonnet-latest');
-    expect(defaultModel('gemini')).toBe('gemini-2.0-flash');
+    expect(defaultModel('openai')).toBe('gpt-5.4-mini');
+    expect(defaultModel('anthropic')).toBe('claude-sonnet-5-5');
+    expect(defaultModel('gemini')).toBe('gemini-3.8-flash');
   });
 
   it('returns empty string for unknown provider', () => {
@@ -591,5 +591,311 @@ describe('custom gateway formats', () => {
     const err = await askAI({ settings: base, messages: [ask] }).catch((e) => e);
     expect(err.diagnostic).toContain('Failed to fetch');
     expect(err.diagnostic).not.toContain('sk-gw-secret');
+  });
+});
+
+describe('hosted providers run through the shared engine', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (window as { cadence?: unknown }).cadence;
+  });
+  const ask = { role: 'user' as const, content: 'Help me' };
+
+  it('gemini: key travels in the address, no auth header, and is masked in the diagnostic', async () => {
+    const fetchMock = vi.fn(async () => new Response('{"error":{"message":"bad"}}', { status: 400 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const err = await askAI({
+      settings: { provider: 'gemini', apiKey: 'AIza-secret-key', model: 'gemini-2.0-flash' },
+      messages: [ask],
+    }).catch((e) => e);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIza-secret-key',
+    );
+    expect(Object.keys(init.headers as Record<string, string>)).toEqual(['content-type']);
+    expect(err.provider).toBe('gemini');
+    expect(err.diagnostic).toContain('?key=<hidden>');
+    expect(err.diagnostic).not.toContain('AIza-secret-key');
+    expect(err.message).not.toContain('AIza-secret-key');
+  });
+
+  it('gemini: a retired 1.x model gets the targeted message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
+    await expect(
+      askAI({ settings: { provider: 'gemini', apiKey: 'AIza-secret-key', model: 'gemini-1.5-flash' }, messages: [ask] }),
+    ).rejects.toMatchObject({ provider: 'gemini', status: 404, message: expect.stringContaining('retired') });
+  });
+
+  it('anthropic: sends the key, the API version and the browser opt-in header', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ content: [{ type: 'text', text: 'hi' }], stop_reason: 'end_turn' }));
+    vi.stubGlobal('fetch', fetchMock);
+    await askAI({ settings: { provider: 'anthropic', apiKey: 'sk-ant-key', model: 'm' }, messages: [ask] });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const h = init.headers as Record<string, string>;
+    expect(url).toBe('https://api.anthropic.com/v1/messages');
+    expect(h['x-api-key']).toBe('sk-ant-key');
+    expect(h['anthropic-version']).toBe('2023-06-01');
+    expect(h['anthropic-dangerous-direct-browser-access']).toBe('true');
+  });
+
+  it('openai: bearer key and the chat completions address', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }] }));
+    vi.stubGlobal('fetch', fetchMock);
+    await askAI({ settings: { provider: 'openai', apiKey: 'sk-key', model: 'm' }, messages: [ask] });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://api.openai.com/v1/chat/completions');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer sk-key');
+  });
+
+  it('desktop: hosted providers go through the main-process bridge too', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const aiGatewayChat = vi.fn(async () => ({
+      ok: true as const,
+      status: 200,
+      text: JSON.stringify({ choices: [{ message: { content: 'via main' }, finish_reason: 'stop' }] }),
+    }));
+    (window as unknown as { cadence: unknown }).cadence = { aiGatewayChat };
+    const r = await askAI({ settings: { provider: 'openai', apiKey: 'sk-key', model: 'm' }, messages: [ask] });
+    expect(r.text).toBe('via main');
+    expect(fetchMock).not.toHaveBeenCalled();
+    const req = (aiGatewayChat.mock.calls[0] as unknown as [{ baseUrl: string; path: string }])[0];
+    expect(req).toMatchObject({ baseUrl: 'https://api.openai.com/v1', path: '/chat/completions' });
+  });
+
+  it('desktop: a key echoed in a bridge error message is masked', async () => {
+    (window as unknown as { cadence: unknown }).cadence = {
+      aiGatewayChat: async () => ({ ok: false, error: 'Could not reach (https://x/?key=AIza-secret-key)' }),
+    };
+    const err = await askAI({
+      settings: { provider: 'gemini', apiKey: 'AIza-secret-key', model: 'gemini-2.0-flash' },
+      messages: [ask],
+    }).catch((e) => e);
+    expect(err.message).not.toContain('AIza-secret-key');
+    expect(err.diagnostic).not.toContain('AIza-secret-key');
+  });
+
+  it('gemini: a key echoed in an error body never reaches the message or the diagnostic', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"error":{"message":"API key not valid: AIza-secret-key"}}', { status: 400 })),
+    );
+    const err = await askAI({
+      settings: { provider: 'gemini', apiKey: 'AIza-secret-key', model: 'gemini-2.0-flash' },
+      messages: [ask],
+    }).catch((e) => e);
+    expect(err.message).toContain('<hidden>');
+    expect(err.message).not.toContain('AIza-secret-key');
+    expect(err.diagnostic).not.toContain('AIza-secret-key');
+  });
+
+  it('gemini: the retired-model message carries a diagnostic without the key', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
+    const err = await askAI({
+      settings: { provider: 'gemini', apiKey: 'AIza-secret-key', model: 'gemini-1.5-flash' },
+      messages: [ask],
+    }).catch((e) => e);
+    expect(err.message).toContain('retired');
+    expect(err.diagnostic).toContain('?key=<hidden>');
+    expect(err.diagnostic).not.toContain('AIza-secret-key');
+  });
+
+  it('still reports a missing key for a hosted provider', async () => {
+    await expect(
+      askAI({ settings: { provider: 'openai', model: 'm' }, messages: [ask] }),
+    ).rejects.toMatchObject({ name: 'AIError', message: expect.stringContaining('not configured') });
+  });
+});
+
+describe('provider details checked against the providers\' published docs', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const ask = { role: 'user' as const, content: 'Help me' };
+  const bodyOf = (m: ReturnType<typeof vi.fn>) =>
+    JSON.parse(((m.mock.calls[0] as unknown as [string, RequestInit])[1].body as string));
+
+  it('hosted OpenAI sends max_completion_tokens, never max_tokens', async () => {
+    const m = vi.fn(async () => Response.json({ choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }] }));
+    vi.stubGlobal('fetch', m);
+    await askAI({ settings: { provider: 'openai', apiKey: 'sk-key', model: 'gpt-5.4-mini' }, messages: [ask] });
+    const body = bodyOf(m);
+    expect(body.max_completion_tokens).toBeGreaterThanOrEqual(64);
+    expect(body.max_tokens).toBeUndefined();
+  });
+
+  it('a custom gateway sends max_tokens unless told otherwise', async () => {
+    const m = vi.fn(async () => Response.json({ choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }] }));
+    vi.stubGlobal('fetch', m);
+    const base = { provider: 'gateway' as const, baseUrl: 'https://gw.example.com/v1', model: 'm' };
+    await askAI({ settings: base, messages: [ask] });
+    expect(bodyOf(m).max_tokens).toBeGreaterThanOrEqual(64);
+    expect(bodyOf(m).max_completion_tokens).toBeUndefined();
+    m.mockClear();
+    await askAI({ settings: { ...base, maxTokensField: 'max_completion_tokens' }, messages: [ask] });
+    expect(bodyOf(m).max_completion_tokens).toBeGreaterThanOrEqual(64);
+    expect(bodyOf(m).max_tokens).toBeUndefined();
+  });
+
+  it('gemini: the system instruction has no role, as in Google\'s examples', async () => {
+    const m = vi.fn(async () => Response.json({ candidates: [{ content: { parts: [{ text: 'hi' }] }, finishReason: 'STOP' }] }));
+    vi.stubGlobal('fetch', m);
+    await askAI({ settings: { provider: 'gemini', apiKey: 'AIza-key-1234', model: 'gemini-3.8-flash' }, messages: [ask] });
+    const body = bodyOf(m);
+    expect(body.systemInstruction).toEqual({ parts: [{ text: expect.any(String) }] });
+    expect(body.contents[0].role).toBe('user');
+  });
+
+  it.each(['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'])(
+    'gemini: a 404 for the retired model %s says it was retired',
+    async (model) => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
+      await expect(
+        askAI({ settings: { provider: 'gemini', apiKey: 'AIza-key-1234', model }, messages: [ask] }),
+      ).rejects.toMatchObject({ message: expect.stringContaining('retired') });
+    },
+  );
+
+  it('gemini: a 404 for a current model is the normal not-found message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
+    await expect(
+      askAI({ settings: { provider: 'gemini', apiKey: 'AIza-key-1234', model: 'gemini-3.8-flash' }, messages: [ask] }),
+    ).rejects.toMatchObject({ message: expect.stringContaining('could not find that model') });
+  });
+
+  it('gemini: no text and MAX_TOKENS explains the token limit', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ candidates: [{ content: { parts: [] }, finishReason: 'MAX_TOKENS' }] })),
+    );
+    await expect(
+      askAI({ settings: { provider: 'gemini', apiKey: 'AIza-key-1234', model: 'gemini-3.8-flash' }, messages: [ask] }),
+    ).rejects.toMatchObject({ message: expect.stringContaining('token limit') });
+  });
+});
+
+describe('engine robustness (from the independent review)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+  const ask = { role: 'user' as const, content: 'Help me' };
+  const gw = { provider: 'gateway' as const, baseUrl: 'https://gw.example.com/v1', model: 'm', apiKey: 'sk-gw-secret-key' };
+  const reply = (json: unknown) => vi.stubGlobal('fetch', vi.fn(async () => Response.json(json)));
+
+  it.each([
+    ['null', 'null'],
+    ['a number', '42'],
+    ['a string', '"hello"'],
+    ['an array', '[1,2]'],
+  ])('a 200 reply that is JSON %s is an AIError with a diagnostic, never a raw TypeError', async (_label, body) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200 })));
+    for (const gatewayFormat of ['openai-chat', 'openai-responses', 'anthropic', 'gemini'] as const) {
+      const err = await askAI({ settings: { ...gw, gatewayFormat }, messages: [ask] }).catch((e) => e);
+      expect(err.name, gatewayFormat).toBe('AIError');
+      expect(err.message, gatewayFormat).toContain('unexpected shape');
+      expect(err.diagnostic, gatewayFormat).toContain('HTTP 200');
+    }
+  });
+
+  it('wrongly typed fields inside a valid object still give an AIError', async () => {
+    for (const [gatewayFormat, json] of [
+      ['openai-chat', { choices: 'nope' }],
+      ['openai-chat', { choices: [null] }],
+      ['openai-responses', { output: { a: 1 }, status: 'completed' }],
+      ['anthropic', { content: 'text' }],
+      ['gemini', { candidates: { a: 1 } }],
+      ['gemini', { candidates: [{ content: { parts: 'x' } }] }],
+    ] as const) {
+      reply(json);
+      const err = await askAI({ settings: { ...gw, gatewayFormat }, messages: [ask] }).catch((e) => e);
+      expect(err.name, `${gatewayFormat} ${JSON.stringify(json)}`).toBe('AIError');
+    }
+  });
+
+  it('openai-chat: reads message.content given as a list of text parts', async () => {
+    reply({
+      choices: [{ message: { content: [{ type: 'text', text: 'Hello ' }, { type: 'text', text: 'world' }, { type: 'image' }] }, finish_reason: 'stop' }],
+    });
+    expect(await askAI({ settings: gw, messages: [ask] })).toEqual({ text: 'Hello world', stopReason: 'stop' });
+  });
+
+  it('openai-responses: an incomplete reply with only reasoning explains the token limit', async () => {
+    reply({
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'reasoning', summary: [] }],
+    });
+    await expect(askAI({ settings: { ...gw, gatewayFormat: 'openai-responses' }, messages: [ask] })).rejects.toMatchObject({
+      message: expect.stringContaining('token limit'),
+    });
+  });
+
+  it('web path: refuses redirects so custom auth headers cannot follow one to another host', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }));
+    vi.stubGlobal('fetch', fetchMock);
+    await askAI({ settings: gw, messages: [ask] });
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(init.redirect).toBe('error');
+  });
+
+  it('web path: gives up after the timeout with a readable message', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          }),
+      ),
+    );
+    const pending = askAI({ settings: gw, messages: [ask] }).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(120_001);
+    const err = await pending;
+    expect(err.name).toBe('AIError');
+    expect(err.message).toContain('did not answer within 120 seconds');
+  });
+
+  it('web path: a user cancel is still an AbortError, not a timeout', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          }),
+      ),
+    );
+    const ctrl = new AbortController();
+    const pending = askAI({ settings: gw, messages: [ask], signal: ctrl.signal }).catch((e) => e);
+    ctrl.abort();
+    expect((await pending).name).toBe('AbortError');
+  });
+
+  it('does not mask harmless flag values such as "true" in the diagnostic or the message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"error":{"message":"bad request","stream": true, "ok": true}}', { status: 400 })),
+    );
+    const err = await askAI({
+      settings: { provider: 'anthropic', apiKey: 'sk-ant-secret-key', model: 'm' },
+      messages: [ask],
+    }).catch((e) => e);
+    expect(err.diagnostic).toContain('"stream": true');
+    expect(err.diagnostic).not.toContain('<hidden>"');
+  });
+
+  it('masks an extra-header token that a gateway echoes into the error the user sees', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('tenant token team-token-98765 rejected', { status: 400 })),
+    );
+    const err = await askAI({
+      settings: { ...gw, extraHeaders: [{ name: 'x-tenant', value: 'team-token-98765' }] },
+      messages: [ask],
+    }).catch((e) => e);
+    expect(err.message).not.toContain('team-token-98765');
+    expect(err.diagnostic).not.toContain('team-token-98765');
   });
 });

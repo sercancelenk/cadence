@@ -9,6 +9,8 @@ import { useToast } from '../components/ui/Toast';
 import { useConfirm } from '../components/ui/ConfirmProvider';
 import { AppModal, AppModalActions } from '../components/ui/AppModal';
 import { askAI, AIError, defaultModel, isAIConfigured } from '../lib/ai';
+import { AiProviderInfo } from '../components/settings/AiProviderInfo';
+import { GATEWAY_TEMPLATES } from '../lib/aiPresets';
 import {
   formatHeaderLines,
   gatewayFormatDefaults,
@@ -19,7 +21,7 @@ import {
 import { APP_SLUG } from '../lib/appBranding';
 import { formatAppVersion } from '../lib/appVersionLabel';
 import { resolveAppProfileLabel } from '../lib/appProfileLabel';
-import type { AIProvider, GatewayAuthScheme, GatewayFormat } from '../model';
+import type { AIProvider, GatewayAuthScheme, GatewayFormat, GatewayTokenField } from '../model';
 import { AI_PROVIDER_OPTIONS, GATEWAY_FORMAT_OPTIONS, appDataToPersistJson, compactAppDataForPersist, normalizeData } from '../model';
 import {
   describeMergeSummary,
@@ -984,7 +986,7 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
  * in Electron, plaintext in PWA localStorage — we say so explicitly). All API
  * calls run from the renderer; we never proxy through any of our own servers.
  */
-function AISettingsSection() {
+export function AISettingsSection() {
   const { confirm } = useConfirm();
   const { data, updateAISettings } = useAppData();
   const ai = data.aiSettings;
@@ -996,6 +998,7 @@ function AISettingsSection() {
   const [authHeader, setAuthHeader] = useState(ai?.authHeader ?? '');
   const [authScheme, setAuthScheme] = useState<GatewayAuthScheme | ''>(ai?.authScheme ?? '');
   const [requestPath, setRequestPath] = useState(ai?.requestPath ?? '');
+  const [maxTokensField, setMaxTokensField] = useState<GatewayTokenField | ''>(ai?.maxTokensField ?? '');
   const savedHeadersText = formatHeaderLines(ai?.extraHeaders);
   const [headersText, setHeadersText] = useState(savedHeadersText);
   const [showKey, setShowKey] = useState(false);
@@ -1018,6 +1021,7 @@ function AISettingsSection() {
     setAuthHeader(ai?.authHeader ?? '');
     setAuthScheme(ai?.authScheme ?? '');
     setRequestPath(ai?.requestPath ?? '');
+    setMaxTokensField(ai?.maxTokensField ?? '');
     setHeadersText(savedHeadersText);
   }, [
     ai?.provider,
@@ -1028,6 +1032,7 @@ function AISettingsSection() {
     ai?.authHeader,
     ai?.authScheme,
     ai?.requestPath,
+    ai?.maxTokensField,
     // A string, not the array: normalizeData builds a new array on every load,
     // which would reset unsaved drafts even when nothing changed.
     savedHeadersText,
@@ -1040,9 +1045,31 @@ function AISettingsSection() {
   );
   // Gemini 1.x was retired from v1beta in late 2025; surface a one-click fix
   // for users who still have the old name saved.
-  const modelIsRetiredGemini = provider === 'gemini' && /^gemini-1\.[05]/i.test(model.trim());
+  const modelIsRetiredGemini = provider === 'gemini' && /^gemini-(1\.|2\.0)/i.test(model.trim());
   const isGateway = provider === 'gateway';
   const savedIsGateway = ai?.provider === 'gateway';
+  /** Gateway settings can linger in the saved data after switching to a hosted provider. */
+  const hasSavedGatewayFields = !!(
+    ai?.baseUrl ||
+    ai?.gatewayFormat ||
+    ai?.authHeader ||
+    ai?.authScheme ||
+    ai?.requestPath ||
+    ai?.maxTokensField ||
+    ai?.extraHeaders?.length
+  );
+  /**
+   * Changing the provider starts the key and model from what is saved for THAT provider, or
+   * empty. Carrying them over would send one provider's key to another (for example an OpenAI
+   * key to a gateway) and save a model name the new provider does not know.
+   */
+  const selectProvider = (next: AIProvider | '') => {
+    const same = next === (ai?.provider ?? '');
+    setProvider(next);
+    setApiKey(same ? (ai?.apiKey ?? '') : '');
+    setModel(same ? (ai?.model ?? '') : '');
+    setTestStatus({ kind: 'idle' });
+  };
   const gatewayUrl = isGateway ? normalizeGatewayBaseUrl(baseUrl) : null;
   const parsedHeaders = isGateway ? parseHeaderLines(headersText) : null;
   const gatewaySettings = {
@@ -1051,14 +1078,53 @@ function AISettingsSection() {
     authHeader: authHeader.trim() || undefined,
     authScheme: authScheme || undefined,
     requestPath: requestPath.trim() || undefined,
+    maxTokensField: maxTokensField || undefined,
     extraHeaders: parsedHeaders?.ok && parsedHeaders.headers.length ? parsedHeaders.headers : undefined,
   };
   // Resolving the request here validates the whole gateway configuration (URL,
-  // path, header names and values) and gives the form a live preview.
-  const gatewayPreview = isGateway
+  // path, header names and values). The preview uses a stand-in key so the real
+  // one is never printed on screen when the path carries it.
+  const gatewayCheck = isGateway
     ? resolveGatewayRequest(gatewaySettings, model.trim() || 'MODEL', apiKey.trim())
     : null;
+  const gatewayPreview = isGateway
+    ? resolveGatewayRequest(gatewaySettings, model.trim() || 'MODEL', 'YOUR_API_KEY')
+    : null;
   const gatewayDefaults = gatewayFormatDefaults(gatewayFormat);
+  /** Fills the gateway form from a template. Nothing is saved until Save is pressed. */
+  const applyTemplate = async (id: string) => {
+    const t = GATEWAY_TEMPLATES.find((x) => x.id === id);
+    if (!t) return;
+    const hasDraft =
+      baseUrl.trim() !== '' ||
+      authHeader.trim() !== '' ||
+      authScheme !== '' ||
+      requestPath.trim() !== '' ||
+      headersText.trim() !== '' ||
+      maxTokensField !== '' ||
+      gatewayFormat !== 'openai-chat';
+    if (
+      hasDraft &&
+      !(await confirm({
+        title: `Fill the form from the ${t.label} template?`,
+        description:
+          'The address, format, authentication, headers and path currently in the form will be replaced. Nothing is saved until you press Save.',
+        confirmLabel: 'Replace',
+      }))
+    ) {
+      return;
+    }
+    const c = t.connection;
+    setBaseUrl(c.baseUrl ?? '');
+    setGatewayFormat(c.gatewayFormat ?? 'openai-chat');
+    setAuthHeader(c.authHeader ?? '');
+    setAuthScheme(c.authScheme ?? '');
+    setRequestPath(c.requestPath ?? '');
+    setMaxTokensField(c.maxTokensField ?? '');
+    setHeadersText(formatHeaderLines(c.extraHeaders));
+    if (!model.trim() && t.modelExample) setModel(t.modelExample);
+    setTestStatus({ kind: 'idle' });
+  };
   const gatewayDirty =
     isGateway &&
     ((ai?.baseUrl ?? '') !== (gatewayUrl?.ok ? gatewayUrl.url : baseUrl.trim()) ||
@@ -1066,7 +1132,8 @@ function AISettingsSection() {
       (ai?.authHeader ?? '') !== authHeader.trim() ||
       (ai?.authScheme ?? '') !== authScheme ||
       (ai?.requestPath ?? '') !== requestPath.trim() ||
-      savedHeadersText !== headersText.trim());
+      (ai?.maxTokensField ?? '') !== maxTokensField ||
+      savedHeadersText !== (parsedHeaders?.ok ? formatHeaderLines(parsedHeaders.headers) : headersText.trim()));
   const dirty =
     (ai?.provider ?? '') !== provider ||
     (ai?.apiKey ?? '') !== apiKey.trim() ||
@@ -1074,9 +1141,10 @@ function AISettingsSection() {
     gatewayDirty;
   // A gateway needs a valid configuration and a model (it has no default one);
   // its key is optional. Hosted providers need a key.
+  // Choosing "— Disabled —" is a valid thing to save: it turns AI off.
   const canSave = isGateway
-    ? !!gatewayPreview?.ok && !!parsedHeaders?.ok && model.trim().length > 0
-    : !!provider && apiKey.trim().length >= 8;
+    ? !!gatewayCheck?.ok && !!parsedHeaders?.ok && model.trim().length > 0
+    : provider === '' || apiKey.trim().length >= 8;
 
   const save = () => {
     updateAISettings({
@@ -1092,6 +1160,7 @@ function AISettingsSection() {
             authHeader: authHeader.trim(),
             authScheme,
             requestPath: requestPath.trim(),
+            maxTokensField,
             extraHeaders: parsedHeaders.headers,
           }
         : {}),
@@ -1103,10 +1172,11 @@ function AISettingsSection() {
   const remove = async () => {
     if (
       !(await confirm({
-        title: savedIsGateway ? 'Remove gateway settings?' : 'Remove API key?',
-        description: savedIsGateway
-          ? 'The gateway URL, model and API key will be removed from this device.'
-          : 'The stored API key will be removed from this device.',
+        title: savedIsGateway || hasSavedGatewayFields ? 'Remove AI settings?' : 'Remove API key?',
+        description:
+          savedIsGateway || hasSavedGatewayFields
+            ? 'The provider, API key, model and the saved gateway settings (address, headers, path) will be removed from this device.'
+            : 'The stored API key will be removed from this device.',
         confirmLabel: 'Remove',
         danger: true,
       }))
@@ -1118,10 +1188,18 @@ function AISettingsSection() {
       apiKey: '',
       model: '',
       systemPrompt: '',
-      // Saved gateway settings are only cleared when a gateway is what is being
-      // removed, matching what the dialog above says.
-      ...(savedIsGateway
-        ? { baseUrl: '', gatewayFormat: '', authHeader: '', authScheme: '', requestPath: '', extraHeaders: [] }
+      // Gateway settings are cleared whenever any are saved, matching the dialog above
+      // (they can hold tokens in headers, so they must not linger after Remove).
+      ...(savedIsGateway || hasSavedGatewayFields
+        ? {
+            baseUrl: '',
+            gatewayFormat: '',
+            authHeader: '',
+            authScheme: '',
+            requestPath: '',
+            maxTokensField: '',
+            extraHeaders: [],
+          }
         : {}),
     });
     setProvider('');
@@ -1132,6 +1210,7 @@ function AISettingsSection() {
     setAuthHeader('');
     setAuthScheme('');
     setRequestPath('');
+    setMaxTokensField('');
     setHeadersText('');
     setSavedAt('');
     setTestStatus({ kind: 'idle' });
@@ -1154,7 +1233,9 @@ function AISettingsSection() {
             content: 'Reply with the single word "ok" so I can confirm the connection works.',
           },
         ],
-        maxOutputTokens: 32,
+        // Newer models may spend part of the limit on hidden reasoning, so a tiny limit can
+        // come back empty; this is a connection check, not a cost concern.
+        maxOutputTokens: 256,
       });
       setTestStatus({
         kind: 'ok',
@@ -1200,7 +1281,7 @@ function AISettingsSection() {
         <select
           className="input"
           value={provider}
-          onChange={(e) => setProvider(e.target.value as AIProvider | '')}
+          onChange={(e) => selectProvider(e.target.value as AIProvider | '')}
         >
           <option value="">— Disabled —</option>
           {AI_PROVIDER_OPTIONS.map((p) => (
@@ -1210,6 +1291,22 @@ function AISettingsSection() {
           ))}
         </select>
       </label>
+
+      <AiProviderInfo provider={provider} />
+
+      {isGateway ? (
+        <label className="field">
+          <span>Start from a template</span>
+          <select className="input" value="" onChange={(e) => void applyTemplate(e.target.value)}>
+            <option value="">Choose a template to fill the fields below…</option>
+            {GATEWAY_TEMPLATES.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label} — {t.hint}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
 
       {isGateway ? (
         <label className="field">
@@ -1287,8 +1384,22 @@ function AISettingsSection() {
                 <option value="">Automatic (Bearer for Authorization, the key alone otherwise)</option>
                 <option value="bearer">Bearer &lt;key&gt;</option>
                 <option value="raw">The key alone</option>
+                <option value="none">No auth header (the key is in the request path)</option>
               </select>
             </label>
+            {gatewayFormat === 'openai-chat' ? (
+              <label className="field">
+                <span>Token limit field</span>
+                <select
+                  className="input"
+                  value={maxTokensField}
+                  onChange={(e) => setMaxTokensField(e.target.value as GatewayTokenField | '')}
+                >
+                  <option value="">max_tokens (works almost everywhere)</option>
+                  <option value="max_completion_tokens">max_completion_tokens (OpenAI reasoning models)</option>
+                </select>
+              </label>
+            ) : null}
             <label className="field">
               <span>
                 Request path <em className="muted">(default: {gatewayDefaults.path})</em>
@@ -1304,7 +1415,8 @@ function AISettingsSection() {
                 onChange={(e) => setRequestPath(e.target.value)}
               />
               <span className="muted small" style={{ marginTop: 4, display: 'block' }}>
-                Appended to the base URL. <code>{'{model}'}</code> is replaced by the model name.
+                Appended to the base URL; may end in a <code>?query</code>. <code>{'{model}'}</code> and{' '}
+                <code>{'{apiKey}'}</code> are replaced by the model name and your API key.
               </span>
             </label>
             <label className="field">
@@ -1331,9 +1443,9 @@ function AISettingsSection() {
             <span className="small" style={{ display: 'block', color: 'var(--danger)' }}>
               {parsedHeaders.error}
             </span>
-          ) : gatewayPreview && !gatewayPreview.ok && gatewayUrl?.ok ? (
+          ) : gatewayCheck && !gatewayCheck.ok && gatewayUrl?.ok ? (
             <span className="small" style={{ display: 'block', color: 'var(--danger)' }}>
-              {gatewayPreview.error}
+              {gatewayCheck.error}
             </span>
           ) : gatewayPreview?.ok ? (
             <span className="muted small" style={{ display: 'block', wordBreak: 'break-all' }}>
@@ -1410,16 +1522,16 @@ function AISettingsSection() {
               color: 'var(--text)',
             }}
           >
-            Heads up: Gemini 1.x models were retired by Google in late 2025 and will return HTTP 404. Click{' '}
+            Heads up: Google retired Gemini 1.x (late 2025) and gemini-2.0-flash (2026-06-01); they return HTTP 404. Click{' '}
             <button
               type="button"
               className="auth-link auth-link--inline"
-              onClick={() => setModel('gemini-2.0-flash')}
+              onClick={() => setModel(defaultModel('gemini'))}
               style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontWeight: 600 }}
             >
-              gemini-2.0-flash
+              {defaultModel('gemini')}
             </button>{' '}
-            to switch to the current GA model.
+            to switch to a current model.
           </span>
         ) : null}
       </label>
@@ -1432,14 +1544,14 @@ function AISettingsSection() {
           type="button"
           variant="secondary"
           icon={<IcRefresh size={16} />}
-          disabled={!canSave || testStatus.kind === 'running'}
+          disabled={!provider || !canSave || testStatus.kind === 'running'}
           onClick={test}
         >
           {testStatus.kind === 'running' ? 'Testing…' : 'Test connection'}
         </Button>
-        {ai?.apiKey || ai?.provider === 'gateway' ? (
+        {ai?.apiKey || ai?.provider === 'gateway' || hasSavedGatewayFields ? (
           <Button type="button" variant="ghost" icon={<IcTrash size={16} />} onClick={() => void remove()}>
-            {isGateway ? 'Remove gateway' : 'Remove key'}
+            {savedIsGateway || hasSavedGatewayFields ? 'Remove AI settings' : 'Remove key'}
           </Button>
         ) : null}
         {savedAt ? <span className="muted small">Saved at {savedAt}</span> : null}

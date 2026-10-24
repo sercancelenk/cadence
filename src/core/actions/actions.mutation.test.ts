@@ -632,6 +632,15 @@ describe('actions mutation — deterministic reducers', () => {
       expect(d.aiSettings).toBeUndefined();
     });
 
+    it('updateAISettings stores, keeps and clears maxTokensField', () => {
+      let d = updateAISettings(freshData(), { provider: 'gateway', baseUrl: 'https://gw.example.com/v1', model: 'm', maxTokensField: 'max_completion_tokens' });
+      expect(d.aiSettings?.maxTokensField).toBe('max_completion_tokens');
+      d = updateAISettings(d, { model: 'm2' });
+      expect(d.aiSettings?.maxTokensField).toBe('max_completion_tokens');
+      d = updateAISettings(d, { maxTokensField: '' });
+      expect(d.aiSettings?.maxTokensField).toBeUndefined();
+    });
+
     it('updateAISettings: an empty provider clears it, undefined leaves it', () => {
       let d = updateAISettings(freshData(), { provider: 'gateway', baseUrl: 'http://localhost:20128/v1', model: 'm' });
       d = updateAISettings(d, { provider: undefined, model: 'm2' });

@@ -73,17 +73,24 @@ function isDotSegment(seg) {
   } catch {
     return true; // malformed escape: refuse rather than guess
   }
-  return decoded === '.' || decoded === '..';
+  // A decoded `%2f` can hide a dot segment inside one path segment (`%2e%2e%2fx`).
+  return decoded.split('/').some((part) => part === '.' || part === '..');
 }
 
 /** Mirrors `validateGatewayPath` in `src/lib/aiGatewayUrl.ts` — keep the two in sync. */
 function validateGatewayPath(raw) {
-  const path = typeof raw === 'string' ? raw.trim() : '';
+  const full = typeof raw === 'string' ? raw.trim() : '';
+  const q = full.indexOf('?');
+  const path = q === -1 ? full : full.slice(0, q);
+  const query = q === -1 ? '' : full.slice(q + 1);
   if (!path.startsWith('/') || path.startsWith('//')) {
     return { ok: false, error: 'The request path must start with a single "/", e.g. /chat/completions.' };
   }
-  if (/[?#\\\s]/.test(path)) {
-    return { ok: false, error: 'The request path must not contain "?", "#", "\\" or spaces.' };
+  if (/[#\\\s]/.test(path)) {
+    return { ok: false, error: 'The request path must not contain "#", "\\" or spaces.' };
+  }
+  if (query && (/[#\\\s]/.test(query) || !/^[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(query))) {
+    return { ok: false, error: 'The query string contains characters that are not allowed.' };
   }
   if (path.split('/').some(isDotSegment)) {
     return { ok: false, error: 'The request path must not contain "." or ".." segments.' };
@@ -91,7 +98,7 @@ function validateGatewayPath(raw) {
   if (!/^[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(path)) {
     return { ok: false, error: 'The request path contains characters that are not allowed.' };
   }
-  return { ok: true, path };
+  return { ok: true, path: full };
 }
 
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;

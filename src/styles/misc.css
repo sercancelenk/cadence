@@ -819,3 +819,63 @@
     border-radius: 0;
   }
 }
+
+/* AI provider help box (Settings → AI Assistant) */
+.ai-info {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.ai-info__title {
+  margin: 0 0 2px;
+  font-size: 0.9375rem;
+}
+
+.ai-info__summary {
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
+.ai-info__facts {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.ai-info__fact {
+  display: grid;
+  grid-template-columns: minmax(96px, 28%) 1fr;
+  gap: 8px;
+}
+
+.ai-info__fact dt {
+  color: var(--muted);
+}
+
+.ai-info__fact dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.ai-info__notes,
+.ai-info__limits ul {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+
+.ai-info__limits summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+@media (max-width: 520px) {
+  .ai-info__fact {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}

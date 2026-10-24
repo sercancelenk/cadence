@@ -2004,6 +2004,34 @@ describe('normalizeData — exhaustive parse/load/migration', () => {
     expect(normalizeData({ ...baseV3(), aiSettings: n }).aiSettings).toEqual(n);
   });
 
+  it('round-trips maxTokensField and drops an unknown value', () => {
+    for (const maxTokensField of ['max_tokens', 'max_completion_tokens'] as const) {
+      const n = normalizeData({
+        ...baseV3(),
+        aiSettings: { provider: 'gateway', baseUrl: 'https://gw.example.com/v1', model: 'm', maxTokensField },
+      }).aiSettings;
+      expect(n?.maxTokensField).toBe(maxTokensField);
+      expect(normalizeData({ ...baseV3(), aiSettings: n }).aiSettings).toEqual(n);
+    }
+    expect(
+      normalizeData({
+        ...baseV3(),
+        aiSettings: { provider: 'gateway', baseUrl: 'https://gw.example.com/v1', model: 'm', maxTokensField: 'tokens' },
+      }).aiSettings?.maxTokensField,
+    ).toBeUndefined();
+  });
+
+  it('round-trips authScheme none, bearer and raw, and keeps the key out of the way', () => {
+    for (const authScheme of ['none', 'bearer', 'raw'] as const) {
+      const n = normalizeData({
+        ...baseV3(),
+        aiSettings: { provider: 'gateway', baseUrl: 'https://gw.example.com/v1', model: 'm', authScheme },
+      }).aiSettings;
+      expect(n?.authScheme).toBe(authScheme);
+      expect(normalizeData({ ...baseV3(), aiSettings: n }).aiSettings).toEqual(n);
+    }
+  });
+
   it('drops malformed gateway fields without losing the rest of the settings', () => {
     const n = normalizeData({
       ...baseV3(),

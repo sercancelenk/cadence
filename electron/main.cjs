@@ -140,6 +140,7 @@ const {
 } = require('./persistence/monthlyShards.cjs');
 const { initCrashReporting } = require('./crashReporting.cjs');
 const { requirePolicyFeature } = require('./ipc/policyGuard.cjs');
+const { parseAllowedHosts, requireAiHost } = require('./ipc/aiHostPolicy.cjs');
 const { createGatewayClient } = require('./aiGateway.cjs');
 const {
   sanitizeAttachmentId,
@@ -4083,11 +4084,19 @@ ipcMain.handle('data:importWorkspace', (_evt, payload) => {
 // Custom AI gateway (OpenAI-compatible). The renderer builds the request body
 // and parses the reply; this process does the HTTP so the production CSP and
 // browser CORS rules do not apply, and enforces the `ai` policy flag here too.
-const aiGatewayClient = createGatewayClient({ fetch: (...args) => fetch(...args) });
+// Electron's `net.fetch` (Chromium network stack) honours the system proxy and the OS
+// certificate store, which a corporate network may need; Node's global fetch does not.
+// It supports abort signals and `redirect: 'error'`.
+const aiGatewayClient = createGatewayClient({
+  fetch: (...args) => require('electron').net.fetch(...args),
+});
 
 ipcMain.handle('ai:gatewayChat', async (_event, req) => {
   const blocked = requirePolicyFeature('ai', isFeatureAllowed);
   if (blocked) return blocked;
+  // An organization may also pin AI to specific hosts (`features.aiAllowedHosts`).
+  const hostBlocked = requireAiHost(req?.baseUrl, getCachedPolicy()?.features?.aiAllowedHosts);
+  if (hostBlocked) return hostBlocked;
   return aiGatewayClient.chat(req);
 });
 
@@ -4315,6 +4324,20 @@ function loadPolicy() {
           if (Object.keys(sync).length) features.sync = sync;
         }
         if (typeof f.ai === 'boolean') features.ai = f.ai;
+        // Present-but-invalid must stay a restriction (an empty list allows
+        // nothing), never silently become "no restriction".
+        const aiAllowedHosts = parseAllowedHosts(f.aiAllowedHosts);
+        if (aiAllowedHosts !== undefined) {
+          features.aiAllowedHosts = aiAllowedHosts;
+          const given = Array.isArray(f.aiAllowedHosts) ? f.aiAllowedHosts.length : 1;
+          if (aiAllowedHosts.length < given) {
+            console.warn(
+              LOG_TAG,
+              'policy.json features.aiAllowedHosts has entries that are not plain host names (no scheme, port or path); they were ignored. Valid entries kept:',
+              aiAllowedHosts.length,
+            );
+          }
+        }
         if (typeof f.dataExport === 'boolean') features.dataExport = f.dataExport;
         if (typeof f.updateCheck === 'boolean') features.updateCheck = f.updateCheck;
         if (Object.keys(features).length) out.features = features;
@@ -5581,7 +5604,7 @@ app.whenReady().then(() => {
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' data: https://fonts.gstatic.com",
           "img-src 'self' data: blob: cadence-attachment:",
-          "connect-src 'self' ws: wss: http://localhost:* cadence-attachment: https://api.github.com https://github.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
+          "connect-src 'self' ws: wss: http://localhost:* cadence-attachment: https://api.github.com https://github.com",
           "object-src 'none'",
           "base-uri 'self'",
           "frame-ancestors 'none'",
@@ -5592,7 +5615,7 @@ app.whenReady().then(() => {
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' data: https://fonts.gstatic.com",
           "img-src 'self' data: blob: cadence-attachment:",
-          "connect-src 'self' cadence-attachment: https://api.github.com https://github.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
+          "connect-src 'self' cadence-attachment: https://api.github.com https://github.com",
           "object-src 'none'",
           "base-uri 'self'",
           "frame-ancestors 'none'",
