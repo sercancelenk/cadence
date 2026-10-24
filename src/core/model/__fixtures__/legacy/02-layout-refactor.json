@@ -1,0 +1,126 @@
+{
+  "version": 3,
+  "teams": [
+    {
+      "id": "team-1",
+      "name": "My first team",
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "status": "active"
+    }
+  ],
+  "people": [
+    {
+      "id": "__self__team-1",
+      "teamId": "team-1",
+      "name": "Me",
+      "isSelf": true,
+      "scratchpad": "",
+      "createdAt": "2026-10-24T08:00:32.160Z"
+    },
+    {
+      "id": "__leader__team-1",
+      "teamId": "team-1",
+      "name": "My leader",
+      "scratchpad": "",
+      "createdAt": "2026-10-24T08:00:32.160Z"
+    }
+  ],
+  "items": [],
+  "notifiedReminderIds": [],
+  "lastTeamId": "team-1",
+  "todoGroups": [
+    {
+      "id": "06a56932-73c7-498b-a866-9deaa8f43c96",
+      "name": "Genel",
+      "sortOrder": 0,
+      "createdAt": "2026-10-24T08:00:32.160Z"
+    }
+  ],
+  "todoItems": [],
+  "notes": [
+    {
+      "id": "n-plain",
+      "title": "Plain markdown",
+      "body": "# Başlık\n\n- madde bir\n- madde iki\n\nTürkçe: ğüşiöç İĞÜŞİÖÇ",
+      "locked": false,
+      "pinned": true,
+      "sortOrder": 2,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-rich",
+      "title": "Rich document",
+      "body": "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Zengin içerik 🚀\"}]}]}",
+      "bodyFormat": "prosemirror",
+      "bodyPlainText": "Zengin içerik 🚀",
+      "locked": false,
+      "pinned": false,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-locked",
+      "title": "Locked note",
+      "body": "",
+      "locked": true,
+      "cipher": {
+        "ivB64": "AAAAAAAAAAAAAAAA",
+        "cipherB64": "c2VjcmV0LWNpcGhlcnRleHQ="
+      },
+      "pinned": false,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-archived",
+      "title": "Archived",
+      "body": "eski not",
+      "locked": false,
+      "pinned": false,
+      "lastOpenedAt": "2026-05-20T09:00:00.000Z",
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-in-list",
+      "title": "In a list",
+      "body": "listede",
+      "locked": false,
+      "pinned": false,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-in-sublist",
+      "title": "In a sub-list",
+      "body": "alt listede",
+      "locked": false,
+      "pinned": false,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-in-archived-list",
+      "title": "In archived list",
+      "body": "arşivli listede",
+      "locked": false,
+      "pinned": false,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-empty",
+      "title": "",
+      "body": "",
+      "locked": false,
+      "pinned": false,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    }
+  ],
+  "profile": {
+    "displayName": "Me",
+    "favoriteTeamIds": []
+  }
+}

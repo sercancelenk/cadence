@@ -522,6 +522,66 @@ describe('runSyncCycle (additional branches)', () => {
     unsubscribe();
   });
 
+  describe('remote written by a build that does not know notes', () => {
+    const NOTE = (id: string) => ({
+      id,
+      title: id,
+      body: 'important',
+      locked: false,
+      createdAt: '2026-05-19T00:00:00.000Z',
+      updatedAt: '2026-05-19T00:00:00.000Z',
+    });
+    const localWithNotes = () =>
+      ({ ...makeData('local'), notes: [NOTE('n1'), NOTE('n2')] }) as unknown as AppData;
+
+    async function cycle(remote: unknown, local: AppData) {
+      const { computeLocalEtag } = await import('./syncFingerprint');
+      const fp = await computeLocalEtag(local);
+      const fake = makeFakeBackend(
+        { etag: 'rev-1', localFingerprint: fp, lastSyncedAt: '2026-05-19T00:00:00.000Z' },
+        { pull: { kind: 'ok', data: remote as AppData, etag: 'rev-2' } },
+      );
+      const applied: AppData[] = [];
+      const { events, unsubscribe } = captureEvents();
+      const action = await runSyncCycle({
+        backend: fake.backend,
+        localData: local,
+        getLocalData: () => local,
+        applyRemote: (d) => applied.push(d),
+      });
+      unsubscribe();
+      return { action, applied, events, fake };
+    }
+
+    it('refuses to replace local notes with a snapshot that has no notes collection at all', async () => {
+      const { notes: _omitted, ...oldPeer } = makeData('remote') as unknown as Record<string, unknown>;
+      const { action, applied, events, fake } = await cycle(oldPeer, localWithNotes());
+
+      expect(action).toBe('remote-without-notes-skipped');
+      expect(applied).toHaveLength(0);
+      expect(fake.record?.etag).toBe('rev-1');
+      expect(events.some((e) => e.code === 'remote-without-notes')).toBe(true);
+    });
+
+    it('still applies a snapshot that has a notes collection, even when it holds fewer notes', async () => {
+      // A newer build always writes `notes`; fewer notes there is a real deletion.
+      const remote = { ...makeData('remote'), notes: [NOTE('n1')] };
+      const { action, applied } = await cycle(remote, localWithNotes());
+
+      expect(action).toBe('pulled');
+      expect(applied).toHaveLength(1);
+      expect(applied[0]!.notes.map((n) => n.id)).toEqual(['n1']);
+    });
+
+    it('does not block when this device has no notes to protect', async () => {
+      const { notes: _omitted, ...oldPeer } = makeData('remote') as unknown as Record<string, unknown>;
+      const { action, applied } = await cycle(oldPeer, makeData('local'));
+
+      expect(action).toBe('pulled');
+      expect(applied).toHaveLength(1);
+    });
+  });
+
   it('warns once per session that gdrive sync omits images when attachments exist', async () => {
     const { __resetCloudAttachmentNotice } = await import('./useSyncAutoSync');
     __resetCloudAttachmentNotice();

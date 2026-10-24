@@ -48,7 +48,16 @@ function workspaceCandidate(raw: unknown): unknown {
 }
 
 export type SnapshotParseResult =
-  | { kind: 'ok'; data: AppData }
+  | {
+      kind: 'ok';
+      data: AppData;
+      /**
+       * False when the payload has no `notes` list at all. Every build that knows
+       * notes writes one (empty or not), so its absence means the writer predates
+       * notes and `data.notes` is empty by omission, not because the user deleted them.
+       */
+      hasNotesCollection: boolean;
+    }
   | { kind: 'invalid' }
   | { kind: 'unsupported-version'; fileVersion: number; error: string };
 
@@ -72,7 +81,7 @@ export function parseRemoteSnapshot(raw: unknown): SnapshotParseResult {
   }
   if (!plausible) return { kind: 'invalid' };
   try {
-    return { kind: 'ok', data: normalizeData(candidate) };
+    return { kind: 'ok', data: normalizeData(candidate), hasNotesCollection: Array.isArray(o.notes) };
   } catch (err) {
     if (isUnsupportedDataVersionError(err)) {
       return { kind: 'unsupported-version', fileVersion: err.fileVersion, error: err.message };

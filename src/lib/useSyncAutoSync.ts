@@ -125,7 +125,8 @@ export type SyncCycleAction =
   | 'corrupt-remote'
   | 'unsupported-remote'
   | 'local-changed-during-pull'
-  | 'empty-remote-skipped';
+  | 'empty-remote-skipped'
+  | 'remote-without-notes-skipped';
 
 /**
  * One-shot-per-session guard so the cloud "images aren't synced" notice
@@ -225,6 +226,7 @@ export async function runSyncCycle(args: {
   async function applyRemoteIfLocalStable(
     remote: AppData,
     baselineFp: string,
+    remoteHasNotes: boolean,
   ): Promise<SyncCycleAction | null> {
     const fpBefore = await safeFingerprint(getLocal());
     await flushLocal();
@@ -247,6 +249,19 @@ export async function runSyncCycle(args: {
         text: 'Skipped remote pull — you have unsaved local changes.',
       });
       return 'local-changed-during-pull';
+    }
+    // Data-loss guard: a snapshot with no `notes` list was written by a build
+    // that does not know notes (its saves drop them). Replacing this device's
+    // notes with that would delete documents, so keep them and ask for an update.
+    if (!remoteHasNotes && getLocal().notes.length > 0) {
+      publishSyncEvent({
+        kind: 'error',
+        backendId,
+        code: 'remote-without-notes',
+        text:
+          'Skipped sync — the remote copy comes from an older Cadence version that has no notes. Update Cadence on that device so your notes are not lost.',
+      });
+      return 'remote-without-notes-skipped';
     }
     // Data-loss guard: never let a structurally-valid but materially-empty
     // remote snapshot wipe a local workspace that still has real content.
@@ -287,7 +302,7 @@ export async function runSyncCycle(args: {
         });
         return parsed.kind === 'unsupported-version' ? 'unsupported-remote' : 'corrupt-remote';
       }
-      const blocked = await applyRemoteIfLocalStable(parsed.data, prePullFp);
+      const blocked = await applyRemoteIfLocalStable(parsed.data, prePullFp, parsed.hasNotesCollection);
       if (blocked) return blocked;
       const fp = await safeFingerprint(parsed.data);
       backend.setRecord({
@@ -367,7 +382,7 @@ export async function runSyncCycle(args: {
       });
       return parsed.kind === 'unsupported-version' ? 'unsupported-remote' : 'corrupt-remote';
     }
-    const blocked = await applyRemoteIfLocalStable(parsed.data, currentFingerprint);
+    const blocked = await applyRemoteIfLocalStable(parsed.data, currentFingerprint, parsed.hasNotesCollection);
     if (blocked) return blocked;
     const fp = await safeFingerprint(parsed.data);
     backend.setRecord({

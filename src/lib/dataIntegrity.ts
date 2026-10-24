@@ -23,6 +23,10 @@ export function isSuspiciousShrink(current: DataShape, previous: DataShape): boo
   if (previous.total <= 0) return false;
   // Populated → empty is always catastrophic, regardless of prior size.
   if (current.total === 0) return true;
+  // Notes are the one thing that must never silently vanish. A build that does
+  // not know notes (or any bug) can drop all of them while todos and team items
+  // survive, which the overall drop below would not flag.
+  if (previous.notes > 0 && current.notes === 0) return true;
   const drop = previous.total - current.total;
   if (drop < 3) return false;
   if (current.total <= 1) return true;

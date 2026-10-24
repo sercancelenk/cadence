@@ -1,0 +1,156 @@
+{
+  "version": 3,
+  "teams": [
+    {
+      "id": "team-1",
+      "name": "My first team",
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "status": "active"
+    }
+  ],
+  "people": [
+    {
+      "id": "__self__team-1",
+      "teamId": "team-1",
+      "name": "Me",
+      "isSelf": true,
+      "scratchpad": "",
+      "createdAt": "2026-10-24T08:00:32.449Z"
+    },
+    {
+      "id": "__leader__team-1",
+      "teamId": "team-1",
+      "name": "My leader",
+      "scratchpad": "",
+      "createdAt": "2026-10-24T08:00:32.449Z"
+    }
+  ],
+  "items": [],
+  "notifiedReminderIds": [],
+  "lastTeamId": "team-1",
+  "todoGroups": [
+    {
+      "id": "5450d9cb-5454-45a8-b577-68623a0cb10c",
+      "name": "Genel",
+      "sortOrder": 0,
+      "createdAt": "2026-10-24T08:00:32.449Z"
+    }
+  ],
+  "todoItems": [],
+  "notes": [
+    {
+      "id": "n-plain",
+      "title": "Plain markdown",
+      "body": "# Başlık\n\n- madde bir\n- madde iki\n\nTürkçe: ğüşiöç İĞÜŞİÖÇ",
+      "locked": false,
+      "pinned": true,
+      "sortOrder": 2,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-rich",
+      "title": "Rich document",
+      "body": "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Zengin içerik 🚀\"}]}]}",
+      "bodyFormat": "prosemirror",
+      "bodyPlainText": "Zengin içerik 🚀",
+      "locked": false,
+      "pinned": false,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-locked",
+      "title": "Locked note",
+      "body": "",
+      "locked": true,
+      "cipher": {
+        "ivB64": "AAAAAAAAAAAAAAAA",
+        "cipherB64": "c2VjcmV0LWNpcGhlcnRleHQ="
+      },
+      "attachmentRefs": [
+        "att-1"
+      ],
+      "lockedBodySignature": "sig-1",
+      "pinned": false,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-archived",
+      "title": "Archived",
+      "body": "eski not",
+      "locked": false,
+      "pinned": false,
+      "lastOpenedAt": "2026-05-20T09:00:00.000Z",
+      "archived": true,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-in-list",
+      "title": "In a list",
+      "body": "listede",
+      "locked": false,
+      "pinned": false,
+      "groupId": "g-root",
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-in-sublist",
+      "title": "In a sub-list",
+      "body": "alt listede",
+      "locked": false,
+      "pinned": false,
+      "groupId": "g-child",
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-in-archived-list",
+      "title": "In archived list",
+      "body": "arşivli listede",
+      "locked": false,
+      "pinned": false,
+      "groupId": "g-old",
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "n-empty",
+      "title": "",
+      "body": "",
+      "locked": false,
+      "pinned": false,
+      "createdAt": "2026-05-20T09:00:00.000Z",
+      "updatedAt": "2026-05-20T09:00:00.000Z"
+    }
+  ],
+  "noteGroups": [
+    {
+      "id": "g-root",
+      "name": "Projects",
+      "sortOrder": 0,
+      "pinned": true,
+      "createdAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "g-child",
+      "name": "Cadence",
+      "sortOrder": 1,
+      "createdAt": "2026-05-20T09:00:00.000Z"
+    },
+    {
+      "id": "g-old",
+      "name": "Old stuff",
+      "sortOrder": 2,
+      "archived": true,
+      "createdAt": "2026-05-20T09:00:00.000Z"
+    }
+  ],
+  "profile": {
+    "displayName": "Me",
+    "favoriteTeamIds": []
+  }
+}

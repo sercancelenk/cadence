@@ -229,7 +229,10 @@ function dedupeById(items) {
   const withoutId = [];
   for (const item of items) {
     if (item && typeof item === 'object' && typeof /** @type {{ id?: unknown }} */ (item).id === 'string') {
-      map.set(/** @type {{ id: string }} */ (item).id, item);
+      const id = /** @type {{ id: string }} */ (item).id;
+      const existing = map.get(id);
+      // Later entries win, unless the earlier one is provably newer.
+      map.set(id, existing !== undefined && isStrictlyNewer(existing, item) ? existing : item);
     } else if (item != null) {
       withoutId.push(item);
     }
@@ -238,8 +241,23 @@ function dedupeById(items) {
 }
 
 /**
+ * True only when both carry a parsable `updatedAt` and `a` is later than `b`.
+ * Anything undated or unparsable never wins on its own.
+ * @param {unknown} a
+ * @param {unknown} b
+ */
+function isStrictlyNewer(a, b) {
+  const ta = Date.parse(/** @type {{ updatedAt?: string }} */ (a).updatedAt ?? '');
+  const tb = Date.parse(/** @type {{ updatedAt?: string }} */ (b).updatedAt ?? '');
+  return Number.isFinite(ta) && Number.isFinite(tb) && ta > tb;
+}
+
+/**
  * Merge base workspace (may still hold legacy bulk) with shard partials.
- * Later entries win on id collision — shard copies override stale base bulk.
+ * Later entries win on id collision — shard copies override stale base bulk —
+ * unless the base copy has a strictly newer `updatedAt`: an older app version
+ * that only knows the base file keeps editing it after shards exist, and those
+ * edits must not be replaced by the stale shard copy.
  * @param {Record<string, unknown>} baseWorkspace
  * @param {Array<{ notes: unknown[]; todoItems: unknown[]; items: unknown[] }>} shardPartials
  */
@@ -258,6 +276,38 @@ function mergeMonthlyShardPartials(baseWorkspace, shardPartials) {
   }
 
   return merged;
+}
+
+/**
+ * Live read path: the base file's own notes/tasks/items are part of the result,
+ * not discarded. Every save of this version writes the full workspace to the
+ * base file and the shards together, so they agree; they only differ when an
+ * older app version wrote the base file alone, and then nothing it wrote may be
+ * lost. A removal made there is not honoured (the shard still has the entity):
+ * resurfacing a deleted note is recoverable, losing one is not.
+ * @param {Record<string, unknown>} baseWorkspace
+ * @param {Array<{ notes: unknown[]; todoItems: unknown[]; items: unknown[] }>} shardPartials
+ */
+function mergeBaseWithShards(baseWorkspace, shardPartials) {
+  return mergeMonthlyShardPartials(baseWorkspace, shardPartials);
+}
+
+/**
+ * Guard for a merge that is meant to be a superset of the base file: every
+ * entity the base holds, by id, plus every one without an id, must be in the
+ * result. Counts cannot say this — repeated ids in the base make its count
+ * larger than any id-deduplicated merge without anything having been lost.
+ * @param {Record<string, unknown>} baseWorkspace
+ * @param {Record<string, unknown>} merged
+ */
+function mergeKeepsEveryBaseEntity(baseWorkspace, merged) {
+  const base = shardableEntityIdSet(baseWorkspace);
+  const result = shardableEntityIdSet(merged);
+  if (result.withoutId < base.withoutId) return false;
+  for (const id of base.ids) {
+    if (!result.ids.has(id)) return false;
+  }
+  return true;
 }
 
 /**
@@ -357,10 +407,9 @@ function mergeWorkspaceFromBackupParts(parsedBase, shardPartials, unwrapWorkspac
     return { ok: true, workspace: baseWs };
   }
 
-  const merged = mergeMonthlyShardPartials(baseCoreForShardMerge(baseWs), shardPartials);
-  const mergedCounts = countShardableEntities(merged);
-  const baseCounts = countShardableEntities(baseWs);
-  if (mergedCounts.total < baseCounts.total && baseCounts.total > 0) {
+  // Same rule as the live read path: nothing the base file holds may be dropped.
+  const merged = mergeBaseWithShards(baseWs, shardPartials);
+  if (!mergeKeepsEveryBaseEntity(baseWs, merged)) {
     return { ok: true, workspace: baseWs };
   }
   return { ok: true, workspace: merged };
@@ -382,6 +431,8 @@ module.exports = {
   unwrapShardPayload,
   wrapShardPayload,
   mergeMonthlyShardPartials,
+  mergeBaseWithShards,
+  mergeKeepsEveryBaseEntity,
   backupSnapshotKey,
   backupShardFilename,
   isMonthlyShardBackupFilename,

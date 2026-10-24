@@ -105,4 +105,31 @@ describe('dataIntegrity', () => {
       ),
     ).toBe(false);
   });
+
+  describe('notes wiped while other content survives', () => {
+    it('is suspicious when every note is gone even though the overall drop is small', () => {
+      const previous = shape({ notes: 5, todoItems: 20, total: 25 });
+      const current = shape({ notes: 0, todoItems: 20, total: 20 });
+      expect(isSuspiciousShrink(current, previous)).toBe(true);
+      expect(shouldBlockPersistOnSuspiciousShrink(current, previous)).toBe(true);
+    });
+
+    it('is suspicious for a single note that disappears', () => {
+      expect(
+        isSuspiciousShrink(shape({ notes: 0, todoItems: 30, total: 30 }), shape({ notes: 1, todoItems: 30, total: 31 })),
+      ).toBe(true);
+    });
+
+    it('is not suspicious when some notes remain', () => {
+      expect(
+        isSuspiciousShrink(shape({ notes: 4, todoItems: 20, total: 24 }), shape({ notes: 5, todoItems: 20, total: 25 })),
+      ).toBe(false);
+    });
+
+    it('is not suspicious when there were no notes to lose', () => {
+      expect(
+        isSuspiciousShrink(shape({ notes: 0, todoItems: 18, total: 18 }), shape({ notes: 0, todoItems: 20, total: 20 })),
+      ).toBe(false);
+    });
+  });
 });

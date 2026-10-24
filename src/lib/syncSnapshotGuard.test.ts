@@ -90,6 +90,34 @@ describe('parseRemoteSnapshot', () => {
     expect(result.data.noteGroups).toEqual([]);
   });
 
+  describe('hasNotesCollection', () => {
+    const base = { version: 3, teams: [{ id: 't1', name: 'T', createdAt: TS, status: 'active' }] };
+
+    it('is false for a snapshot written by a build that does not know notes', () => {
+      const r = parseRemoteSnapshot({ ...base, todoItems: [], todoGroups: [] });
+      expect(r.kind).toBe('ok');
+      if (r.kind === 'ok') expect(r.hasNotesCollection).toBe(false);
+    });
+
+    it('is true when notes is present, even if the user has none', () => {
+      const r = parseRemoteSnapshot({ ...base, notes: [] });
+      expect(r.kind).toBe('ok');
+      if (r.kind === 'ok') expect(r.hasNotesCollection).toBe(true);
+    });
+
+    it('is false when notes is not a list', () => {
+      const r = parseRemoteSnapshot({ ...base, notes: 'garbage' });
+      expect(r.kind).toBe('ok');
+      if (r.kind === 'ok') expect(r.hasNotesCollection).toBe(false);
+    });
+
+    it('reads the flag through a rolling-backup envelope', () => {
+      const r = parseRemoteSnapshot({ magic: 'CDNC1', workspace: { ...base, notes: [] } });
+      expect(r.kind).toBe('ok');
+      if (r.kind === 'ok') expect(r.hasNotesCollection).toBe(true);
+    });
+  });
+
   it('accepts a snapshot with teams', () => {
     const result = parseRemoteSnapshot({ teams: [{ id: 't1', name: 'A' }] });
     expect(result.kind).toBe('ok');
