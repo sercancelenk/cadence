@@ -14,6 +14,14 @@ rather than per build number.
 
 ### Added
 
+- **Tools → Document is now multi-document.** Tabs like JSON / YAML: add, rename (double-click or F2), switch with the arrow keys, close with a confirmation when there is content. Your existing single document becomes the first tab; the old field is never rewritten or removed, and a document an older version edited afterwards comes back as a "Document (from older version)" tab.
+- **Move to Notes** for any Tools tab (Document and JSON / YAML). Choose a list or no list; the note is created and the tab removed in one step. JSON / YAML content becomes a code block.
+- **Save to a file with ⇧⌘S** on both Tools pages, like Notes. The extension you type in the save window decides the format (Document: md / txt / html).
+- **Notes ⇄ files.** Open `.md`, `.txt` or `.html` files (or drop them on the Notes page) as new notes, and save a note as `.md`, `.txt` or `.html`.
+- **Nested note lists** with sub-lists, derived archive, safe delete and a yellow gradient folder icon for lists.
+- **Notes ⌘S saves now; ⇧⌘S saves to a file.** Typing is written every 30 seconds, structural changes within ~300 ms, and note switches, blur, lock and quit write immediately.
+- **Strikethrough moved to ⇧⌘X** in rich-text editors so ⇧⌘S can save to a file.
+
 - **Account recovery codes.** Optional MetaMask-style codes for resetting your account password on this device without losing encrypted data. Generate at sign-up (welcome tour) or in Settings; envelope is saved only after you confirm you stored the codes. `/recover` for forgotten passwords. Existing accounts without codes are unchanged.
 - **Portable ZIP backup.** Cross-platform export/import with workspace JSON and image sidecars. Primary backup on web/mobile; desktop also offers full backup folders (with note version history). Legacy JSON and folder imports still work.
 - **In-app user guide.** New `/guide` route (Settings → About, ⌘K, Welcome tour, Electron Help menu) renders `docs/USER-GUIDE.md`.
@@ -36,6 +44,18 @@ rather than per build number.
   + manual close + `aria-live` for screen readers.
 - **CHANGELOG.md** (this file) and a top-level **LICENSE** file (MIT) to make
   the license grant explicit alongside the README badge.
+
+### Fixed (data safety)
+
+- **Last keystrokes in JSON / YAML.** The editor's 150 ms buffer was only drained when a tab closed; ⌘S, switching windows and quitting could miss the last characters. It now drains on every flush.
+- **Saving the very last edit.** A flush right after typing (quit, lock, ⌘S) could write a stale snapshot and leave the edit unsaved for up to 30 s. The workspace now updates synchronously.
+- **Images in Document tabs** are protected from attachment cleanup, in the app and in the desktop main process.
+- **Older versions on the same machine.** Notes, todos and items an older version wrote to the main data file are no longer replaced by older copies kept in the monthly files, in normal reads, backup restores and rollback.
+- **Older versions that do not know notes** can no longer wipe notes silently: a note count dropping to zero blocks saving and offers a restore, and sync refuses a remote copy without a notes list.
+- **Deleting an archived list** keeps its notes and sub-lists archived instead of bringing them back to the active view.
+- **Importing a file** reports an error instead of "Note imported" when the workspace is write-protected.
+- **Saving a note to a file** refuses instead of overwriting a file named `<your file>.tmp` next to it.
+- **Shift+⌘S no longer strikes through the selection** in the editor before saving.
 
 ### Changed
 

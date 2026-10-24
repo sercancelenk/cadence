@@ -35,6 +35,15 @@ A practical guide to daily use, backups, recovery, and storage. For install and 
 - **Lock** sensitive notes with a workspace passphrase (PBKDF2 → AES-256-GCM).
 - **Version history** (desktop): open the clock icon on a note to browse and restore earlier revisions.
 
+### Tools: Document and JSON / YAML
+
+Scratch pads under **Tools**. They are not notes or to-dos, but they are saved with your workspace like everything else.
+
+- **Document** and **JSON / YAML** both work in tabs: **＋** adds one, double-click (or **F2**) renames it, **←/→** moves between tabs. Closing a tab that has content asks first.
+- **Move to Notes** turns the open tab into a note and removes it from Tools. Pick a list or no list. A JSON / YAML tab becomes a note with a code block.
+- **⌘S** saves right now. **⇧⌘S** saves the open tab as a file: type the extension you want in the save window (Document: `.md`, `.txt` or `.html`; JSON / YAML: any).
+- Notes lists are shown with a yellow folder.
+
 ### Agenda
 
 - Read-only calendar of reminders, due dates, and recurring tasks for the next seven days, plus **Overdue**.
@@ -131,6 +140,7 @@ Cadence is designed so **existing users are never forced to migrate**:
 
 - New fields (`recoveryEnvelope`, attachments, note revisions) are **optional** — older workspace files load unchanged.
 - **No schema version bump** is required for recovery codes or portable backups.
+- **Tools → Document** tabs are new optional fields; your existing single document becomes the first tab and the old field is kept untouched, so going back to an older version still finds it.
 - Import always runs through `normalizeData()` and snapshots your current state before replacing (desktop).
 - If something looks wrong after an update, use **Backup & recovery** — do not delete files manually.
 
@@ -175,6 +185,9 @@ Both are off by default. See [LAN-SYNC.md](./LAN-SYNC.md) and README for setup.
 | ⌘B / Ctrl+B | Bold (in rich-text editors) |
 | ⌘I / Ctrl+I | Italic |
 | ⌘K (in editor) | Insert link |
+| ⌘S / Ctrl+S | Save now (every page) |
+| ⇧⌘S / Ctrl+Shift+S | Save the open note or Tools tab as a file |
+| ⇧⌘X / Ctrl+Shift+X | Strikethrough (in rich-text editors) |
 
 Native macOS menus expose additional shortcuts when running the desktop build, including **Help → User guide**.
 
