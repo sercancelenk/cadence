@@ -178,8 +178,9 @@ const {
   writePrefs: writeDailyBackupPrefs,
   normalizePrefs: normalizeDailyBackupPrefs,
   maybeRunDailyBackupMirror,
-  DEFAULT_KEEP_DAYS: DAILY_BACKUP_KEEP_DAYS,
 } = require('./dailyBackupMirror.cjs');
+const { getRetentionState, changeRetention } = require('./backupRetention.cjs');
+const { pruneSnapshotDir, readSnapshotPrefs } = require('./persistence/snapshotRetention.cjs');
 
 /** Atomic + fsync'd JSON write. See persistence/durableWrite.cjs for the why. */
 const writeJsonText = createDurableJsonWriter({ fs, path });
@@ -490,14 +491,6 @@ const KEY_CACHE_FILENAME_PREFIX = `${DATA_FILE_PREFIX}-keycache-`;
  * to "never checked", which forces an immediate retry.
  */
 const UPDATE_STATE_FILENAME = `${DATA_FILE_PREFIX}-update-state.json`;
-/**
- * How many rolling on-disk snapshots to keep per user. We snapshot before
- * every save, so 50 is roughly a few hours of heavy editing. The on-disk
- * format is identical to the live file (encrypted envelope or plaintext),
- * which means restore is a single file copy.
- */
-const BACKUPS_KEEP_MAX = 50;
-
 function legacyDataPath() {
   return path.join(app.getPath('userData'), LEGACY_SINGLEUSER_DATA_FILENAME);
 }
@@ -1417,7 +1410,7 @@ function readUserData(userId) {
  *  - We copy the raw bytes (encrypted envelope or legacy plaintext), so a
  *    later restore is byte-identical to what was there.
  *  - Best-effort: any I/O error is logged but never blocks the live write.
- *  - We keep at most `BACKUPS_KEEP_MAX` files per user (FIFO), to bound disk.
+ *  - Snapshots are trimmed per the user's retention choice (see persistence/retentionPolicy.cjs).
  */
 /**
  * When each user last had a snapshot written, so `decidePreSaveSnapshot` can
@@ -1442,8 +1435,10 @@ const lastSnapshotBytesByUser = new Map();
  * @param {string} [label]
  * @param {number | null} [contentBytes] serialized size of the workspace being
  *   snapshotted, when the caller knows it
+ * @param {{ protectSetKey?: string | null }} [options] `protectSetKey`: a snapshot set the
+ *   trim that follows must not delete (the one a restore is reading from)
  */
-function snapshotCurrentDataFile(userId, label = 'pre-write', contentBytes = null) {
+function snapshotCurrentDataFile(userId, label = 'pre-write', contentBytes = null, { protectSetKey = null } = {}) {
   try {
     const dir = backupsDirForUser(userId);
     fs.mkdirSync(dir, { recursive: true });
@@ -1474,7 +1469,7 @@ function snapshotCurrentDataFile(userId, label = 'pre-write', contentBytes = nul
 
     snapshotAttachmentsForUser(userId, label, ts);
     snapshotNoteHistoryForUser(userId, label, ts);
-    pruneBackups(dir);
+    pruneBackups(userId, dir, protectSetKey ? [protectSetKey] : []);
     // Any snapshot — launch, login, restore, autosave — restarts the
     // pre-save throttle window.
     lastSnapshotAtByUser.set(userId, Date.now());
@@ -1493,86 +1488,18 @@ function snapshotCurrentDataFile(userId, label = 'pre-write', contentBytes = nul
   }
 }
 
-function pruneBackups(dir) {
+/**
+ * Trim `backups/<user>/` to the user's retention choice (default: the
+ * long-standing 50 routine sets, restore points kept apart). Best-effort.
+ */
+function pruneBackups(userId, dir, protect = []) {
   try {
-    const entries = fs
-      .readdirSync(dir)
-      .filter((n) => n.startsWith('data-') && n.endsWith('.json'))
-      .map((n) => ({
-        name: n,
-        full: path.join(dir, n),
-        mtime: fs.statSync(path.join(dir, n)).mtimeMs,
-        setKey: backupSnapshotKey(n),
-      }));
-
-    /** @type {Map<string, { mtime: number; files: { name: string; full: string }[] }>} */
-    const sets = new Map();
-    for (const entry of entries) {
-      const existing = sets.get(entry.setKey);
-      if (!existing) {
-        sets.set(entry.setKey, { mtime: entry.mtime, files: [{ name: entry.name, full: entry.full }] });
-      } else {
-        existing.mtime = Math.max(existing.mtime, entry.mtime);
-        existing.files.push({ name: entry.name, full: entry.full });
-      }
-    }
-
-    const sortedSets = Array.from(sets.values()).sort((a, b) => b.mtime - a.mtime);
-    const keptSets = sortedSets.slice(0, BACKUPS_KEEP_MAX);
-    for (const old of sortedSets.slice(BACKUPS_KEEP_MAX)) {
-      for (const file of old.files) {
-        try {
-          fs.unlinkSync(file.full);
-        } catch {
-          /* ignore */
-        }
-        const attName = file.name.replace(/^data-/, 'attachments-').replace(/\.json$/, '');
-        const attDir = path.join(dir, attName);
-        if (fs.existsSync(attDir)) {
-          try {
-            fs.rmSync(attDir, { recursive: true, force: true });
-          } catch {
-            /* ignore */
-          }
-        }
-        const histName = file.name.replace(/^data-/, 'note-history-').replace(/\.json$/, '');
-        const histDir = path.join(dir, histName);
-        if (fs.existsSync(histDir)) {
-          try {
-            fs.rmSync(histDir, { recursive: true, force: true });
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    }
-    // Drop orphaned attachment-only folders left from older builds.
-    const keptAtt = new Set(
-      keptSets.flatMap((set) =>
-        set.files.map((f) => f.name.replace(/^data-/, 'attachments-').replace(/\.json$/, '')),
-      ),
-    );
-    const keptHist = new Set(
-      keptSets.flatMap((set) =>
-        set.files.map((f) => f.name.replace(/^data-/, 'note-history-').replace(/\.json$/, '')),
-      ),
-    );
-    for (const name of fs.readdirSync(dir)) {
-      if (name.startsWith('attachments-') && !keptAtt.has(name)) {
-        try {
-          fs.rmSync(path.join(dir, name), { recursive: true, force: true });
-        } catch {
-          /* ignore */
-        }
-      }
-      if (name.startsWith('note-history-') && !keptHist.has(name)) {
-        try {
-          fs.rmSync(path.join(dir, name), { recursive: true, force: true });
-        } catch {
-          /* ignore */
-        }
-      }
-    }
+    pruneSnapshotDir({
+      fs,
+      path,
+      dir,
+      limits: { routineKeep: readSnapshotPrefs(retentionDeps(userId)).routineKeep, protect },
+    });
   } catch (err) {
     console.warn('[cadence] prune backups failed', err);
   }
@@ -2991,6 +2918,19 @@ function finishDataSave({ uid, saveTimer, notifyRenderer }, payload, r) {
  * No-op when unset. Failures are recorded in prefs for Settings — never
  * thrown into the save path (zero disruption for users without the feature).
  */
+function retentionDeps(userId) {
+  return {
+    fs,
+    path,
+    userDataDir: app.getPath('userData'),
+    filePrefix: DATA_FILE_PREFIX,
+    userId,
+    appSlug: APP_SLUG,
+    backupsDir: backupsDirForUser(userId),
+    writeJsonText,
+  };
+}
+
 function dailyBackupMirrorDeps(userId) {
   return {
     fs,
@@ -3005,7 +2945,6 @@ function dailyBackupMirrorDeps(userId) {
       exportNoteHistoryToDir(userId, destFolder);
     },
     countNoteHistoryRevisions: () => countNoteHistoryRevisions(userId),
-    keepDays: DAILY_BACKUP_KEEP_DAYS,
   };
 }
 
@@ -3037,13 +2976,30 @@ function getDailyBackupMirrorStatus(userId) {
   return {
     ok: true,
     prefs,
-    keepDays: DAILY_BACKUP_KEEP_DAYS,
   };
 }
 
 ipcMain.handle('backupMirror:get', () => {
   const uid = readSessionUserId();
   return getDailyBackupMirrorStatus(uid);
+});
+
+ipcMain.handle('backupRetention:get', () => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  return { ok: true, state: getRetentionState(retentionDeps(uid)) };
+});
+
+// Saving a lower value trims existing backups, so it is answered with
+// `needsConfirm` + the counts until the renderer repeats it with `confirmed: true`.
+ipcMain.handle('backupRetention:set', (_evt, request) => {
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  try {
+    return changeRetention(retentionDeps(uid), request && typeof request === 'object' ? request : {});
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
 });
 
 ipcMain.handle('backupMirror:chooseDir', async () => {
@@ -3072,7 +3028,7 @@ ipcMain.handle('backupMirror:chooseDir', async () => {
   if (!written.ok) {
     return { ok: false, error: written.error || 'Could not save backup folder preference.' };
   }
-  return { ok: true, prefs: normalizeDailyBackupPrefs(next), keepDays: DAILY_BACKUP_KEEP_DAYS };
+  return { ok: true, prefs: normalizeDailyBackupPrefs(next) };
 });
 
 ipcMain.handle('backupMirror:clearDir', () => {
@@ -3091,7 +3047,7 @@ ipcMain.handle('backupMirror:clearDir', () => {
   if (!written.ok) {
     return { ok: false, error: written.error || 'Could not clear backup folder preference.' };
   }
-  return { ok: true, prefs: normalizeDailyBackupPrefs(next), keepDays: DAILY_BACKUP_KEEP_DAYS };
+  return { ok: true, prefs: normalizeDailyBackupPrefs(next) };
 });
 
 ipcMain.handle('backupMirror:runNow', (_evt, { data: payload } = {}) => {
@@ -3523,7 +3479,9 @@ ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
 
   // Snapshot the existing live file under a "pre-restore" label so the user
   // can undo the restore if they picked the wrong source.
-  snapshotCurrentDataFile(uid, 'pre-restore');
+  // The snapshot prunes, and the restore still has to read this set's attachments and note
+  // history afterwards, so the set being restored is exempt.
+  snapshotCurrentDataFile(uid, 'pre-restore', null, { protectSetKey: backupSnapshotKey(path.basename(resolved)) });
   workspaceImportLockUid = uid;
   try {
     // Commit the workspace FIRST. `writeUserData` preflights the data version

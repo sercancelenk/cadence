@@ -1,7 +1,7 @@
 /**
  * When to copy the live workspace files into `backups/` before a write.
  *
- * The old rule was "every save". With `BACKUPS_KEEP_MAX = 50` snapshots and a
+ * The old rule was "every save". With 50 snapshots and a
  * save landing every few seconds of typing, the ring buffer wrapped in about a
  * minute: the user paid a full file copy on every keystroke burst and still
  * could not recover a note deleted ten minutes earlier.
@@ -24,7 +24,7 @@
 
 const { contentShapeShrank } = require('./dataIntegrity.cjs');
 
-/** Routine saves snapshot at most this often. 50 slots then cover ~4 hours. */
+/** Routine saves snapshot at most this often. 50 routine slots (the default) then cover ~4 hours. */
 const PRE_SAVE_SNAPSHOT_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
 /**

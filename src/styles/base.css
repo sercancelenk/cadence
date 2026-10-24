@@ -112,32 +112,19 @@ code {
 }
 
 .page {
-  /* Content-density tiers (per-route opt-in via modifier classes below):
+  /* Every route in the left menu fills the space the shell gives it, the way
+   * Notes does, instead of sitting in a centred column. On a maximised window
+   * or a wide monitor the content now reaches both edges; the side padding is
+   * the only gutter. Individual blocks that need a readable line length cap
+   * themselves (e.g. `.guide-page__body`, `ch`-limited descriptions).
    *
-   *   default 1280px — reading + lists + small grids (Settings, Agenda,
-   *                    Team dashboard, Profile). Comfortable line length
-   *                    even on a 27" monitor.
-   *   .page--wide 1600px — data-dense surfaces (Home, Teams, To-dos,
-   *                    Analytics, People). Multi-column grids / charts
-   *                    naturally absorb the extra width.
-   *   .page--narrow 920px — focused forms (reserved for future use).
-   *
-   * Every tier still has a hard cap: a 5K / ultrawide display centres
-   * the content rather than letting a single sentence span the
-   * viewport. The bump from 1180 → 1280 closes the worst of the
-   * "empty kanvas" feeling on 16" / 27" displays without making
-   * paragraph text uncomfortable. */
-  max-width: 1280px;
-  margin: 0 auto;
+   * `.page--wide` / `.page--narrow` are kept as hooks for markup that already
+   * carries them; they no longer change the width. */
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
   padding: 40px 28px 48px;
-}
-
-.page--wide {
-  max-width: 1600px;
-}
-
-.page--narrow {
-  max-width: 920px;
 }
 
 .page-head h1 {

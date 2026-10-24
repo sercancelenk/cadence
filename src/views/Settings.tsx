@@ -31,6 +31,7 @@ import { CollapsibleCard } from '../components/ui/CollapsibleCard';
 import { AppearanceSettingsSection } from '../components/settings/AppearanceSettingsSection';
 import { PreferencesShell } from '../components/settings/PreferencesShell';
 import { SaveDiagnosticsSection } from '../components/settings/SaveDiagnosticsSection';
+import { BackupRetentionSettings } from '../components/settings/BackupRetentionSettings';
 import { RecoveryCodesPanel } from '../components/RecoveryCodesPanel';
 import { prepareForRemoteApply } from '../lib/syncApplyGuard';
 import { estimateWorkspaceStorage } from '../lib/workspaceStorageStats';
@@ -1270,7 +1271,6 @@ function BackupsRecoverySection({
   const [sources, setSources] = useState<DataSources | null>(null);
   const [selectedBackupPath, setSelectedBackupPath] = useState<string | null>(null);
   const [mirrorPrefs, setMirrorPrefs] = useState<DailyBackupMirrorPrefs | null>(null);
-  const [mirrorKeepDays, setMirrorKeepDays] = useState(30);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [saveError, setSaveError] = useState<SaveError | null>(null);
@@ -1283,7 +1283,6 @@ function BackupsRecoverySection({
     try {
       const r = await window.cadence!.backupMirrorGet!();
       if (r.prefs) setMirrorPrefs(r.prefs);
-      if (typeof r.keepDays === 'number') setMirrorKeepDays(r.keepDays);
     } catch (err) {
       console.warn('[cadence] backupMirrorGet failed', err);
     }
@@ -1604,7 +1603,7 @@ function BackupsRecoverySection({
                 Optional. In-app snapshots keep working as before. If you choose a folder, Cadence also writes one{' '}
                 <strong>full export</strong> there per day (data, images, note history) — so a copy survives even if
                 the app is removed. Files are <strong>readable on disk</strong> (same as Export full backup) — pick a
-                private folder. Older daily folders are pruned after {mirrorKeepDays} days. Restore with{' '}
+                private folder. Older daily folders are pruned automatically (see below). Restore with{' '}
                 <strong>Import backup folder</strong>.
               </p>
               {mirrorPrefs?.mirrorDir ? (
@@ -1640,8 +1639,7 @@ function BackupsRecoverySection({
                         return;
                       }
                       if (r.prefs) setMirrorPrefs(r.prefs);
-                      if (typeof r.keepDays === 'number') setMirrorKeepDays(r.keepDays);
-                      toast.showSuccess('Daily backup folder set', 'A full export will run once per day.');
+                                      toast.showSuccess('Daily backup folder set', 'A full export will run once per day.');
                     } finally {
                       setBusy(false);
                     }
@@ -1710,6 +1708,8 @@ function BackupsRecoverySection({
               </div>
             </div>
           ) : null}
+
+          {isElectron ? <BackupRetentionSettings /> : null}
 
           {saveError ? (
         <div

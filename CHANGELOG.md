@@ -21,6 +21,7 @@ rather than per build number.
 - **Nested note lists** with sub-lists, derived archive, safe delete and a yellow gradient folder icon for lists.
 - **Notes ⌘S saves now; ⇧⌘S saves to a file.** Typing is written every 30 seconds, structural changes within ~300 ms, and note switches, blur, lock and quit write immediately.
 - **Strikethrough moved to ⇧⌘X** in rich-text editors so ⇧⌘S can save to a file.
+- **Choose how many backups to keep** (Settings → Data & backup, desktop). Daily backup folders: newest 3 / 7 / 14 / 30 (default 30). In-app snapshots: newest 10 / 20 / 30 / 50 (default 50). Lowering a value shows exactly how many older backups will be deleted and does nothing until you confirm; cancelling changes nothing. Raising a value deletes nothing. The newest backup is always kept. The choice is stored per account on this computer, so existing installs behave exactly as before until you change it.
 
 - **Account recovery codes.** Optional MetaMask-style codes for resetting your account password on this device without losing encrypted data. Generate at sign-up (welcome tour) or in Settings; envelope is saved only after you confirm you stored the codes. `/recover` for forgotten passwords. Existing accounts without codes are unchanged.
 - **Portable ZIP backup.** Cross-platform export/import with workspace JSON and image sidecars. Primary backup on web/mobile; desktop also offers full backup folders (with note version history). Legacy JSON and folder imports still work.
@@ -59,6 +60,9 @@ rather than per build number.
 
 ### Changed
 
+- **Safety copies are no longer pushed out by routine snapshots.** The copies taken right before an import, restore, password change or account recovery now have their own quota (newest 50) instead of sharing the rolling snapshot list with the constant pre-save snapshots, which used to evict them after a few hours of editing. Nothing is deleted by this change.
+- **Every page in the left menu now fills the window**, like Notes, instead of sitting in a centred column on maximised or wide windows.
+- **Daily backup folders are counted, not dated.** The folder keeps the newest N *complete* daily folders instead of everything from the last 30 calendar days, so a computer that was off for a week never ends up with a single backup. Damaged or half-written folders, and folders dated in the future (a wrong clock), are neither counted nor deleted, and other accounts' folders in the same directory are never touched. Restoring a snapshot can no longer lose its own images because the safety copy taken first pruned it.
 - **Settings reorganised.** Cards are now grouped into five named sections:
   Account & security · Data & backup · Sync · Integrations · About. The
   "Appearance" card was removed (theme toggle already lives in the top bar).

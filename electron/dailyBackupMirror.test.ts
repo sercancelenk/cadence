@@ -13,10 +13,11 @@ const {
   isDailyFolderComplete,
   normalizePrefs,
   pruneDailyMirrorFolders,
+  planDailyMirrorTrim,
   writeDailyFullExport,
   maybeRunDailyBackupMirror,
-  DEFAULT_KEEP_DAYS,
 } = require('./dailyBackupMirror.cjs');
+const { DEFAULT_MIRROR_KEEP } = require('./persistence/retentionPolicy.cjs');
 
 const USER = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
@@ -49,42 +50,133 @@ describe('dailyBackupMirror helpers', () => {
     expect(normalizePrefs({ lastDailyDate: 'nope' }).lastDailyDate).toBeNull();
     expect(normalizePrefs({ lastDailyDate: '2026-01-02' }).lastDailyDate).toBe('2026-01-02');
   });
+
+  it('normalizePrefs reads a prefs file written before keepFolders existed', () => {
+    const legacy = { version: 1, mirrorDir: '/x', lastDailyDate: '2026-01-02' };
+    expect(normalizePrefs(legacy).keepFolders).toBeNull();
+    expect(normalizePrefs({ ...legacy, keepFolders: 7 }).keepFolders).toBe(7);
+    expect(normalizePrefs({ ...legacy, keepFolders: 5 }).keepFolders).toBeNull();
+    expect(normalizePrefs({ ...legacy, keepFolders: '7' }).keepFolders).toBeNull();
+  });
 });
 
+/** A folder `isDailyFolderComplete` accepts: parseable data.json + bundle manifest. */
+function makeCompleteFolder(root: string, name: string) {
+  const dir = path.join(root, name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify({ notes: [{ id: 'n' }] }));
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ format: 'cadence-bundle-v2' }));
+}
+
+const day = (user: string, d: number) => `cadence-daily-${user}-2026-07-${String(d).padStart(2, '0')}`;
+const prune = (root: string, keepFolders?: number | null, removeStrays?: boolean) =>
+  pruneDailyMirrorFolders({ fs, path, mirrorDir: root, appSlug: 'cadence', userId: USER, keepFolders, removeStrays });
+
 describe('pruneDailyMirrorFolders', () => {
-  it('removes only this account’s old daily folders and matching .partial dirs', () => {
+  it('keeps the newest N complete folders of this account and nothing else is touched', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-prune-'));
-    fs.mkdirSync(path.join(root, 'cadence-daily-aaaaaaaa-2026-06-01'));
-    fs.mkdirSync(path.join(root, 'cadence-daily-aaaaaaaa-2026-07-20'));
-    fs.mkdirSync(path.join(root, 'cadence-daily-bbbbbbbb-2026-06-01'));
-    fs.mkdirSync(path.join(root, 'cadence-daily-aaaaaaaa-2026-07-23.partial'));
-    fs.mkdirSync(path.join(root, 'cadence-daily-aaaaaaaa-2026-07-22.displaced'));
-    // Legacy (no user segment) must never be pruned — shared-dir multi-account risk.
-    fs.mkdirSync(path.join(root, 'cadence-daily-2026-01-01'));
+    for (let d = 1; d <= 10; d += 1) makeCompleteFolder(root, day('aaaaaaaa', d));
+    makeCompleteFolder(root, day('bbbbbbbb', 1));
+    makeCompleteFolder(root, 'cadence-daily-2026-01-01'); // legacy: no user segment
     fs.mkdirSync(path.join(root, 'something-else.partial'));
     fs.mkdirSync(path.join(root, 'unrelated-folder'));
 
-    const removed = pruneDailyMirrorFolders({
-      fs,
-      path,
-      mirrorDir: root,
-      appSlug: 'cadence',
-      userId: USER,
-      keepDays: 7,
-      todayKey: '2026-07-23',
-    });
+    expect(prune(root, 7)).toBe(3);
 
-    expect(removed).toBeGreaterThanOrEqual(3);
-    expect(fs.existsSync(path.join(root, 'cadence-daily-aaaaaaaa-2026-06-01'))).toBe(false);
-    expect(fs.existsSync(path.join(root, 'cadence-daily-aaaaaaaa-2026-07-23.partial'))).toBe(false);
-    expect(fs.existsSync(path.join(root, 'cadence-daily-aaaaaaaa-2026-07-22.displaced'))).toBe(
-      false,
-    );
-    expect(fs.existsSync(path.join(root, 'cadence-daily-aaaaaaaa-2026-07-20'))).toBe(true);
-    expect(fs.existsSync(path.join(root, 'cadence-daily-bbbbbbbb-2026-06-01'))).toBe(true);
+    for (const d of [1, 2, 3]) expect(fs.existsSync(path.join(root, day('aaaaaaaa', d)))).toBe(false);
+    for (const d of [4, 5, 6, 7, 8, 9, 10]) expect(fs.existsSync(path.join(root, day('aaaaaaaa', d)))).toBe(true);
+    expect(fs.existsSync(path.join(root, day('bbbbbbbb', 1)))).toBe(true);
     expect(fs.existsSync(path.join(root, 'cadence-daily-2026-01-01'))).toBe(true);
     expect(fs.existsSync(path.join(root, 'something-else.partial'))).toBe(true);
     expect(fs.existsSync(path.join(root, 'unrelated-folder'))).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('drops this account’s stray .partial / .displaced dirs unless told not to', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-stray-'));
+    makeCompleteFolder(root, day('aaaaaaaa', 20));
+    fs.mkdirSync(path.join(root, `${day('aaaaaaaa', 23)}.partial`));
+    fs.mkdirSync(path.join(root, `${day('aaaaaaaa', 22)}.displaced`));
+    fs.mkdirSync(path.join(root, `${day('bbbbbbbb', 23)}.partial`));
+
+    expect(prune(root, 30, false)).toBe(0);
+    expect(fs.existsSync(path.join(root, `${day('aaaaaaaa', 23)}.partial`))).toBe(true);
+
+    expect(prune(root, 30)).toBe(2);
+    expect(fs.existsSync(path.join(root, `${day('aaaaaaaa', 23)}.partial`))).toBe(false);
+    expect(fs.existsSync(path.join(root, `${day('aaaaaaaa', 22)}.displaced`))).toBe(false);
+    expect(fs.existsSync(path.join(root, `${day('bbbbbbbb', 23)}.partial`))).toBe(true);
+    expect(fs.existsSync(path.join(root, day('aaaaaaaa', 20)))).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('never counts or deletes a damaged folder, and it cannot cost a good one its place', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-damaged-'));
+    makeCompleteFolder(root, day('aaaaaaaa', 1));
+    makeCompleteFolder(root, day('aaaaaaaa', 2));
+    makeCompleteFolder(root, day('aaaaaaaa', 3));
+    fs.mkdirSync(path.join(root, day('aaaaaaaa', 9))); // newest, but an empty stub
+    fs.mkdirSync(path.join(root, day('aaaaaaaa', 8)));
+    fs.writeFileSync(path.join(root, day('aaaaaaaa', 8), 'data.json'), '{ not json');
+
+    expect(prune(root, 3)).toBe(0);
+    expect(fs.readdirSync(root)).toHaveLength(5);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('keeps the only complete folder under the smallest setting, and works on a missing dir', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-one-'));
+    makeCompleteFolder(root, day('aaaaaaaa', 5));
+    expect(prune(root, 3)).toBe(0);
+    expect(fs.existsSync(path.join(root, day('aaaaaaaa', 5)))).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
+    expect(prune(path.join(root, 'gone'), 3)).toBe(0);
+  });
+
+  it('planDailyMirrorTrim lists what pruning would delete and deletes nothing', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-plan-'));
+    for (let d = 1; d <= 5; d += 1) makeCompleteFolder(root, day('aaaaaaaa', d));
+    const plan = planDailyMirrorTrim({ fs, path, mirrorDir: root, appSlug: 'cadence', userId: USER, keepFolders: 3 });
+    expect(plan).toEqual([day('aaaaaaaa', 1), day('aaaaaaaa', 2)]);
+    expect(fs.readdirSync(root)).toHaveLength(5);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('folders dated in the future are neither ranked nor deleted, so today’s backup always stays', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-future-'));
+    for (const d of [1, 2, 3]) makeCompleteFolder(root, day('aaaaaaaa', d));
+    for (const d of [20, 21, 22, 23]) makeCompleteFolder(root, day('aaaaaaaa', d)); // clock was wrong
+    const pruneAt = (todayKey: string) =>
+      pruneDailyMirrorFolders({ fs, path, mirrorDir: root, appSlug: 'cadence', userId: USER, keepFolders: 3, todayKey });
+
+    expect(pruneAt('2026-07-04')).toBe(0);
+
+    for (const d of [1, 2, 3, 20, 21, 22, 23]) expect(fs.existsSync(path.join(root, day('aaaaaaaa', d)))).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('upgrade safety: at the default, 30 complete folders next to strays, legacy and other accounts lose nothing', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-upgrade-'));
+    for (let d = 1; d <= 30; d += 1) makeCompleteFolder(root, `cadence-daily-aaaaaaaa-2026-06-${String(d).padStart(2, '0')}`);
+    makeCompleteFolder(root, 'cadence-daily-bbbbbbbb-2026-06-01');
+    makeCompleteFolder(root, 'cadence-daily-2026-01-01');
+    fs.mkdirSync(path.join(root, 'cadence-daily-aaaaaaaa-2026-05-09')); // damaged stub
+    const before = fs.readdirSync(root).sort();
+
+    expect(
+      pruneDailyMirrorFolders({ fs, path, mirrorDir: root, appSlug: 'cadence', userId: USER, removeStrays: false, todayKey: '2026-06-30' }),
+    ).toBe(0);
+    expect(fs.readdirSync(root).sort()).toEqual(before);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('an unset or unknown keepFolders keeps the long-standing default', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-default-'));
+    for (let d = 1; d <= DEFAULT_MIRROR_KEEP + 1; d += 1) {
+      makeCompleteFolder(root, `cadence-daily-aaaaaaaa-2026-06-${String(d).padStart(2, '0')}`);
+    }
+    expect(prune(root, null)).toBe(1);
+    expect(prune(root, 2)).toBe(0); // 2 is not an offered choice → default, nothing more to trim
     fs.rmSync(root, { recursive: true, force: true });
   });
 });
@@ -156,7 +248,6 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
       exportNoteHistory: () => {},
       countNoteHistoryRevisions: () => 0,
       now: new Date(2026, 6, 23),
-      keepDays: DEFAULT_KEEP_DAYS,
     });
     expect(ran.ran).toBe(true);
     expect(ran.ok).toBe(true);

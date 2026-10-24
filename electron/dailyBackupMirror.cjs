@@ -11,10 +11,13 @@
 'use strict';
 
 const { isCatastrophicEmptyOverwrite } = require('./persistence/dataIntegrity.cjs');
+const {
+  MIRROR_KEEP_CHOICES,
+  normalizeMirrorKeep,
+  planMirrorPrune,
+} = require('./persistence/retentionPolicy.cjs');
 
 const PREFS_VERSION = 1;
-/** Keep this many calendar days of daily folders. */
-const DEFAULT_KEEP_DAYS = 30;
 /** `cadence-daily-<userIdShort>-YYYY-MM-DD` (userIdShort = first 8 of UUID). */
 const DAILY_FOLDER_RE = /^(.+)-daily-([0-9a-f]{8})-(\d{4}-\d{2}-\d{2})$/i;
 
@@ -85,7 +88,7 @@ function isDailyFolderComplete(opts) {
 
 /**
  * @param {unknown} raw
- * @returns {{ version: number; mirrorDir: string | null; lastDailyDate: string | null; lastOkPath: string | null; lastOkAt: string | null; lastError: string | null; lastErrorAt: string | null }}
+ * @returns {{ version: number; mirrorDir: string | null; keepFolders: number | null; lastDailyDate: string | null; lastOkPath: string | null; lastOkAt: string | null; lastError: string | null; lastErrorAt: string | null }}
  */
 function normalizePrefs(raw) {
   const o = raw && typeof raw === 'object' ? /** @type {Record<string, unknown>} */ (raw) : {};
@@ -97,6 +100,8 @@ function normalizePrefs(raw) {
   return {
     version: PREFS_VERSION,
     mirrorDir,
+    // Optional and expand-only: absent / unknown means "use the default".
+    keepFolders: MIRROR_KEEP_CHOICES.includes(o.keepFolders) ? o.keepFolders : null,
     lastDailyDate,
     lastOkPath: typeof o.lastOkPath === 'string' ? o.lastOkPath : null,
     lastOkAt: typeof o.lastOkAt === 'string' ? o.lastOkAt : null,
@@ -140,63 +145,86 @@ function writePrefs(deps, prefs) {
 }
 
 /**
- * Remove this account's daily folders older than keepDays; also drop leftover
- * matching `*.partial` dirs. Never deletes unrelated `*.partial` names.
+ * This account's daily folders in `mirrorDir`, split into backups that can be
+ * ranked and stray `*.partial` / `*.displaced` leftovers.
  *
- * @param {{ fs: typeof import('fs'); path: typeof import('path'); mirrorDir: string; appSlug: string; userId: string; keepDays?: number; todayKey: string }} opts
- * @returns {number} number of directories removed
+ * Legacy `app-daily-YYYY-MM-DD` folders have no user segment, so in a shared
+ * mirror dir they cannot be told apart from another account's: they are never
+ * listed here, hence never deleted.
+ *
+ * Folders dated after `todayKey` (a clock that was wrong, or a folder copied in) are left out
+ * entirely: they must neither push today's real backup out of the ranking nor be deleted.
+ *
+ * @param {{ fs: typeof import('fs'); path: typeof import('path'); mirrorDir: string; appSlug: string; userId: string; todayKey?: string }} opts
+ * @returns {{ folders: { name: string; dateKey: string; complete: boolean }[]; strays: string[] }}
  */
-function pruneDailyMirrorFolders(opts) {
-  const { fs, path, mirrorDir, appSlug, userId, todayKey } = opts;
-  const keepDays = opts.keepDays ?? DEFAULT_KEEP_DAYS;
-  if (!mirrorDir || !fs.existsSync(mirrorDir)) return 0;
-
-  let removed = 0;
-  const today = parseDateKey(todayKey);
-  if (!today) return 0;
+function listDailyMirrorFolders(opts) {
+  const { fs, path, mirrorDir, appSlug, userId } = opts;
+  const todayKey = opts.todayKey ?? localDateKey();
+  const folders = [];
+  const strays = [];
+  if (!mirrorDir || !fs.existsSync(mirrorDir)) return { folders, strays };
   const uidSeg = userIdFolderSegment(userId);
 
   for (const name of fs.readdirSync(mirrorDir)) {
-    const full = path.join(mirrorDir, name);
-    let stat;
     try {
-      stat = fs.statSync(full);
+      if (!fs.statSync(path.join(mirrorDir, name)).isDirectory()) continue;
     } catch {
       continue;
     }
-    if (!stat.isDirectory()) continue;
-
-    let baseName = name;
-    if (name.endsWith('.partial')) baseName = name.slice(0, -'.partial'.length);
-    else if (name.endsWith('.displaced')) baseName = name.slice(0, -'.displaced'.length);
-
+    const isStray = name.endsWith('.partial') || name.endsWith('.displaced');
+    const baseName = isStray ? name.slice(0, name.lastIndexOf('.')) : name;
     const modern = DAILY_FOLDER_RE.exec(baseName);
-    // Never auto-delete legacy `app-daily-YYYY-MM-DD` folders: they have no user
-    // segment, so pruning them from a shared mirror dir can wipe another account.
-    if (!modern) continue;
-    if (modern[1] !== appSlug || modern[2].toLowerCase() !== uidSeg) continue;
-
-    if (name.endsWith('.partial') || name.endsWith('.displaced')) {
-      try {
-        fs.rmSync(full, { recursive: true, force: true });
-        removed += 1;
-      } catch {
-        /* ignore */
-      }
+    if (!modern || modern[1] !== appSlug || modern[2].toLowerCase() !== uidSeg) continue;
+    if (isStray) {
+      strays.push(name);
       continue;
     }
+    const dateKey = modern[3];
+    if (!parseDateKey(dateKey) || dateKey > todayKey) continue;
+    folders.push({
+      name,
+      dateKey,
+      // Existence alone is not a backup; see isDailyFolderComplete.
+      complete: isDailyFolderComplete({ fs, path, mirrorDir, appSlug, userId, dateKey }),
+    });
+  }
+  return { folders, strays };
+}
 
-    const folderDay = parseDateKey(modern[3]);
-    if (!folderDay) continue;
-    // Calendar-day age (avoid DST ms skew near the keep boundary).
-    const ageDays =
-      Math.round((today.getTime() - folderDay.getTime()) / 86400000);
-    if (ageDays < keepDays) continue;
+/**
+ * Daily folders that trimming to `keepFolders` would delete, without deleting.
+ *
+ * @param {{ fs: typeof import('fs'); path: typeof import('path'); mirrorDir: string; appSlug: string; userId: string; keepFolders?: number | null; todayKey?: string }} opts
+ * @returns {string[]} folder names, oldest first
+ */
+function planDailyMirrorTrim(opts) {
+  const { folders } = listDailyMirrorFolders(opts);
+  return planMirrorPrune(folders, normalizeMirrorKeep(opts.keepFolders)).remove;
+}
+
+/**
+ * Keep the newest `keepFolders` complete daily folders of this account and
+ * delete the older ones. With `removeStrays`, also drop this account's leftover
+ * `*.partial` / `*.displaced` dirs — only safe when no write is in flight.
+ *
+ * @param {{ fs: typeof import('fs'); path: typeof import('path'); mirrorDir: string; appSlug: string; userId: string; keepFolders?: number | null; removeStrays?: boolean; todayKey?: string }} opts
+ * @returns {number} number of directories removed
+ */
+function pruneDailyMirrorFolders(opts) {
+  const { fs, path, mirrorDir, removeStrays = true } = opts;
+  const { folders, strays } = listDailyMirrorFolders(opts);
+  const doomed = [
+    ...(removeStrays ? strays : []),
+    ...planMirrorPrune(folders, normalizeMirrorKeep(opts.keepFolders)).remove,
+  ];
+  let removed = 0;
+  for (const name of doomed) {
     try {
-      fs.rmSync(full, { recursive: true, force: true });
+      fs.rmSync(path.join(mirrorDir, name), { recursive: true, force: true });
       removed += 1;
     } catch {
-      /* ignore */
+      /* best-effort */
     }
   }
   return removed;
@@ -381,7 +409,6 @@ const inFlightUsers = new Set();
  *   exportAttachments: (destDir: string) => number;
  *   exportNoteHistory: (destFolder: string) => void;
  *   countNoteHistoryRevisions: () => number;
- *   keepDays?: number;
  *   now?: Date;
  *   force?: boolean;
  * }} deps
@@ -449,7 +476,7 @@ function maybeRunDailyBackupMirror(deps) {
           mirrorDir: /** @type {string} */ (prefs.mirrorDir),
           appSlug: deps.appSlug,
           userId: deps.userId,
-          keepDays: deps.keepDays ?? DEFAULT_KEEP_DAYS,
+          keepFolders: prefs.keepFolders,
           todayKey,
         });
       } catch {
@@ -472,7 +499,6 @@ function maybeRunDailyBackupMirror(deps) {
 
 module.exports = {
   PREFS_VERSION,
-  DEFAULT_KEEP_DAYS,
   localDateKey,
   userIdFolderSegment,
   dailyFolderName,
@@ -482,6 +508,8 @@ module.exports = {
   prefsPathForUser,
   readPrefs,
   writePrefs,
+  listDailyMirrorFolders,
+  planDailyMirrorTrim,
   pruneDailyMirrorFolders,
   writeDailyFullExport,
   maybeRunDailyBackupMirror,

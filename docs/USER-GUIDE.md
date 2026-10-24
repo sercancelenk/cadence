@@ -103,7 +103,10 @@ Everything lives under **Settings → Data & backup → Backup & recovery**. The
 
 ### Automatic snapshots (desktop only)
 
-Cadence keeps up to **50 rolling snapshots** at launch, sign-in, before each save, before password changes, and before restores. Each snapshot shows team / task / note counts so you can pick the right one.
+Cadence keeps up to **50 rolling snapshots** (default) at launch, sign-in and before saves. Safety copies taken before an import, restore, password change or account recovery are kept **separately** (the newest 50), so routine snapshots never push them out. Each snapshot shows team / task / note counts so you can pick the right one.
+
+- **How many to keep:** under **How many backups to keep** you can choose 10 / 20 / 30 / 50 routine snapshots and 3 / 7 / 14 / 30 daily backup folders. Images are shared between snapshots and cost little disk space; each daily folder holds a full copy of your images, so that is the setting that decides disk use.
+- **Lowering a value deletes older backups.** Cadence tells you how many will go and waits for your confirmation; Cancel changes nothing. The newest backup is always kept, and raising a value deletes nothing.
 
 - **Restore** always snapshots your *current* state first — you can undo a bad restore.
 - **Open data folder** opens the Cadence data directory in Finder / Explorer.

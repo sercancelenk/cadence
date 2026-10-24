@@ -62,6 +62,8 @@ export type DataSources = {
 export type DailyBackupMirrorPrefs = {
   version: number;
   mirrorDir: string | null;
+  /** Newest complete daily folders to keep; null = the default (30). */
+  keepFolders: number | null;
   lastDailyDate: string | null;
   lastOkPath: string | null;
   lastOkAt: string | null;
@@ -74,9 +76,39 @@ export type DailyBackupMirrorStatus = {
   error?: string;
   canceled?: boolean;
   prefs?: DailyBackupMirrorPrefs;
-  keepDays?: number;
   path?: string;
 };
+
+export type BackupRetentionState = {
+  mirrorKeep: number;
+  mirrorKeepChoices: number[];
+  snapshotRoutineKeep: number;
+  snapshotRoutineKeepChoices: number[];
+  /** Restore points (import / restore / password change / recovery) kept apart from routine snapshots. */
+  snapshotLifecycleKeep: number;
+  mirrorDirConfigured: boolean;
+  mirrorDirAvailable: boolean;
+};
+
+export type BackupRetentionDeleteCounts = { mirrorFolders: number; snapshotSets: number };
+
+export type BackupRetentionRequest = {
+  mirrorKeep?: number;
+  snapshotRoutineKeep?: number;
+  /** Must be `true`, together with `expectedWillDelete`, to apply a change that deletes existing backups. */
+  confirmed?: boolean;
+  /** The counts the user was shown; if more would be deleted now, the main process asks again. */
+  expectedWillDelete?: BackupRetentionDeleteCounts;
+};
+
+export type BackupRetentionGetResult =
+  | { ok: true; state: BackupRetentionState }
+  | { ok: false; error: string };
+
+export type BackupRetentionSetResult =
+  | { ok: true; state: BackupRetentionState; deleted: BackupRetentionDeleteCounts; mirrorDeferred: boolean }
+  | { ok: false; needsConfirm: true; willDelete: BackupRetentionDeleteCounts }
+  | { ok: false; needsConfirm?: undefined; error: string };
 
 export type LoadResult =
   | { ok: true; data: unknown; encrypted: boolean; reason?: string; writeGeneration?: number }
@@ -211,6 +243,8 @@ interface CadenceApi {
       backupMirrorChooseDir?: () => Promise<DailyBackupMirrorStatus>;
       backupMirrorClearDir?: () => Promise<DailyBackupMirrorStatus>;
       backupMirrorRunNow?: (data: unknown) => Promise<DailyBackupMirrorStatus>;
+      backupRetentionGet?: () => Promise<BackupRetentionGetResult>;
+      backupRetentionSet?: (request: BackupRetentionRequest) => Promise<BackupRetentionSetResult>;
       cacheStats?: () => Promise<CacheStats>;
       clearChromiumCache?: () => Promise<CacheClearResult>;
       saveDiagnosticsGet?: () => Promise<SaveDiagnostics>;
