@@ -2623,3 +2623,12 @@
   font-size: 16px;
   line-height: 1;
 }
+
+/* Autosave confirmation next to the note actions: green check for a few seconds. */
+.saved-flash {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ok);
+  margin-right: 4px;
+}

@@ -13,6 +13,7 @@ import {
   IcTrash,
   IcUnlock,
 } from '../../components/icons';
+import type { ReactNode } from 'react';
 import type { Note } from '../../model';
 import { NOTE_EXPORT_FORMATS, type NoteExportFormat } from '../../lib/noteExport';
 import { Tooltip } from '../../components/ui/Tooltip';
@@ -41,6 +42,8 @@ export type NotesDetailHeaderProps = {
   archivedViaList?: boolean;
   /** Omit to hide the save controls (e.g. no desktop bridge). */
   onSaveToFile?: () => void;
+  /** Autosave confirmation (green check) shown at the start of the actions. */
+  saveFlash?: ReactNode;
 };
 
 export function NotesDetailHeader({
@@ -63,6 +66,7 @@ export function NotesDetailHeader({
   onExportFormatChange,
   onSaveToFile,
   archivedViaList = false,
+  saveFlash,
 }: NotesDetailHeaderProps) {
   const extractBlocked = selected.locked && !editorReady;
   const deleteBlocked = selected.locked;
@@ -91,6 +95,7 @@ export function NotesDetailHeader({
         </button>
       </Tooltip>
       <div className="notes-page__main-actions">
+        {saveFlash}
         {aiEnabled ? (
           <NotesIconButton
             onClick={onExtractTasks}

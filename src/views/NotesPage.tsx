@@ -13,6 +13,7 @@ import { useConfirm } from '../components/ui/ConfirmProvider';
 import { useToast } from '../components/ui/Toast';
 import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
 import { useAccount } from '../AccountContext';
+import { SavedFlashConnected } from '../components/SavedFlash';
 import {
   NotesBodyEditor,
   NotesDetailHeader,
@@ -628,6 +629,7 @@ export function NotesPage() {
         ) : (
           <>
             <NotesDetailHeader
+              saveFlash={<SavedFlashConnected />}
               selected={selected}
               editorReady={editorReady}
               busy={lock.busy}

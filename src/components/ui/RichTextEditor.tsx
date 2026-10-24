@@ -5,11 +5,7 @@ import { createPortal } from 'react-dom';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { RichTextBodyFormat, RichTextDoc, RichTextPayload } from '../../lib/richText';
 import {
-  isRichTextOverSoftLimit,
-  measureCharCount,
   serializeRichDoc,
-  RICH_TEXT_HARD_CHAR_LIMIT,
-  RICH_TEXT_SOFT_CHAR_LIMIT,
 } from '../../lib/richText';
 import { canonicalDocSignature } from '../../lib/richTextBody';
 import { applyCodeBlockLanguage } from '../../lib/richTextCodeBlock';
@@ -77,8 +73,6 @@ export type RichTextEditorProps = {
   minHeight?: number;
   /** Debounce `onChange` (ms). Default {@link EDITOR_CHANGE_DEBOUNCE_MS}. Set 0 to fire synchronously. */
   onChangeDebounceMs?: number;
-  /** Show a banner when the document exceeds {@link RICH_TEXT_SOFT_CHAR_LIMIT}. Default true. */
-  showSizeWarning?: boolean;
   /** Optional hook for insert errors (oversized image, etc.). */
   onEditorNotice?: (message: string) => void;
   /** Scope for sidecar image files (note/todo id). Required for paste/upload. */
@@ -113,10 +107,6 @@ function contentKey(
 }
 
 /** Used by the external-sync paths, which compare against incoming props. */
-function editorCharCount(ed: Editor): number {
-  return measureCharCount(ed.state.doc.content.size, () => ed.getText().length);
-}
-
 function docSignatureFromEditor(ed: Editor): string {
   return canonicalDocSignature(ed.getJSON() as RichTextDoc, 'prosemirror');
 }
@@ -230,7 +220,6 @@ export function RichTextEditor({
   toolbar = true,
   minHeight = 280,
   onChangeDebounceMs = DEFAULT_ON_CHANGE_DEBOUNCE_MS,
-  showSizeWarning = true,
   onEditorNotice,
   attachmentScope,
   attachmentUserId,
@@ -309,7 +298,6 @@ export function RichTextEditor({
   // hydrateAndTrack is declared below; ref avoids TDZ / circular hook deps.
   const hydrateAndTrackRef = useRef<(ed: Editor, userId: string) => Promise<void>>(async () => {});
 
-  const [charCount, setCharCount] = useState(0);
 
   // In-editor find & replace (⌘F). `findOpenRef` mirrors the state so the
   // (stable) ProseMirror keydown handler can read/toggle it without stale
@@ -336,12 +324,6 @@ export function RichTextEditor({
 
   const syncBaselineFromEditor = useCallback((ed: Editor) => {
     lastEmittedSig.current = docSignatureFromEditor(ed);
-    setCharCount(editorCharCount(ed));
-  }, []);
-
-  /** Display-only attachment URL swaps — never treat live doc as already-emitted. */
-  const refreshEditorMetrics = useCallback((ed: Editor) => {
-    setCharCount(editorCharCount(ed));
   }, []);
 
   const tryAutoFocus = useCallback((ed: Editor) => {
@@ -369,16 +351,12 @@ export function RichTextEditor({
     localEditGen.current += 1;
     onChangeRef.current?.(payload);
     onSaveStateChangeRef.current?.('saved');
-    setCharCount(editorCharCount(ed));
   }, []);
 
   const flushPendingExternalRef = useRef<() => void>(() => {});
 
   const scheduleChange = useCallback(
     (ed: Editor) => {
-      // No per-keystroke `getText()` / setState here: both walk the whole
-      // document and re-render this component on every key. The size warning
-      // refreshes when the debounce flushes (`flushChange`).
       onSaveStateChangeRef.current?.('pending');
       const ms = debounceMsRef.current;
       if (ms <= 0) {
@@ -412,12 +390,10 @@ export function RichTextEditor({
       syncBaselineFromEditor(ed);
       const uid = attachmentUserIdRef.current;
       if (uid) {
-        void hydrateAndTrackRef.current(ed, uid).then(() => {
-          if (editorRef.current) refreshEditorMetrics(editorRef.current);
-        });
+        void hydrateAndTrackRef.current(ed, uid);
       }
     },
-    [refreshEditorMetrics, syncBaselineFromEditor],
+    [syncBaselineFromEditor],
   );
 
   const flushPendingExternal = useCallback(() => {
@@ -730,7 +706,6 @@ export function RichTextEditor({
       if (transaction.getMeta(HYDRATION_TX_META)) {
         // Attachment display-URL swaps only — never advance the emit baseline
         // (async hydration can race with typed edits already debounced).
-        refreshEditorMetrics(ed);
         return;
       }
       if (!editableRef.current) {
@@ -745,9 +720,7 @@ export function RichTextEditor({
       tryAutoFocus(ed);
       void fetchRichTextAttachmentUserId(attachmentUserIdRef.current).then((uid) => {
         attachmentUserIdRef.current = uid;
-        void hydrateAndTrackRef.current(ed, uid).then(() => {
-          if (editorRef.current) refreshEditorMetrics(editorRef.current);
-        });
+        void hydrateAndTrackRef.current(ed, uid);
       });
     },
     onBlur: () => {
@@ -836,27 +809,21 @@ export function RichTextEditor({
       if (cancelled) return;
       attachmentUserIdRef.current = uid;
       if (editor) {
-        void hydrateAndTrack(editor, uid).then(() => {
-          if (editorRef.current) refreshEditorMetrics(editorRef.current);
-        });
+        void hydrateAndTrack(editor, uid);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [attachmentUserId, editor, hydrateAndTrack, refreshEditorMetrics]);
+  }, [attachmentUserId, editor, hydrateAndTrack]);
 
   useEffect(() => {
     if (!editor) return;
     const uid = attachmentUserIdRef.current;
     if (!uid) return;
-    void hydrateAndTrack(editor, uid).then(() => {
-      if (editorRef.current) refreshEditorMetrics(editorRef.current);
-    });
-  }, [editor, externalKey, hydrateAndTrack, refreshEditorMetrics]);
+    void hydrateAndTrack(editor, uid);
+  }, [editor, externalKey, hydrateAndTrack]);
 
-  const overSoft = showSizeWarning && isRichTextOverSoftLimit(charCount);
-  const overHard = charCount > RICH_TEXT_HARD_CHAR_LIMIT;
 
   const toolbarNode =
     toolbar && editor ? (
@@ -879,26 +846,6 @@ export function RichTextEditor({
       {editorNotice ? (
         <div className="rich-editor__notice" role="status">
           {editorNotice}
-        </div>
-      ) : null}
-      {overSoft ? (
-        <div
-          className={`rich-editor__size-banner${overHard ? ' rich-editor__size-banner--hard' : ''}`}
-          role="status"
-        >
-          {overHard ? (
-            <>
-              Very large document ({charCount.toLocaleString()} characters). Consider splitting into
-              multiple notes — editing may feel slow above{' '}
-              {RICH_TEXT_HARD_CHAR_LIMIT.toLocaleString()} characters.
-            </>
-          ) : (
-            <>
-              Large document ({charCount.toLocaleString()} characters). Still fine to edit; for very
-              long reference material, splitting notes keeps things snappy (soft limit{' '}
-              {RICH_TEXT_SOFT_CHAR_LIMIT.toLocaleString()}).
-            </>
-          )}
         </div>
       ) : null}
       {findOpen && editor ? (

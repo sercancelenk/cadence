@@ -37,26 +37,6 @@ export type RichTextPayload = {
   docSignature?: string;
 };
 
-/**
- * Performance guardrails for a single note/todo body (plain-text length).
- * Thousands of short notes are fine — cost scales with ONE open document.
- */
-export const RICH_TEXT_SOFT_CHAR_LIMIT = 100_000;
-export const RICH_TEXT_HARD_CHAR_LIMIT = 250_000;
-
-export function isRichTextOverSoftLimit(plainTextLength: number): boolean {
-  return plainTextLength > RICH_TEXT_SOFT_CHAR_LIMIT;
-}
-
-/**
- * Character count for the size warning. ProseMirror's `content.size` is O(1)
- * and never smaller than the text length, so below the soft limit it is enough;
- * only a document that could be over the limit pays for the exact full walk.
- */
-export function measureCharCount(contentSize: number, exactTextLength: () => number): number {
-  return contentSize <= RICH_TEXT_SOFT_CHAR_LIMIT ? contentSize : exactTextLength();
-}
-
 export const EMPTY_RICH_DOC: RichTextDoc = {
   type: 'doc',
   content: [{ type: 'paragraph' }],

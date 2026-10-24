@@ -455,19 +455,6 @@
   padding: 0 2px;
 }
 
-.rich-editor__size-banner {
-  padding: 8px 12px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
-}
-.rich-editor__size-banner--hard {
-  background: color-mix(in srgb, #ffb24a 18%, var(--panel));
-  border-bottom-color: color-mix(in srgb, #ffb24a 35%, transparent);
-}
-
 /* Task list checkboxes */
 .rich-editor__surface .tiptap ul[data-type='taskList'] {
   list-style: none;
