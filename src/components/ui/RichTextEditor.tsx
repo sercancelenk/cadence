@@ -371,7 +371,9 @@ export function RichTextEditor({
 
   const scheduleChange = useCallback(
     (ed: Editor) => {
-      setCharCount(ed.getText().length);
+      // No per-keystroke `getText()` / setState here: both walk the whole
+      // document and re-render this component on every key. The size warning
+      // refreshes when the debounce flushes (`flushChange`).
       onSaveStateChangeRef.current?.('pending');
       const ms = debounceMsRef.current;
       if (ms <= 0) {
