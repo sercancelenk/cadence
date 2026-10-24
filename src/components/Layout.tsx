@@ -5,7 +5,8 @@ import { TopBar } from './TopBar';
 import { MobileTabBar } from './MobileTabBar';
 import { QuickAddFab } from './QuickAddFab';
 import { BackToTopFab } from './BackToTopFab';
-import { usePersistStatus } from '../AppDataContext';
+import { useAppDataActions, usePersistStatus } from '../AppDataContext';
+import { isSaveNowShortcut } from '../lib/saveNowShortcut';
 import { IcAlertTriangle, IcX } from './icons';
 import { PATH_SETTINGS } from '../lib/routes';
 import { isElectronApp } from '../lib/runtime';
@@ -25,6 +26,19 @@ export function Layout() {
   // visible by default and the toggle just switches between full / collapsed.
   const [navCollapsed, setNavCollapsed] = useState<boolean>(detectIsMobile);
   const location = useLocation();
+  const { flushPendingSave } = useAppDataActions();
+
+  // ⌘S / Ctrl+S: commit the open editor and write now, without waiting for the
+  // autosave interval. (Shift+⌘S saves the open note to a file instead.)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!isSaveNowShortcut(e)) return;
+      e.preventDefault();
+      void flushPendingSave();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [flushPendingSave]);
 
   // Track viewport changes (rotate / resize). When transitioning from desktop
   // to mobile we collapse, and vice-versa we expand for the desktop default.

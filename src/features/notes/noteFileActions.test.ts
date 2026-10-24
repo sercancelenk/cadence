@@ -131,16 +131,16 @@ describe('saveNoteToDisk', () => {
   });
 });
 
-describe('isSaveNoteShortcut', () => {
+describe('isSaveNoteShortcut (save to file = Shift+Cmd/Ctrl+S)', () => {
   const ev = (o: Partial<KeyboardEvent>) => o as KeyboardEvent;
-  it('matches Cmd+S and Ctrl+S, case-insensitively', () => {
-    expect(isSaveNoteShortcut(ev({ key: 's', metaKey: true }))).toBe(true);
-    expect(isSaveNoteShortcut(ev({ key: 'S', ctrlKey: true }))).toBe(true);
+  it('matches Shift+Cmd+S and Shift+Ctrl+S, case-insensitively', () => {
+    expect(isSaveNoteShortcut(ev({ key: 'S', metaKey: true, shiftKey: true }))).toBe(true);
+    expect(isSaveNoteShortcut(ev({ key: 's', ctrlKey: true, shiftKey: true }))).toBe(true);
   });
-  it('ignores plain s, Shift+Cmd+S and Alt+Cmd+S', () => {
+  it('leaves plain Cmd+S to the immediate save, and ignores plain s and Alt combos', () => {
+    expect(isSaveNoteShortcut(ev({ key: 's', metaKey: true }))).toBe(false);
     expect(isSaveNoteShortcut(ev({ key: 's' }))).toBe(false);
-    expect(isSaveNoteShortcut(ev({ key: 's', metaKey: true, shiftKey: true }))).toBe(false);
-    expect(isSaveNoteShortcut(ev({ key: 's', metaKey: true, altKey: true }))).toBe(false);
+    expect(isSaveNoteShortcut(ev({ key: 'S', metaKey: true, shiftKey: true, altKey: true }))).toBe(false);
   });
 });
 

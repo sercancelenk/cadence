@@ -45,6 +45,7 @@ export type PersistStatusSnapshot = {
   lastSaveError: PersistError | null;
   lastSavedAt: number | null;
   saving: boolean;
+  hasPendingSave: boolean;
   dataLossSuspicion: DataLossSuspicion | null;
   currentShape: DataShape;
 };

@@ -13,7 +13,7 @@ import { useAccount } from './AccountContext';
 import { STORAGE_PREFIX } from '../lib/appBranding';
 import { registerFlushPendingSave, runBeforeFlushHooks, unregisterFlushPendingSave } from '../lib/pendingSaveFlush';
 import { revokeAttachmentBlobUrls } from '../lib/richTextAttachmentStore';
-import { APP_SAVE_DEBOUNCE_MS } from '../lib/saveTiming';
+import { planSaveTimer, type SaveKind } from '../lib/saveTiming';
 import { isReminderSlotNotified, reminderNotifyKey } from '../lib/reminderNotify';
 import { advanceReminderOnce } from '../lib/reminderRecurrence';
 import { supportsPwaOsSchedule } from '../lib/reminderDelivery/capabilities';
@@ -141,7 +141,11 @@ type Api = {
    */
   syncFromDisk: () => Promise<void>;
   /** Returns false when persist is blocked (mutation is not applied). */
-  update: (fn: (d: AppData) => AppData) => boolean;
+  /**
+   * `kind` picks the write cadence: `structural` (default) lands on disk within
+   * ~300 ms; `typing` is batched into one write every 30 s (flushes still drain it).
+   */
+  update: (fn: (d: AppData) => AppData, kind?: SaveKind) => boolean;
   /**
    * Most recent unrecoverable save failure (or null). Subscribe to this from
    * a Layout-level banner so users see save issues anywhere in the app, not
@@ -152,6 +156,8 @@ type Api = {
   lastSavedAt: number | null;
   /** True while a save is currently in flight. */
   saving: boolean;
+  /** True while edits are waiting for the next scheduled write. */
+  hasPendingSave: boolean;
   clearSaveError: () => void;
   /**
    * If the file loaded at boot is meaningfully smaller than the
@@ -320,6 +326,8 @@ type Api = {
         | 'groupId'
       >
     >,
+    /** `typing` marks editor body saves, which are written on the slow typing cadence. */
+    opts?: { typing?: boolean },
   ) => void;
   removeNote: (id: string) => void;
   setNotesLock: (lock: NotesLock | undefined) => void;
@@ -364,10 +372,11 @@ const SnapshotStoreCtx = createContext<AppDataSnapshotStore | null>(null);
 const PersistStoreCtx = createContext<PersistStatusStore | null>(null);
 const ActionsCtx = createContext<Omit<
   Api,
-  'data' | 'ready' | 'lastSaveError' | 'lastSavedAt' | 'saving' | 'dataLossSuspicion' | 'currentShape'
+  'data' | 'ready' | 'lastSaveError' | 'lastSavedAt' | 'saving' | 'hasPendingSave' | 'dataLossSuspicion' | 'currentShape'
 > | null>(null);
 
-const SAVE_DEBOUNCE_MS = APP_SAVE_DEBOUNCE_MS;
+/** Pause between draining the editor and checking for a pending write on window blur. */
+const BLUR_SETTLE_MS = 100;
 
 /** Load failures that must not be overwritten by an empty in-memory workspace. */
 const PERSIST_BLOCK_LOAD_REASONS = new Set([
@@ -635,8 +644,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [lastSaveError, setLastSaveError] = useState<PersistError | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+  const [hasPendingSave, setHasPendingSave] = useState(false);
   const [dataLossSuspicion, setDataLossSuspicion] = useState<DataLossSuspicion | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** When `saveTimer` fires; lets typing edits keep an earlier pending write instead of resetting it. */
+  const saveDueAt = useRef<number | null>(null);
+  const clearSaveTimer = useCallback(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    saveDueAt.current = null;
+  }, []);
   const persistBlockedRef = useRef(false);
   // The most recent payload pending a debounced save, kept so we can flush it
   // synchronously on tab close / unmount.
@@ -653,6 +670,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       lastSaveError: null,
       lastSavedAt: null,
       saving: false,
+      hasPendingSave: false,
       dataLossSuspicion: null,
       currentShape: shapeOfData(normalizeData(null)),
     }),
@@ -672,10 +690,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       lastSaveError,
       lastSavedAt,
       saving,
+      hasPendingSave,
       dataLossSuspicion,
       currentShape: shapeOfData(data ?? normalizeData(null)),
     });
-  }, [data, ready, lastSaveError, lastSavedAt, saving, dataLossSuspicion]);
+  }, [data, ready, lastSaveError, lastSavedAt, saving, hasPendingSave, dataLossSuspicion]);
 
   // Bubble main-process save failures
   // undecipherable file") up to the global banner. This complements the
@@ -872,14 +891,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const flushPendingSave = useCallback(async () => {
     await runBeforeFlushHooks();
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
+    clearSaveTimer();
     // Never flush an empty/failed scaffold over disk while persist is blocked
     // (pagehide, syncFromDisk, visibilitychange, effect cleanup).
     if (persistBlockedRef.current) {
       pendingSave.current = null;
+      setHasPendingSave(false);
       persistQueueRef.current.cancelPending();
       await persistQueueRef.current.flush();
       return;
@@ -887,6 +904,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const uid = userIdRef.current;
     const next = pendingSave.current ?? snapshotStoreRef.current.getSnapshot();
     pendingSave.current = null;
+    setHasPendingSave(false);
     // Keep the snapshot store in lockstep with the just-flushed state. Callers
     // (export / additive merge in Settings) read `getLatestSnapshot()` right
     // after awaiting this flush; without this the store still lags React by one
@@ -938,13 +956,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const syncLocalStorageBestEffort = () => {
       const uid = userIdRef.current;
       if (!uid || persistBlockedRef.current || window.cadence?.saveData) return;
-      if (saveTimer.current) {
-        clearTimeout(saveTimer.current);
-        saveTimer.current = null;
-      }
+      clearSaveTimer();
       const payload = pendingSave.current ?? snapshotStoreRef.current.getSnapshot();
       if (!payload) return;
       pendingSave.current = null;
+      setHasPendingSave(false);
       try {
         localStorage.setItem(storageKeyForUser(uid), appDataToPersistJson(payload));
         writeGenerationRef.current += 1;
@@ -976,11 +992,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         void flushPendingSave();
       }
     };
+    // Typing is written on a slow interval, so leaving the window (another app,
+    // another window) must not wait for it. Skipped when nothing is pending so
+    // plain focus changes never trigger a write.
+    const onWindowBlur = () => {
+      void (async () => {
+        await runBeforeFlushHooks();
+        // The editor drain hands its text to `update`, whose state updater runs
+        // on React's schedule; give it a beat before deciding whether to write.
+        await new Promise((resolve) => setTimeout(resolve, BLUR_SETTLE_MS));
+        if (pendingSave.current !== null) await flushPendingSave();
+      })();
+    };
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('beforeunload', onPageHide);
+    window.addEventListener('blur', onWindowBlur);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('blur', onWindowBlur);
       window.removeEventListener('beforeunload', onPageHide);
       document.removeEventListener('visibilitychange', onVisibility);
       void flushPendingSave();
@@ -1062,26 +1092,32 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
   }, [userId, runPersist]);
 
-  const scheduleSave = useCallback((next: AppData) => {
+  const scheduleSave = useCallback((next: AppData, kind: SaveKind = 'structural') => {
     const uid = userIdRef.current;
     if (!uid || persistBlockedRef.current) return;
     pendingSave.current = next;
+    setHasPendingSave(true);
+    const plan = planSaveTimer(kind, Date.now(), saveDueAt.current);
+    if (!plan) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveDueAt.current = plan.dueAt;
     saveTimer.current = setTimeout(() => {
       saveTimer.current = null;
+      saveDueAt.current = null;
       const payload = pendingSave.current;
       pendingSave.current = null;
+      setHasPendingSave(false);
       if (payload) void runPersist(uid, payload);
-    }, SAVE_DEBOUNCE_MS);
+    }, Math.max(0, plan.dueAt - Date.now()));
   }, [runPersist]);
 
   const update = useCallback(
-    (fn: (d: AppData) => AppData): boolean => {
+    (fn: (d: AppData) => AppData, kind: SaveKind = 'structural'): boolean => {
       if (persistBlockedRef.current) return false;
       setData((prev) => {
         if (!prev) return prev;
         const next = fn(prev);
-        scheduleSave(next);
+        scheduleSave(next, kind);
         return next;
       });
       return true;
@@ -1107,11 +1143,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         // Mobile Safari is especially aggressive about freezing pages on
         // visibility change, so we persist immediately and clear any
         // pending debounced save that would otherwise overwrite us.
-        if (saveTimer.current) {
-          clearTimeout(saveTimer.current);
-          saveTimer.current = null;
-        }
+        clearSaveTimer();
         pendingSave.current = null;
+        setHasPendingSave(false);
         void runPersist(uid, normalized);
       }
     },
@@ -1119,11 +1153,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   );
 
   const discardPendingLocalEdits = useCallback(async () => {
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
+    clearSaveTimer();
     pendingSave.current = null;
+    setHasPendingSave(false);
     persistQueueRef.current.cancelPending();
     await persistQueueRef.current.flush();
   }, []);
@@ -1326,6 +1358,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       lastSaveError,
       lastSavedAt,
       saving,
+      hasPendingSave,
       clearSaveError: () => setLastSaveError(null),
       dataLossSuspicion,
       dismissDataLossSuspicion,
@@ -1407,11 +1440,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       updateNoteGroup: (groupId, patch) => update((x) => updateNoteGroupFn(x, groupId, patch)),
       removeNoteGroup: (groupId) => update((x) => removeNoteGroupFn(x, groupId)),
       replaceNote: (note) => update((x) => replaceNoteFn(x, note)),
-      patchNote: (id, patch) => update((x) => patchNoteFn(x, id, patch)),
+      patchNote: (id, patch, opts) =>
+        update((x) => patchNoteFn(x, id, patch), opts?.typing ? 'typing' : 'structural'),
       removeNote: (id) => update((x) => removeNoteFn(x, id)),
       setNotesLock: (lock) => update((x) => setNotesLockFn(x, lock)),
-      patchUtilityDocument: (patch) => update((x) => patchUtilityDocumentFn(x, patch)),
-      patchUtilityStructuredText: (patch) => update((x) => patchUtilityStructuredTextFn(x, patch)),
+      patchUtilityDocument: (patch) => update((x) => patchUtilityDocumentFn(x, patch), 'typing'),
+      patchUtilityStructuredText: (patch) =>
+        update((x) => patchUtilityStructuredTextFn(x, patch), 'typing'),
       addStructuredTab: () => {
         const id = uuid();
         update((x) => addStructuredTabFn(x, id));
@@ -1465,7 +1500,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         update((x) => renameUtilitySketchDocumentFn(x, id, title)),
       removeUtilitySketchDocument: (id) => update((x) => removeUtilitySketchDocumentFn(x, id)),
     };
-  }, [data, ready, update, replaceAll, reload, importWorkspace, syncFromDisk, lastSaveError, lastSavedAt, saving, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
+  }, [data, ready, update, replaceAll, reload, importWorkspace, syncFromDisk, lastSaveError, lastSavedAt, saving, hasPendingSave, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
 
   const actionsBridgeRef = useRef(api);
   actionsBridgeRef.current = api;
@@ -1476,7 +1511,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       reload: () => actionsBridgeRef.current.reload(),
       importWorkspace: (next: AppData) => actionsBridgeRef.current.importWorkspace(next),
       syncFromDisk: () => actionsBridgeRef.current.syncFromDisk(),
-      update: (fn: (d: AppData) => AppData) => actionsBridgeRef.current.update(fn),
+      update: (fn: (d: AppData) => AppData, kind?: SaveKind) => actionsBridgeRef.current.update(fn, kind),
       clearSaveError: () => actionsBridgeRef.current.clearSaveError(),
       dismissDataLossSuspicion: () => actionsBridgeRef.current.dismissDataLossSuspicion(),
       flushPendingSave: () => actionsBridgeRef.current.flushPendingSave(),
@@ -1543,8 +1578,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         actionsBridgeRef.current.updateNoteGroup(groupId, patch),
       removeNoteGroup: (groupId: string) => actionsBridgeRef.current.removeNoteGroup(groupId),
       replaceNote: (note: Parameters<Api['replaceNote']>[0]) => actionsBridgeRef.current.replaceNote(note),
-      patchNote: (id: string, patch: Parameters<Api['patchNote']>[1]) =>
-        actionsBridgeRef.current.patchNote(id, patch),
+      patchNote: (id: string, patch: Parameters<Api['patchNote']>[1], opts?: Parameters<Api['patchNote']>[2]) =>
+        actionsBridgeRef.current.patchNote(id, patch, opts),
       removeNote: (id: string) => actionsBridgeRef.current.removeNote(id),
       setNotesLock: (lock: Parameters<Api['setNotesLock']>[0]) => actionsBridgeRef.current.setNotesLock(lock),
       patchUtilityDocument: (patch: Parameters<Api['patchUtilityDocument']>[0]) =>
@@ -1623,7 +1658,7 @@ export function useAppDataSelector<T>(
 /** Stable mutation API — does not subscribe to data snapshots. */
 export function useAppDataActions(): Omit<
   Api,
-  'data' | 'ready' | 'lastSaveError' | 'lastSavedAt' | 'saving' | 'dataLossSuspicion' | 'currentShape'
+  'data' | 'ready' | 'lastSaveError' | 'lastSavedAt' | 'saving' | 'hasPendingSave' | 'dataLossSuspicion' | 'currentShape'
 > {
   const v = useContext(ActionsCtx);
   if (!v) throw new Error('useAppDataActions outside provider');

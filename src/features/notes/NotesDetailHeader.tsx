@@ -170,7 +170,7 @@ export function NotesDetailHeader({
               tooltip={
                 extractBlocked
                   ? 'Unlock this note first — it must be readable to save'
-                  : 'Save this note to your computer (⌘S / Ctrl+S)'
+                  : 'Save this note to your computer (⇧⌘S / Ctrl+Shift+S)'
               }
             >
               <IcSave size={16} />

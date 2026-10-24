@@ -16,6 +16,7 @@ import type { NotesUnlockApi } from '../../providers/NotesUnlockContext';
 import type { Note } from '../../model';
 import type { NoteRevisionTrigger } from '../../lib/noteRevision/types';
 import { registerBeforeFlushHook, runBeforeFlushHooks } from '../../lib/pendingSaveFlush';
+import type { SaveKind } from '../../lib/saveTiming';
 import { deriveStoredTitleFromPlainText } from './noteDisplay';
 
 /**
@@ -58,8 +59,8 @@ function noteForRevisionSnapshot(note: Note, fields?: RichTextBodyFields): Note 
 
 export function useNotesEditor(
   selected: Note | null,
-  patchNote: (id: string, patch: Partial<Note>) => void,
-  update: (fn: (d: AppData) => AppData) => void,
+  patchNote: (id: string, patch: Partial<Note>, opts?: { typing?: boolean }) => void,
+  update: (fn: (d: AppData) => AppData, kind?: SaveKind) => void,
   unlock: NotesUnlockApi,
   captureRevision?: NoteRevisionCapture,
   createNoteEditIntentRef?: MutableRefObject<string | null>,
@@ -294,7 +295,7 @@ export function useNotesEditor(
         fields,
       );
       rememberRevisionNote(nextNote);
-      patchNote(selected.id, { ...fields, title: derivedTitle });
+      patchNote(selected.id, { ...fields, title: derivedTitle }, { typing: true });
       captureRevision?.(prev, nextNote, 'autosave');
       return;
     }
@@ -346,6 +347,7 @@ export function useNotesEditor(
           attachmentRefs,
           lockedBodySignature,
         }),
+        'typing',
       );
       const nextNote: Note = {
         ...selected,

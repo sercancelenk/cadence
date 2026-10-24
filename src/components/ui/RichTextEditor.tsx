@@ -56,7 +56,7 @@ import {
   handleRichTextEditableLinkClick,
   handleRichTextPreviewLinkClick,
 } from '../../lib/richTextPreviewLinks';
-import { EDITOR_CHANGE_DEBOUNCE_MS } from '../../lib/saveTiming';
+import { EDITOR_CHANGE_DEBOUNCE_MS, editorFlushDelayMs } from '../../lib/saveTiming';
 import { RichTextImageLightbox } from './RichTextImageLightbox';
 import { RichTextFindController } from './RichTextFindController';
 import { Tooltip } from './Tooltip';
@@ -271,6 +271,8 @@ export function RichTextEditor({
   const debounceMsRef = useRef(onChangeDebounceMs);
   debounceMsRef.current = onChangeDebounceMs;
   const pendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** When the current unflushed typing burst began; caps the debounce so non-stop typing still flushes. */
+  const burstStartedAt = useRef<number | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const attachmentScopeRef = useRef(attachmentScope);
   attachmentScopeRef.current = attachmentScope;
@@ -351,6 +353,7 @@ export function RichTextEditor({
   }, []);
 
   const flushChange = useCallback((ed: Editor) => {
+    burstStartedAt.current = null;
     const payload = payloadFromEditor(ed);
     const sig = payload.docSignature;
     if (sig === lastEmittedSig.current) {
@@ -376,12 +379,14 @@ export function RichTextEditor({
         flushPendingExternalRef.current();
         return;
       }
+      const now = Date.now();
+      if (burstStartedAt.current === null) burstStartedAt.current = now;
       if (pendingTimer.current) clearTimeout(pendingTimer.current);
       pendingTimer.current = setTimeout(() => {
         pendingTimer.current = null;
         flushChange(ed);
         flushPendingExternalRef.current();
-      }, ms);
+      }, Math.min(ms, editorFlushDelayMs(now, burstStartedAt.current)));
     },
     [flushChange],
   );

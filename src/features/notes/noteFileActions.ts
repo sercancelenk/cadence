@@ -57,10 +57,10 @@ export function pickLockedBody(
 
 export type SaveNoteOutcome = 'saved' | 'canceled' | 'error' | 'locked' | 'none';
 
-/** Cmd+S / Ctrl+S, without Shift or Alt. */
+/** Shift+Cmd+S / Shift+Ctrl+S: save the open note to a file (plain Cmd+S is the immediate save). */
 export function isSaveNoteShortcut(e: KeyboardEvent): boolean {
   return Boolean(
-    (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 's' || e.key === 'S'),
+    (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && (e.key === 's' || e.key === 'S' || e.code === 'KeyS'),
   );
 }
 

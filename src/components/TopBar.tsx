@@ -15,7 +15,7 @@ import {
 import { CMD_PALETTE_OPEN_EVENT } from './CommandPalette';
 import { useAccount } from '../AccountContext';
 import { useSession } from '../AuthContext';
-import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
+import { useAppDataActions, useAppDataSelector, usePersistStatus } from '../AppDataContext';
 import { sortedTeams } from '../lib/teamSort';
 import { TEAM_STATUS_OPTIONS, teamStatusLabel } from '../lib/teamStatus';
 import { useMobileWeb } from '../lib/runtime';
@@ -24,6 +24,7 @@ import { teamBase } from '../lib/teamPaths';
 import { useTheme } from '../ThemeContext';
 import type { AppData, TeamStatus } from '../model';
 import { TopBarHistoryNav } from './TopBarHistoryNav';
+import { SaveStatusIndicator } from './SaveStatusIndicator';
 
 function breadcrumbFromPath(data: AppData, pathname: string): string {
   if (pathname === PATH_HOME) return 'Home';
@@ -79,6 +80,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
   const activeTeamId = teamMatch?.params.teamId;
   const mobileWeb = useMobileWeb();
   const { rememberTeam, toggleFavoriteTeam, updateTeam, flushPendingSave } = useAppDataActions();
+  const { lastSaveError, saving, hasPendingSave } = usePersistStatus();
   const topBarData = useAppDataSelector(
     (d) => ({
       profile: d.profile ?? { displayName: 'Me', favoriteTeamIds: [] as string[] },
@@ -274,6 +276,7 @@ export function TopBar({ navCollapsed, onToggleNav }: TopBarProps) {
       </div>
 
       <div className="topbar__right">
+        <SaveStatusIndicator lastSaveError={lastSaveError} saving={saving} hasPendingSave={hasPendingSave} />
         <button type="button" className="icon-btn" title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={toggle}>
           {theme === 'dark' ? <IcSun size={20} /> : <IcMoon size={20} />}
         </button>
