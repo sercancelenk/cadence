@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { registerBeforeFlushHook } from '../lib/pendingSaveFlush';
 
 /**
  * Debounced callback emitter with echo tracking — used by structured text editors
@@ -36,6 +37,19 @@ export function useDebouncedEmit(debounceMs: number, onEmit?: (value: string) =>
     },
     [flush],
   );
+
+  /** Emit what is still buffered now instead of when the timer would have fired. */
+  const flushPending = useCallback(() => {
+    if (pending.current) {
+      clearTimeout(pending.current);
+      pending.current = null;
+    }
+    if (pendingValue.current != null) flush(pendingValue.current);
+  }, [flush]);
+
+  // ⌘S, window blur, lock and quit all drain editors through the before-flush
+  // hooks. Without this the last debounce window of keystrokes would miss them.
+  useEffect(() => registerBeforeFlushHook(() => flushPending(), 'editor'), [flushPending]);
 
   useEffect(
     () => () => {

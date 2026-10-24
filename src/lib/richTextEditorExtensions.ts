@@ -9,7 +9,7 @@ import Highlight from '@tiptap/extension-highlight';
 import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
-import type { Extensions } from '@tiptap/core';
+import { Extension, type Extensions } from '@tiptap/core';
 import { RichTextCodeBlock } from './richTextCodeBlock';
 import { DateChip } from './richTextDateChip';
 import { RichTextSearchExtension } from './richTextSearch';
@@ -208,6 +208,25 @@ export const RichTextImage = Image.extend({
 });
 
 /**
+ * Shift+Mod+S is "save this document to a file" (Notes and the Tools pages
+ * listen for it on the window). StarterKit also binds it to strikethrough, so
+ * pressing it struck the selection through before the file was saved. This
+ * extension takes the key first, does nothing with it (the event still bubbles
+ * to the window listener) and moves strikethrough to Shift+Mod+X, the usual
+ * alternative in other editors.
+ */
+const SaveToFileShortcut = Extension.create({
+  name: 'saveToFileShortcut',
+  priority: 1000,
+  addKeyboardShortcuts() {
+    return {
+      'Mod-Shift-s': () => true,
+      'Mod-Shift-x': () => this.editor.commands.toggleStrike(),
+    };
+  },
+});
+
+/**
  * Single extension list shared by RichTextEditor and markdown import so
  * `generateJSON(html)` produces the same node types the live editor uses.
  */
@@ -219,6 +238,7 @@ export function createRichTextExtensions(placeholder = 'Write here…'): Extensi
       codeBlock: false,
       blockquote: {},
     }),
+    SaveToFileShortcut,
     RichTextCodeBlock,
     Underline,
     Highlight.configure({

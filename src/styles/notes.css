@@ -2300,8 +2300,19 @@
 
 .notes-page__group-folder {
   flex-shrink: 0;
-  color: var(--accent);
-  opacity: 0.9;
+}
+
+/* Yellow gradient for the list folder (dark theme is the base). */
+:root {
+  --list-folder-top: #ffd666;
+  --list-folder-bottom: #f0a30a;
+  --list-folder-edge: #b8790a;
+}
+
+:root[data-theme='light'] {
+  --list-folder-top: #ffe58a;
+  --list-folder-bottom: #f5b301;
+  --list-folder-edge: #d08c00;
 }
 
 .notes-page__group-name {
@@ -2632,3 +2643,33 @@
   color: var(--ok);
   margin-right: 4px;
 }
+
+.utilities-doc-page__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.move-to-note__options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(320px, 50vh);
+  overflow-y: auto;
+}
+
+.move-to-note__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.move-to-note__option:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.12));
+}
+

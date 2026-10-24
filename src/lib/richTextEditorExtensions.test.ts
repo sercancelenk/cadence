@@ -127,3 +127,56 @@ describe('RichTextImage', () => {
     editor.destroy();
   });
 });
+
+describe('save-to-file shortcut vs. strikethrough', () => {
+  function press(editor: Editor, init: KeyboardEventInit) {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+    editor.view.dom.dispatchEvent(event);
+    return event;
+  }
+  function makeEditor() {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const editor = new Editor({
+      element: host,
+      extensions: createRichTextExtensions(),
+      content: '<p>hello world</p>',
+    });
+    editor.commands.selectAll();
+    return editor;
+  }
+
+  it('does not strike the selection when Shift+Mod+S is pressed (that key saves to a file)', () => {
+    const editor = makeEditor();
+    press(editor, { key: 'S', code: 'KeyS', keyCode: 83, ctrlKey: true, shiftKey: true });
+    expect(editor.isActive('strike')).toBe(false);
+    editor.destroy();
+  });
+
+  it('leaves the keystroke to the window listener, which saves the file', () => {
+    const editor = makeEditor();
+    let reachedWindow = false;
+    const onKey = () => {
+      reachedWindow = true;
+    };
+    window.addEventListener('keydown', onKey);
+    press(editor, { key: 'S', code: 'KeyS', keyCode: 83, ctrlKey: true, shiftKey: true });
+    window.removeEventListener('keydown', onKey);
+    expect(reachedWindow).toBe(true);
+    editor.destroy();
+  });
+
+  it('still strikes through with Shift+Mod+X', () => {
+    const editor = makeEditor();
+    press(editor, { key: 'X', code: 'KeyX', keyCode: 88, ctrlKey: true, shiftKey: true });
+    expect(editor.isActive('strike')).toBe(true);
+    editor.destroy();
+  });
+
+  it('keeps the toolbar strikethrough command working', () => {
+    const editor = makeEditor();
+    editor.commands.toggleStrike();
+    expect(editor.isActive('strike')).toBe(true);
+    editor.destroy();
+  });
+});

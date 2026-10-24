@@ -216,3 +216,12 @@ describe('NotesGroupTree archived view', () => {
     expect(screen.getByRole('button', { name: 'Restore Mid' })).toBeTruthy();
   });
 });
+
+describe('NotesGroupTree list icon', () => {
+  it('marks every list row with the yellow gradient folder, but not the action buttons', () => {
+    setup({ groups: [g('work'), g('sub', { parentId: 'work' }), g('home')] });
+    expect(document.querySelectorAll('[data-list-icon]')).toHaveLength(3);
+    const ids = [...document.querySelectorAll('linearGradient')].map((x) => x.id);
+    expect(new Set(ids).size).toBe(3);
+  });
+});

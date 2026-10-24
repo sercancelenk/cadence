@@ -1,4 +1,4 @@
-import type { SVGProps } from 'react';
+import { useId, type SVGProps } from 'react';
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number };
 
@@ -285,6 +285,35 @@ export function IcFolder(p: IconProps) {
   return (
     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/**
+ * The folder that marks a note list in the Notes tree: a filled folder with a
+ * yellow vertical gradient. Colours come from theme tokens (`--list-folder-*`)
+ * so dark and light can differ. Each instance owns its gradient id; ids must be
+ * unique per rendered icon or one row's gradient would resolve against another.
+ */
+export function IcFolderGradient(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  const gradientId = `list-folder-${useId().replace(/[^A-Za-z0-9_-]/g, '')}`;
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" aria-hidden className={cn} data-list-icon="" {...rest}>
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" style={{ stopColor: 'var(--list-folder-top)' }} />
+          <stop offset="1" style={{ stopColor: 'var(--list-folder-bottom)' }} />
+        </linearGradient>
+      </defs>
+      <path
+        d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+        fill={`url(#${gradientId})`}
+        style={{ stroke: 'var(--list-folder-edge)' }}
+        strokeWidth={Math.min(sw, 1.5)}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

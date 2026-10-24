@@ -4,6 +4,7 @@ import {
   IcArchiveRestore,
   IcChevronDown,
   IcFolder,
+  IcFolderGradient,
   IcPlus,
   IcTrash,
 } from '../../components/icons';
@@ -171,7 +172,7 @@ export function NotesGroupTree(props: NotesGroupTreeProps) {
               <span className={`notes-page__group-chev${expanded ? ' notes-page__group-chev--open' : ''}`}>
                 <IcChevronDown size={14} />
               </span>
-              <IcFolder size={16} className="notes-page__group-folder" aria-hidden />
+              <IcFolderGradient size={16} className="notes-page__group-folder" />
               {node.pathLabel ? <span className="notes-page__group-path">{node.pathLabel}</span> : null}
               <span className="notes-page__group-name">{g.name}</span>
               <span className="notes-page__group-count">{node.noteCount}</span>
