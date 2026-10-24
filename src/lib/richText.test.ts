@@ -4,6 +4,8 @@ import {
   SAMPLE_RICH_DOC,
   extractPlainText,
   isRichTextOverSoftLimit,
+  measureCharCount,
+  RICH_TEXT_SOFT_CHAR_LIMIT,
   parseRichDoc,
   serializeRichDoc,
 } from './richText';
@@ -70,5 +72,21 @@ describe('richText', () => {
   it('parseRichDoc rejects empty and malformed payloads', () => {
     expect(parseRichDoc('')).toBeNull();
     expect(parseRichDoc('null')).toBeNull();
+  });
+});
+
+describe('measureCharCount', () => {
+  it('skips the full-text walk for documents that cannot be over the soft limit', () => {
+    let walked = 0;
+    const n = measureCharCount(500, () => {
+      walked += 1;
+      return 10;
+    });
+    expect(walked).toBe(0);
+    expect(n).toBeLessThan(RICH_TEXT_SOFT_CHAR_LIMIT);
+  });
+
+  it('measures exactly once the document could be over the soft limit', () => {
+    expect(measureCharCount(RICH_TEXT_SOFT_CHAR_LIMIT + 5, () => 123_456)).toBe(123_456);
   });
 });

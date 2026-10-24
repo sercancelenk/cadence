@@ -6,6 +6,7 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { RichTextBodyFormat, RichTextDoc, RichTextPayload } from '../../lib/richText';
 import {
   isRichTextOverSoftLimit,
+  measureCharCount,
   serializeRichDoc,
   RICH_TEXT_HARD_CHAR_LIMIT,
   RICH_TEXT_SOFT_CHAR_LIMIT,
@@ -112,6 +113,10 @@ function contentKey(
 }
 
 /** Used by the external-sync paths, which compare against incoming props. */
+function editorCharCount(ed: Editor): number {
+  return measureCharCount(ed.state.doc.content.size, () => ed.getText().length);
+}
+
 function docSignatureFromEditor(ed: Editor): string {
   return canonicalDocSignature(ed.getJSON() as RichTextDoc, 'prosemirror');
 }
@@ -331,12 +336,12 @@ export function RichTextEditor({
 
   const syncBaselineFromEditor = useCallback((ed: Editor) => {
     lastEmittedSig.current = docSignatureFromEditor(ed);
-    setCharCount(ed.getText().length);
+    setCharCount(editorCharCount(ed));
   }, []);
 
   /** Display-only attachment URL swaps — never treat live doc as already-emitted. */
   const refreshEditorMetrics = useCallback((ed: Editor) => {
-    setCharCount(ed.getText().length);
+    setCharCount(editorCharCount(ed));
   }, []);
 
   const tryAutoFocus = useCallback((ed: Editor) => {
@@ -364,7 +369,7 @@ export function RichTextEditor({
     localEditGen.current += 1;
     onChangeRef.current?.(payload);
     onSaveStateChangeRef.current?.('saved');
-    setCharCount(payload.plainText.length);
+    setCharCount(editorCharCount(ed));
   }, []);
 
   const flushPendingExternalRef = useRef<() => void>(() => {});
