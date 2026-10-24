@@ -13,6 +13,7 @@ import { useAccount } from './AccountContext';
 import { STORAGE_PREFIX } from '../lib/appBranding';
 import { registerFlushPendingSave, runBeforeFlushHooks, unregisterFlushPendingSave } from '../lib/pendingSaveFlush';
 import { revokeAttachmentBlobUrls } from '../lib/richTextAttachmentStore';
+import { APP_SAVE_DEBOUNCE_MS } from '../lib/saveTiming';
 import { isReminderSlotNotified, reminderNotifyKey } from '../lib/reminderNotify';
 import { advanceReminderOnce } from '../lib/reminderRecurrence';
 import { supportsPwaOsSchedule } from '../lib/reminderDelivery/capabilities';
@@ -364,7 +365,7 @@ const ActionsCtx = createContext<Omit<
   'data' | 'ready' | 'lastSaveError' | 'lastSavedAt' | 'saving' | 'dataLossSuspicion' | 'currentShape'
 > | null>(null);
 
-const SAVE_DEBOUNCE_MS = 400;
+const SAVE_DEBOUNCE_MS = APP_SAVE_DEBOUNCE_MS;
 
 /** Load failures that must not be overwritten by an empty in-memory workspace. */
 const PERSIST_BLOCK_LOAD_REASONS = new Set([
@@ -1100,7 +1101,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (uid) {
         // Bulk replace (sync pull, restore) is a "import" event, not a
         // typing event — there's no debounce benefit and a high cost if
-        // the user backgrounds the app before the 400 ms timer fires.
+        // the user backgrounds the app before the debounce timer fires.
         // Mobile Safari is especially aggressive about freezing pages on
         // visibility change, so we persist immediately and clear any
         // pending debounced save that would otherwise overwrite us.

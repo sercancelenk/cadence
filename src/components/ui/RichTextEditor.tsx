@@ -56,12 +56,13 @@ import {
   handleRichTextEditableLinkClick,
   handleRichTextPreviewLinkClick,
 } from '../../lib/richTextPreviewLinks';
+import { EDITOR_CHANGE_DEBOUNCE_MS } from '../../lib/saveTiming';
 import { RichTextImageLightbox } from './RichTextImageLightbox';
 import { RichTextFindController } from './RichTextFindController';
 import { Tooltip } from './Tooltip';
 
 /** Coalesce parent updates — editor stays instant; persist layer debounces again. */
-const DEFAULT_ON_CHANGE_DEBOUNCE_MS = 120;
+const DEFAULT_ON_CHANGE_DEBOUNCE_MS = EDITOR_CHANGE_DEBOUNCE_MS;
 
 export type RichTextEditorProps = {
   value?: RichTextDoc | string | null;
@@ -73,7 +74,7 @@ export type RichTextEditorProps = {
   className?: string;
   toolbar?: boolean;
   minHeight?: number;
-  /** Debounce `onChange` (ms). Default 120. Set 0 to fire synchronously. */
+  /** Debounce `onChange` (ms). Default {@link EDITOR_CHANGE_DEBOUNCE_MS}. Set 0 to fire synchronously. */
   onChangeDebounceMs?: number;
   /** Show a banner when the document exceeds {@link RICH_TEXT_SOFT_CHAR_LIMIT}. Default true. */
   showSizeWarning?: boolean;
