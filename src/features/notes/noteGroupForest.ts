@@ -144,6 +144,11 @@ export function describeGroupDeletion(
   };
 }
 
+/** Lists a note or list may be moved into: moving into an archived list would hide it. */
+export function movableGroups(groups: NoteGroup[]): NoteGroup[] {
+  return groups.filter((g) => !isGroupEffectivelyArchived(groups, g.id));
+}
+
 /** Valid "Move to…" destinations for a list; `id: undefined` is the top level. */
 export function moveTargets(
   groups: NoteGroup[],
@@ -157,7 +162,7 @@ export function moveTargets(
 
   const out: { id: string | undefined; label: string }[] = [];
   if (target.parentId !== undefined) out.push({ id: undefined, label: 'Top level' });
-  for (const g of groups) {
+  for (const g of movableGroups(groups)) {
     if (blocked.has(g.id) || g.id === target.parentId) continue;
     if (groupDepth(groups, g.id) + height > MAX_NOTE_GROUP_DEPTH) continue;
     const path = [...groupAncestors(groups, g.id)].reverse().map((a) => names.get(a) ?? a);

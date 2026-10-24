@@ -39,6 +39,22 @@ export type SaveNoteDeps = {
   };
 };
 
+type NoteBodyFields = { noteId: string } & RichTextBodyFields;
+
+/**
+ * Body of a locked note that may be written out. The editor buffer is only
+ * trusted while the note is still decrypted: locking does not clear it, so
+ * using it on its own would write plaintext of a note that is locked again.
+ */
+export function pickLockedBody(
+  noteId: string,
+  latest: NoteBodyFields | null,
+  decrypted: NoteBodyFields | null,
+): RichTextBodyFields | null {
+  if (!decrypted || decrypted.noteId !== noteId) return null;
+  return latest && latest.noteId === noteId ? latest : decrypted;
+}
+
 export type SaveNoteOutcome = 'saved' | 'canceled' | 'error' | 'locked' | 'none';
 
 /** Cmd+S / Ctrl+S, without Shift or Alt. */

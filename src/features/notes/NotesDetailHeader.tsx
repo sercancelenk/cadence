@@ -37,6 +37,8 @@ export type NotesDetailHeaderProps = {
   versionHistoryAvailable?: boolean;
   exportFormat?: NoteExportFormat;
   onExportFormatChange?: (format: NoteExportFormat) => void;
+  /** Archived only because its list is archived: restore the list instead. */
+  archivedViaList?: boolean;
   /** Omit to hide the save controls (e.g. no desktop bridge). */
   onSaveToFile?: () => void;
 };
@@ -60,6 +62,7 @@ export function NotesDetailHeader({
   exportFormat = 'md',
   onExportFormatChange,
   onSaveToFile,
+  archivedViaList = false,
 }: NotesDetailHeaderProps) {
   const extractBlocked = selected.locked && !editorReady;
   const deleteBlocked = selected.locked;
@@ -132,11 +135,14 @@ export function NotesDetailHeader({
 
         <NotesIconButton
           onClick={onToggleArchive}
-          label={selected.archived ? 'Unarchive' : 'Archive'}
+          disabled={archivedViaList}
+          label={archivedViaList ? 'Archived with its list' : selected.archived ? 'Unarchive' : 'Archive'}
           tooltip={
-            selected.archived
-              ? 'Unarchive — restore this note to Active lists'
-              : 'Archive — hide from Active view without deleting'
+            archivedViaList
+              ? 'This note is archived with its list — restore the list from the Archived view'
+              : selected.archived
+                ? 'Unarchive — restore this note to Active lists'
+                : 'Archive — hide from Active view without deleting'
           }
         >
           {selected.archived ? <IcArchiveRestore size={16} /> : <IcArchive size={16} />}

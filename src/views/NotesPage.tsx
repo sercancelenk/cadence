@@ -44,6 +44,7 @@ import { addTodoItem as appendTodoItem, moveNoteToGroup } from '../core/actions'
 import {
   importDroppedFile,
   importFileAsNote,
+  pickLockedBody,
   type ImportedNoteFields,
 } from '../features/notes/noteFileActions';
 import { isAIConfigured } from '../lib/ai';
@@ -51,8 +52,10 @@ import { useFeatures } from '../lib/features';
 import { useNotesUnlock } from '../lib/NotesUnlockContext';
 import { purgeNoteRevisionHistory } from '../lib/noteRevision/noteRevisionStore';
 import { runBeforeFlushHooks } from '../lib/pendingSaveFlush';
+import { movableGroups } from '../features/notes/noteGroupForest';
 import { defaultTodoGroupId } from '../lib/todoGroupPick';
 import type { AppData } from '../model';
+import { isNoteEffectivelyArchived } from '../model';
 
 const AITaskExtractorDialog = lazy(() =>
   import('../components/AITaskExtractorDialog').then((m) => ({ default: m.AITaskExtractorDialog })),
@@ -217,13 +220,8 @@ export function NotesPage() {
     selectedId: selected?.id,
     getLatestSnapshot,
     flushPendingSave,
-    getLockedBody: (noteId) => {
-      const latest = editorState.getLatestBodyFields();
-      if (latest && latest.noteId === noteId) return latest;
-      return decryptedForSelected && decryptedForSelected.noteId === noteId
-        ? decryptedForSelected
-        : null;
-    },
+    getLockedBody: (noteId) =>
+      pickLockedBody(noteId, editorState.getLatestBodyFields(), decryptedForSelected),
     notify: fileNotify,
   });
 
@@ -659,6 +657,10 @@ export function NotesPage() {
               versionHistoryAvailable={versionHistory.available}
               exportFormat={fileActions.format}
               onExportFormatChange={fileActions.setFormat}
+              archivedViaList={
+                selected.archived !== true &&
+                isNoteEffectivelyArchived(selected, notesWorkspace.noteGroups)
+              }
               onSaveToFile={fileActions.available ? () => void fileActions.saveSelected() : undefined}
             />
 
@@ -693,7 +695,7 @@ export function NotesPage() {
           y={listContextMenu.y}
           noteIds={listContextMenu.noteIds}
           notes={notesWorkspace.notes}
-          groups={groups}
+          groups={movableGroups(groups)}
           onClose={() => setListContextMenu(null)}
           onPin={onBulkPin}
           onUnpin={onBulkUnpin}

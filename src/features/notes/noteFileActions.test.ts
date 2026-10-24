@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Note } from '../../model';
 import {
   importDroppedFile,
+  pickLockedBody,
   importFileAsNote,
   isSaveNoteShortcut,
   saveNoteToDisk,
@@ -221,5 +222,28 @@ describe('importDroppedFile', () => {
     const big = { name: 'big.md', size: 6 * 1024 * 1024, text: async () => '' } as unknown as File;
     await expect(importDroppedFile(big, base)).resolves.toBe('error');
     expect(created).toHaveLength(0);
+  });
+});
+
+describe('pickLockedBody', () => {
+  const fields = (text: string) => ({ body: doc(text), bodyFormat: 'prosemirror' as const });
+
+  it('never exposes an editor buffer once the note is locked and no longer decrypted', () => {
+    const buffer = { noteId: 'n1', ...fields('typed before locking') };
+    expect(pickLockedBody('n1', buffer, null)).toBeNull();
+    expect(pickLockedBody('n1', buffer, { noteId: 'other', ...fields('x') })).toBeNull();
+  });
+
+  it('prefers the fresher editor buffer while the note is decrypted', () => {
+    const buffer = { noteId: 'n1', ...fields('newest') };
+    const decrypted = { noteId: 'n1', ...fields('older') };
+    expect(pickLockedBody('n1', buffer, decrypted)?.body).toContain('newest');
+  });
+
+  it('falls back to the decrypted body when the buffer belongs to another note', () => {
+    const buffer = { noteId: 'other', ...fields('wrong note') };
+    const decrypted = { noteId: 'n1', ...fields('right note') };
+    expect(pickLockedBody('n1', buffer, decrypted)?.body).toContain('right note');
+    expect(pickLockedBody('n1', null, decrypted)?.body).toContain('right note');
   });
 });

@@ -4,6 +4,7 @@ import {
   buildGroupForest,
   describeGroupDeletion,
   flattenForestNoteIds,
+  movableGroups,
   moveTargets,
   type GroupNode,
 } from './noteGroupForest';
@@ -192,5 +193,25 @@ describe('moveTargets', () => {
     const targets = moveTargets(deep, 'x').map((t) => t.id);
     expect(targets).not.toContain('l4');
     expect(targets).toContain('l3');
+  });
+});
+
+describe('archived lists are not move destinations', () => {
+  const groups = [
+    g('live'),
+    g('old', { archived: true }),
+    g('old-sub', { parentId: 'old' }),
+    g('mover'),
+  ];
+
+  it('movableGroups drops archived lists and lists inside them', () => {
+    expect(movableGroups(groups).map((x) => x.id)).toEqual(['live', 'mover']);
+  });
+
+  it('moveTargets never offers an archived list or one inside it', () => {
+    const targets = moveTargets(groups, 'mover').map((t) => t.id);
+    expect(targets).toContain('live');
+    expect(targets).not.toContain('old');
+    expect(targets).not.toContain('old-sub');
   });
 });
