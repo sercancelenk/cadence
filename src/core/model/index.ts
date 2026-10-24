@@ -435,6 +435,23 @@ export interface AppData {
    */
   utilityDocument?: UtilityDocument;
   /**
+   * Utilities → Document multi-document tabs. Supersedes `utilityDocument`,
+   * which is kept untouched (never written, never deleted) so a downgrade still
+   * finds the last-migrated document. The array being PRESENT — even empty —
+   * means "already migrated": moving the only tab to Notes leaves `[]`, and the
+   * legacy document must not come back as a tab on the next load.
+   */
+  utilityDocumentTabs?: UtilityDocumentTab[];
+  /** Id of the currently active Document tab. */
+  activeDocumentTabId?: string;
+  /**
+   * `updatedAt` of the legacy `utilityDocument` that has already been accounted
+   * for. A newer legacy document means an older build edited it; see
+   * `ensureDocumentTabs`. Lives on the workspace so it survives the migrated tab
+   * being moved or closed.
+   */
+  utilityDocumentLegacySeenAt?: string;
+  /**
    * Utilities → JSON / YAML scratch buffer (legacy single-buffer).
    *
    * Superseded by `utilityStructuredTabs`. Kept on the model so that:
@@ -497,6 +514,17 @@ export interface NoteTodoLink {
 
 /** Persisted rich-text scratch pad under Utilities. */
 export interface UtilityDocument {
+  body: string;
+  bodyFormat?: 'markdown' | 'prosemirror';
+  bodyPlainText?: string;
+  updatedAt: string;
+}
+
+/** One document in Utilities → Document (multi-document tabs). */
+export interface UtilityDocumentTab {
+  id: string;
+  /** User-facing tab label. Renamed via double-click. */
+  title: string;
   body: string;
   bodyFormat?: 'markdown' | 'prosemirror';
   bodyPlainText?: string;
@@ -1221,6 +1249,11 @@ export function normalizeData(raw: unknown): AppData {
   const noteGroups = parseNoteGroups(Array.isArray(o.noteGroups) ? o.noteGroups : []);
   let notesLock = parseNotesLock(o.notesLock);
   const utilityDocument = parseUtilityDocument(o.utilityDocument);
+  const utilityDocumentTabs = parseUtilityDocumentTabs(o.utilityDocumentTabs);
+  const activeDocumentTabId =
+    typeof o.activeDocumentTabId === 'string' ? o.activeDocumentTabId : undefined;
+  const utilityDocumentLegacySeenAt =
+    typeof o.utilityDocumentLegacySeenAt === 'string' ? o.utilityDocumentLegacySeenAt : undefined;
   const utilityStructuredText = parseUtilityStructuredText(o.utilityStructuredText);
   const utilityStructuredTabs = parseUtilityStructuredTabs(o.utilityStructuredTabs);
   const activeStructuredTabId =
@@ -1261,6 +1294,9 @@ export function normalizeData(raw: unknown): AppData {
     noteGroups,
     notesLock,
     utilityDocument,
+    utilityDocumentTabs,
+    activeDocumentTabId,
+    utilityDocumentLegacySeenAt,
     utilityStructuredText,
     utilityStructuredTabs,
     activeStructuredTabId,
@@ -1275,6 +1311,7 @@ export function normalizeData(raw: unknown): AppData {
   data = ensureTeamsHaveSkipLevel(data);
   data = ensureProfile(data);
   data = ensureStructuredTabs(data);
+  data = ensureDocumentTabs(data);
   data = ensureNoteTodoLinksFromSourceNoteIds(data);
 
   return patchDataToV3(data);
@@ -1342,6 +1379,18 @@ function parseAISettings(raw: unknown): AISettings | undefined {
   return withExtras(o, { provider, apiKey, model, systemPrompt, extractionGuidance });
 }
 
+/**
+ * Compatibility contract (pinned by noteGroupCompat.test.ts):
+ *  - A list is a flat object and `parentId` an ordinary key on it, so a build
+ *    that keeps unknown keys (`withExtras`, since bdb1e73) carries `parentId`
+ *    through its own load → save. Do not move the hierarchy into a side table
+ *    or a nested structure: builds that predate `withExtras` drop every unknown
+ *    key anywhere, so nothing stored outside the fields they know can survive
+ *    them, and it would hide `parentId` from the builds that do keep it.
+ *  - Keys this build does not know are kept (`withExtras`); known keys always win.
+ *  - A `parentId` that dangles is kept verbatim (the tree helpers read it as
+ *    root), so a restore or sync can make it valid again.
+ */
 function parseNoteGroups(raw: unknown[]): NoteGroup[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -1463,8 +1512,40 @@ function parseUtilityStructuredTab(raw: unknown, index: number): UtilityStructur
   });
 }
 
+function parseUtilityDocumentTabs(raw: unknown): UtilityDocumentTab[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  // An empty array is meaningful ("migrated, nothing open"), so it is kept.
+  const out: UtilityDocumentTab[] = [];
+  const usedIds = new Set<string>();
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue;
+    const o = r as Record<string, unknown>;
+    // A tab without an id, or repeating one, is still a document: give it a fresh
+    // id rather than dropping it, and so that closing one cannot close its twin.
+    const id = typeof o.id === 'string' && o.id && !usedIds.has(o.id) ? o.id : uuid();
+    usedIds.add(id);
+    out.push(
+      withExtras(o, {
+        id,
+        title: typeof o.title === 'string' && o.title.trim() ? o.title : 'Untitled',
+        body: typeof o.body === 'string' ? o.body : '',
+        bodyFormat:
+          o.bodyFormat === 'markdown' || o.bodyFormat === 'prosemirror' ? o.bodyFormat : undefined,
+        bodyPlainText: typeof o.bodyPlainText === 'string' ? o.bodyPlainText : undefined,
+        updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
+      }),
+    );
+  }
+  return out;
+}
+
 function parseUtilityStructuredTabs(raw: unknown): UtilityStructuredTab[] | undefined {
   if (!Array.isArray(raw)) return undefined;
+  // Same marker as document tabs: `[]` written by a move means "nothing open",
+  // so the legacy buffer must not be migrated again.
+  if (raw.length === 0) return [];
+  // A non-empty array of unreadable entries yields `undefined` on purpose: the
+  // legacy buffer is then migrated, so the only readable copy is not left hidden.
   const tabs = raw
     .map((r, i) => parseUtilityStructuredTab(r, i))
     .filter((t): t is UtilityStructuredTab => Boolean(t));
@@ -1593,6 +1674,7 @@ function ensureNoteTodoLinksFromSourceNoteIds(data: AppData): AppData {
  */
 function ensureStructuredTabs(data: AppData): AppData {
   const tabs = data.utilityStructuredTabs;
+  if (tabs && tabs.length === 0) return data;
   if (tabs && tabs.length > 0) {
     const activeOk = tabs.some((t) => t.id === data.activeStructuredTabId);
     if (activeOk) return data;
@@ -1617,6 +1699,107 @@ function ensureStructuredTabs(data: AppData): AppData {
     utilityStructuredTabs: [migrated],
     activeStructuredTabId: migrated.id,
   };
+}
+
+/**
+ * Documents in Utilities → Document are tabs now. Data-safety contract (0% loss):
+ *   - `utilityDocumentTabs` PRESENT (even `[]`) is authoritative and the legacy
+ *     document is never migrated again — otherwise a document moved to Notes
+ *     would come back as a tab on the next load.
+ *   - Absent + legacy present: the legacy document becomes tab #1 verbatim.
+ *   - The legacy field is never written or deleted (a downgrade still finds it).
+ *   - An older build may keep editing the legacy field after migration. When it
+ *     is newer than `utilityDocumentLegacySeenAt` and its content is in no tab,
+ *     it is added as a recovery tab instead of being ignored.
+ *   - A workspace with neither field is left untouched (the page seeds lazily).
+ */
+const EMPTY_RICH_NODE_TYPES = new Set(['doc', 'paragraph', 'text', 'hardBreak']);
+
+function richNodeHasContent(node: unknown): boolean {
+  if (!node || typeof node !== 'object') return false;
+  const n = node as { type?: unknown; text?: unknown; content?: unknown };
+  if (n.type === 'text') return typeof n.text === 'string' && n.text.trim() !== '';
+  // Any structure the user built (image, table, rule, code block, list, heading…)
+  // counts even when it holds no text yet.
+  if (typeof n.type === 'string' && !EMPTY_RICH_NODE_TYPES.has(n.type)) return true;
+  return Array.isArray(n.content) && n.content.some(richNodeHasContent);
+}
+
+/**
+ * Whether a document holds anything the user made. A rich-text body is a
+ * non-empty JSON string even when blank, and a body of only a table or an image
+ * has no text; both are judged by structure. When a rich body cannot be read it
+ * counts as content: asking one confirmation too many beats discarding a document.
+ */
+export function utilityDocumentHasContent(
+  doc: Pick<UtilityDocument, 'body' | 'bodyFormat'> & { bodyPlainText?: string },
+): boolean {
+  if (doc.bodyFormat !== 'prosemirror') return doc.body.trim() !== '';
+  if ((doc.bodyPlainText ?? '').trim() !== '') return true;
+  try {
+    return richNodeHasContent(JSON.parse(doc.body));
+  } catch {
+    return true;
+  }
+}
+
+function ensureDocumentTabs(data: AppData): AppData {
+  const legacy = data.utilityDocument;
+  let tabs = data.utilityDocumentTabs;
+  let seenAt = data.utilityDocumentLegacySeenAt;
+  let activeId = data.activeDocumentTabId;
+
+  if (tabs === undefined) {
+    if (!legacy) return data;
+    const migrated: UtilityDocumentTab = {
+      id: uuid(),
+      title: 'Document',
+      body: legacy.body,
+      bodyFormat: legacy.bodyFormat,
+      bodyPlainText: legacy.bodyPlainText,
+      updatedAt: legacy.updatedAt || nowIso(),
+    };
+    return {
+      ...data,
+      utilityDocumentTabs: [migrated],
+      activeDocumentTabId: migrated.id,
+      utilityDocumentLegacySeenAt: legacy.updatedAt,
+    };
+  }
+
+  if (legacy) {
+    const legacyMs = Date.parse(legacy.updatedAt);
+    const seenMs = seenAt === undefined ? NaN : Date.parse(seenAt);
+    // Nothing recorded as seen while tabs exist means the legacy field is new
+    // since then (e.g. a downgrade wrote the first legacy document): treat it as
+    // unseen so the text does not sit in the file and never show.
+    const unseen = seenAt === undefined && utilityDocumentHasContent(legacy);
+    const newer = seenAt !== undefined && Number.isFinite(legacyMs) && Number.isFinite(seenMs) && legacyMs > seenMs;
+    if (seenAt === undefined && !unseen) {
+      seenAt = legacy.updatedAt;
+    } else if (unseen || newer) {
+      if (!tabs.some((t) => t.body === legacy.body)) {
+        tabs = [
+          ...tabs,
+          {
+            id: uuid(),
+            title: 'Document (from older version)',
+            body: legacy.body,
+            bodyFormat: legacy.bodyFormat,
+            bodyPlainText: legacy.bodyPlainText,
+            updatedAt: legacy.updatedAt,
+          },
+        ];
+      }
+      seenAt = legacy.updatedAt;
+    }
+  }
+
+  if (tabs.length > 0 && !tabs.some((t) => t.id === activeId)) activeId = tabs[0]!.id;
+  if (tabs === data.utilityDocumentTabs && seenAt === data.utilityDocumentLegacySeenAt && activeId === data.activeDocumentTabId) {
+    return data;
+  }
+  return { ...data, utilityDocumentTabs: tabs, activeDocumentTabId: activeId, utilityDocumentLegacySeenAt: seenAt };
 }
 
 function parseNotesLock(raw: unknown): NotesLock | undefined {

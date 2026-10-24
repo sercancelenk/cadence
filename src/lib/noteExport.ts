@@ -27,10 +27,15 @@ export function parseNoteExportFormat(raw: unknown): NoteExportFormat {
   return raw === 'txt' || raw === 'html' || raw === 'md' ? raw : 'md';
 }
 
-export function exportFileName(title: string, format: NoteExportFormat): string {
+/** File name without extension: unsafe characters replaced, length capped. */
+export function exportFileStem(title: string): string {
   const stem = title.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-') || UNTITLED;
+  return stem.slice(0, MAX_FILE_STEM);
+}
+
+export function exportFileName(title: string, format: NoteExportFormat): string {
   const ext = NOTE_EXPORT_FORMATS.find((f) => f.value === format)?.ext ?? format;
-  return `${stem.slice(0, MAX_FILE_STEM)}.${ext}`;
+  return `${exportFileStem(title)}.${ext}`;
 }
 
 function imageToPlaceholder(node: RichTextDoc): RichTextDoc {

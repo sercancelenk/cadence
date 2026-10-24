@@ -24,6 +24,7 @@ import { mergeReminderEventIntoAppData } from '../lib/reminderDelivery/mergeRemi
 import { createAppDataSelectionMemo } from './appDataSelectionMemo';
 import { postReminderSyncToServiceWorker } from '../lib/reminderDelivery/pwaReminderSync';
 import { uuid } from '../lib/uuid';
+import { structuredTabNoteFields } from '../lib/structuredTabNote';
 import {
   addItem as addItemFn,
   addNote as addNoteFn,
@@ -46,6 +47,13 @@ import {
   renameStructuredTab as renameStructuredTabFn,
   setActiveStructuredTab as setActiveStructuredTabFn,
   patchStructuredTab as patchStructuredTabFn,
+  addDocumentTab as addDocumentTabFn,
+  closeDocumentTab as closeDocumentTabFn,
+  renameDocumentTab as renameDocumentTabFn,
+  setActiveDocumentTab as setActiveDocumentTabFn,
+  patchDocumentTab as patchDocumentTabFn,
+  moveDocumentTabToNote as moveDocumentTabToNoteFn,
+  moveStructuredTabToNote as moveStructuredTabToNoteFn,
   upsertUtilityErdDocument as upsertUtilityErdDocumentFn,
   renameUtilityErdDocument as renameUtilityErdDocumentFn,
   removeUtilityErdDocument as removeUtilityErdDocumentFn,
@@ -95,6 +103,7 @@ import type {
   TodoStatus,
   UserProfile,
   UtilityDocument,
+  UtilityDocumentTab,
   UtilityStructuredText,
   UtilityStructuredTab,
 } from '../core/model';
@@ -178,6 +187,12 @@ type Api = {
    * (logout, password change) that must not lose unsaved typing.
    */
   flushPendingSave: () => Promise<void>;
+  /**
+   * Like `flushPendingSave`, but writes only when an edit is waiting. For
+   * moments that should land typing on disk without a redundant save (note
+   * switch, window blur).
+   */
+  flushIfPending: () => Promise<void>;
   /**
    * Synchronously read the freshest in-memory workspace snapshot (the same
    * source of truth that `update` writes to). Unlike the `data` field this is
@@ -339,6 +354,24 @@ type Api = {
       Pick<UtilityStructuredText, 'content' | 'diffContentLeft' | 'diffContent' | 'language'>
     >,
   ) => void;
+  /** Create a new empty Document tab and activate it; returns its id. */
+  addDocumentTab: () => string;
+  closeDocumentTab: (id: string) => void;
+  renameDocumentTab: (id: string, title: string) => void;
+  setActiveDocumentTab: (id: string) => void;
+  patchDocumentTab: (
+    id: string,
+    patch: Partial<Pick<UtilityDocumentTab, 'body' | 'bodyFormat' | 'bodyPlainText'>>,
+  ) => void;
+  /**
+   * Move a Document tab into Notes (a list, or the top level when `groupId` is
+   * omitted). Drains the editors first, then creates the note and removes the
+   * tab in ONE update. Resolves to the new note id, or null when nothing was
+   * moved (unknown tab, or the workspace is write-protected).
+   */
+  moveDocumentTabToNote: (tabId: string, groupId?: string) => Promise<string | null>;
+  /** Same for a JSON / YAML tab; its buffer becomes a code block in the note. */
+  moveStructuredTabToNote: (tabId: string, groupId?: string) => Promise<string | null>;
   /** Create a new empty JSON / YAML tab and activate it; returns its id. */
   addStructuredTab: () => string;
   closeStructuredTab: (id: string) => void;
@@ -374,9 +407,6 @@ const ActionsCtx = createContext<Omit<
   Api,
   'data' | 'ready' | 'lastSaveError' | 'lastSavedAt' | 'saving' | 'hasPendingSave' | 'dataLossSuspicion' | 'currentShape'
 > | null>(null);
-
-/** Pause between draining the editor and checking for a pending write on window blur. */
-const BLUR_SETTLE_MS = 100;
 
 /** Load failures that must not be overwritten by an empty in-memory workspace. */
 const PERSIST_BLOCK_LOAD_REASONS = new Set([
@@ -640,6 +670,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   userIdRef.current = userId;
 
   const [data, setData] = useState<AppData | null>(null);
+  /**
+   * The newest workspace, updated synchronously by every writer. React state
+   * only catches up on its own schedule, so anything that must act on "what the
+   * user just typed" (a flush mid-quit, ⌘S, note switch) has to read this, never
+   * `data` and never a value a state updater has yet to produce.
+   */
+  const latestDataRef = useRef<AppData | null>(null);
+  const commitData = useCallback((next: AppData | null) => {
+    latestDataRef.current = next;
+    setData(next);
+  }, []);
   const [ready, setReady] = useState(false);
   const [lastSaveError, setLastSaveError] = useState<PersistError | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
@@ -889,7 +930,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
   }, [shouldSurfacePersistError]);
 
-  const flushPendingSave = useCallback(async () => {
+  /**
+   * Drain the editors, then write. `onlyIfPending` skips the write when no edit
+   * is waiting (note switch, blur) so an idle flush neither re-encrypts the
+   * workspace nor flashes "saved"; a full flush (⌘S, quit, lock) always writes
+   * the latest workspace.
+   */
+  const flushNow = useCallback(async (opts: { onlyIfPending: boolean }) => {
     await runBeforeFlushHooks();
     clearSaveTimer();
     // Never flush an empty/failed scaffold over disk while persist is blocked
@@ -902,7 +949,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return;
     }
     const uid = userIdRef.current;
-    const next = pendingSave.current ?? snapshotStoreRef.current.getSnapshot();
+    const next = pendingSave.current ?? (opts.onlyIfPending ? null : latestDataRef.current);
     pendingSave.current = null;
     setHasPendingSave(false);
     // Keep the snapshot store in lockstep with the just-flushed state. Callers
@@ -935,6 +982,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     await persistQueueRef.current.flush();
   }, [runPersist, applyPersistOutcome]);
 
+  const flushPendingSave = useCallback(() => flushNow({ onlyIfPending: false }), [flushNow]);
+  const flushIfPending = useCallback(() => flushNow({ onlyIfPending: true }), [flushNow]);
+
   useEffect(() => {
     registerFlushPendingSave(flushPendingSave);
     return () => unregisterFlushPendingSave();
@@ -957,7 +1007,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const uid = userIdRef.current;
       if (!uid || persistBlockedRef.current || window.cadence?.saveData) return;
       clearSaveTimer();
-      const payload = pendingSave.current ?? snapshotStoreRef.current.getSnapshot();
+      const payload = pendingSave.current ?? latestDataRef.current;
       if (!payload) return;
       pendingSave.current = null;
       setHasPendingSave(false);
@@ -996,13 +1046,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     // another window) must not wait for it. Skipped when nothing is pending so
     // plain focus changes never trigger a write.
     const onWindowBlur = () => {
-      void (async () => {
-        await runBeforeFlushHooks();
-        // The editor drain hands its text to `update`, whose state updater runs
-        // on React's schedule; give it a beat before deciding whether to write.
-        await new Promise((resolve) => setTimeout(resolve, BLUR_SETTLE_MS));
-        if (pendingSave.current !== null) await flushPendingSave();
-      })();
+      void flushIfPending();
     };
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('beforeunload', onPageHide);
@@ -1015,19 +1059,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', onVisibility);
       void flushPendingSave();
     };
-  }, [flushPendingSave]);
+  }, [flushPendingSave, flushIfPending]);
 
   useEffect(() => {
     if (!userId) {
       persistBlockedRef.current = false;
-      setData(null);
+      commitData(null);
       setReady(false);
       setDataLossSuspicion(null);
       return;
     }
     let cancelled = false;
     setReady(false);
-    setData(null);
+    commitData(null);
     setDataLossSuspicion(null);
     void (async () => {
       const loaded = await loadInitial(userId);
@@ -1082,7 +1126,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         console.warn('[cadence] data integrity check failed (continuing)', err);
       }
-      setData(merged);
+      commitData(merged);
       setReady(true);
       // Never seed-write while persist is blocked (would overwrite disk).
       if (seeded && !persistBlockedRef.current) void runPersist(userId, merged);
@@ -1114,12 +1158,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const update = useCallback(
     (fn: (d: AppData) => AppData, kind: SaveKind = 'structural'): boolean => {
       if (persistBlockedRef.current) return false;
-      setData((prev) => {
-        if (!prev) return prev;
-        const next = fn(prev);
-        scheduleSave(next, kind);
-        return next;
-      });
+      const prev = latestDataRef.current;
+      // No workspace yet (loading, or signed out): there is nothing to edit, and
+      // callers must hear that rather than be told the change was applied.
+      if (!prev) return false;
+      const next = fn(prev);
+      latestDataRef.current = next;
+      scheduleSave(next, kind);
+      setData(next);
       return true;
     },
     [scheduleSave],
@@ -1129,7 +1175,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     (next: AppData) => {
       const normalized = normalizeData(next);
       persistBlockedRef.current = false;
-      setData(normalized);
+      commitData(normalized);
       // A replaceAll is either a sync pull or a backup restore — both
       // are explicit "I want this snapshot" events. Clear any
       // data-loss suspicion the boot raised, because the user has now
@@ -1169,6 +1215,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [discardPendingLocalEdits, syncWriteGenerationFromDisk]);
 
   const applyLoadedWorkspace = useCallback((uid: string, loaded: LoadInitialResult) => {
+    // The workspace in memory is about to be replaced wholesale. An edit queued
+    // while it was being re-read was built on the old snapshot; saving it later
+    // would write that snapshot back over what was just loaded.
+    clearSaveTimer();
+    pendingSave.current = null;
+    setHasPendingSave(false);
     writeGenerationRef.current = loaded.writeGeneration;
     persistBlockedRef.current = loaded.loadError
       ? shouldBlockPersistOnLoad(loaded.loadError.reason)
@@ -1181,12 +1233,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       });
       // Keep last-known-good shape + suspicion so a failed reload cannot
       // erase the integrity marker with an empty scaffold shape.
-      setData(loaded.data);
+      commitData(loaded.data);
       setReady(true);
       return;
     }
     setLastSaveError(null);
-    setData(loaded.data);
+    commitData(loaded.data);
     setReady(true);
     setDataLossSuspicion(null);
     setLastSavedAt(Date.now());
@@ -1364,7 +1416,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       dismissDataLossSuspicion,
       currentShape: shapeOfData(d),
       flushPendingSave,
-      getLatestSnapshot: () => snapshotStoreRef.current.getSnapshot() ?? empty,
+      flushIfPending,
+      getLatestSnapshot: () => latestDataRef.current ?? empty,
       rememberTeam: (teamId) => update((x) => setLastTeamIdFn(x, teamId)),
       update,
       addTeam: (name) => update((x) => addTeamFn(x, name)),
@@ -1447,6 +1500,39 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       patchUtilityDocument: (patch) => update((x) => patchUtilityDocumentFn(x, patch), 'typing'),
       patchUtilityStructuredText: (patch) =>
         update((x) => patchUtilityStructuredTextFn(x, patch), 'typing'),
+      addDocumentTab: () => {
+        const id = uuid();
+        update((x) => addDocumentTabFn(x, id));
+        return id;
+      },
+      closeDocumentTab: (id) => update((x) => closeDocumentTabFn(x, id)),
+      renameDocumentTab: (id, title) => update((x) => renameDocumentTabFn(x, id, title)),
+      setActiveDocumentTab: (id) => update((x) => setActiveDocumentTabFn(x, id)),
+      patchDocumentTab: (id, patch) => update((x) => patchDocumentTabFn(x, id, patch), 'typing'),
+      moveDocumentTabToNote: async (tabId, groupId) => {
+        // The latest keystrokes live in the editors until they are drained.
+        await runBeforeFlushHooks();
+        const latest = latestDataRef.current;
+        if (!latest?.utilityDocumentTabs?.some((t) => t.id === tabId)) return null;
+        const noteId = uuid();
+        const applied = update(
+          (x) => moveDocumentTabToNoteFn(x, { tabId, noteId, groupId }),
+          'structural',
+        );
+        return applied && latestDataRef.current?.notes.some((n) => n.id === noteId) ? noteId : null;
+      },
+      moveStructuredTabToNote: async (tabId, groupId) => {
+        await runBeforeFlushHooks();
+        const tab = latestDataRef.current?.utilityStructuredTabs?.find((t) => t.id === tabId);
+        if (!tab) return null;
+        const noteId = uuid();
+        const fields = structuredTabNoteFields(tab);
+        const applied = update(
+          (x) => moveStructuredTabToNoteFn(x, { tabId, noteId, groupId, fields }),
+          'structural',
+        );
+        return applied && latestDataRef.current?.notes.some((n) => n.id === noteId) ? noteId : null;
+      },
       addStructuredTab: () => {
         const id = uuid();
         update((x) => addStructuredTabFn(x, id));
@@ -1500,7 +1586,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         update((x) => renameUtilitySketchDocumentFn(x, id, title)),
       removeUtilitySketchDocument: (id) => update((x) => removeUtilitySketchDocumentFn(x, id)),
     };
-  }, [data, ready, update, replaceAll, reload, importWorkspace, syncFromDisk, lastSaveError, lastSavedAt, saving, hasPendingSave, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave]);
+  }, [data, ready, update, replaceAll, reload, importWorkspace, syncFromDisk, lastSaveError, lastSavedAt, saving, hasPendingSave, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave, flushIfPending]);
 
   const actionsBridgeRef = useRef(api);
   actionsBridgeRef.current = api;
@@ -1515,6 +1601,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       clearSaveError: () => actionsBridgeRef.current.clearSaveError(),
       dismissDataLossSuspicion: () => actionsBridgeRef.current.dismissDataLossSuspicion(),
       flushPendingSave: () => actionsBridgeRef.current.flushPendingSave(),
+      flushIfPending: () => actionsBridgeRef.current.flushIfPending(),
       getLatestSnapshot: () => actionsBridgeRef.current.getLatestSnapshot(),
       rememberTeam: (teamId: string) => actionsBridgeRef.current.rememberTeam(teamId),
       addTeam: (name: string) => actionsBridgeRef.current.addTeam(name),
@@ -1586,6 +1673,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         actionsBridgeRef.current.patchUtilityDocument(patch),
       patchUtilityStructuredText: (patch: Parameters<Api['patchUtilityStructuredText']>[0]) =>
         actionsBridgeRef.current.patchUtilityStructuredText(patch),
+      addDocumentTab: () => actionsBridgeRef.current.addDocumentTab(),
+      closeDocumentTab: (id: string) => actionsBridgeRef.current.closeDocumentTab(id),
+      renameDocumentTab: (id: string, title: string) =>
+        actionsBridgeRef.current.renameDocumentTab(id, title),
+      setActiveDocumentTab: (id: string) => actionsBridgeRef.current.setActiveDocumentTab(id),
+      patchDocumentTab: (id: string, patch: Parameters<Api['patchDocumentTab']>[1]) =>
+        actionsBridgeRef.current.patchDocumentTab(id, patch),
+      moveDocumentTabToNote: (tabId: string, groupId?: string) =>
+        actionsBridgeRef.current.moveDocumentTabToNote(tabId, groupId),
+      moveStructuredTabToNote: (tabId: string, groupId?: string) =>
+        actionsBridgeRef.current.moveStructuredTabToNote(tabId, groupId),
       addStructuredTab: () => actionsBridgeRef.current.addStructuredTab(),
       closeStructuredTab: (id: string) => actionsBridgeRef.current.closeStructuredTab(id),
       renameStructuredTab: (id: string, title: string) =>

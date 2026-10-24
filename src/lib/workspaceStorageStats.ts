@@ -52,6 +52,7 @@ export function estimateWorkspaceStorage(data: AppData): WorkspaceStorageBreakdo
     todoGroups: data.todoGroups,
     aiSettings: data.aiSettings,
     utilityDocument: data.utilityDocument,
+    utilityDocumentTabs: data.utilityDocumentTabs,
     utilityStructuredText: data.utilityStructuredText,
     notesLock: data.notesLock,
     notifiedReminderIds: data.notifiedReminderIds,

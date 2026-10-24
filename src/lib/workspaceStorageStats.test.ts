@@ -107,4 +107,14 @@ describe('formatStorageBytes', () => {
     expect(formatStorageBytes(2 * 1024 * 1024)).toBe('2.0 MB');
     expect(formatStorageBytes(2 * 1024 * 1024 * 1024)).toBe('2.00 GB');
   });
+
+  it('counts document tab bodies in the other bytes', () => {
+    const empty = estimateWorkspaceStorage(emptyData());
+    const withTabs = emptyData();
+    withTabs.utilityDocumentTabs = [
+      { id: 't1', title: 'Draft', body: 'x'.repeat(5000), updatedAt: '2026-01-01T00:00:00.000Z' },
+    ];
+    expect(estimateWorkspaceStorage(withTabs).otherBytes).toBeGreaterThan(empty.otherBytes + 4000);
+  });
 });
+

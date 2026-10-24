@@ -100,6 +100,7 @@ const api = {
   exportDataBundle: (data) => ipcRenderer.invoke('data:exportBundle', { data }),
   importDataBundle: () => ipcRenderer.invoke('data:importBundle'),
   saveNoteFile: (payload) => ipcRenderer.invoke('note:saveAs', payload),
+  saveToolFile: (payload) => ipcRenderer.invoke('tools:saveAs', payload),
   openNoteFile: () => ipcRenderer.invoke('note:openFile'),
   importWorkspace: (payload) => ipcRenderer.invoke('data:importWorkspace', payload),
   backupMirrorGet: () => ipcRenderer.invoke('backupMirror:get'),

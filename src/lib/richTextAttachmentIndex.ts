@@ -101,6 +101,9 @@ export function collectReferencedAttachmentIds(data: AppData): string[] {
   if (data.utilityDocument) {
     scanAnyBody(data.utilityDocument.body, data.utilityDocument.bodyFormat, ids);
   }
+  // Document tabs hold images too. Missing here, a pasted image would look
+  // orphaned and be garbage-collected.
+  for (const tab of data.utilityDocumentTabs ?? []) scanAnyBody(tab.body, tab.bodyFormat, ids);
   for (const it of data.items ?? []) scanAnyBody(it.body, it.bodyFormat, ids);
   for (const p of data.people ?? []) {
     scanAnyBody(p.scratchpad, p.scratchpadFormat, ids);

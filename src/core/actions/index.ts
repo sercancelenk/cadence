@@ -19,6 +19,7 @@ import type {
   TodoStatus,
   UserProfile,
   UtilityDocument,
+  UtilityDocumentTab,
   UtilityErdDocument,
   UtilitySketchDocument,
   UtilityStructuredText,
@@ -43,6 +44,7 @@ import {
   groupDepth,
   groupDescendantIds,
   groupSubtreeHeight,
+  isGroupEffectivelyArchived,
 } from '../model';
 
 export function addTeam(data: AppData, name: string): AppData {
@@ -1330,19 +1332,29 @@ export function updateNoteGroup(
 /**
  * Delete a list without deleting anything inside it: its sub-lists and notes
  * move up to the deleted list's parent (root / ungrouped when it had none).
+ *
+ * A note is archived by its list, so deleting an archived list would silently
+ * bring everything in it back to the active view. When the list itself carried
+ * the archive, what moves out is archived explicitly instead.
  */
 export function removeNoteGroup(data: AppData, groupId: string): AppData {
   const parent = effectiveParentId(data.noteGroups, groupId);
+  const carriedArchive =
+    data.noteGroups.find((g) => g.id === groupId)?.archived === true &&
+    !(parent !== undefined && isGroupEffectivelyArchived(data.noteGroups, parent));
   const noteGroups = data.noteGroups
     .filter((g) => g.id !== groupId)
     .map((g) => {
       if (g.parentId !== groupId) return g;
       const { parentId: _old, ...rest } = g;
-      return parent === undefined ? rest : { ...rest, parentId: parent };
+      const moved = parent === undefined ? rest : { ...rest, parentId: parent };
+      return carriedArchive ? { ...moved, archived: true } : moved;
     });
-  const notes = data.notes.map((n) =>
-    n.groupId === groupId ? { ...n, groupId: parent } : n,
-  );
+  const notes = data.notes.map((n) => {
+    if (n.groupId !== groupId) return n;
+    const moved = { ...n, groupId: parent };
+    return carriedArchive ? { ...moved, archived: true } : moved;
+  });
   return { ...data, noteGroups, notes };
 }
 
@@ -1397,7 +1409,7 @@ export function patchUtilityStructuredText(
 // ---------------------------------------------------------------------------
 
 /** Pick the next free "Untitled N" label so new tabs don't collide. */
-function nextUntitledTitle(tabs: UtilityStructuredTab[]): string {
+function nextUntitledTitle(tabs: readonly { title: string }[]): string {
   let n = tabs.length + 1;
   const taken = new Set(tabs.map((t) => t.title));
   while (taken.has(`Untitled ${n}`)) n += 1;
@@ -1497,6 +1509,143 @@ export function patchStructuredTab(
   });
   if (!changed) return data;
   return { ...data, utilityStructuredTabs: next };
+}
+
+// ---------------------------------------------------------------------------
+// Utilities → Document multi-document tabs. Same rules as the JSON / YAML tabs;
+// reducers are pure and never touch a non-target tab.
+// ---------------------------------------------------------------------------
+
+function createDocumentTab(id: string, title: string): UtilityDocumentTab {
+  return { id, title, body: '', updatedAt: nowIso() };
+}
+
+/** Append an empty tab and make it active. `id` comes from the caller to keep the updater pure. */
+export function addDocumentTab(data: AppData, id: string): AppData {
+  const tabs = data.utilityDocumentTabs ?? [];
+  const tab = createDocumentTab(id, nextUntitledTitle(tabs));
+  return { ...data, utilityDocumentTabs: [...tabs, tab], activeDocumentTabId: tab.id };
+}
+
+/** Close a tab. Closing the last one leaves a fresh empty tab so the page is never blank. */
+export function closeDocumentTab(data: AppData, id: string): AppData {
+  const tabs = data.utilityDocumentTabs ?? [];
+  const idx = tabs.findIndex((t) => t.id === id);
+  if (idx === -1) return data;
+  const remaining = tabs.filter((t) => t.id !== id);
+  if (remaining.length === 0) {
+    const fresh = createDocumentTab(uuid(), 'Untitled 1');
+    return { ...data, utilityDocumentTabs: [fresh], activeDocumentTabId: fresh.id };
+  }
+  const activeDocumentTabId =
+    data.activeDocumentTabId === id
+      ? remaining[Math.min(idx, remaining.length - 1)]!.id
+      : data.activeDocumentTabId;
+  return { ...data, utilityDocumentTabs: remaining, activeDocumentTabId };
+}
+
+export function renameDocumentTab(data: AppData, id: string, title: string): AppData {
+  const tabs = data.utilityDocumentTabs ?? [];
+  const trimmed = title.trim();
+  if (!trimmed) return data;
+  let changed = false;
+  const next = tabs.map((t) => {
+    if (t.id !== id || t.title === trimmed) return t;
+    changed = true;
+    return { ...t, title: trimmed, updatedAt: nowIso() };
+  });
+  return changed ? { ...data, utilityDocumentTabs: next } : data;
+}
+
+export function setActiveDocumentTab(data: AppData, id: string): AppData {
+  if (data.activeDocumentTabId === id) return data;
+  if (!(data.utilityDocumentTabs ?? []).some((t) => t.id === id)) return data;
+  return { ...data, activeDocumentTabId: id };
+}
+
+export function patchDocumentTab(
+  data: AppData,
+  id: string,
+  patch: Partial<Pick<UtilityDocumentTab, 'body' | 'bodyFormat' | 'bodyPlainText'>>,
+): AppData {
+  const tabs = data.utilityDocumentTabs ?? [];
+  let changed = false;
+  const next = tabs.map((t) => {
+    if (t.id !== id) return t;
+    changed = true;
+    return { ...t, ...patch, updatedAt: nowIso() };
+  });
+  return changed ? { ...data, utilityDocumentTabs: next } : data;
+}
+
+// ---------------------------------------------------------------------------
+// Move a Tools tab into Notes. One pure update: the note is created and the tab
+// removed together, so a save can never persist one without the other.
+// ---------------------------------------------------------------------------
+
+export type MoveToNoteFields = {
+  title: string;
+  body: string;
+  bodyFormat?: 'markdown' | 'prosemirror';
+  bodyPlainText?: string;
+};
+
+type MoveToNoteArgs = { tabId: string; noteId: string; groupId?: string };
+
+function withNoteFromFields(data: AppData, noteId: string, groupId: string | undefined, f: MoveToNoteFields): AppData {
+  const created = addNote(data, noteId, groupId);
+  const t = nowIso();
+  return {
+    ...created,
+    notes: created.notes.map((n) =>
+      n.id === noteId
+        ? { ...n, title: f.title, body: f.body, bodyFormat: f.bodyFormat, bodyPlainText: f.bodyPlainText, updatedAt: t }
+        : n,
+    ),
+  };
+}
+
+/** Pick the neighbour that becomes active after `id` leaves `tabs`. */
+function neighbourAfterRemoval(tabs: readonly { id: string }[], id: string): string | undefined {
+  const idx = tabs.findIndex((t) => t.id === id);
+  const remaining = tabs.filter((t) => t.id !== id);
+  return remaining.length === 0 ? undefined : remaining[Math.min(idx, remaining.length - 1)]!.id;
+}
+
+export function moveDocumentTabToNote(data: AppData, args: MoveToNoteArgs): AppData {
+  const tabs = data.utilityDocumentTabs ?? [];
+  const tab = tabs.find((t) => t.id === args.tabId);
+  if (!tab || data.notes.some((n) => n.id === args.noteId)) return data;
+  const withNote = withNoteFromFields(data, args.noteId, args.groupId, {
+    title: tab.title,
+    body: tab.body,
+    bodyFormat: tab.bodyFormat,
+    bodyPlainText: tab.bodyPlainText,
+  });
+  const activeDocumentTabId =
+    data.activeDocumentTabId === tab.id ? neighbourAfterRemoval(tabs, tab.id) : data.activeDocumentTabId;
+  return {
+    ...withNote,
+    utilityDocumentTabs: tabs.filter((t) => t.id !== tab.id),
+    activeDocumentTabId,
+  };
+}
+
+export function moveStructuredTabToNote(
+  data: AppData,
+  args: MoveToNoteArgs & { fields: MoveToNoteFields },
+): AppData {
+  const tabs = data.utilityStructuredTabs ?? [];
+  const tab = tabs.find((t) => t.id === args.tabId);
+  if (!tab || data.notes.some((n) => n.id === args.noteId)) return data;
+  const withNote = withNoteFromFields(data, args.noteId, args.groupId, args.fields);
+  const activeStructuredTabId =
+    data.activeStructuredTabId === tab.id ? neighbourAfterRemoval(tabs, tab.id) : data.activeStructuredTabId;
+  return {
+    ...withNote,
+    utilityStructuredTabs: tabs.filter((t) => t.id !== tab.id),
+    activeStructuredTabId,
+  };
 }
 
 // ---------------------------------------------------------------------------

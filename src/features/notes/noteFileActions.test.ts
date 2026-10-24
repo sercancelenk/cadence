@@ -151,6 +151,7 @@ function importDeps(over: Partial<ImportNoteDeps> = {}) {
     openFile: vi.fn(async () => ({ ok: true, name: 'Ideas.md', ext: 'md', text: '# Hello\n\n- a' })),
     createNote: (fields) => {
       created.push(fields);
+      return true;
     },
     notify: { success: vi.fn(), error: vi.fn() },
     ...over,
@@ -159,6 +160,13 @@ function importDeps(over: Partial<ImportNoteDeps> = {}) {
 }
 
 describe('importFileAsNote', () => {
+  it('reports an error instead of success when the note could not be created', async () => {
+    const { base } = importDeps({ createNote: () => false });
+    await expect(importFileAsNote(base)).resolves.toBe('error');
+    expect(base.notify.success).not.toHaveBeenCalled();
+    expect(base.notify.error).toHaveBeenCalledTimes(1);
+  });
+
   it('creates a new note titled after the file with the converted body', async () => {
     const { base, created } = importDeps();
     await expect(importFileAsNote(base)).resolves.toBe('imported');

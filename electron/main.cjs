@@ -122,6 +122,8 @@ const { unwrapStoredWorkspace, wrapCommitEnvelope } = require('./persistence/com
 const {
   splitWorkspaceForMonthlyShards,
   mergeMonthlyShardPartials,
+  mergeBaseWithShards,
+  mergeKeepsEveryBaseEntity,
   monthlyShardFilename,
   listMonthlyShardMonths,
   unwrapShardPayload,
@@ -139,9 +141,16 @@ const {
 const { initCrashReporting } = require('./crashReporting.cjs');
 const { requirePolicyFeature } = require('./ipc/policyGuard.cjs');
 const {
+  sanitizeAttachmentId,
+  collectReferencedAttachmentIdsFromPayload,
+} = require('./attachmentRefs.cjs');
+const {
   validateNoteSavePayload,
   checkOpenableNoteFile,
+  checkSaveTargetFree,
   decodeNoteFileText,
+  validateToolSavePayload,
+  pickSaveVariant,
 } = require('./noteFileIo.cjs');
 const {
   NOTE_HISTORY_DIRNAME,
@@ -757,12 +766,6 @@ function attachmentsDirForUser(userId) {
   return path.join(app.getPath('userData'), ATTACHMENTS_DIRNAME, userId || '_anon');
 }
 
-/** Safe attachment id for filesystem use (matches renderer validation). */
-function sanitizeAttachmentId(id) {
-  const s = String(id || '').trim();
-  if (!/^[a-zA-Z0-9_-]{8,128}$/.test(s)) return null;
-  return s;
-}
 
 function attachmentPathForUser(userId, attachmentId, encrypted) {
   const safe = sanitizeAttachmentId(attachmentId);
@@ -771,82 +774,7 @@ function attachmentPathForUser(userId, attachmentId, encrypted) {
   return path.join(attachmentsDirForUser(userId), `${safe}${ext}`);
 }
 
-const ATTACHMENT_URI_PREFIX = 'cadence-attachment://';
 const ATTACHMENT_DRAFT_GRACE_MS = 24 * 60 * 60 * 1000;
-
-function parseAttachmentIdFromSrc(src) {
-  if (!src || typeof src !== 'string') return null;
-  if (!src.startsWith(ATTACHMENT_URI_PREFIX)) return null;
-  return sanitizeAttachmentId(src.slice(ATTACHMENT_URI_PREFIX.length).trim());
-}
-
-function collectAttachmentIdsFromDocNode(node, out) {
-  if (!node || typeof node !== 'object') return;
-  if (node.type === 'image' && node.attrs && typeof node.attrs === 'object') {
-    const id =
-      (typeof node.attrs.attachmentId === 'string' && sanitizeAttachmentId(node.attrs.attachmentId)) ||
-      parseAttachmentIdFromSrc(node.attrs.src);
-    if (id) out.add(id);
-  }
-  if (Array.isArray(node.content)) {
-    for (const child of node.content) collectAttachmentIdsFromDocNode(child, out);
-  }
-}
-
-const ATTACHMENT_URI_SCAN_RE = /cadence-attachment:\/\/([a-zA-Z0-9_-]{8,128})/g;
-
-/**
- * Scan a markdown / legacy / unknown-format body for raw
- * `cadence-attachment://<id>` URIs (inside `![](…)` or inline HTML). The
- * prosemirror structural scan cannot see these, so orphan GC must fall back
- * to this — otherwise a markdown-bodied note/todo's still-referenced images
- * look like orphans and get deleted (silent attachment loss).
- */
-function collectAttachmentIdsFromMarkdownBody(body, out) {
-  if (!body || typeof body !== 'string' || !body.includes(ATTACHMENT_URI_PREFIX)) return;
-  for (const m of body.matchAll(ATTACHMENT_URI_SCAN_RE)) {
-    const safe = sanitizeAttachmentId(m[1]);
-    if (safe) out.add(safe);
-  }
-}
-
-function collectReferencedAttachmentIdsFromPayload(payload) {
-  const ids = new Set();
-  // Format-agnostic scan, mirroring the renderer's `scanAnyBody`: prosemirror
-  // bodies are parsed structurally; every other format is scanned for raw
-  // attachment URIs. A malformed prosemirror body also falls back to the URI
-  // scan so GC can never UNDER-count references (worst case: keep an orphan).
-  const scan = (body, bodyFormat) => {
-    if (!body || typeof body !== 'string' || !body.trim()) return;
-    if (bodyFormat === 'prosemirror') {
-      try {
-        collectAttachmentIdsFromDocNode(JSON.parse(body), ids);
-        return;
-      } catch {
-        /* malformed prosemirror — fall through to raw URI scan */
-      }
-    }
-    collectAttachmentIdsFromMarkdownBody(body, ids);
-  };
-  for (const n of payload?.notes || []) {
-    scan(n.body, n.bodyFormat);
-    if (Array.isArray(n.attachmentRefs)) {
-      for (const id of n.attachmentRefs) {
-        const safe = sanitizeAttachmentId(id);
-        if (safe) ids.add(safe);
-      }
-    }
-  }
-  for (const t of payload?.todoItems || []) scan(t.body, t.bodyFormat);
-  const util = payload?.utilityDocument;
-  if (util) scan(util.body, util.bodyFormat);
-  for (const it of payload?.items || []) scan(it.body, it.bodyFormat);
-  for (const p of payload?.people || []) {
-    scan(p.scratchpad, p.scratchpadFormat);
-    scan(p.agenda, p.agendaFormat);
-  }
-  return ids;
-}
 
 function listAttachmentIdsOnDisk(userId) {
   const dir = attachmentsDirForUser(userId);
@@ -986,37 +914,6 @@ function restoreAttachmentsFromBackupDir(userId, backupAttDir) {
   return { ok: true, restored };
 }
 
-/** Read attachment bytes for `ownerUserId`, including OS-keychain cached keys. */
-function readAttachmentBytesWithPersistedKey(ownerUserId, attachmentId) {
-  const fromMem = readAttachmentBytes(ownerUserId, attachmentId);
-  if (fromMem?.length) return fromMem;
-  const persisted = loadPersistedDataKey(ownerUserId);
-  if (!persisted) return null;
-  const encPath = attachmentPathForUser(ownerUserId, attachmentId, true);
-  if (encPath && fs.existsSync(encPath)) {
-    try {
-      const plain = decryptBuffer(fs.readFileSync(encPath, 'utf8'), persisted);
-      if (plain?.length) return plain;
-    } catch {
-      /* fall through */
-    }
-  }
-  const plainPath = attachmentPathForUser(ownerUserId, attachmentId, false);
-  if (plainPath && fs.existsSync(plainPath)) {
-    try {
-      const raw = fs.readFileSync(plainPath);
-      const text = raw.toString('utf8');
-      if (isEncryptedEnvelope(text)) {
-        return decryptBuffer(text, persisted);
-      }
-      return raw;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
 /**
  * Portable export: decrypt sidecars so a bundle can be imported under another
  * account (or machine) without carrying the source encryption key.
@@ -1069,34 +966,6 @@ function importAttachmentsPortableFromDir(userId, srcDir) {
     else skipped += 1;
   }
   return { ok: true, restored, skipped };
-}
-
-/**
- * After a JSON-only import on this machine, copy referenced images from other
- * local account attachment folders (same device, pre-export salvage path).
- */
-function salvageReferencedAttachmentsLocally(targetUserId, payload) {
-  const needed = collectReferencedAttachmentIdsFromPayload(payload);
-  if (!needed.length) return { restored: 0 };
-  const attRoot = path.join(app.getPath('userData'), ATTACHMENTS_DIRNAME);
-  if (!fs.existsSync(attRoot)) return { restored: 0 };
-  let restored = 0;
-  const siblingDirs = fs
-    .readdirSync(attRoot)
-    .filter((name) => name !== targetUserId && fs.statSync(path.join(attRoot, name)).isDirectory());
-  for (const attachmentId of needed) {
-    if (readAttachmentBytes(targetUserId, attachmentId)?.length) continue;
-    for (const ownerId of siblingDirs) {
-      const bytes = readAttachmentBytesWithPersistedKey(ownerId, attachmentId);
-      if (!bytes?.length) continue;
-      const w = writeAttachmentBytes(targetUserId, attachmentId, bytes, detectAttachmentMime(bytes));
-      if (w.ok) {
-        restored += 1;
-        break;
-      }
-    }
-  }
-  return { restored };
 }
 
 function pairedAttachmentsBackupDir(dataBackupPath) {
@@ -1493,8 +1362,9 @@ function readUserDataResult(userId) {
     shardPartials.push(unwrapShardPayload(sr.parsed));
   }
 
-  // Shards are canonical for bulk; base may still hold a full monolithic copy for older app versions.
-  const merged = mergeMonthlyShardPartials(baseCoreForShardMerge(baseWorkspace), shardPartials);
+  // Shards and the base file's own bulk are merged by id (newer `updatedAt` wins):
+  // an older app version may have kept writing the base file after shards existed.
+  const merged = mergeBaseWithShards(baseWorkspace, shardPartials);
   const mergedCounts = countShardableEntities(merged);
   const baseCounts = countShardableEntities(baseWorkspace);
 
@@ -1516,7 +1386,7 @@ function readUserDataResult(userId) {
   }
 
   let data = merged;
-  if (mergedCounts.total < baseCounts.total && baseCounts.total > 0) {
+  if (baseCounts.total > 0 && !mergeKeepsEveryBaseEntity(baseWorkspace, merged)) {
     console.warn('[cadence] shard merge incomplete — serving full base file bulk', {
       shardReadFailures,
       mergedTotal: mergedCounts.total,
@@ -4072,7 +3942,36 @@ ipcMain.handle('note:saveAs', async (_evt, payload) => {
     ],
   });
   if (pick.canceled || !pick.filePath) return { ok: false, canceled: true };
+  const free = checkSaveTargetFree(pick.filePath, (p) => fs.existsSync(p));
+  if (!free.ok) return free;
   const write = writeJsonText(pick.filePath, checked.content);
+  if (!write.ok) return { ok: false, error: write.error || 'Could not write the file.' };
+  return { ok: true, path: pick.filePath };
+});
+
+/**
+ * Save a Tools document (Document tab or JSON / YAML tab) to a file. Unlike
+ * `note:saveAs`, the renderer sends every format it can produce and the
+ * extension the user types in the system dialog decides which one is written.
+ * The destination is chosen here, never by the renderer.
+ */
+ipcMain.handle('tools:saveAs', async (_evt, payload) => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
+  if (!readSessionUserId()) return { ok: false, error: 'Not signed in.' };
+  const checked = validateToolSavePayload(payload);
+  if (!checked.ok) return checked;
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const pick = await dialog.showSaveDialog(win, {
+    title: 'Save document',
+    defaultPath: path.join(app.getPath('documents'), checked.suggestedName),
+    filters: checked.filters,
+  });
+  if (pick.canceled || !pick.filePath) return { ok: false, canceled: true };
+  const free = checkSaveTargetFree(pick.filePath, (p) => fs.existsSync(p));
+  if (!free.ok) return free;
+  const content = pickSaveVariant(checked.variants, pick.filePath, checked.defaultExt);
+  const write = writeJsonText(pick.filePath, content);
   if (!write.ok) return { ok: false, error: write.error || 'Could not write the file.' };
   return { ok: true, path: pick.filePath };
 });
@@ -4170,12 +4069,11 @@ ipcMain.handle('data:importBundle', async () => {
       : { restored: 0, skipped: 0 };
     const histSrc = path.join(folder, NOTE_HISTORY_DIRNAME);
     if (fs.existsSync(histSrc)) importNoteHistoryFromDir(uid, histSrc);
-    const salvaged = salvageReferencedAttachmentsLocally(uid, payload);
     return {
       ok: true,
       importedFrom: path.basename(folder),
       writeGeneration: w.writeGeneration,
-      attachmentsRestored: attResult.restored + salvaged.restored,
+      attachmentsRestored: attResult.restored,
       attachmentsSkipped: attResult.skipped ?? 0,
     };
   } finally {
@@ -4212,10 +4110,11 @@ ipcMain.handle('data:importWorkspace', (_evt, payload) => {
   try {
     const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
     if (!w.ok) return w;
-    const salvaged = salvageReferencedAttachmentsLocally(uid, payload);
+    // A JSON-only import carries no images. Another account's attachments are
+    // never read here; use a portable ZIP or full backup folder to bring images.
     return {
       ...w,
-      attachmentsRestored: salvaged.restored,
+      attachmentsRestored: 0,
     };
   } finally {
     workspaceImportLockUid = null;

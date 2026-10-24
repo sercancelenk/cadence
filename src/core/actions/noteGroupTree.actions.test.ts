@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyData, type AppData, type Note, type NoteGroup } from '../model';
+import { emptyData, isNoteEffectivelyArchived, type AppData, type Note, type NoteGroup } from '../model';
 import { addNoteGroup, moveNoteGroup, removeNoteGroup, updateNoteGroup } from './index';
 
 const TS = '2026-01-01T00:00:00.000Z';
@@ -139,5 +139,92 @@ describe('archiving a list keeps everything in place', () => {
     expect(restored.noteGroups.find((g) => g.id === 'p')?.archived).toBeUndefined();
     expect(restored.noteGroups.find((g) => g.id === 'c')).toEqual(data.noteGroups.find((g) => g.id === 'c'));
     expect(restored.notes).toEqual(data.notes);
+  });
+});
+
+describe('removeNoteGroup keeps archived content archived', () => {
+  it('notes of a deleted archived list stay archived at the new parent', () => {
+    const data = withGroups([grp('p'), grp('g', 'p', { archived: true })], [nt('n', 'g')]);
+    const d = removeNoteGroup(data, 'g');
+    const n = d.notes.find((x) => x.id === 'n')!;
+    expect(n.groupId).toBe('p');
+    expect(isNoteEffectivelyArchived(n, d.noteGroups)).toBe(true);
+  });
+
+  it('notes of a deleted archived root list stay archived at the top level', () => {
+    const data = withGroups([grp('g', undefined, { archived: true })], [nt('n', 'g')]);
+    const d = removeNoteGroup(data, 'g');
+    const n = d.notes.find((x) => x.id === 'n')!;
+    expect(n.groupId).toBeUndefined();
+    expect(isNoteEffectivelyArchived(n, d.noteGroups)).toBe(true);
+  });
+
+  it('sub-lists of a deleted archived list stay archived, with their notes', () => {
+    const data = withGroups(
+      [grp('g', undefined, { archived: true }), grp('c', 'g')],
+      [nt('n', 'c')],
+    );
+    const d = removeNoteGroup(data, 'g');
+    const n = d.notes.find((x) => x.id === 'n')!;
+    expect(parentOf(d, 'c')).toBeUndefined();
+    expect(isNoteEffectivelyArchived(n, d.noteGroups)).toBe(true);
+  });
+
+  it('keeps content archived when only an ancestor of the deleted list was archived', () => {
+    const data = withGroups(
+      [grp('a', undefined, { archived: true }), grp('g', 'a')],
+      [nt('n', 'g')],
+    );
+    const d = removeNoteGroup(data, 'g');
+    const n = d.notes.find((x) => x.id === 'n')!;
+    expect(n.groupId).toBe('a');
+    expect(isNoteEffectivelyArchived(n, d.noteGroups)).toBe(true);
+  });
+
+  it('leaves content active when the deleted list was active', () => {
+    const data = withGroups([grp('g'), grp('c', 'g')], [nt('n', 'g'), nt('m', 'c')]);
+    const d = removeNoteGroup(data, 'g');
+    expect(d.notes.every((x) => !isNoteEffectivelyArchived(x, d.noteGroups))).toBe(true);
+    expect(d.noteGroups.find((x) => x.id === 'c')?.archived).toBeUndefined();
+  });
+
+  it('never changes which notes exist', () => {
+    const data = withGroups([grp('g', undefined, { archived: true })], [nt('n1', 'g'), nt('n2')]);
+    const d = removeNoteGroup(data, 'g');
+    expect(d.notes.map((x) => x.id)).toEqual(['n1', 'n2']);
+  });
+});
+
+describe('removeNoteGroup with damaged trees', () => {
+  it('keeps content archived when the archived list pointed at a parent that no longer exists', () => {
+    const data = withGroups([grp('g', 'ghost', { archived: true })], [nt('n', 'g')]);
+    const d = removeNoteGroup(data, 'g');
+    const n = d.notes.find((x) => x.id === 'n')!;
+    expect(n.groupId).toBeUndefined();
+    expect(isNoteEffectivelyArchived(n, d.noteGroups)).toBe(true);
+  });
+
+  it('loses nothing and archives everything when an archived list sits in a parent cycle', () => {
+    const data = withGroups(
+      [grp('a', 'b', { archived: true }), grp('b', 'a')],
+      [nt('n1', 'a'), nt('n2', 'b')],
+    );
+    const d = removeNoteGroup(data, 'a');
+    expect(d.notes.map((x) => x.id).sort()).toEqual(['n1', 'n2']);
+    expect(d.noteGroups.map((x) => x.id)).toEqual(['b']);
+    const n1 = d.notes.find((x) => x.id === 'n1')!;
+    expect(isNoteEffectivelyArchived(n1, d.noteGroups)).toBe(true);
+    expect(d.noteGroups[0]!.parentId).toBeUndefined();
+  });
+
+  it('does not archive anything extra when an archived list moves under an already archived parent', () => {
+    const data = withGroups(
+      [grp('top', undefined, { archived: true }), grp('g', 'top', { archived: true })],
+      [nt('n', 'g')],
+    );
+    const d = removeNoteGroup(data, 'g');
+    const n = d.notes.find((x) => x.id === 'n')!;
+    expect(n.groupId).toBe('top');
+    expect(n.archived).toBeUndefined();
   });
 });

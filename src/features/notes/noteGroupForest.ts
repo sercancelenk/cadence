@@ -136,17 +136,37 @@ export function describeGroupDeletion(
   if (parts.length === 0) return { noteCount, subListCount, destinationName, message: 'This list is empty.' };
 
   const where = destinationName ? `“${destinationName}”` : 'the top level';
+  // Mirrors `removeNoteGroup`: content the list itself kept archived is archived explicitly.
+  const staysArchived =
+    groups.find((x) => x.id === groupId)?.archived === true &&
+    !(destinationId !== undefined && isGroupEffectivelyArchived(groups, destinationId));
   return {
     noteCount,
     subListCount,
     destinationName,
-    message: `${parts.join(' and ')} will move to ${where}. Nothing else is deleted.`,
+    message: `${parts.join(' and ')} will move to ${where}${staysArchived ? ' and stay archived' : ''}. Nothing else is deleted.`,
   };
 }
 
 /** Lists a note or list may be moved into: moving into an archived list would hide it. */
 export function movableGroups(groups: NoteGroup[]): NoteGroup[] {
   return groups.filter((g) => !isGroupEffectivelyArchived(groups, g.id));
+}
+
+/**
+ * Where a document arriving from outside Notes (e.g. a Tools tab) can be put:
+ * the top level, then every list that is not archived (an archived list would
+ * hide the note), each labelled with its ancestor path.
+ */
+export function noteDestinations(groups: NoteGroup[]): { id: string | undefined; label: string }[] {
+  const names = new Map(groups.map((g) => [g.id, g.name]));
+  const lists = movableGroups(groups)
+    .map((g) => ({
+      id: g.id as string | undefined,
+      label: [...[...groupAncestors(groups, g.id)].reverse().map((a) => names.get(a) ?? a), g.name].join(' / '),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  return [{ id: undefined, label: 'No list (top level)' }, ...lists];
 }
 
 /** Valid "Move to…" destinations for a list; `id: undefined` is the top level. */

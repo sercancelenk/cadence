@@ -54,6 +54,7 @@ import { useNotesUnlock } from '../lib/NotesUnlockContext';
 import { purgeNoteRevisionHistory } from '../lib/noteRevision/noteRevisionStore';
 import { runBeforeFlushHooks } from '../lib/pendingSaveFlush';
 import { movableGroups } from '../features/notes/noteGroupForest';
+import { useFlushOnNoteSwitch } from '../features/notes/useFlushOnNoteSwitch';
 import { defaultTodoGroupId } from '../lib/todoGroupPick';
 import type { AppData } from '../model';
 import { isNoteEffectivelyArchived } from '../model';
@@ -84,6 +85,7 @@ export function NotesPage() {
     setNotesLock,
     update,
     flushPendingSave,
+    flushIfPending,
     getLatestSnapshot,
     linkNoteTodo,
     unlinkNoteTodo,
@@ -168,6 +170,7 @@ export function NotesPage() {
     pendingSelectNoteIdRef,
     notesWorkspace.noteGroups,
   );
+  useFlushOnNoteSwitch(selectedId, flushIfPending);
 
   // Layout, not passive: a passive effect runs *after* paint, which leaves a
   // window where the new note is on screen and selectable but not yet held.
@@ -292,8 +295,10 @@ export function NotesPage() {
   );
 
   const createImportedNote = useCallback(
-    (fields: ImportedNoteFields) => {
+    (fields: ImportedNoteFields): boolean => {
       const id = addNote();
+      // `addNote` hands back an id even when the workspace refused the write.
+      if (!getLatestSnapshot().notes.some((n) => n.id === id)) return false;
       patchNote(id, fields);
       setViewMode('active');
       setDecrypted(null);
@@ -301,8 +306,9 @@ export function NotesPage() {
       setListContextMenu(null);
       pendingSelectNoteIdRef.current = id;
       setSelectedId(id);
+      return true;
     },
-    [addNote, patchNote, clearBulk, setDecrypted, setSelectedId, setViewMode],
+    [addNote, getLatestSnapshot, patchNote, clearBulk, setDecrypted, setSelectedId, setViewMode],
   );
 
   const onOpenFile = useCallback(() => {

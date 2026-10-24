@@ -2266,7 +2266,8 @@ describe('normalizeData — forward-compatible unknown-field passthrough', () =>
     const allowed = new Set([
       'version', 'teams', 'people', 'items', 'notifiedReminderIds', 'lastTeamId',
       'profile', 'todoGroups', 'todoItems', 'aiSettings', 'notes', 'noteGroups',
-      'notesLock', 'utilityDocument', 'utilityStructuredText',
+      'notesLock', 'utilityDocument', 'utilityDocumentTabs', 'activeDocumentTabId',
+      'utilityDocumentLegacySeenAt', 'utilityStructuredText',
       'utilityStructuredTabs', 'activeStructuredTabId', 'noteTodoLinks',
       'utilityErdDocuments', 'utilitySketchDocuments',
     ]);

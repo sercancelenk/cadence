@@ -4,7 +4,12 @@ import { useConfirm } from '../components/ui/ConfirmProvider';
 import { StructuredTextDiffPane } from '../components/ui/StructuredTextDiffPane';
 import { StructuredTextEditor } from '../components/ui/StructuredTextEditor';
 import { StructuredTextHelpDialog } from '../components/ui/StructuredTextHelpDialog';
-import { IcHelpCircle, IcLayoutGrid, IcPencil, IcPlus, IcX } from '../components/icons';
+import { IcFileText, IcHelpCircle, IcLayoutGrid, IcPencil } from '../components/icons';
+import { UtilityTabStrip } from '../features/tools/UtilityTabStrip';
+import { useMoveTabToNote } from '../features/tools/useMoveTabToNote';
+import { useToolFileSave } from '../features/tools/useToolFileSave';
+import { useToast } from '../components/ui/Toast';
+import { structuredTabFile } from '../lib/toolFileExport';
 import type { StructuredTextLanguage } from '../lib/structuredText';
 import type { UtilityStructuredTab } from '../core/model';
 
@@ -31,31 +36,47 @@ export function UtilitiesStructuredPage() {
     renameStructuredTab,
     setActiveStructuredTab,
     patchStructuredTab,
+    flushPendingSave,
+    getLatestSnapshot,
   } = useAppData();
   const { confirm } = useConfirm();
+  const move = useMoveTabToNote('structured');
 
   const tabs = useMemo(() => data.utilityStructuredTabs ?? [], [data.utilityStructuredTabs]);
   const activeTab =
     tabs.find((t) => t.id === data.activeStructuredTabId) ?? tabs[0] ?? null;
 
+  const toast = useToast();
+  // In Diff mode the file is still the tab's edit buffer: the diff panes are scratch.
+  useToolFileSave({
+    active: Boolean(activeTab),
+    flush: flushPendingSave,
+    saveFile: window.cadence?.saveToolFile,
+    notify: { success: toast.showSuccess, error: toast.showError },
+    getFile: () => {
+      const latest = getLatestSnapshot();
+      const all = latest.utilityStructuredTabs ?? [];
+      const tab = all.find((t) => t.id === latest.activeStructuredTabId) ?? all[0];
+      return tab ? structuredTabFile(tab) : null;
+    },
+  });
+
   const [helpOpen, setHelpOpen] = useState(false);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState('');
-  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   // Brand-new workspaces (never opened this editor, no legacy buffer) have no
   // tabs yet. Seed exactly one so the editor is never blank. The ref guards
   // against React StrictMode's double-invoked effect creating two tabs.
   const seededRef = useRef(false);
   useEffect(() => {
-    if (tabs.length > 0 || seededRef.current) return;
+    // Re-arm once a tab exists: moving the only tab to Notes leaves none again.
+    if (tabs.length > 0) {
+      seededRef.current = false;
+      return;
+    }
+    if (seededRef.current) return;
     seededRef.current = true;
     addStructuredTab();
   }, [tabs.length, addStructuredTab]);
-
-  useEffect(() => {
-    if (renamingId) renameInputRef.current?.focus();
-  }, [renamingId]);
 
   const lastUpdated = useMemo(() => {
     if (!activeTab?.updatedAt) return null;
@@ -135,22 +156,6 @@ export function UtilitiesStructuredPage() {
     closeStructuredTab(tab.id);
   };
 
-  const beginRename = (tab: UtilityStructuredTab) => {
-    setRenamingId(tab.id);
-    setRenameValue(tab.title);
-  };
-
-  const commitRename = () => {
-    if (renamingId) renameStructuredTab(renamingId, renameValue);
-    setRenamingId(null);
-    setRenameValue('');
-  };
-
-  const cancelRename = () => {
-    setRenamingId(null);
-    setRenameValue('');
-  };
-
   return (
     <div className="page page--wide utilities-structured-page">
       <header className="utilities-doc-page__head">
@@ -172,82 +177,45 @@ export function UtilitiesStructuredPage() {
             your workspace — not a note or todo.
           </p>
         </div>
-        {lastUpdated ? (
-          <p className="utilities-doc-page__meta muted small">Last updated {lastUpdated}</p>
-        ) : null}
+        <div className="utilities-doc-page__actions">
+          {lastUpdated ? (
+            <p className="utilities-doc-page__meta muted small">Last updated {lastUpdated}</p>
+          ) : null}
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            title="Turn this tab into a note and remove it from Tools"
+            onClick={() => move.request(activeId)}
+          >
+            <IcFileText size={14} aria-hidden />
+            Move to Notes
+          </button>
+        </div>
       </header>
+      {move.dialog}
 
       {helpOpen ? <StructuredTextHelpDialog onClose={() => setHelpOpen(false)} /> : null}
 
-      <div className="structured-tabbar" role="tablist" aria-label="JSON / YAML documents">
-        <div className="structured-tabbar__list">
-          {tabs.map((tab) => {
-            const isActive = tab.id === activeId;
-            const isRenaming = tab.id === renamingId;
-            return (
-              <div
-                key={tab.id}
-                className={`structured-tab${isActive ? ' structured-tab--active' : ''}`}
-                role="tab"
-                aria-selected={isActive}
-                onClick={() => setActiveStructuredTab(tab.id)}
-                onDoubleClick={() => beginRename(tab)}
-              >
-                <span
-                  className={`structured-tab__badge structured-tab__badge--${tab.language}`}
-                  aria-hidden
-                >
-                  {tab.language === 'yaml' ? 'YAML' : 'JSON'}
-                </span>
-                {isRenaming ? (
-                  <input
-                    ref={renameInputRef}
-                    className="structured-tab__rename"
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={commitRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        commitRename();
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        cancelRename();
-                      }
-                    }}
-                  />
-                ) : (
-                  <span className="structured-tab__title" title={tab.title}>
-                    {tab.title}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className="structured-tab__close"
-                  aria-label={`Close ${tab.title}`}
-                  title="Close tab"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void handleCloseTab(tab);
-                  }}
-                >
-                  <IcX size={13} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          className="structured-tabbar__add"
-          aria-label="New tab"
-          title="New tab"
-          onClick={() => addStructuredTab()}
-        >
-          <IcPlus size={16} />
-        </button>
-      </div>
+      <UtilityTabStrip
+        tabs={tabs.map((tab) => ({
+          id: tab.id,
+          title: tab.title,
+          badge: (
+            <span className={`structured-tab__badge structured-tab__badge--${tab.language}`} aria-hidden>
+              {tab.language === 'yaml' ? 'YAML' : 'JSON'}
+            </span>
+          ),
+        }))}
+        activeId={activeId}
+        ariaLabel="JSON / YAML documents"
+        onSelect={setActiveStructuredTab}
+        onAdd={() => addStructuredTab()}
+        onClose={(id) => {
+          const tab = tabs.find((t) => t.id === id);
+          if (tab) void handleCloseTab(tab);
+        }}
+        onRename={renameStructuredTab}
+      />
 
       <div
         className={`structured-text-workspace${mode === 'diff' ? ' structured-text-workspace--diff' : ''}`}

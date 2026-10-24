@@ -267,6 +267,12 @@ interface CadenceApi {
         format: 'md' | 'txt' | 'html';
         content: string;
       }) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+      saveToolFile?: (payload: {
+        suggestedName: string;
+        defaultExt: string;
+        extensions: string[];
+        variants: Record<string, string>;
+      }) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
       openNoteFile?: () => Promise<{
         ok: boolean;
         name?: string;

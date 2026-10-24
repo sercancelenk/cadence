@@ -205,3 +205,29 @@ describe('attachmentRefsFromAnyBody', () => {
     expect(attachmentRefsFromAnyBody(md, 'markdown')).toEqual(['dup-image-1234567890']);
   });
 });
+
+describe('collectReferencedAttachmentIds for Tools → Document tabs', () => {
+  const imageDoc = (id: string) =>
+    serializeRichDoc({ type: 'doc', content: [{ type: 'image', attrs: { attachmentId: id, src: `cadence-attachment://${id}` } }] });
+
+  it('counts an image that only a document tab references', () => {
+    const data = baseData();
+    data.utilityDocumentTabs = [
+      { id: 't1', title: 'A', body: '', updatedAt: '2026-01-01T00:00:00.000Z' },
+      { id: 't2', title: 'B', body: imageDoc('utility-tab-img-111111'), bodyFormat: 'prosemirror', updatedAt: '2026-01-01T00:00:00.000Z' },
+    ];
+    expect(collectReferencedAttachmentIds(data)).toContain('utility-tab-img-111111');
+  });
+
+  it('still counts the legacy document and markdown tab bodies', () => {
+    const data = baseData();
+    data.utilityDocument = { body: imageDoc('utility-legacy-2222222'), bodyFormat: 'prosemirror', updatedAt: '2026-01-01T00:00:00.000Z' };
+    data.utilityDocumentTabs = [
+      { id: 't1', title: 'A', body: '![x](cadence-attachment://utility-md-tab-3333333)', updatedAt: '2026-01-01T00:00:00.000Z' },
+    ];
+    const ids = collectReferencedAttachmentIds(data);
+    expect(ids).toContain('utility-legacy-2222222');
+    expect(ids).toContain('utility-md-tab-3333333');
+  });
+});
+

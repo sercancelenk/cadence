@@ -125,8 +125,12 @@ export type ImportedNoteFields = {
 export type ImportNoteDeps = {
   /** Desktop bridge (native open dialog); undefined in the plain web build. */
   openFile: (() => Promise<OpenNoteResult>) | undefined;
-  /** Adds a brand-new note holding these fields — never touches existing notes. */
-  createNote: (fields: ImportedNoteFields) => void;
+  /**
+   * Adds a brand-new note holding these fields — never touches existing notes.
+   * Returns false when the note was not created (e.g. the workspace is
+   * write-protected after a failed load), so the user is not told it worked.
+   */
+  createNote: (fields: ImportedNoteFields) => boolean;
   notify: SaveNoteDeps['notify'];
 };
 
@@ -141,12 +145,16 @@ function createNoteFromText(
   const doc = importFileToDoc(text, ext);
   const fields = richBodyFieldsFromPayload(richPayloadFromDoc(doc));
   const title = titleFromFileName(name);
-  deps.createNote({
+  const created = deps.createNote({
     title,
     body: fields.body,
     bodyFormat: fields.bodyFormat,
     bodyPlainText: fields.bodyPlainText,
   });
+  if (!created) {
+    deps.notify.error('Could not import note', 'Your workspace is not writable right now.');
+    return 'error';
+  }
   deps.notify.success('Note imported', title || name);
   return 'imported';
 }

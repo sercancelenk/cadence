@@ -6,6 +6,7 @@ import {
   flattenForestNoteIds,
   movableGroups,
   moveTargets,
+  noteDestinations,
   type GroupNode,
 } from './noteGroupForest';
 
@@ -215,3 +216,53 @@ describe('archived lists are not move destinations', () => {
     expect(targets).not.toContain('old-sub');
   });
 });
+
+describe('describeGroupDeletion for an archived list', () => {
+  it('says the moved content stays archived', () => {
+    const groups = [g('top'), g('arch', { parentId: 'top', archived: true })];
+    const d = describeGroupDeletion(groups, [n('a', { groupId: 'arch' })], 'arch');
+    expect(d.message).toContain('stay archived');
+    expect(d.message).toContain('Nothing else is deleted');
+  });
+
+  it('does not mention archiving for an active list', () => {
+    const groups = [g('top'), g('mid', { parentId: 'top' })];
+    const d = describeGroupDeletion(groups, [n('a', { groupId: 'mid' })], 'mid');
+    expect(d.message).not.toContain('archived');
+  });
+
+  it('keeps the empty-list wording', () => {
+    const d = describeGroupDeletion([g('arch', { archived: true })], [], 'arch');
+    expect(d.message).toBe('This list is empty.');
+  });
+});
+
+describe('noteDestinations', () => {
+  it('puts the top level first, then every list with its path', () => {
+    const groups = [
+      g('work', { name: 'Work' }),
+      g('proj', { name: 'Projects', parentId: 'work' }),
+      g('home', { name: 'Home' }),
+    ];
+    expect(noteDestinations(groups)).toEqual([
+      { id: undefined, label: 'No list (top level)' },
+      { id: 'home', label: 'Home' },
+      { id: 'work', label: 'Work' },
+      { id: 'proj', label: 'Work / Projects' },
+    ]);
+  });
+
+  it('leaves out archived lists and the lists inside them', () => {
+    const groups = [
+      g('live', { name: 'Live' }),
+      g('old', { name: 'Old', archived: true }),
+      g('inside', { name: 'Inside', parentId: 'old' }),
+    ];
+    expect(noteDestinations(groups).map((d) => d.id)).toEqual([undefined, 'live']);
+  });
+
+  it('offers only the top level when there are no lists', () => {
+    expect(noteDestinations([])).toEqual([{ id: undefined, label: 'No list (top level)' }]);
+  });
+});
+
