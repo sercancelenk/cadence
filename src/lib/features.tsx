@@ -58,8 +58,12 @@ export type Features = {
      */
     cloud: boolean;
   };
-  /** BYO-key AI assistant (calls OpenAI / Anthropic directly from renderer). */
+  /** BYO-key AI assistant (the desktop app makes the request itself). */
   ai: boolean;
+  /** AI on people data (1:1 notes, feedback). Follows `ai` unless the policy sets it. */
+  aiPeople: boolean;
+  /** The constrained "Focus note" on AI prompts. Follows `ai` unless the policy sets it. */
+  aiFocusNote: boolean;
   /** Backup-as-file export from Settings → Backups & Recovery. */
   dataExport: boolean;
   /** Periodic + manual update check against GitHub Releases. */
@@ -78,6 +82,8 @@ export const PRESETS: Record<PresetName, Features> = {
     // Cloud sync is product-disabled; keep lan false for schema parity.
     sync: { lan: false, cloud: false },
     ai: true,
+    aiPeople: true,
+    aiFocusNote: true,
     dataExport: true,
     updateCheck: true,
   },
@@ -87,6 +93,8 @@ export const PRESETS: Record<PresetName, Features> = {
     // kullanabilir, backup alabilir, güncelleme alabilir.
     sync: { lan: false, cloud: false },
     ai: true,
+    aiPeople: true,
+    aiFocusNote: true,
     dataExport: true,
     updateCheck: true,
   },
@@ -97,6 +105,8 @@ export const PRESETS: Record<PresetName, Features> = {
     // güncelleme yine açık — outdated app daha büyük güvenlik riski.
     sync: { lan: false, cloud: false },
     ai: false,
+    aiPeople: false,
+    aiFocusNote: false,
     dataExport: false,
     updateCheck: true,
   },
@@ -172,6 +182,8 @@ export type PolicyPayload = {
   features?: {
     sync?: { lan?: boolean; cloud?: boolean };
     ai?: boolean;
+    aiPeople?: boolean;
+    aiFocusNote?: boolean;
     dataExport?: boolean;
     updateCheck?: boolean;
   };
@@ -208,6 +220,8 @@ export function parsePolicy(raw: unknown): PolicyPayload | null {
       if (typeof s.cloud === 'boolean') out.sync.cloud = s.cloud;
     }
     if (typeof f.ai === 'boolean') out.ai = f.ai;
+    if (typeof f.aiPeople === 'boolean') out.aiPeople = f.aiPeople;
+    if (typeof f.aiFocusNote === 'boolean') out.aiFocusNote = f.aiFocusNote;
     if (typeof f.dataExport === 'boolean') out.dataExport = f.dataExport;
     if (typeof f.updateCheck === 'boolean') out.updateCheck = f.updateCheck;
     if (Object.keys(out).length > 0) features = out;
@@ -237,6 +251,15 @@ function withCloudSyncDisabled(features: Features): Features {
   };
 }
 
+/** `ai` plus its two sub-flags: unless the policy sets them, they follow the resolved `ai`. */
+function aiFlags(
+  f: PolicyPayload['features'] | undefined,
+  baseAi: boolean,
+): Pick<Features, 'ai' | 'aiPeople' | 'aiFocusNote'> {
+  const ai = f?.ai ?? baseAi;
+  return { ai, aiPeople: f?.aiPeople ?? ai, aiFocusNote: f?.aiFocusNote ?? ai };
+}
+
 export function resolveFeatures(
   policy: PolicyPayload | null,
   userPreset: PresetName | null,
@@ -255,7 +278,7 @@ export function resolveFeatures(
         lan: policy?.features?.sync?.lan ?? base.sync.lan,
         cloud: policy?.features?.sync?.cloud ?? base.sync.cloud,
       },
-      ai: policy?.features?.ai ?? base.ai,
+      ...aiFlags(policy?.features, base.ai),
       dataExport: policy?.features?.dataExport ?? base.dataExport,
       updateCheck: policy?.features?.updateCheck ?? base.updateCheck,
     });
@@ -278,7 +301,7 @@ export function resolveFeatures(
         lan: policy.features?.sync?.lan ?? base.sync.lan,
         cloud: policy.features?.sync?.cloud ?? base.sync.cloud,
       },
-      ai: policy.features?.ai ?? base.ai,
+      ...aiFlags(policy.features, base.ai),
       dataExport: policy.features?.dataExport ?? base.dataExport,
       updateCheck: policy.features?.updateCheck ?? base.updateCheck,
     });

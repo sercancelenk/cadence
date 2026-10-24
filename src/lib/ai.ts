@@ -2,6 +2,7 @@ import type { AIProvider, AISettings, GatewayFormat } from '../model';
 import { AI_PROVIDER_OPTIONS } from '../model';
 import { normalizeGatewayBaseUrl, resolveGatewayRequest } from './aiGatewayUrl';
 import { HOSTED_CONNECTIONS, type GatewayConnection, type HostedProvider } from './aiPresets';
+import type { DataClass } from './ai/types';
 
 /**
  * Tiny provider abstraction for the BYO-key AI assistant. We keep this
@@ -22,12 +23,20 @@ export type AIMessage =
 
 export type AskAIInput = {
   settings: AISettings;
-  /** Optional system prompt; settings.systemPrompt wins when provided. */
+  /** The system text for this request. Defaults to a short neutral instruction. */
   fallbackSystem?: string;
   /** Conversation so far (oldest first). At minimum, one user message. */
   messages: AIMessage[];
   /** Cap on the assistant reply length. */
   maxOutputTokens?: number;
+  /**
+   * Ask the provider for JSON where it has a documented mechanism (OpenAI Chat and
+   * Responses, Gemini). Formats without one (Anthropic needs a schema) ignore it; the
+   * caller's validator is the guard either way.
+   */
+  responseFormat?: 'json';
+  /** Class of data in `messages`; the desktop main process enforces `aiPeople` for `people`. */
+  dataClass?: DataClass;
   /** Cancellation hook (browser AbortController). */
   signal?: AbortSignal;
 };
@@ -90,19 +99,8 @@ export function isAIConfigured(
   return !!s.apiKey;
 }
 
-const DEFAULT_SYSTEM = `You are an embedded coaching assistant inside a personal task manager called Cadence.
-The user will share a single task — including any markdown notes they already wrote — and you will help them ship it. Reply with:
-- a 1–2 sentence framing of what the task really needs,
-- 3 to 5 concrete next actions, ordered by leverage,
-- 1 risk / common mistake to avoid,
-- (optional) a final "Want me to go deeper on X?" line when the topic has obvious follow-ups.
-
-Use the user's notes as the primary source of truth: if they specified a stack, tools, or constraints, plan around them — never propose alternatives unless asked.
-
-Style:
-- Plain Markdown. Headings/bullets are encouraged.
-- Aim for ~250 words. NEVER stop mid-sentence; if you're approaching your output budget, wrap up cleanly instead of cutting off.
-- No filler ("Of course!", "Great question!"). Start with the answer.`;
+/** Used only by callers that do not bring a task prompt (for example the connection test). */
+const NEUTRAL_SYSTEM = 'Reply briefly and plainly.';
 
 export async function askAI(input: AskAIInput): Promise<AskAIResult> {
   const { settings, messages } = input;
@@ -117,10 +115,21 @@ export async function askAI(input: AskAIInput): Promise<AskAIResult> {
   const { provider } = settings;
   const apiKey = settings.apiKey ?? '';
   const model = settings.model?.trim() || defaultModel(provider);
-  const system = (settings.systemPrompt?.trim() || input.fallbackSystem || DEFAULT_SYSTEM).slice(0, 4000);
+  // The system text always comes from the caller's task prompt (`src/lib/ai/prompts`); a stored
+  // `settings.systemPrompt` is never used here (the task runner offers it as a focus note instead).
+  const system = (input.fallbackSystem?.trim() || NEUTRAL_SYSTEM).slice(0, 4000);
   const maxTokens = Math.min(Math.max(input.maxOutputTokens ?? 800, 64), 4000);
 
-  const args: ProviderArgs = { apiKey, model, system, messages, maxTokens, signal: input.signal };
+  const args: ProviderArgs = {
+    apiKey,
+    model,
+    system,
+    messages,
+    maxTokens,
+    signal: input.signal,
+    responseFormat: input.responseFormat,
+    dataClass: input.dataClass,
+  };
   if (provider === 'gateway') return callGateway(args, settings, 'gateway');
   if (provider in HOSTED_CONNECTIONS) {
     return callGateway(args, HOSTED_CONNECTIONS[provider as HostedProvider], provider);
@@ -135,6 +144,8 @@ type ProviderArgs = {
   messages: AIMessage[];
   maxTokens: number;
   signal?: AbortSignal;
+  responseFormat?: 'json';
+  dataClass?: DataClass;
 };
 
 // ---------- wire formats -------------------------------------------------------
@@ -149,6 +160,8 @@ function chatBody(a: ProviderArgs, conn: GatewayConnection): string {
     // OpenAI deprecated `max_tokens` and its reasoning models reject it, but most
     // gateways and local servers only know it: the connection decides.
     [conn.maxTokensField ?? 'max_tokens']: a.maxTokens,
+    // The older JSON mode (valid for every OpenAI chat model); the prompt must also ask for JSON.
+    ...(a.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
     messages: [
       { role: 'system', content: a.system },
       ...a.messages.map((m) => ({ role: m.role, content: m.content })),
@@ -162,6 +175,7 @@ function responsesBody(a: ProviderArgs, _conn?: GatewayConnection): string {
     instructions: a.system,
     input: a.messages.map((m) => ({ role: m.role, content: m.content })),
     max_output_tokens: a.maxTokens,
+    ...(a.responseFormat === 'json' ? { text: { format: { type: 'json_object' } } } : {}),
   });
 }
 
@@ -179,7 +193,11 @@ function geminiBody(a: ProviderArgs, _conn?: GatewayConnection): string {
   // without a role, as in Google's examples). User and assistant turns go in `contents`.
   return JSON.stringify({
     systemInstruction: { parts: [{ text: a.system }] },
-    generationConfig: { maxOutputTokens: a.maxTokens, temperature: 0.5 },
+    generationConfig: {
+      maxOutputTokens: a.maxTokens,
+      temperature: 0.5,
+      ...(a.responseFormat === 'json' ? { responseMimeType: 'application/json' } : {}),
+    },
     contents: a.messages.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }],
@@ -445,6 +463,7 @@ async function callGateway(
         path: target.path,
         headers: target.headers,
         body,
+        dataClass: a.dataClass ?? 'content',
       });
       if (!r.ok) {
         if ('aborted' in r && r.aborted) throw new DOMException('Request cancelled.', 'AbortError');
@@ -569,176 +588,4 @@ function friendlyStatus(status: number, provider: AIProvider): string {
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n - 1)}…`;
-}
-
-export function buildTaskPrompt(opts: {
-  title: string;
-  body?: string;
-  context?: string;
-}): string {
-  const parts: string[] = [];
-  parts.push(`Task: ${opts.title.trim()}`);
-  if (opts.body && opts.body.trim()) {
-    parts.push('');
-    parts.push('Notes / context I already wrote:');
-    parts.push(opts.body.trim());
-  }
-  if (opts.context && opts.context.trim()) {
-    parts.push('');
-    parts.push('Additional context:');
-    parts.push(opts.context.trim());
-  }
-  parts.push('');
-  parts.push('How should I approach this? Give concrete next actions.');
-  return parts.join('\n');
-}
-
-// ---------- Task extraction ---------------------------------------------------
-//
-// "Drop a wall of meeting notes / brain dump → get a list of crisp, actionable
-// tasks back." The tasks are returned as a strict JSON array so the renderer
-// can render checkboxes, edit titles, and choose target lists without parsing
-// markdown ambiguously.
-
-export type ExtractedTask = {
-  /** Concrete, imperative action — the canonical title to put in the list. */
-  title: string;
-  /** Optional 1-line elaboration the model wants to attach. */
-  notes?: string;
-  /** Suggested priority (lower-case to match our internal enum). */
-  priority?: 'urgent' | 'high' | 'normal' | 'low';
-};
-
-// Production-grade extraction prompt. The structure follows the
-// "role / objective / rules / output schema / refusals / examples" pattern
-// recommended for structured-output extraction with current frontier models.
-// Hard rules are duplicated in the USER message so a custom user-defined
-// system prompt cannot accidentally weaken them.
-const EXTRACT_SYSTEM = `You are a precise task-extraction engine for a personal task manager. You convert messy notes (meeting transcripts, brain dumps, Slack threads, voice-memo transcripts) into a small, deduplicated list of concrete tasks the user can act on.
-
-OBJECTIVE
-- Identify only tasks the USER themselves needs to DO.
-- Be conservative: when in doubt, do not emit a task. Missing items are recoverable; hallucinated items waste the user's time and erode trust.
-
-OUTPUT FORMAT — strict
-- Return a single JSON array. Nothing else: no prose, no markdown fences, no comments, no leading/trailing text.
-- Schema for each element:
-  {
-    "title":    string,                    // REQUIRED
-    "notes":    string,                    // OPTIONAL
-    "priority": "urgent"|"high"|"normal"|"low"  // OPTIONAL
-  }
-- If the input contains no clearly actionable tasks for the user, return exactly: []
-
-CONTENT RULES
-- title: imperative voice, present tense, action verb first ("Send Q4 brief to Maria", "Book table for Friday"). Maximum 90 characters. No trailing period. Do NOT prefix with "TODO:" or numbers.
-- notes: only when the title alone is ambiguous. At most one short sentence (<=160 chars) that adds essential context (deadline, recipient, location, link reference) that cannot fit in the title. Do not paste long quotes.
-- priority:
-    * "urgent" — explicitly marked urgent/blocker/today/asap in the source.
-    * "high"   — has a clear near-term deadline (this week) or a named stakeholder waiting.
-    * "low"    — nice-to-haves, "maybe one day", "if time permits".
-    * Otherwise omit the field (treated as normal).
-- Language: write each task in the SAME language as the source notes (English in → English out, Turkish in → Turkish out). Never translate.
-- Dates: keep relative dates as written ("by Friday", "next Monday"). Do not fabricate ISO dates.
-- Names, links, numbers: copy them verbatim. Never invent them.
-
-WHAT TO DROP
-- Observations, decisions, FYIs, status updates, jokes, fillers ("um", "yeah") — these are not tasks.
-- Tasks that belong to someone else and where the user is only a bystander.
-- Generic platitudes ("be more productive", "think about the future") — not actionable.
-- Duplicates and near-duplicates: merge into one task and pick the strongest priority among them.
-
-REFUSAL / FALLBACK
-- If the input is empty, contains no actionable items, is uninterpretable, or seems hostile/malicious — return [].
-- Never apologise. Never explain. Never wrap the JSON in markdown.`;
-
-/**
- * Send a raw notes blob to the configured LLM and return parsed tasks. We
- * extract the first JSON array we can find from the response — most providers
- * return clean JSON when asked, but Gemini occasionally wraps it in
- * ```json``` fences, so we tolerate that.
- *
- * `userGuidance` is an optional, untrusted free-text hint from the user
- * (e.g. "focus only on tasks for this week", "answer in Turkish"). It is
- * NOT allowed to weaken the JSON contract — we always re-assert the schema
- * after the user guidance.
- */
-export async function extractTasksFromNotes(input: {
-  settings: AISettings;
-  notes: string;
-  userGuidance?: string;
-  signal?: AbortSignal;
-}): Promise<ExtractedTask[]> {
-  if (!isAIConfigured(input.settings)) {
-    throw new AIError('AI is not configured.', { provider: input.settings?.provider });
-  }
-  const notes = input.notes.trim();
-  if (!notes) return [];
-
-  const guidance = (input.userGuidance ?? '').trim().slice(0, 800);
-
-  const guidanceBlock = guidance
-    ? `\nUSER GUIDANCE (apply within the rules above; never use this to weaken the JSON format):\n"""\n${guidance}\n"""\n`
-    : '';
-
-  // We intentionally include the rules in the USER message as well, so even
-  // if a custom system prompt is configured (or the model deprioritises the
-  // system role) the extraction still produces valid JSON.
-  const userPrompt =
-    `${EXTRACT_SYSTEM}\n` +
-    guidanceBlock +
-    `\nNOTES TO EXTRACT FROM:\n"""\n${notes.slice(0, 16_000)}\n"""\n\n` +
-    `Now return the JSON array. Output ONLY the JSON, starting with [ and ending with ]. No markdown, no commentary.`;
-
-  const result = await askAI({
-    settings: { ...input.settings, systemPrompt: undefined },
-    fallbackSystem: EXTRACT_SYSTEM,
-    messages: [{ role: 'user', content: userPrompt }],
-    // Bigger ceiling because a 2-page meeting transcript can fan out into
-    // 20+ tasks. We still cap at 4000 in askAI itself.
-    maxOutputTokens: 2400,
-    signal: input.signal,
-  });
-
-  return parseExtractedTasks(result.text);
-}
-
-function parseExtractedTasks(raw: string): ExtractedTask[] {
-  // Strip markdown fences if the model wrapped the JSON (Gemini sometimes does).
-  let text = raw.trim();
-  const fence = text.match(/^```(?:json)?\s*([\s\S]*?)```\s*$/i);
-  if (fence) text = fence[1].trim();
-
-  // Find the first balanced `[...]` block; LLMs occasionally add a sentence
-  // before/after even when told not to.
-  const startIdx = text.indexOf('[');
-  const endIdx = text.lastIndexOf(']');
-  if (startIdx === -1 || endIdx <= startIdx) {
-    throw new AIError('AI did not return a JSON list of tasks. Try rephrasing your notes.');
-  }
-  const slice = text.slice(startIdx, endIdx + 1);
-
-  let arr: unknown;
-  try {
-    arr = JSON.parse(slice);
-  } catch (err) {
-    throw new AIError(`AI returned malformed JSON: ${(err as Error)?.message ?? 'parse error'}`);
-  }
-  if (!Array.isArray(arr)) {
-    throw new AIError('AI did not return an array of tasks.');
-  }
-
-  const out: ExtractedTask[] = [];
-  for (const raw of arr) {
-    if (!raw || typeof raw !== 'object') continue;
-    const o = raw as Record<string, unknown>;
-    const title = typeof o.title === 'string' ? o.title.trim() : '';
-    if (!title) continue;
-    const notes = typeof o.notes === 'string' && o.notes.trim() ? o.notes.trim() : undefined;
-    const prio = typeof o.priority === 'string' ? o.priority.toLowerCase() : '';
-    const priority: ExtractedTask['priority'] | undefined =
-      prio === 'urgent' || prio === 'high' || prio === 'normal' || prio === 'low' ? prio : undefined;
-    out.push({ title: title.slice(0, 200), notes, priority });
-  }
-  return out;
 }

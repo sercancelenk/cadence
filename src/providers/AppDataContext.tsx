@@ -83,11 +83,15 @@ import {
   updateTodoGroup as updateTodoGroupFn,
   updateNoteGroup as updateNoteGroupFn,
   updateAISettings as updateAISettingsFn,
+  upsertAIConnection as upsertAIConnectionFn,
+  patchAIConnection as patchAIConnectionFn,
+  removeAIConnection as removeAIConnectionFn,
   type AISettingsPatch,
   updateTodoItem as updateTodoItemFn,
   updateUserProfile as updateUserProfileFn,
 } from '../core/actions';
 import type {
+  AIConnection,
   AppData,
   DataShape,
   Item,
@@ -228,6 +232,10 @@ type Api = {
   ) => void;
   toggleFavoriteTeam: (teamId: string) => void;
   updateAISettings: (patch: AISettingsPatch) => void;
+  /** Connection edits scoped to one id and applied to the latest data (see core/actions). */
+  upsertAIConnection: (connection: AIConnection) => void;
+  patchAIConnection: (id: string, patch: Parameters<typeof patchAIConnectionFn>[2]) => void;
+  removeAIConnection: (id: string) => void;
   addItem: (
     personId: string,
     kind: ItemKind,
@@ -285,7 +293,14 @@ type Api = {
   addTodoItem: (
     groupId: string,
     title: string,
-    extras?: { priority?: Priority; dueAt?: string; body?: string; sourceNoteId?: string },
+    extras?: {
+      priority?: Priority;
+      dueAt?: string;
+      body?: string;
+      bodyFormat?: 'markdown' | 'prosemirror';
+      bodyPlainText?: string;
+      sourceNoteId?: string;
+    },
   ) => void;
   updateTodoItem: (
     id: string,
@@ -1442,6 +1457,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       updateUserProfile: (patch) => update((x) => updateUserProfileFn(x, patch)),
       toggleFavoriteTeam: (teamId) => update((x) => toggleFavoriteTeamFn(x, teamId)),
       updateAISettings: (patch) => update((x) => updateAISettingsFn(x, patch)),
+      upsertAIConnection: (connection) => update((x) => upsertAIConnectionFn(x, connection)),
+      patchAIConnection: (id, patch) => update((x) => patchAIConnectionFn(x, id, patch)),
+      removeAIConnection: (id) => update((x) => removeAIConnectionFn(x, id)),
       addItem: (personId, kind, fields) => update((x) => addItemFn(x, personId, kind, fields ?? {})),
       updateItem: (id, patch) => update((x) => updateItemFn(x, id, patch)),
       toggleItemDone: (id) => update((x) => toggleItemDoneFn(x, id)),
@@ -1618,6 +1636,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       toggleFavoriteTeam: (teamId: string) => actionsBridgeRef.current.toggleFavoriteTeam(teamId),
       updateAISettings: (patch: Parameters<Api['updateAISettings']>[0]) =>
         actionsBridgeRef.current.updateAISettings(patch),
+      upsertAIConnection: (connection: AIConnection) => actionsBridgeRef.current.upsertAIConnection(connection),
+      patchAIConnection: (id: string, patch: Parameters<Api['patchAIConnection']>[1]) =>
+        actionsBridgeRef.current.patchAIConnection(id, patch),
+      removeAIConnection: (id: string) => actionsBridgeRef.current.removeAIConnection(id),
       addItem: (
         personId: string,
         kind: Parameters<Api['addItem']>[1],

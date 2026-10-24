@@ -200,9 +200,9 @@
             <h3>AI when you want it</h3>
             <p>
               Bring your own API key for Anthropic Claude, OpenAI or Google
-              Gemini. Calls go directly from your device to the provider —
-              no proxy, no Cadence-side telemetry. Turn AI off completely
-              and nothing else changes.
+              Gemini, or connect your own gateway. Calls go directly from your
+              device to the address you chose — no proxy, no Cadence-side
+              telemetry. Turn AI off completely and nothing else changes.
             </p>
           </article>
 
@@ -277,6 +277,8 @@
               <li>Active · Archived segment — shelve without deleting</li>
               <li>Syntax-highlighted code · Mermaid diagrams</li>
               <li>Find &amp; replace in the editor · body search in ⌘K</li>
+              <li>Nested note lists with sub-lists</li>
+              <li>Open .md, .txt or .html files as notes · save a note as a file (⇧⌘S)</li>
             </ul>
           </div>
           <figure class="feature__media">
@@ -407,7 +409,8 @@
             </p>
             <p>
               <strong>Document</strong> is a rich-text scratch pad with the
-              same Preview / Edit tabs as Notes. <strong>JSON / YAML</strong>
+              same Preview / Edit tabs as Notes, and it holds several
+              documents in tabs you can add, rename and close. <strong>JSON / YAML</strong>
               is a CodeMirror bench: syntax highlighting, validation, code
               folding, pretty-print, and a side-by-side <strong>Diff</strong>
               mode for Before/After config reviews. JSON adds compact
@@ -417,6 +420,8 @@
               <li>Document + JSON/YAML autosave to your encrypted workspace</li>
               <li>Edit + Diff tabs; fold nested blocks from the gutter</li>
               <li>Undo/redo; icon toolbar with hover labels</li>
+              <li>Move to Notes: turn any tab into a note in one step</li>
+              <li>Save to a file with ⇧⌘S (Document: md / txt / html)</li>
               <li>⌘K → Document, JSON / YAML, or Tools</li>
             </ul>
           </div>
@@ -483,50 +488,75 @@ ERD / Sketch → Export PNG or JSON
           </h2>
           <p class="section__sub">
             Cadence's AI assistant talks straight from your browser or
-            desktop to the provider you chose. Your key is stored next to
-            your data (in the same encrypted file). We can't see your
+            desktop to the provider or gateway you chose. Your key is stored
+            next to your data (in the same encrypted file). We can't see your
             prompts, your replies or your usage — there is no Cadence
             server in the loop.
           </p>
 
           <div class="ai-grid">
             <article class="ai-card">
-              <h3>Task extractor</h3>
+              <h3>Extract tasks</h3>
               <p>
-                Drop a wall of meeting notes, a brain dump or a transcript.
-                Get back a clean, ordered task list ready to file into any
-                project group.
+                Turn a note, a selection or a transcript into a task list.
+                Each suggestion comes with a list and a due date, you review
+                them, and nothing is added until you say so. Start it from the
+                <code>/extract</code> slash command, the ✨ menu on a
+                selection, or ⌘K.
               </p>
-              <p class="ai-card__hint">Best with Claude 3.5 Sonnet · GPT-4o</p>
+              <p class="ai-card__hint">Knows today's date and your lists</p>
             </article>
 
             <article class="ai-card">
-              <h3>Coaching on a single task</h3>
+              <h3>Ask AI on a task</h3>
               <p>
-                Stuck on a hard task? The assistant gives you a one-line
-                reframing, three concrete next actions ordered by leverage,
-                and one risk to avoid. Always under 200 words.
+                Stuck on a task? Choose a focus and the assistant answers with
+                the task's list, due date and priority in mind. Follow up in
+                the same conversation, then save the answer to the task.
               </p>
-              <p class="ai-card__hint">Tunable system prompt in Settings</p>
+              <p class="ai-card__hint">Plan · Risks · First 15 minutes</p>
             </article>
 
             <article class="ai-card">
-              <h3>Three providers, one switch</h3>
+              <h3>Your provider, or your own gateway</h3>
               <p>
-                Pick the model and price point you want: Anthropic Claude,
-                OpenAI ChatGPT, or Google Gemini. Switching providers is one
-                dropdown — nothing else in the app changes.
+                Anthropic Claude, OpenAI ChatGPT, Google Gemini, or a custom
+                gateway: any router, proxy or model server, including one
+                your company runs. Set the address, key and model, and pick
+                the API format it speaks.
               </p>
-              <p class="ai-card__hint">Anthropic · OpenAI · Google</p>
+              <p class="ai-card__hint">OpenAI Chat · OpenAI Responses · Anthropic · Gemini</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Several connections, routed</h3>
+              <p>
+                Keep more than one connection and choose which one serves
+                notes and tasks and which serves people data. A built-in
+                check tells you whether a connection returns reliable JSON.
+              </p>
+              <p class="ai-card__hint">Feature routing in Settings</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>People data stays under your control</h3>
+              <p>
+                1:1 and feedback context only goes to connections you
+                explicitly allow. A model running on this computer is allowed
+                by default; hosted providers and company gateways are not.
+                Each result shows what was read and what was sent.
+              </p>
+              <p class="ai-card__hint">Allowed per connection</p>
             </article>
 
             <article class="ai-card">
               <h3>Off completely</h3>
               <p>
                 No key, no AI — the rest of the app works exactly the same.
-                The whole AI surface is gated behind <em>"is the key
+                The whole AI surface is gated behind <em>"is a connection
                 configured?"</em> so an offline workspace is the default,
-                not a degraded mode.
+                not a degraded mode. Organizations can switch AI off, or limit
+                it to approved hosts, by policy.
               </p>
               <p class="ai-card__hint">No telemetry either way</p>
             </article>
@@ -691,7 +721,9 @@ ERD / Sketch → Export PNG or JSON
               <code>launch</code> / <code>post-login</code> /
               <code>pre-save</code> / <code>pre-pwchange</code> /
               <code>pre-restore</code> — oldest pruned automatically so disk
-              use stays bounded. <strong>Settings → Backup &amp; recovery</strong>
+              use stays bounded. On desktop you choose how many daily backups
+              and snapshots to keep, and lowering the number shows what will
+              be deleted before anything is. <strong>Settings → Backup &amp; recovery</strong>
               combines manual export/import with snapshot restore; each snapshot
               shows teams / lists / tasks / notes counts and restores with a
               clear &quot;Loaded: …&quot; confirmation.
@@ -757,8 +789,8 @@ ERD / Sketch → Export PNG or JSON
             <h3>No telemetry. Period.</h3>
             <p>
               Cadence makes zero network requests on its own. The auto-updater
-              hits GitHub Releases. The AI assistant hits whichever provider
-              you configured. Nothing else dials home.
+              hits GitHub Releases. The AI assistant hits whichever provider or
+              gateway address you configured. Nothing else dials home.
             </p>
           </div>
         </div>
@@ -866,8 +898,8 @@ ERD / Sketch → Export PNG or JSON
         </nav>
         <p class="footer__meta">
           Built with Electron, React, Vite. Encryption uses the Web Crypto
-          API on every platform. Plays well with Anthropic, OpenAI and Google
-          Gemini. <span>Made for people who like their data on their own
+          API on every platform. Plays well with Anthropic, OpenAI, Google
+          Gemini and your own gateway. <span>Made for people who like their data on their own
           machine — moved only when they choose, via encrypted backup.</span>
         </p>
       </div>

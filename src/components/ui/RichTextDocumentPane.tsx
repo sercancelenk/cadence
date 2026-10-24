@@ -24,6 +24,9 @@ export type RichTextDocumentPaneProps = {
   onEditorAutoFocusHandled?: () => void;
   /** Opt-in bubble “Create task” — notes only; other panes leave undefined. */
   onCreateTaskFromSelection?: (title: string) => void;
+  /** Opt-in AI actions in the slash menu and the selection bubble (notes only). */
+  aiEnabled?: boolean;
+  onAiAction?: (actionId: string, text: string) => void;
 };
 
 const EDITABLE_CHROME_HINT =
@@ -49,6 +52,8 @@ export function RichTextDocumentPane({
   autoFocusEditor = false,
   onEditorAutoFocusHandled,
   onCreateTaskFromSelection,
+  aiEnabled,
+  onAiAction,
 }: RichTextDocumentPaneProps) {
   const [toolbarMountEl, setToolbarMountEl] = useState<HTMLElement | null>(null);
 
@@ -91,6 +96,8 @@ export function RichTextDocumentPane({
           autoFocus={autoFocusEditor}
           onAutoFocusHandled={onEditorAutoFocusHandled}
           onCreateTaskFromSelection={onCreateTaskFromSelection}
+          aiEnabled={aiEnabled}
+          onAiAction={onAiAction}
         />
       </div>
     </div>

@@ -353,6 +353,51 @@ export interface GatewayHeader {
   value: string;
 }
 
+/** What a connection is known to support. Detected by Test connection, overridable by the user. */
+export type AICapability = 'json' | 'vision' | 'streaming';
+
+const AI_CAPABILITIES: readonly AICapability[] = ['json', 'vision', 'streaming'];
+
+/** The id the default connection (the top-level `aiSettings` fields) goes by in routing. */
+export const DEFAULT_CONNECTION_ID = 'default';
+
+/** An additional named connection. The default connection is the top-level `aiSettings` itself. */
+export interface AIConnection {
+  id: string;
+  name: string;
+  provider: AIProvider;
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
+  gatewayFormat?: GatewayFormat;
+  authHeader?: string;
+  authScheme?: GatewayAuthScheme;
+  requestPath?: string;
+  maxTokensField?: GatewayTokenField;
+  extraHeaders?: GatewayHeader[];
+  capabilities?: AICapability[];
+  /** When a capability probe last ran (whatever it found). Absent: never probed. */
+  probedAt?: string;
+  /** Explicit switch for `people` data; absent means "only if the address is loopback". */
+  allowPeopleData?: boolean;
+}
+
+/** Which connection each class of AI task uses. Values are connection ids (`'default'` is allowed). */
+export interface AIRouting {
+  content?: string;
+  people?: string;
+  /** Per-task override, keyed by task id (e.g. `ai.coach`). */
+  tasks?: Record<string, string>;
+}
+
+/** Name and detected capabilities of the default connection. */
+export interface AIDefaultMeta {
+  name?: string;
+  capabilities?: AICapability[];
+  probedAt?: string;
+  allowPeopleData?: boolean;
+}
+
 export interface AISettings {
   provider?: AIProvider;
   /** API key supplied by the user. Stored alongside other AppData (encrypted on disk in Electron). */
@@ -377,6 +422,15 @@ export interface AISettings {
   maxTokensField?: GatewayTokenField;
   /** Extra headers sent with every gateway request. */
   extraHeaders?: GatewayHeader[];
+  /**
+   * Additional connections and the routing between feature classes and connections. They
+   * live inside this object on purpose: an older build keeps unknown keys of `aiSettings`
+   * (`withExtras`), so it carries them through its own load and save untouched, and its
+   * edits to the fields above are edits to the default connection.
+   */
+  connections?: AIConnection[];
+  routing?: AIRouting;
+  defaultMeta?: AIDefaultMeta;
   /**
    * Path (optionally with a `?query`) appended to `baseUrl`, replacing the
    * format default. `{model}` and `{apiKey}` are replaced by the URL-encoded
@@ -1452,19 +1506,107 @@ function parseAISettings(raw: unknown): AISettings | undefined {
   const maxTokensField: GatewayTokenField | undefined =
     o.maxTokensField === 'max_tokens' || o.maxTokensField === 'max_completion_tokens' ? o.maxTokensField : undefined;
   const extraHeaders = parseGatewayHeaders(o.extraHeaders);
+  const connections = parseAIConnections(o.connections);
+  const routing = parseAIRouting(o.routing);
+  const defaultMeta = parseAIDefaultMeta(o.defaultMeta);
   const systemPrompt = typeof o.systemPrompt === 'string' ? o.systemPrompt : undefined;
   const extractionGuidance =
     typeof o.extractionGuidance === 'string' ? o.extractionGuidance : undefined;
   if (
     !provider && !apiKey && !model && !baseUrl && !gatewayFormat && !authHeader && !authScheme &&
-    !requestPath && !maxTokensField && !extraHeaders && !systemPrompt && !extractionGuidance
+    !requestPath && !maxTokensField && !extraHeaders && !connections && !routing && !defaultMeta &&
+    !systemPrompt && !extractionGuidance
   ) {
     return undefined;
   }
   return withExtras(o, {
     provider, apiKey, model, baseUrl, gatewayFormat, authHeader, authScheme, requestPath, maxTokensField,
-    extraHeaders, systemPrompt, extractionGuidance,
+    extraHeaders, connections, routing, defaultMeta, systemPrompt, extractionGuidance,
   });
+}
+
+/** More than this are dropped on load, so the UI and the actions stop at the same number. */
+export const MAX_AI_CONNECTIONS = 20;
+
+function parseCapabilities(raw: unknown): AICapability[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = AI_CAPABILITIES.filter((c) => raw.includes(c));
+  return out.length ? out : undefined;
+}
+
+function trimmed(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+/** Valid entries only (id, name, provider required); unknown keys inside an entry are kept. */
+function parseAIConnections(raw: unknown): AIConnection[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const providers: AIProvider[] = ['anthropic', 'openai', 'gemini', 'gateway'];
+  const seen = new Set<string>([DEFAULT_CONNECTION_ID]);
+  const out: AIConnection[] = [];
+  for (const item of raw) {
+    if (out.length >= MAX_AI_CONNECTIONS) break;
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const id = trimmed(o.id);
+    const name = trimmed(o.name);
+    const provider = providers.find((p) => p === o.provider);
+    if (!id || !name || !provider || seen.has(id)) continue;
+    seen.add(id);
+    const parsed: AIConnection = {
+      id,
+      name,
+      provider,
+      apiKey: trimmed(o.apiKey),
+      model: trimmed(o.model),
+      baseUrl: trimmed(o.baseUrl),
+      gatewayFormat: GATEWAY_FORMAT_OPTIONS.find((f) => f.value === o.gatewayFormat)?.value,
+      authHeader: trimmed(o.authHeader),
+      authScheme: o.authScheme === 'bearer' || o.authScheme === 'raw' || o.authScheme === 'none' ? o.authScheme : undefined,
+      requestPath: trimmed(o.requestPath),
+      maxTokensField:
+        o.maxTokensField === 'max_tokens' || o.maxTokensField === 'max_completion_tokens' ? o.maxTokensField : undefined,
+      extraHeaders: parseGatewayHeaders(o.extraHeaders),
+      capabilities: parseCapabilities(o.capabilities),
+      probedAt: trimmed(o.probedAt),
+      allowPeopleData: typeof o.allowPeopleData === 'boolean' ? o.allowPeopleData : undefined,
+    };
+    out.push(withExtras(o, parsed));
+  }
+  return out.length ? out : undefined;
+}
+
+function parseAIRouting(raw: unknown): AIRouting | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const routing: AIRouting = {};
+  const content = trimmed(o.content);
+  const people = trimmed(o.people);
+  if (content) routing.content = content;
+  if (people) routing.people = people;
+  if (o.tasks && typeof o.tasks === 'object' && !Array.isArray(o.tasks)) {
+    const tasks: Record<string, string> = {};
+    for (const [taskId, value] of Object.entries(o.tasks as Record<string, unknown>)) {
+      const id = trimmed(value);
+      if (taskId.trim() && id) tasks[taskId.trim()] = id;
+    }
+    if (Object.keys(tasks).length) routing.tasks = tasks;
+  }
+  return Object.keys(routing).length ? routing : undefined;
+}
+
+function parseAIDefaultMeta(raw: unknown): AIDefaultMeta | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const meta: AIDefaultMeta = {};
+  const name = trimmed(o.name);
+  const capabilities = parseCapabilities(o.capabilities);
+  if (name) meta.name = name;
+  if (capabilities) meta.capabilities = capabilities;
+  const probedAt = trimmed(o.probedAt);
+  if (probedAt) meta.probedAt = probedAt;
+  if (typeof o.allowPeopleData === 'boolean') meta.allowPeopleData = o.allowPeopleData;
+  return Object.keys(meta).length ? meta : undefined;
 }
 
 /** Keeps well-formed `{ name, value }` string pairs; `undefined` when none remain. */

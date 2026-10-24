@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { parseAllowedHosts, isAiHostAllowed, requireAiHost } = require('./aiHostPolicy.cjs');
+const { parseAllowedHosts, isAiHostAllowed, requireAiHost, parseAiPolicyFlags, resolveAiSubFlag } = require('./aiHostPolicy.cjs');
 
 describe('parseAllowedHosts', () => {
   it('lower-cases and trims valid entries and drops the rest', () => {
@@ -73,5 +73,23 @@ describe('requireAiHost', () => {
   it('blocks an unparsable address when a list is set', () => {
     expect(requireAiHost('not a url', ['api.openai.com'])).toMatchObject({ ok: false });
     expect(requireAiHost(undefined, ['api.openai.com'])).toMatchObject({ ok: false });
+  });
+});
+
+describe('parseAiPolicyFlags', () => {
+  it('keeps booleans for aiPeople and aiFocusNote and nothing else', () => {
+    expect(parseAiPolicyFlags({ aiPeople: false, aiFocusNote: true, other: 1 })).toEqual({ aiPeople: false, aiFocusNote: true });
+    expect(parseAiPolicyFlags({ aiPeople: 'no', aiFocusNote: null })).toEqual({});
+    expect(parseAiPolicyFlags(undefined)).toEqual({});
+    expect(parseAiPolicyFlags('x')).toEqual({});
+  });
+});
+
+describe('resolveAiSubFlag', () => {
+  it('an explicit boolean wins; otherwise it follows the ai flag', () => {
+    expect(resolveAiSubFlag(true, false)).toBe(true);
+    expect(resolveAiSubFlag(false, true)).toBe(false);
+    expect(resolveAiSubFlag(undefined, true)).toBe(true);
+    expect(resolveAiSubFlag(undefined, false)).toBe(false);
   });
 });

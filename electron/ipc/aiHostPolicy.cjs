@@ -78,4 +78,34 @@ function requireAiHost(baseUrl, allowed) {
   };
 }
 
-module.exports = { parseAllowedHosts, isAiHostAllowed, requireAiHost };
+/**
+ * `features.aiPeople` and `features.aiFocusNote` from policy.json: booleans only.
+ *
+ * @param {unknown} features
+ * @returns {{ aiPeople?: boolean; aiFocusNote?: boolean }}
+ */
+function parseAiPolicyFlags(features) {
+  const out = {};
+  if (!features || typeof features !== 'object') return out;
+  if (typeof features.aiPeople === 'boolean') out.aiPeople = features.aiPeople;
+  if (typeof features.aiFocusNote === 'boolean') out.aiFocusNote = features.aiFocusNote;
+  return out;
+}
+
+/**
+ * The AI sub-flags follow `features.ai` unless the policy sets them explicitly.
+ *
+ * @param {boolean | undefined} explicit
+ * @param {boolean} aiAllowed
+ */
+function resolveAiSubFlag(explicit, aiAllowed) {
+  return typeof explicit === 'boolean' ? explicit : aiAllowed;
+}
+
+module.exports = {
+  parseAllowedHosts,
+  isAiHostAllowed,
+  requireAiHost,
+  parseAiPolicyFlags,
+  resolveAiSubFlag,
+};

@@ -1,4 +1,5 @@
 import type { ChainedCommands, Editor, Range } from '@tiptap/core';
+import type { AiAction } from './ai/entryPoints';
 
 export type SlashCommandItem = {
   id: string;
@@ -143,10 +144,44 @@ export const SLASH_COMMAND_ITEMS: readonly SlashCommandItem[] = [
   },
 ];
 
-export function filterSlashCommandItems(query: string): SlashCommandItem[] {
+/**
+ * Slash items that start an AI action. Choosing one removes the `/query` and reports the
+ * selection (or the whole note when nothing is selected) to `onAction`; the caller opens
+ * the matching dialog. Nothing is changed in the document beyond removing the `/query`.
+ */
+export function createAiSlashItems(
+  actions: readonly AiAction[],
+  onAction: (actionId: string, text: string) => void,
+): SlashCommandItem[] {
+  return actions.map((a) => ({
+    id: `ai-${a.id}`,
+    title: `AI: ${a.label}`,
+    hint: a.hint,
+    keywords: a.keywords,
+    run: (editor, range) => {
+      if (!editor.isEditable) return;
+      // Read the text first: removing the `/query` changes the selection. Without a selection the
+      // whole note is used, minus the typed `/query` itself.
+      const { from, to, empty } = editor.state.selection;
+      const { doc } = editor.state;
+      const selected = empty ? '' : doc.textBetween(from, to, '\n');
+      const text = selected.trim()
+        ? selected
+        : (doc.textBetween(0, range.from, '\n\n') + doc.textBetween(range.to, doc.content.size, '\n\n')).trim();
+      runSlashCommand(editor, range, (chain) => chain);
+      onAction(a.id, text);
+    },
+  }));
+}
+
+export function filterSlashCommandItems(
+  query: string,
+  extra: readonly SlashCommandItem[] = [],
+): SlashCommandItem[] {
   const q = query.trim().toLowerCase();
-  if (!q) return [...SLASH_COMMAND_ITEMS];
-  return SLASH_COMMAND_ITEMS.filter((item) => {
+  const all = [...SLASH_COMMAND_ITEMS, ...extra];
+  if (!q) return all;
+  return all.filter((item) => {
     const hay = `${item.title} ${item.hint} ${item.keywords} ${item.id}`.toLowerCase();
     return hay.includes(q);
   });

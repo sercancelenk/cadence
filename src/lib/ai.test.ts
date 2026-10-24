@@ -1,6 +1,6 @@
 /**
  * Unit tests for the AI provider abstraction — pure helpers and
- * askAI / extractTasksFromNotes with mocked fetch.
+ * askAI with mocked fetch (task prompts and parsing are tested under src/lib/ai/).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,9 +8,7 @@ import type { AISettings } from '../model';
 import {
   AIError,
   askAI,
-  buildTaskPrompt,
   defaultModel,
-  extractTasksFromNotes,
   isAIConfigured,
 } from './ai';
 
@@ -44,27 +42,6 @@ describe('defaultModel', () => {
 
   it('returns empty string for unknown provider', () => {
     expect(defaultModel('unknown' as 'openai')).toBe('');
-  });
-});
-
-describe('buildTaskPrompt', () => {
-  it('builds a minimal prompt from title only', () => {
-    const prompt = buildTaskPrompt({ title: '  Ship release  ' });
-    expect(prompt).toContain('Task: Ship release');
-    expect(prompt).toContain('How should I approach this?');
-    expect(prompt).not.toContain('Notes / context');
-  });
-
-  it('includes body and extra context when provided', () => {
-    const prompt = buildTaskPrompt({
-      title: 'Fix bug',
-      body: '  Repro steps here  ',
-      context: '  Sprint deadline Friday  ',
-    });
-    expect(prompt).toContain('Notes / context I already wrote:');
-    expect(prompt).toContain('Repro steps here');
-    expect(prompt).toContain('Additional context:');
-    expect(prompt).toContain('Sprint deadline Friday');
   });
 });
 
@@ -200,88 +177,6 @@ describe('askAI', () => {
       name: 'AIError',
       status: 404,
       message: expect.stringContaining('no longer served'),
-    });
-  });
-});
-
-describe('extractTasksFromNotes', () => {
-  beforeEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('returns empty array for blank notes without calling the API', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-
-    const tasks = await extractTasksFromNotes({ settings: configured, notes: '   ' });
-    expect(tasks).toEqual([]);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('parses a JSON array from the model response', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        Response.json({
-          choices: [
-            {
-              message: {
-                content: '[{"title":"Email Maria","priority":"high"},{"title":"  ","notes":"skip"}]',
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        }),
-      ),
-    );
-
-    const tasks = await extractTasksFromNotes({
-      settings: configured,
-      notes: 'Maria needs the deck by Friday',
-    });
-    expect(tasks).toEqual([{ title: 'Email Maria', priority: 'high' }]);
-  });
-
-  it('strips markdown fences before parsing', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        Response.json({
-          choices: [
-            {
-              message: {
-                content: '```json\n[{"title":"Book flight"}]\n```',
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        }),
-      ),
-    );
-
-    const tasks = await extractTasksFromNotes({ settings: configured, notes: 'Travel notes' });
-    expect(tasks).toEqual([{ title: 'Book flight' }]);
-  });
-
-  it('throws when the model does not return JSON', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        Response.json({
-          choices: [{ message: { content: 'Here are your tasks…' }, finish_reason: 'stop' }],
-        }),
-      ),
-    );
-
-    await expect(
-      extractTasksFromNotes({ settings: configured, notes: 'Some notes' }),
-    ).rejects.toMatchObject({
-      name: 'AIError',
-      message: expect.stringContaining('JSON list'),
     });
   });
 });
@@ -897,5 +792,111 @@ describe('engine robustness (from the independent review)', () => {
     }).catch((e) => e);
     expect(err.message).not.toContain('team-token-98765');
     expect(err.diagnostic).not.toContain('team-token-98765');
+  });
+});
+
+describe('structured output (responseFormat: json)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const ask = { role: 'user' as const, content: 'Return JSON' };
+  const gw = { provider: 'gateway' as const, baseUrl: 'https://gw.example.com/v1', model: 'm', apiKey: 'sk-gw-secret-key' };
+  const okChat = () => Response.json({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] });
+  const okResponses = () => Response.json({ status: 'completed', output_text: '{}' });
+  const okGemini = () => Response.json({ candidates: [{ content: { parts: [{ text: '{}' }] }, finishReason: 'STOP' }] });
+  const okAnthropic = () => Response.json({ content: [{ type: 'text', text: '{}' }], stop_reason: 'end_turn' });
+  const bodyOf = (m: ReturnType<typeof vi.fn>) => JSON.parse((m.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+  const run = async (settings: Parameters<typeof askAI>[0]['settings'], reply: () => Response, responseFormat?: 'json') => {
+    const m = vi.fn(async () => reply());
+    vi.stubGlobal('fetch', m);
+    await askAI({ settings, messages: [ask], responseFormat });
+    return bodyOf(m);
+  };
+
+  it('openai-chat: json_object response format, only when asked (gateway and hosted OpenAI)', async () => {
+    expect((await run(gw, okChat, 'json')).response_format).toEqual({ type: 'json_object' });
+    expect((await run(gw, okChat)).response_format).toBeUndefined();
+    const hosted = await run({ provider: 'openai', apiKey: 'sk-key-1234', model: 'gpt-5.4-mini' }, okChat, 'json');
+    expect(hosted.response_format).toEqual({ type: 'json_object' });
+    expect(hosted.max_completion_tokens).toBeGreaterThanOrEqual(64);
+  });
+
+  it('openai-responses: text.format json_object', async () => {
+    const s = { ...gw, gatewayFormat: 'openai-responses' as const };
+    expect((await run(s, okResponses, 'json')).text).toEqual({ format: { type: 'json_object' } });
+    expect((await run(s, okResponses)).text).toBeUndefined();
+  });
+
+  it('gemini: generationConfig.responseMimeType application/json, other settings kept', async () => {
+    const s = { provider: 'gemini' as const, apiKey: 'AIza-key-1234', model: 'gemini-3.8-flash' };
+    const withJson = await run(s, okGemini, 'json');
+    expect(withJson.generationConfig.responseMimeType).toBe('application/json');
+    expect(withJson.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(64);
+    expect(withJson.generationConfig.temperature).toBe(0.5);
+    expect((await run(s, okGemini)).generationConfig.responseMimeType).toBeUndefined();
+  });
+
+  it('anthropic: no schema-less JSON mode exists, so the flag changes nothing', async () => {
+    const s = { provider: 'anthropic' as const, apiKey: 'sk-ant-key-1234', model: 'claude-sonnet-5-5' };
+    const a = await run(s, okAnthropic, 'json');
+    const b = await run(s, okAnthropic);
+    expect(a).toEqual(b);
+  });
+});
+
+describe('data class on the desktop bridge', () => {
+  afterEach(() => {
+    delete (window as { cadence?: unknown }).cadence;
+  });
+  const reply = JSON.stringify({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] });
+  const mount = () => {
+    const aiGatewayChat = vi.fn(async () => ({ ok: true as const, status: 200, text: reply }));
+    (window as unknown as { cadence: unknown }).cadence = { aiGatewayChat };
+    return aiGatewayChat;
+  };
+  const settings = { provider: 'gateway' as const, baseUrl: 'https://gw.example.com/v1', model: 'm' };
+  const ask = { role: 'user' as const, content: 'hi' };
+
+  it('sends dataClass people when the caller says so, and content by default', async () => {
+    const bridge = mount();
+    await askAI({ settings, messages: [ask], dataClass: 'people' });
+    await askAI({ settings, messages: [ask] });
+    const calls = bridge.mock.calls as unknown as Array<[{ dataClass?: string }]>;
+    expect(calls[0][0].dataClass).toBe('people');
+    expect(calls[1][0].dataClass).toBe('content');
+  });
+});
+
+describe('system text in the engine', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const settings = { provider: 'gateway' as const, baseUrl: 'https://gw.example.com/v1', model: 'm' };
+  const sentSystem = async (input: Partial<Parameters<typeof askAI>[0]>) => {
+    const m = vi.fn(async () => Response.json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }));
+    vi.stubGlobal('fetch', m);
+    await askAI({ settings, messages: [{ role: 'user', content: 'hi' }], ...input });
+    const body = JSON.parse((m.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    return body.messages[0].content as string;
+  };
+
+  it('uses the caller\'s system text', async () => {
+    expect(await sentSystem({ fallbackSystem: 'THE TASK SYSTEM TEXT' })).toBe('THE TASK SYSTEM TEXT');
+  });
+
+  it('never lets a stored systemPrompt replace it', async () => {
+    const out = await sentSystem({ settings: { ...settings, systemPrompt: 'EVIL OVERRIDE' }, fallbackSystem: 'THE TASK SYSTEM TEXT' });
+    expect(out).toBe('THE TASK SYSTEM TEXT');
+    expect(await sentSystem({ settings: { ...settings, systemPrompt: 'EVIL OVERRIDE' } })).not.toContain('EVIL');
+  });
+
+  it('falls back to a neutral instruction, not a task-specific prompt', async () => {
+    const out = await sentSystem({});
+    expect(out.length).toBeLessThan(120);
+    expect(out).not.toMatch(/Cadence|coach|task manager/i);
+  });
+
+  it('cuts an over-long system text at 4,000 characters', async () => {
+    expect((await sentSystem({ fallbackSystem: 'x'.repeat(5000) })).length).toBe(4000);
   });
 });

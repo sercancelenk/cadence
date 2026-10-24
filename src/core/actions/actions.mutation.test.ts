@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as uuidModule from '../../lib/uuid';
 import * as modelModule from '../model';
 import {
+  MAX_AI_CONNECTIONS,
   emptyData,
   getSelfPerson,
   isSelfPerson,
@@ -26,7 +27,10 @@ import {
   toggleFavoriteTeam,
   toggleItemDone,
   toggleTodoItem,
+  patchAIConnection,
+  removeAIConnection,
   updateAISettings,
+  upsertAIConnection,
   updateItem,
   updatePerson,
   updateTeam,
@@ -630,6 +634,102 @@ describe('actions mutation — deterministic reducers', () => {
       expect(d.aiSettings).toEqual({ provider: 'openai', apiKey: 'k', model: undefined, systemPrompt: undefined });
       d = updateAISettings(d, { provider: '' as never, apiKey: '' });
       expect(d.aiSettings).toBeUndefined();
+    });
+
+    it('updateAISettings stores, keeps and clears connections and routing', () => {
+      const conn = { id: 'c1', name: 'Mine', provider: 'gateway' as const, baseUrl: 'https://gw.example.com/v1' };
+      let d = updateAISettings(freshData(), { provider: 'openai', apiKey: 'sk-key-12345', connections: [conn], routing: { content: 'c1' } });
+      expect(d.aiSettings?.connections).toEqual([conn]);
+      expect(d.aiSettings?.routing).toEqual({ content: 'c1' });
+      d = updateAISettings(d, { model: 'm2' });
+      expect(d.aiSettings?.connections).toEqual([conn]);
+      expect(d.aiSettings?.routing).toEqual({ content: 'c1' });
+      d = updateAISettings(d, { connections: [], routing: {} });
+      expect(d.aiSettings?.connections).toBeUndefined();
+      expect(d.aiSettings?.routing).toBeUndefined();
+      expect(d.aiSettings?.apiKey).toBe('sk-key-12345');
+    });
+
+    it('updateAISettings merges defaultMeta instead of replacing it', () => {
+      let d = updateAISettings(freshData(), { provider: 'openai', apiKey: 'sk-key-12345', defaultMeta: { name: 'Work', capabilities: ['json'] } });
+      d = updateAISettings(d, { defaultMeta: { allowPeopleData: true } });
+      expect(d.aiSettings?.defaultMeta).toEqual({ name: 'Work', capabilities: ['json'], allowPeopleData: true });
+      d = updateAISettings(d, { defaultMeta: { allowPeopleData: undefined, capabilities: [] } });
+      expect(d.aiSettings?.defaultMeta).toEqual({ name: 'Work' });
+      d = updateAISettings(d, { defaultMeta: { name: undefined } });
+      expect(d.aiSettings?.defaultMeta).toBeUndefined();
+    });
+
+    describe('id-scoped connection actions (work on the latest data, never on a stale list)', () => {
+      const conn = (id: string, over: Record<string, unknown> = {}) => ({ id, name: id.toUpperCase(), provider: 'gateway' as const, baseUrl: `https://${id}.example.com/v1`, ...over });
+      const withConns = (...ids: string[]) =>
+        updateAISettings(freshData(), { provider: 'openai', apiKey: 'sk-key-12345', connections: ids.map((i) => conn(i)) });
+
+      it('upsertAIConnection appends a new connection and replaces an existing one in place', () => {
+        let d = upsertAIConnection(withConns('a', 'b'), conn('c'));
+        expect(d.aiSettings?.connections?.map((c) => c.id)).toEqual(['a', 'b', 'c']);
+        d = upsertAIConnection(d, conn('b', { name: 'Renamed' }));
+        expect(d.aiSettings?.connections?.map((c) => c.name)).toEqual(['A', 'Renamed', 'C']);
+      });
+
+      it('stops at the connection limit instead of losing the extra one on the next load', () => {
+        const ids = Array.from({ length: MAX_AI_CONNECTIONS }, (_, i) => `c${i}`);
+        const full = withConns(...ids);
+        expect(upsertAIConnection(full, conn('one-too-many'))).toBe(full);
+        // Replacing one that exists is still allowed at the limit.
+        expect(upsertAIConnection(full, conn('c3', { name: 'Edited' })).aiSettings?.connections).toHaveLength(MAX_AI_CONNECTIONS);
+        // The generic action cannot exceed it either.
+        const over = updateAISettings(freshData(), { connections: Array.from({ length: 25 }, (_, i) => conn(`x${i}`)) });
+        expect(over.aiSettings?.connections).toHaveLength(MAX_AI_CONNECTIONS);
+      });
+
+      it('patchAIConnection changes only the named connection and only the given fields', () => {
+        const base = withConns('a', 'b');
+        const d = patchAIConnection(base, 'b', { allowPeopleData: true, probedAt: '2026-10-24T10:00:00.000Z' });
+        expect(d.aiSettings?.connections?.[0]).toEqual(base.aiSettings?.connections?.[0]);
+        expect(d.aiSettings?.connections?.[1]).toMatchObject({ id: 'b', baseUrl: 'https://b.example.com/v1', allowPeopleData: true, probedAt: '2026-10-24T10:00:00.000Z' });
+        expect(d.aiSettings?.apiKey).toBe('sk-key-12345');
+      });
+
+      it('patchAIConnection removes a field set to undefined and drops empty capabilities', () => {
+        const base = patchAIConnection(withConns('a'), 'a', { allowPeopleData: true, capabilities: ['json'] });
+        const d = patchAIConnection(base, 'a', { allowPeopleData: undefined, capabilities: [] });
+        expect('allowPeopleData' in (d.aiSettings?.connections?.[0] ?? {})).toBe(false);
+        expect('capabilities' in (d.aiSettings?.connections?.[0] ?? {})).toBe(false);
+      });
+
+      it('patching a connection that was removed meanwhile does nothing (no resurrection)', () => {
+        const after = removeAIConnection(withConns('a', 'b'), 'a');
+        expect(patchAIConnection(after, 'a', { allowPeopleData: true })).toBe(after);
+        expect(upsertAIConnection(after, conn('b')).aiSettings?.connections?.map((c) => c.id)).toEqual(['b']);
+      });
+
+      it('removing b after a probe result landed on a leaves a intact (and the reverse)', () => {
+        let d = withConns('a', 'b');
+        d = removeAIConnection(d, 'b');
+        d = patchAIConnection(d, 'a', { probedAt: '2026-10-24T10:00:00.000Z' });
+        expect(d.aiSettings?.connections).toHaveLength(1);
+        expect(d.aiSettings?.connections?.[0]).toMatchObject({ id: 'a', probedAt: '2026-10-24T10:00:00.000Z' });
+      });
+
+      it('removeAIConnection also removes routing that pointed to it, and clears the list when it was the last', () => {
+        let d = updateAISettings(withConns('a', 'b'), { routing: { content: 'a', people: 'b', tasks: { 'ai.coach': 'a', 'ai.extract': 'b' } } });
+        d = removeAIConnection(d, 'a');
+        expect(d.aiSettings?.routing).toEqual({ people: 'b', tasks: { 'ai.extract': 'b' } });
+        d = removeAIConnection(d, 'b');
+        expect(d.aiSettings?.connections).toBeUndefined();
+        expect(d.aiSettings?.routing).toBeUndefined();
+        expect(d.aiSettings?.apiKey).toBe('sk-key-12345');
+        expect(removeAIConnection(d, 'missing')).toBe(d);
+      });
+
+      it('none of them touch notes, todos or teams', () => {
+        const base = withConns('a');
+        const d = removeAIConnection(patchAIConnection(upsertAIConnection(base, conn('b')), 'b', { allowPeopleData: true }), 'a');
+        expect(d.notes).toBe(base.notes);
+        expect(d.todoItems).toBe(base.todoItems);
+        expect(d.teams).toBe(base.teams);
+      });
     });
 
     it('updateAISettings stores, keeps and clears maxTokensField', () => {

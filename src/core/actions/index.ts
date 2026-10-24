@@ -1,6 +1,8 @@
 import { uuid } from '../../lib/uuid';
 import { clearReminderNotifyKeys, reminderNotifyEntryId } from '../../lib/reminderNotify';
 import type {
+  AIConnection,
+  AIRouting,
   AISettings,
   AppData,
   FeedbackKind,
@@ -33,6 +35,7 @@ import {
   validateSketchSceneForSave,
 } from '../../lib/utilityDiagrams';
 import {
+  MAX_AI_CONNECTIONS,
   isSyntheticPerson,
   nowIso,
   selfPersonIdForTeam,
@@ -489,13 +492,80 @@ export function updateUserProfile(
  * `provider` that means `''` ("Disabled" / Remove) rather than `undefined`.
  */
 export type AISettingsPatch = Partial<
-  Omit<AISettings, 'provider' | 'gatewayFormat' | 'authScheme' | 'maxTokensField'>
+  Omit<AISettings, 'provider' | 'gatewayFormat' | 'authScheme' | 'maxTokensField' | 'defaultMeta'>
 > & {
+  /** Merged into the stored value; a key set to `undefined` (or an empty list) is removed. */
+  defaultMeta?: { [K in keyof NonNullable<AISettings['defaultMeta']>]?: NonNullable<AISettings['defaultMeta']>[K] | undefined };
   provider?: AISettings['provider'] | '';
   gatewayFormat?: AISettings['gatewayFormat'] | '';
   authScheme?: AISettings['authScheme'] | '';
   maxTokensField?: AISettings['maxTokensField'] | '';
 };
+
+/** The routing map without any entry that points at `id`. `{}` when nothing is left. */
+export function routingWithout(routing: AIRouting | undefined, id: string): AIRouting {
+  const out: AIRouting = {};
+  if (routing?.content && routing.content !== id) out.content = routing.content;
+  if (routing?.people && routing.people !== id) out.people = routing.people;
+  const tasks = Object.fromEntries(Object.entries(routing?.tasks ?? {}).filter(([, v]) => v !== id));
+  if (Object.keys(tasks).length) out.tasks = tasks;
+  return out;
+}
+
+/**
+ * Connection edits are scoped to one id and applied to the LATEST data. A caller that
+ * captured the list earlier (a probe that finishes seconds after it started) can therefore
+ * never put a removed connection back or undo another connection's change.
+ */
+export function upsertAIConnection(data: AppData, connection: AIConnection): AppData {
+  const list = data.aiSettings?.connections ?? [];
+  const exists = list.some((c) => c.id === connection.id);
+  if (!exists && list.length >= MAX_AI_CONNECTIONS) return data;
+  return updateAISettings(data, {
+    connections: exists ? list.map((c) => (c.id === connection.id ? connection : c)) : [...list, connection],
+  });
+}
+
+export function patchAIConnection(
+  data: AppData,
+  id: string,
+  patch: { [K in keyof Omit<AIConnection, 'id'>]?: AIConnection[K] | undefined },
+): AppData {
+  const list = data.aiSettings?.connections;
+  if (!list?.some((c) => c.id === id)) return data;
+  return updateAISettings(data, {
+    connections: list.map((c) => {
+      if (c.id !== id) return c;
+      const merged: Record<string, unknown> = { ...c, ...patch };
+      for (const [key, value] of Object.entries(merged)) {
+        if (value === undefined || (Array.isArray(value) && value.length === 0)) delete merged[key];
+      }
+      return merged as unknown as AIConnection;
+    }),
+  });
+}
+
+export function removeAIConnection(data: AppData, id: string): AppData {
+  const s = data.aiSettings;
+  if (!s?.connections?.some((c) => c.id === id)) return data;
+  return updateAISettings(data, {
+    connections: s.connections.filter((c) => c.id !== id),
+    routing: routingWithout(s.routing, id),
+  });
+}
+
+function mergeDefaultMeta(
+  current: AISettings['defaultMeta'],
+  patch: NonNullable<AISettingsPatch['defaultMeta']>,
+): AISettings['defaultMeta'] {
+  const merged = { ...current, ...patch };
+  const next: NonNullable<AISettings['defaultMeta']> = {};
+  if (merged.name?.trim()) next.name = merged.name.trim();
+  if (merged.capabilities?.length) next.capabilities = merged.capabilities;
+  if (merged.probedAt?.trim()) next.probedAt = merged.probedAt.trim();
+  if (typeof merged.allowPeopleData === 'boolean') next.allowPeopleData = merged.allowPeopleData;
+  return Object.keys(next).length ? next : undefined;
+}
 
 export function updateAISettings(
   data: AppData,
@@ -537,6 +607,20 @@ export function updateAISettings(
     authScheme: patch.authScheme !== undefined ? patch.authScheme || undefined : current.authScheme,
     maxTokensField:
       patch.maxTokensField !== undefined ? patch.maxTokensField || undefined : current.maxTokensField,
+    connections:
+      patch.connections !== undefined
+        ? patch.connections.length
+          ? // The same limit the loader applies, so what is saved is what is loaded again.
+            patch.connections.slice(0, MAX_AI_CONNECTIONS)
+          : undefined
+        : current.connections,
+    routing:
+      patch.routing !== undefined
+        ? Object.keys(patch.routing).length
+          ? patch.routing
+          : undefined
+        : current.routing,
+    defaultMeta: patch.defaultMeta !== undefined ? mergeDefaultMeta(current.defaultMeta, patch.defaultMeta) : current.defaultMeta,
     requestPath:
       patch.requestPath !== undefined
         ? patch.requestPath.trim()
@@ -562,6 +646,16 @@ export function updateAISettings(
           : undefined
         : current.extractionGuidance,
   };
+  // An older version drops `aiSettings` when none of ITS known fields is set, and with it every
+  // extra connection, the routing and the default's metadata. While any of those exist and no
+  // older field is set, keep the (default) API format as a marker so they survive a downgrade.
+  const hasNewKeys = Boolean(next.connections?.length || next.routing || next.defaultMeta);
+  const hasOlderField = Boolean(
+    next.provider || next.apiKey || next.model || next.baseUrl || next.gatewayFormat || next.authHeader ||
+      next.authScheme || next.requestPath || next.maxTokensField || next.extraHeaders?.length ||
+      next.systemPrompt || next.extractionGuidance,
+  );
+  if (hasNewKeys && !hasOlderField) next.gatewayFormat = 'openai-chat';
   // Empty when every value (including any preserved forward-compat extra) is blank.
   const isEmpty = Object.values(next as Record<string, unknown>).every(
     (v) => v === undefined || v === null || v === '',

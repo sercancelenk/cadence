@@ -30,6 +30,9 @@ export type NotesBodyEditorProps = {
   onUnlinkTodo?: (todoId: string) => void;
   /** Selection bubble → create Cadence todo (does not mutate note body). */
   onCreateTaskFromSelection?: (title: string) => void;
+  /** AI actions in the slash menu and selection bubble. */
+  aiEnabled?: boolean;
+  onAiAction?: (actionId: string, text: string) => void;
 };
 
 /**
@@ -58,6 +61,8 @@ export const NotesBodyEditor = memo(function NotesBodyEditor({
   onLinkTodo,
   onUnlinkTodo,
   onCreateTaskFromSelection,
+  aiEnabled,
+  onAiAction,
 }: NotesBodyEditorProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -126,6 +131,8 @@ export const NotesBodyEditor = memo(function NotesBodyEditor({
         attachmentScope={{ documentKind: 'note', documentId: noteId }}
         attachmentUserId={attachmentUserId}
         onCreateTaskFromSelection={onCreateTaskFromSelection}
+        aiEnabled={aiEnabled}
+        onAiAction={onAiAction}
       />
 
       {onLinkTodo ? (

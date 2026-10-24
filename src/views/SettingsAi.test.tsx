@@ -2,8 +2,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AISettings } from '../model';
 import { STORAGE_PREFIX } from '../lib/appBranding';
+import { updateAISettings as realUpdateAISettings } from '../core/actions';
+import { emptyData } from '../core/model';
+import { legacyParseAISettings } from '../core/model/legacyAiParser.testutil';
 
 const updateAISettings = vi.fn();
+const askAI = vi.hoisted(() => vi.fn());
+vi.mock('../lib/ai', async (importOriginal) => ({ ...(await importOriginal<typeof import('../lib/ai')>()), askAI }));
 const confirm = vi.fn(async () => true);
 let aiSettings: AISettings | undefined;
 
@@ -145,13 +150,32 @@ describe('Settings → AI assistant', () => {
   });
 
   describe('templates', () => {
+    it('lists templates by API format, none tied to a product or to this computer', () => {
+      mount();
+      choose('gateway');
+      const labels = Array.from((screen.getByLabelText(/^Start from a template/) as HTMLSelectElement).options)
+        .slice(1)
+        .map((o) => o.textContent?.split(' — ')[0]);
+      expect(labels).toEqual(['OpenAI-compatible', 'OpenAI Responses', 'Anthropic Claude', 'OpenAI', 'Google Gemini']);
+    });
+
     it('fills the gateway fields from a template without saving', async () => {
       mount();
       choose('gateway');
-      fireEvent.change(screen.getByLabelText(/^Start from a template/), { target: { value: 'ollama' } });
-      await waitFor(() => expect((baseUrl() as HTMLInputElement).value).toBe('http://localhost:11434/v1'));
+      fireEvent.change(screen.getByLabelText(/^Start from a template/), { target: { value: 'anthropic' } });
+      await waitFor(() => expect((baseUrl() as HTMLInputElement).value).toBe('https://api.anthropic.com/v1'));
       expect(confirm).not.toHaveBeenCalled(); // empty form: nothing to overwrite
       expect(updateAISettings).not.toHaveBeenCalled();
+    });
+
+    it('a generic template sets only the API format and leaves the address for you', async () => {
+      mount();
+      choose('gateway');
+      fireEvent.change(screen.getByLabelText(/^Start from a template/), { target: { value: 'openai-responses' } });
+      await waitFor(() =>
+        expect((screen.getByLabelText(/^API format/) as HTMLSelectElement).value).toBe('openai-responses'),
+      );
+      expect((baseUrl() as HTMLInputElement).value).toBe('');
     });
 
     it('asks before replacing a filled form, and keeps it when declined', async () => {
@@ -159,7 +183,7 @@ describe('Settings → AI assistant', () => {
       choose('gateway');
       type(baseUrl(), 'https://gw.example.com/v1');
       confirm.mockResolvedValueOnce(false);
-      fireEvent.change(screen.getByLabelText(/^Start from a template/), { target: { value: 'ollama' } });
+      fireEvent.change(screen.getByLabelText(/^Start from a template/), { target: { value: 'anthropic' } });
       await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
       expect((baseUrl() as HTMLInputElement).value).toBe('https://gw.example.com/v1');
     });
@@ -238,5 +262,125 @@ describe('Settings → AI assistant', () => {
     const offers = screen.getAllByRole('button', { name: 'gemini-3.8-flash' });
     fireEvent.click(offers[offers.length - 1]);
     expect(modelInput().value).toBe('gemini-3.8-flash');
+  });
+
+  describe('Test connection and the JSON capability', () => {
+    const testBtnEnabled = () => screen.getByRole('button', { name: /Test connection/ });
+    const answers = (connection: string, probe: string) => {
+      askAI.mockReset();
+      askAI.mockResolvedValueOnce({ text: connection, stopReason: 'stop' }).mockResolvedValueOnce({ text: probe, stopReason: 'stop' });
+    };
+    const saved: AISettings = { provider: 'gateway', baseUrl: 'http://localhost:11434/v1', model: 'llama3' };
+
+    it('shows "JSON replies: ok" and remembers it for a saved connection', async () => {
+      answers('ok', '{"ok":true}');
+      mount(saved);
+      fireEvent.click(testBtnEnabled());
+      await waitFor(() => expect(screen.getByText(/JSON replies: ok/)).toBeTruthy());
+      const patch = updateAISettings.mock.calls.at(-1)?.[0];
+      expect(patch.defaultMeta.capabilities).toEqual(['json']);
+      expect(typeof patch.defaultMeta.probedAt).toBe('string');
+    });
+
+    it('shows "unreliable" and remembers that a probe ran when JSON failed', async () => {
+      answers('ok', 'sure thing');
+      mount(saved);
+      fireEvent.click(testBtnEnabled());
+      await waitFor(() => expect(screen.getByText(/JSON replies: unreliable/)).toBeTruthy());
+      const patch = updateAISettings.mock.calls.at(-1)?.[0];
+      expect(patch.defaultMeta.capabilities).toEqual([]);
+      expect(typeof patch.defaultMeta.probedAt).toBe('string');
+    });
+
+    it('shows the result but saves nothing while the form has unsaved changes', async () => {
+      answers('ok', '{"ok":true}');
+      mount(saved);
+      type(modelInput(), 'another-model');
+      fireEvent.click(testBtnEnabled());
+      await waitFor(() => expect(screen.getByText(/JSON replies: ok/)).toBeTruthy());
+      expect(screen.getByText(/Not saved: save the connection, then test again/)).toBeTruthy();
+      expect(updateAISettings).not.toHaveBeenCalled();
+    });
+
+    it('does not probe when the connection test itself failed', async () => {
+      askAI.mockReset();
+      askAI.mockRejectedValueOnce(new Error('HTTP 401'));
+      mount(saved);
+      fireEvent.click(testBtnEnabled());
+      await waitFor(() => expect(screen.getByText(/HTTP 401/)).toBeTruthy());
+      expect(askAI).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText(/JSON replies/)).toBeNull();
+    });
+  });
+
+  describe('the default connection: consent and probe belong to a destination', () => {
+    const meta = { allowPeopleData: true, capabilities: ['json' as const], probedAt: '2026-10-24T10:00:00.000Z', name: 'Mine' };
+    const saved: AISettings = { provider: 'gateway', baseUrl: 'http://localhost:11434/v1', model: 'llama3', defaultMeta: meta };
+    const patchOf = () => updateAISettings.mock.calls.at(-1)?.[0];
+
+    it('a new address clears the people-data permission and the probe result, and keeps the name', () => {
+      mount(saved);
+      type(screen.getByLabelText(/^Base URL/), 'https://remote.example.com/v1');
+      fireEvent.click(save());
+      expect(patchOf().defaultMeta).toEqual({ allowPeopleData: undefined, capabilities: [], probedAt: undefined });
+    });
+
+    it('a different provider clears them too', () => {
+      mount(saved);
+      choose('openai');
+      type(keyInput(), 'sk-new-key-12345');
+      fireEvent.click(save());
+      expect(patchOf().defaultMeta).toMatchObject({ allowPeopleData: undefined, capabilities: [], probedAt: undefined });
+    });
+
+    it('a new model clears only the probe result: the permission is for the destination, not the model', () => {
+      mount(saved);
+      type(modelInput(), 'llama3:70b');
+      fireEvent.click(save());
+      expect(patchOf().defaultMeta).toEqual({ capabilities: [], probedAt: undefined });
+    });
+
+    it('changing only the API key leaves both alone', () => {
+      mount(saved);
+      type(keyInput(), 'sk-rotated-key-1234');
+      fireEvent.click(save());
+      expect('defaultMeta' in patchOf()).toBe(false);
+    });
+  });
+
+  it('removing the default connection keeps the "Previous instructions" the UI says are kept', async () => {
+    mount({ provider: 'openai', apiKey: 'sk-openai-secret', systemPrompt: 'Always answer in Turkish', extractionGuidance: 'Only this week' });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove key' }));
+    await waitFor(() => expect(updateAISettings).toHaveBeenCalledTimes(1));
+    const patch = updateAISettings.mock.calls[0][0];
+    expect('systemPrompt' in patch).toBe(false);
+    expect('extractionGuidance' in patch).toBe(false);
+  });
+
+  describe('removing the default connection while extra connections exist', () => {
+    const company = { id: 'c-company', name: 'Company gateway', provider: 'gateway' as const, baseUrl: 'https://ai.corp.example.com/v1', model: 'team/x', apiKey: 'sk-corp-key-12345' };
+    const withExtras: AISettings = { provider: 'openai', apiKey: 'sk-openai-secret', model: 'gpt-5.4-mini', connections: [company], routing: { content: 'c-company' } };
+
+    it('leaves the extras and routing, and the result still survives an older build\'s load and save', async () => {
+      mount(withExtras);
+      fireEvent.click(screen.getByRole('button', { name: 'Remove key' }));
+      await waitFor(() => expect(updateAISettings).toHaveBeenCalledTimes(1));
+      const patch = updateAISettings.mock.calls[0][0];
+      const after = realUpdateAISettings({ ...emptyData(), aiSettings: withExtras }, patch).aiSettings;
+      expect(after?.provider).toBeUndefined();
+      expect(after?.connections).toEqual([company]);
+      expect(after?.routing).toEqual({ content: 'c-company' });
+      // What an older build would do with it:
+      const older = legacyParseAISettings(JSON.parse(JSON.stringify(after))) as Record<string, unknown> | undefined;
+      expect(older?.connections).toEqual([company]);
+      expect(older?.routing).toEqual({ content: 'c-company' });
+    });
+
+    it('with nothing else left, the card offers no Remove button for an empty default', () => {
+      mount({ gatewayFormat: 'openai-chat', connections: [company] });
+      // (The connection list has its own "Remove <name>" buttons; the default form has none.)
+      expect(screen.queryByRole('button', { name: 'Remove key' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Remove AI settings' })).toBeNull();
+    });
   });
 });

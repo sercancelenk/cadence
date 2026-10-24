@@ -151,7 +151,9 @@ export function createSlashSuggestionRender() {
  * TipTap `/` command palette. Editor-only — do not add to markdown-import
  * extension lists (Suggestion needs a live view).
  */
-export function createSlashCommandExtension(): Extension {
+export function createSlashCommandExtension(
+  options: { getExtraItems?: () => readonly SlashCommandItem[] } = {},
+): Extension {
   return Extension.create({
     name: 'slashCommand',
 
@@ -161,7 +163,8 @@ export function createSlashCommandExtension(): Extension {
           char: '/',
           allowSpaces: false,
           startOfLine: false,
-          items: ({ query }: { query: string }) => filterSlashCommandItems(query),
+          items: ({ query }: { query: string }) =>
+            filterSlashCommandItems(query, options.getExtraItems?.() ?? []),
           allow: ({
             editor,
             state,

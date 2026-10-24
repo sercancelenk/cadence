@@ -116,7 +116,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | | |
 |---|---|
 | 🪶 **Task extractor** | Drop a wall of meeting notes / brain dump → get a clean ordered task list back, ready to file into any project group. |
-| 🧭 **Coaching on a task** | One-line reframing + three concrete next actions ordered by leverage + one risk to avoid. Always under 200 words. Tunable system prompt in Settings. |
+| 🧭 **Coaching on a task** | One-line reframing + three concrete next actions ordered by leverage + one risk to avoid. Always under 200 words. |
 | 🎛️ **Three providers, one switch** | Anthropic Claude, OpenAI ChatGPT, Google Gemini. One dropdown to swap. |
 | 🛑 **Off completely** | No provider configured, no AI — the rest of the app behaves identically. AI is gated behind "is a provider configured?", so an offline workspace is the default, not a degraded mode. |
 
@@ -373,7 +373,7 @@ The `/todos` page scales as your lists grow:
 
 ### AI Assistant (BYO API key)
 
-Every task row has an **Ask AI** button as soon as you connect a provider in *Settings → AI Assistant*. The assistant takes the task title + optional Markdown details + your custom system prompt and returns a structured next-action plan, rendered as Markdown in a side dialog.
+Every task row has an **Ask AI** button as soon as you connect a provider in *Settings → AI Assistant*. The assistant takes the task title + optional Markdown details and returns a structured next-action plan, rendered as Markdown in a side dialog.
 
 - **Bring your own key** — pick a provider, paste your API key, optionally override the model name. There is **no proxy**; calls go from this device straight to the provider you chose. The provider sees your task title/body but not your other data.
 - **Providers supported**
@@ -389,7 +389,7 @@ Every task row has an **Ask AI** button as soon as you connect a provider in *Se
   - **Desktop**: inside your encrypted data file (`cadence-data-<userId>.json`, AES-256-GCM, keyed by your account password).
   - **PWA**: in this browser's `localStorage` only (not encrypted) — use a low-budget key with usage limits.
 
-The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts).
+The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts). Connection details and limits: [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md). Where AI is going next (diagrams from text, task breakdown, 1:1 and feedback help, digests) and the design behind it: [AI features: foundation and roadmap](docs/superpowers/specs/2026-10-24-ai-features-design.md).
 
 ### Backups & recovery
 

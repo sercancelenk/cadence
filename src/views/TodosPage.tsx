@@ -24,9 +24,11 @@ import {
 } from '../features/todos';
 import { noteDisplayTitle } from '../features/notes/noteDisplay';
 import { appendPlainTextToBodyFields } from '../lib/richTextBody';
-import { isAIConfigured } from '../lib/ai';
+import { hasUsableConnection } from '../lib/ai/connections';
+import { aiIntentFromSearch } from '../lib/ai/entryPoints';
+import { toLocalDatetimeValue } from '../lib/datetime';
 import { useFeatures } from '../lib/features';
-import type { TodoItem } from '../model';
+import type { Note, TodoItem } from '../model';
 
 const AIAssistantDialog = lazy(() =>
   import('../components/AIAssistantDialog').then((m) => ({ default: m.AIAssistantDialog })),
@@ -107,7 +109,16 @@ export function TodosPage() {
   } = prefs;
 
   const { features: appFeatures } = useFeatures();
-  const aiEnabled = appFeatures.ai && isAIConfigured(workspace.aiSettings);
+  const aiEnabled = appFeatures.ai && hasUsableConnection(workspace.aiSettings);
+
+  // ⌘K "AI: Extract tasks from notes" arrives as /todos?ai=extract: open the extractor, then
+  // drop the parameter so a reload or the back button does not reopen it.
+  const aiIntent = aiIntentFromSearch(location.search);
+  useEffect(() => {
+    if (!aiIntent) return;
+    if (aiIntent === 'extract' && aiEnabled) setExtractorOpen(true);
+    navigate(location.pathname, { replace: true });
+  }, [aiIntent, aiEnabled, navigate, location.pathname]);
   const allGroupsSorted = useMemo(() => sortGroups(workspace.todoGroups), [workspace.todoGroups]);
   const archivedItemCount = useMemo(
     () => workspace.todoItems.filter((it) => it.archived === true).length,
@@ -339,6 +350,12 @@ export function TodosPage() {
                 title: aiTask.title,
                 body: legacyBodyPlainText(aiTask) || undefined,
               }}
+              context={{
+                listName: workspace.todoGroups.find((g) => g.id === aiTask.groupId)?.name,
+                dueAt: aiTask.dueAt ? toLocalDatetimeValue(aiTask.dueAt).slice(0, 10) || undefined : undefined,
+                priority: aiTask.priority,
+                linkedNoteTitle: linkedNoteTitle(workspace.notes, aiTask.sourceNoteId),
+              }}
               onAppendToBody={(markdown) => {
                 const targetId = aiTask.id;
                 const nextFields = appendPlainTextToBodyFields(aiTask, markdown);
@@ -362,4 +379,10 @@ export function TodosPage() {
       ) : null}
     </div>
   );
+}
+
+/** Title of the note a task came from, for the AI context. A locked note's title is never sent. */
+function linkedNoteTitle(notes: Note[], noteId: string | undefined): string | undefined {
+  const note = noteId ? notes.find((n) => n.id === noteId) : undefined;
+  return note && !note.locked ? noteDisplayTitle(note) : undefined;
 }

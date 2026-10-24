@@ -31,6 +31,6 @@ describe('AiProviderInfo', () => {
   it('the custom gateway box explains the placeholders and templates', () => {
     render(<AiProviderInfo provider="gateway" />);
     expect(screen.getByText(/\{model\} and \{apiKey\}/)).toBeTruthy();
-    expect(screen.getByText(/Start from a template/)).toBeTruthy();
+    expect(screen.getByText(/Start from the template for the API format/)).toBeTruthy();
   });
 });

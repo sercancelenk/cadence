@@ -57,23 +57,21 @@ export type GatewayTemplate = {
 };
 
 /**
- * Starting points for the custom gateway form. The hosted ones mirror
- * `HOSTED_CONNECTIONS`; the local ones were verified against a running
- * OmniRoute (`/v1`, all four formats) and Ollama (`/v1`, OpenAI Chat).
+ * Starting points for the custom gateway form, by API format. The two generic ones set only the
+ * format (the address is yours to enter); the hosted ones mirror `HOSTED_CONNECTIONS`.
  */
 export const GATEWAY_TEMPLATES: GatewayTemplate[] = [
   {
-    id: 'omniroute',
-    label: 'OmniRoute (local)',
-    hint: 'A local router for many providers. Default port 20128.',
-    connection: { baseUrl: 'http://localhost:20128/v1', gatewayFormat: 'openai-chat' },
-    modelExample: 'auto/best-fast',
+    id: 'openai-compatible',
+    label: 'OpenAI-compatible',
+    hint: 'Chat Completions format, spoken by most routers, proxies and model servers.',
+    connection: { gatewayFormat: 'openai-chat' },
   },
   {
-    id: 'ollama',
-    label: 'Ollama (local)',
-    hint: 'Models running on this computer. No API key needed.',
-    connection: { baseUrl: 'http://localhost:11434/v1', gatewayFormat: 'openai-chat' },
+    id: 'openai-responses',
+    label: 'OpenAI Responses',
+    hint: 'Responses API format.',
+    connection: { gatewayFormat: 'openai-responses' },
   },
   {
     id: 'anthropic',
@@ -167,7 +165,7 @@ export const PROVIDER_INFO: Record<AIProvider | 'none', ProviderInfo> = {
   gateway: {
     title: 'Custom gateway',
     summary:
-      'Connects to any router, proxy or local model server you run or are given access to. You decide the address, headers, key and model.',
+      'Connects to any router, proxy or model server you run or are given access to. You decide the address, headers, key and model.',
     facts: [
       ['API format', 'OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Google Gemini'],
       ['Address', 'Any https:// address, or http:// for localhost and private networks'],
@@ -175,7 +173,7 @@ export const PROVIDER_INFO: Record<AIProvider | 'none', ProviderInfo> = {
       ['Sent', SENT],
     ],
     notes: [
-      'Start from a template (OmniRoute, Ollama, or a hosted provider) and change what you need.',
+      'Start from the template for the API format your gateway speaks, then change what you need.',
       'In the request path, {model} and {apiKey} are replaced by the model name and your key. A ?query string is allowed.',
       'Tools such as Codex or OpenCode show the provider type they use for the same gateway; pick the matching API format.',
       'The gateway decides which provider sees your text. Check who operates it before sending anything sensitive.',

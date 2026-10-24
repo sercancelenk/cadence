@@ -2,6 +2,7 @@ import type { Range } from '@tiptap/core';
 import { BubbleMenu, type Editor } from '@tiptap/react';
 import { useCallback, useRef, useState, type MouseEvent } from 'react';
 import { IcListTodo } from '../icons';
+import { AiActionsMenu } from '../ai/AiActionsMenu';
 import { isSafeEditorLinkUrl } from '../../lib/richTextEditorExtensions';
 import { taskTitleFromEditorSelection } from '../../lib/richTextSelectionTask';
 import { readRichTextBubbleToolbarState } from '../../lib/richTextToolbarState';
@@ -14,6 +15,9 @@ type Props = {
    * current selection text. Other surfaces omit this — no button, no side effects.
    */
   onCreateTaskFromSelection?: (title: string) => void;
+  /** AI actions valid for a selection; shown as one ✨ menu. */
+  aiActions?: readonly { id: string; label: string; hint: string }[];
+  onAiAction?: (actionId: string, selectionText: string) => void;
 };
 
 /** Keep editor focus + selection when interacting with the bubble. */
@@ -28,7 +32,7 @@ function keepSelection(event: MouseEvent) {
  * Link editing uses an inline field (not `window.prompt`) — Electron does not
  * implement `window.prompt`, and a modal would steal focus / collapse the selection.
  */
-export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Props) {
+export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection, aiActions, onAiAction }: Props) {
   const active = useEditorToolbarState(editor, readRichTextBubbleToolbarState);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
@@ -261,6 +265,18 @@ export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection }: Pro
                 <IcListTodo size={14} strokeWidth={2} />
                 <span>Task</span>
               </button>
+            </>
+          ) : null}
+          {aiActions && aiActions.length > 0 && onAiAction ? (
+            <>
+              <span className="rich-bubble-menu__sep" aria-hidden="true" />
+              <AiActionsMenu
+                actions={aiActions}
+                onSelect={(id) => {
+                  const { from, to } = editor.state.selection;
+                  onAiAction(id, editor.state.doc.textBetween(from, to, '\n'));
+                }}
+              />
             </>
           ) : null}
         </>

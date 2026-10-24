@@ -15,6 +15,8 @@ import {
   shouldClearPendingOnPropsEcho,
 } from '../../lib/richTextExternalSync';
 import { createSlashCommandExtension } from '../../lib/richTextSlashCommand';
+import { createAiSlashItems } from '../../lib/richTextSlashItems';
+import { availableAiActions } from '../../lib/ai/entryPoints';
 import { readRichTextToolbarState } from '../../lib/richTextToolbarState';
 import { useEditorToolbarState } from '../../hooks/useEditorToolbarState';
 import { RichTextBubbleToolbar } from './RichTextBubbleToolbar';
@@ -93,6 +95,13 @@ export type RichTextEditorProps = {
    * Notes wire this; todos/people/utilities omit it (no UI change).
    */
   onCreateTaskFromSelection?: (title: string) => void;
+  /**
+   * Opt-in AI actions (notes only). When AI is enabled and a handler is given, the slash menu
+   * gains an "AI" entry and the selection bubble a single ✨ menu. The handler receives the
+   * action id and the selection (or the whole note for the slash menu when nothing is selected).
+   */
+  aiEnabled?: boolean;
+  onAiAction?: (actionId: string, text: string) => void;
 };
 
 function contentKey(
@@ -228,6 +237,8 @@ export function RichTextEditor({
   onSaveStateChange,
   autoFocus = false,
   onCreateTaskFromSelection,
+  aiEnabled = false,
+  onAiAction,
   onAutoFocusHandled,
 }: RichTextEditorProps) {
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
@@ -317,8 +328,26 @@ export function RichTextEditor({
   const externalKey = contentKey(value, valueFormat);
   const lastExternalKey = useRef(externalKey);
 
+  // The slash extension reads the AI items lazily, so toggling AI never rebuilds the editor.
+  const onAiActionRef = useRef(onAiAction);
+  onAiActionRef.current = onAiAction;
+  const aiOn = aiEnabled && !!onAiAction;
+  const aiSlashItems = useMemo(
+    () =>
+      aiOn
+        ? createAiSlashItems(availableAiActions('slash', { aiEnabled: true }), (id, text) =>
+            onAiActionRef.current?.(id, text),
+          )
+        : [],
+    [aiOn],
+  );
+  const aiSlashItemsRef = useRef(aiSlashItems);
+  aiSlashItemsRef.current = aiSlashItems;
   const extensions = useMemo(
-    () => [...createRichTextExtensions(placeholder), createSlashCommandExtension()],
+    () => [
+      ...createRichTextExtensions(placeholder),
+      createSlashCommandExtension({ getExtraItems: () => aiSlashItemsRef.current }),
+    ],
     [placeholder],
   );
 
@@ -860,6 +889,8 @@ export function RichTextEditor({
         <RichTextBubbleToolbar
           editor={editor}
           onCreateTaskFromSelection={onCreateTaskFromSelection}
+          aiActions={aiOn ? availableAiActions('bubble', { aiEnabled: true }) : undefined}
+          onAiAction={aiOn ? onAiAction : undefined}
         />
       ) : null}
       {imageLightbox ? (

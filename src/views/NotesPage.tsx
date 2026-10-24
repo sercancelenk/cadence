@@ -48,7 +48,7 @@ import {
   pickLockedBody,
   type ImportedNoteFields,
 } from '../features/notes/noteFileActions';
-import { isAIConfigured } from '../lib/ai';
+import { hasUsableConnection } from '../lib/ai/connections';
 import { useFeatures } from '../lib/features';
 import { useNotesUnlock } from '../lib/NotesUnlockContext';
 import { purgeNoteRevisionHistory } from '../lib/noteRevision/noteRevisionStore';
@@ -114,7 +114,7 @@ export function NotesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { features } = useFeatures();
-  const aiEnabled = features.ai && isAIConfigured(notesWorkspace.aiSettings);
+  const aiEnabled = features.ai && hasUsableConnection(notesWorkspace.aiSettings);
 
   const [extractorContext, setExtractorContext] = useState<{ noteId: string; notes: string } | null>(
     null,
@@ -359,6 +359,18 @@ export function NotesPage() {
   );
 
   const selectedNoteId = selected?.id;
+
+  /** Slash menu and selection bubble: open the task extractor on the selection, or the whole note. */
+  const onAiAction = useCallback(
+    (actionId: string, text: string) => {
+      if (actionId !== 'extract-tasks' || !selected) return;
+      setExtractorContext({
+        noteId: selected.id,
+        notes: text.trim() ? text : notePlainText(selected, decryptedForSelected),
+      });
+    },
+    [selected, decryptedForSelected],
+  );
 
   const onCreateTaskFromSelection = useCallback(
     (title: string) => {
@@ -691,6 +703,8 @@ export function NotesPage() {
                 onLinkTodo={onLinkSelectedNoteTodo}
                 onUnlinkTodo={onUnlinkSelectedNoteTodo}
                 onCreateTaskFromSelection={onCreateTaskFromSelection}
+                aiEnabled={aiEnabled}
+                onAiAction={onAiAction}
               />
             )}
           </>

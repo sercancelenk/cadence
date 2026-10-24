@@ -330,4 +330,22 @@ describe('buildCommands', () => {
     const ids = commands.filter((c) => c.id.startsWith('note-')).map((c) => c.id);
     expect(ids).toEqual(['note-c', 'note-d']);
   });
+
+  describe('AI commands', () => {
+    it('adds none unless AI is enabled', () => {
+      const none = buildCommands(paletteData(), navigate);
+      const off = buildCommands(paletteData(), navigate, { aiEnabled: false });
+      expect(none.some((c) => c.group === 'AI')).toBe(false);
+      expect(off.some((c) => c.group === 'AI')).toBe(false);
+    });
+
+    it('adds "AI: Extract tasks from notes", which opens the extractor on the To-dos page', () => {
+      const nav = vi.fn();
+      const commands = buildCommands(paletteData(), nav, { aiEnabled: true });
+      const cmd = commands.find((c) => c.id === 'ai-extract-tasks');
+      expect(cmd).toMatchObject({ group: 'AI', label: 'AI: Extract tasks from notes' });
+      cmd?.run();
+      expect(nav).toHaveBeenCalledWith('/todos?ai=extract');
+    });
+  });
 });

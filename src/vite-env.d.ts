@@ -347,6 +347,8 @@ interface CadenceApi {
         /** Complete request headers, including authentication. */
         headers: Record<string, string>;
         body: string;
+        /** `people` additionally requires the `aiPeople` policy flag in the main process. */
+        dataClass?: 'content' | 'people';
       }) => Promise<
         | { ok: true; status: number; text: string }
         | { ok: false; error: string; aborted?: boolean; reason?: string }

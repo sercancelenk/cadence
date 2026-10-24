@@ -39,6 +39,8 @@ describe('PRESETS shape', () => {
     expect(PRESETS.personal).toEqual({
       sync: { lan: false, cloud: false },
       ai: true,
+      aiPeople: true,
+      aiFocusNote: true,
       dataExport: true,
       updateCheck: true,
     });
@@ -48,6 +50,8 @@ describe('PRESETS shape', () => {
     expect(PRESETS['work-standard']).toEqual({
       sync: { lan: false, cloud: false },
       ai: true,
+      aiPeople: true,
+      aiFocusNote: true,
       dataExport: true,
       updateCheck: true,
     });
@@ -57,6 +61,8 @@ describe('PRESETS shape', () => {
     expect(PRESETS['work-strict']).toEqual({
       sync: { lan: false, cloud: false },
       ai: false,
+      aiPeople: false,
+      aiFocusNote: false,
       dataExport: false,
       updateCheck: true,
     });
@@ -112,6 +118,8 @@ describe('parsePolicy validation', () => {
       features: {
         sync: { lan: false, cloud: 'no' },
         ai: true,
+        aiPeople: true,
+        aiFocusNote: true,
         dataExport: 0,
         updateCheck: false,
       },
@@ -121,6 +129,8 @@ describe('parsePolicy validation', () => {
       features: {
         sync: { lan: false },
         ai: true,
+        aiPeople: true,
+        aiFocusNote: true,
         updateCheck: false,
       },
     });
@@ -183,6 +193,8 @@ describe('resolveFeatures precedence', () => {
     expect(r.features).toEqual({
       ...PRESETS['work-standard'],
       ai: false,
+      aiPeople: false,
+      aiFocusNote: false,
     });
     expect(r.managed).toBe(true);
   });
@@ -197,6 +209,8 @@ describe('resolveFeatures precedence', () => {
     expect(r.features).toEqual({
       ...PRESETS['work-strict'],
       ai: true,
+      aiPeople: true,
+      aiFocusNote: true,
     });
   });
 
@@ -265,6 +279,8 @@ describe('resolveFeatures — enterprise build flavor', () => {
     expect(r.features).toEqual({
       ...PRESETS['work-strict'],
       ai: true,
+      aiPeople: true,
+      aiFocusNote: true,
     });
     expect(r.managed).toBe(true);
     expect(r.source).toEqual({
@@ -302,6 +318,8 @@ describe('resolveFeatures — enterprise build flavor', () => {
     expect(r.features).toEqual({
       sync: { lan: false, cloud: false },
       ai: false,
+      aiPeople: false,
+      aiFocusNote: false,
       dataExport: false,
       updateCheck: true,
     });
@@ -323,5 +341,45 @@ describe('resolveFeatures — enterprise build flavor', () => {
       { enterpriseBuild: true },
     );
     expect(r.features).toEqual(PRESETS['work-strict']);
+  });
+});
+
+describe('AI sub-flags aiPeople and aiFocusNote', () => {
+  it('parsePolicy keeps booleans and drops anything else', () => {
+    expect(parsePolicy({ path: '/x', features: { aiPeople: false, aiFocusNote: true } })).toEqual({
+      path: '/x',
+      features: { aiPeople: false, aiFocusNote: true },
+    });
+    expect(parsePolicy({ path: '/x', features: { ai: true, aiPeople: 'no', aiFocusNote: 1 } })).toEqual({
+      path: '/x',
+      features: { ai: true },
+    });
+  });
+
+  it('presets follow the preset AI value', () => {
+    expect(PRESETS.personal).toMatchObject({ ai: true, aiPeople: true, aiFocusNote: true });
+    expect(PRESETS['work-standard']).toMatchObject({ ai: true, aiPeople: true, aiFocusNote: true });
+    expect(PRESETS['work-strict']).toMatchObject({ ai: false, aiPeople: false, aiFocusNote: false });
+  });
+
+  it('absent flags follow the resolved ai flag', () => {
+    const off = resolveFeatures({ path: '/x', features: { ai: false } }, null, { enterpriseBuild: false }).features;
+    expect([off.ai, off.aiPeople, off.aiFocusNote]).toEqual([false, false, false]);
+    const reEnabled = resolveFeatures({ path: '/x', preset: 'work-strict', features: { ai: true } }, null, { enterpriseBuild: false }).features;
+    expect([reEnabled.ai, reEnabled.aiPeople, reEnabled.aiFocusNote]).toEqual([true, true, true]);
+  });
+
+  it('an explicit flag wins over ai in both directions', () => {
+    const f1 = resolveFeatures({ path: '/x', features: { aiPeople: false } }, null, { enterpriseBuild: false }).features;
+    expect([f1.ai, f1.aiPeople, f1.aiFocusNote]).toEqual([true, false, true]);
+    const f2 = resolveFeatures({ path: '/x', preset: 'work-strict', features: { aiFocusNote: true } }, null, { enterpriseBuild: false }).features;
+    expect([f2.ai, f2.aiPeople, f2.aiFocusNote]).toEqual([false, false, true]);
+  });
+
+  it('the enterprise build starts locked down and a policy may loosen the flags', () => {
+    const locked = resolveFeatures(null, null, { enterpriseBuild: true }).features;
+    expect([locked.ai, locked.aiPeople, locked.aiFocusNote]).toEqual([false, false, false]);
+    const loosened = resolveFeatures({ path: '/x', features: { ai: true } }, null, { enterpriseBuild: true }).features;
+    expect([loosened.ai, loosened.aiPeople, loosened.aiFocusNote]).toEqual([true, true, true]);
   });
 });

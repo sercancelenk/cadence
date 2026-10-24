@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createAiSlashItems,
   filterSlashCommandItems,
   runSlashCommand,
   SLASH_COMMAND_ITEMS,
@@ -197,5 +198,80 @@ describe('richTextSlashItems', () => {
     SLASH_COMMAND_ITEMS.find((i) => i.id === 'mermaid')!.run(editor, { from: 0, to: 1 });
     expect(updateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'mermaid' });
     expect(toggleCodeBlock).not.toHaveBeenCalled();
+  });
+});
+
+describe('AI slash items', () => {
+  const action = { id: 'extract-tasks', label: 'Extract tasks', hint: 'Find tasks in this text', keywords: 'ai extract tasks todo', surfaces: ['slash'] as const, taskId: 'ai.extract' };
+
+  /** A just-enough editor: records the chain and answers selection and text questions. */
+  function fakeEditor(opts: { editable?: boolean; selected?: string; whole?: string; flat?: string }) {
+    const steps: string[] = [];
+    const chain: Record<string, unknown> = {
+      focus: () => (steps.push('focus'), chain),
+      deleteRange: (r: Range) => (steps.push(`delete:${r.from}-${r.to}`), chain),
+      run: () => (steps.push('run'), true),
+    };
+    const editor = {
+      isEditable: opts.editable ?? true,
+      chain: () => chain,
+      getText: () => opts.whole ?? '',
+      state: {
+        selection: { from: 3, to: opts.selected ? 3 + opts.selected.length : 3, empty: !opts.selected },
+        doc: {
+          content: { size: (opts.flat ?? '').length },
+          textBetween: (a: number, b: number) => (opts.flat !== undefined ? opts.flat.slice(a, b) : (opts.selected ?? '')),
+        },
+      },
+    } as unknown as Editor;
+    return { editor, steps };
+  }
+
+  it('turns actions into slash items with the AI prefix, hint and keywords', () => {
+    const [item] = createAiSlashItems([action], () => {});
+    expect(item.id).toBe('ai-extract-tasks');
+    expect(item.title).toBe('AI: Extract tasks');
+    expect(item.hint).toBe('Find tasks in this text');
+    expect(item.keywords).toContain('ai');
+  });
+
+  it('removes the /query, then reports the selection', () => {
+    const calls: Array<[string, string]> = [];
+    const [item] = createAiSlashItems([action], (id, text) => calls.push([id, text]));
+    const { editor, steps } = fakeEditor({ selected: 'Send the brief', whole: 'whole note' });
+    item.run(editor, { from: 1, to: 3 });
+    expect(steps).toEqual(['focus', 'delete:1-3', 'run']);
+    expect(calls).toEqual([['extract-tasks', 'Send the brief']]);
+  });
+
+  it('falls back to the whole note when nothing is selected', () => {
+    const calls: Array<[string, string]> = [];
+    const [item] = createAiSlashItems([action], (id, text) => calls.push([id, text]));
+    item.run(fakeEditor({ flat: 'whole note /e' }).editor, { from: 11, to: 13 });
+    expect(calls).toEqual([['extract-tasks', 'whole note']]);
+  });
+
+  it('never sends the typed /query itself when the whole note is used', () => {
+    const calls: Array<[string, string]> = [];
+    const [item] = createAiSlashItems([action], (id, text) => calls.push([id, text]));
+    item.run(fakeEditor({ flat: 'Buy milk /extract then call Ana' }).editor, { from: 9, to: 17 });
+    expect(calls).toEqual([['extract-tasks', 'Buy milk  then call Ana']]);
+  });
+
+  it('does nothing in a read-only editor', () => {
+    const calls: unknown[] = [];
+    const [item] = createAiSlashItems([action], (...a) => calls.push(a));
+    const { editor, steps } = fakeEditor({ editable: false, whole: 'x' });
+    item.run(editor, { from: 1, to: 3 });
+    expect(steps).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it('extra items take part in filtering, built-in behavior is unchanged without them', () => {
+    const extra = createAiSlashItems([action], () => {});
+    expect(filterSlashCommandItems('extract', extra).map((i) => i.id)).toEqual(['ai-extract-tasks']);
+    expect(filterSlashCommandItems('', extra)).toHaveLength(SLASH_COMMAND_ITEMS.length + 1);
+    expect(filterSlashCommandItems('')).toHaveLength(SLASH_COMMAND_ITEMS.length);
+    expect(filterSlashCommandItems('extract')).toEqual([]);
   });
 });

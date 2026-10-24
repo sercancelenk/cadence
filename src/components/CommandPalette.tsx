@@ -9,6 +9,8 @@ import {
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppDataSelector } from '../AppDataContext';
+import { hasUsableConnection } from '../lib/ai/connections';
+import { useFeatures } from '../lib/features';
 import { kindLabel } from '../lib/labels';
 import {
   buildSnippet,
@@ -53,6 +55,7 @@ import {
   IcLock,
   IcPlus,
   IcSettings,
+  IcSparkles,
   IcSliders,
   IcStickyNote,
   IcTarget,
@@ -62,7 +65,7 @@ import {
 
 type Command = {
   id: string;
-  group: 'Create' | 'Navigate' | 'Teams' | 'People' | 'Items' | 'To-dos' | 'Notes' | 'Help';
+  group: 'Create' | 'AI' | 'Navigate' | 'Teams' | 'People' | 'Items' | 'To-dos' | 'Notes' | 'Help';
   label: string;
   hint?: string;
   /**
@@ -147,10 +150,13 @@ function CommandPaletteDialog({ onClose }: { onClose: () => void }) {
 
   const navigate = useNavigate();
   const indexData = useAppDataSelector(selectPaletteData, paletteDataUnchanged);
+  const { features } = useFeatures();
+  const aiConfigured = useAppDataSelector((d) => hasUsableConnection(d.aiSettings));
+  const aiEnabled = features.ai && aiConfigured;
 
   const commands = useMemo<Command[]>(
-    () => buildCommands(indexData, navigate),
-    [indexData, navigate],
+    () => buildCommands(indexData, navigate, { aiEnabled }),
+    [indexData, navigate, aiEnabled],
   );
 
   // Typing stays responsive on large workspaces: the input paints with the new
@@ -311,6 +317,7 @@ function paletteDataUnchanged(a: PaletteData, b: PaletteData): boolean {
 export function buildCommands(
   data: PaletteData,
   navigate: ReturnType<typeof useNavigate>,
+  opts: { aiEnabled?: boolean } = {},
 ): Command[] {
   // Resolving a person's team (and an item's person, then that person's team)
   // with `find` is O(items × people); with thousands of rows that lookup, not
@@ -345,6 +352,20 @@ export function buildCommands(
       icon: <IcPlus size={16} />,
       run: () => openQuickAddMenu(),
     },
+    // AI is a verb reached from ⌘K, not a permanent surface: present only when it is usable.
+    ...(opts.aiEnabled
+      ? [
+          {
+            id: 'ai-extract-tasks',
+            group: 'AI' as const,
+            label: 'AI: Extract tasks from notes',
+            hint: 'Paste notes, review the tasks it finds',
+            searchText: 'ai extract tasks todo action items',
+            icon: <IcSparkles size={16} />,
+            run: () => navigate(`${PATH_TODOS}?ai=extract`),
+          },
+        ]
+      : []),
     {
       id: 'nav-home',
       group: 'Navigate',

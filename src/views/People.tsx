@@ -35,7 +35,7 @@ import { Button } from '../components/ui/Button';
 import { useConfirm } from '../components/ui/ConfirmProvider';
 import { SchedulePopover } from '../components/ui/SchedulePopover';
 import { OneOnOneHelpDialog } from '../features/people/OneOnOneHelpDialog';
-import { isAIConfigured } from '../lib/ai';
+import { hasUsableConnection } from '../lib/ai/connections';
 import { useFeatures } from '../lib/features';
 import {
   carryOverHeading,
@@ -1128,7 +1128,7 @@ function KindSection({
   // Hide AI affordances entirely when the active policy/preset disables AI
   // (e.g. work-strict). Otherwise fall back to the per-account API-key gate.
   const { features: appFeatures } = useFeatures();
-  const aiEnabled = appFeatures.ai && isAIConfigured(data.aiSettings);
+  const aiEnabled = appFeatures.ai && hasUsableConnection(data.aiSettings);
   const listId = `cat-${teamId}-${kind}`;
   const submittingRef = useRef(false);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -1571,6 +1571,11 @@ function KindSection({
             task={{
               title: aiTarget.title,
               body: plainTextFromBodyFields(aiTarget) || undefined,
+            }}
+            // A person's task or goal is people data: it needs a connection allowed for it.
+            dataClass="people"
+            context={{
+              dueAt: aiTarget.dueAt ? toLocalDatetimeValue(aiTarget.dueAt).slice(0, 10) || undefined : undefined,
             }}
             onAppendToBody={(markdown) => {
               const t = aiTarget;

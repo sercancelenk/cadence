@@ -139,8 +139,13 @@ const {
   mergeWorkspaceFromBackupParts,
 } = require('./persistence/monthlyShards.cjs');
 const { initCrashReporting } = require('./crashReporting.cjs');
-const { requirePolicyFeature } = require('./ipc/policyGuard.cjs');
-const { parseAllowedHosts, requireAiHost } = require('./ipc/aiHostPolicy.cjs');
+const { requirePolicyFeature, requireDataClassPolicy } = require('./ipc/policyGuard.cjs');
+const {
+  parseAllowedHosts,
+  requireAiHost,
+  parseAiPolicyFlags,
+  resolveAiSubFlag,
+} = require('./ipc/aiHostPolicy.cjs');
 const { createGatewayClient } = require('./aiGateway.cjs');
 const {
   sanitizeAttachmentId,
@@ -4097,6 +4102,9 @@ ipcMain.handle('ai:gatewayChat', async (_event, req) => {
   // An organization may also pin AI to specific hosts (`features.aiAllowedHosts`).
   const hostBlocked = requireAiHost(req?.baseUrl, getCachedPolicy()?.features?.aiAllowedHosts);
   if (hostBlocked) return hostBlocked;
+  // People data (1:1 notes, feedback) needs its own switch on top of `ai`.
+  const classBlocked = requireDataClassPolicy(req?.dataClass, isFeatureAllowed);
+  if (classBlocked) return classBlocked;
   return aiGatewayClient.chat(req);
 });
 
@@ -4324,6 +4332,7 @@ function loadPolicy() {
           if (Object.keys(sync).length) features.sync = sync;
         }
         if (typeof f.ai === 'boolean') features.ai = f.ai;
+        Object.assign(features, parseAiPolicyFlags(f));
         // Present-but-invalid must stay a restriction (an empty list allows
         // nothing), never silently become "no restriction".
         const aiAllowedHosts = parseAllowedHosts(f.aiAllowedHosts);
@@ -4420,8 +4429,16 @@ function isFeatureAllowed(featurePath) {
     if (featurePath === 'sync.lan'    && typeof policy.features.sync?.lan    === 'boolean') return policy.features.sync.lan;
     if (featurePath === 'sync.cloud'  && typeof policy.features.sync?.cloud  === 'boolean') return policy.features.sync.cloud;
     if (featurePath === 'ai'          && typeof policy.features.ai          === 'boolean') return policy.features.ai;
+    if (featurePath === 'aiPeople'    && typeof policy.features.aiPeople    === 'boolean') return policy.features.aiPeople;
+    if (featurePath === 'aiFocusNote' && typeof policy.features.aiFocusNote === 'boolean') return policy.features.aiFocusNote;
     if (featurePath === 'dataExport'  && typeof policy.features.dataExport  === 'boolean') return policy.features.dataExport;
     if (featurePath === 'updateCheck' && typeof policy.features.updateCheck === 'boolean') return policy.features.updateCheck;
+  }
+
+  // The AI sub-flags have no preset of their own: unless the policy sets them above, they
+  // follow the resolved `ai` flag.
+  if (featurePath === 'aiPeople' || featurePath === 'aiFocusNote') {
+    return resolveAiSubFlag(undefined, isFeatureAllowed('ai'));
   }
 
   // 2. Policy preset.
