@@ -7,6 +7,7 @@ import {
   IcLockOff,
   IcPlus,
   IcTrash,
+  IcUpload,
 } from '../../components/icons';
 import { useConfirm } from '../../components/ui/ConfirmProvider';
 import type { Note, NoteGroup } from '../../model';
@@ -33,6 +34,8 @@ export type NotesSidebarProps = {
   onNoteClick: (id: string, event: React.MouseEvent) => void;
   onNoteContextMenu: (id: string, event: React.MouseEvent) => void;
   onCreateNote: (groupId?: string) => void;
+  /** Omit to hide "Open file" (no desktop bridge). */
+  onOpenFile?: () => void;
   onCreateGroup: (name: string) => void;
   onRenameGroup: (id: string, name: string) => void;
   onRemoveGroup: (id: string) => void;
@@ -74,6 +77,7 @@ export const NotesSidebar = memo(function NotesSidebar({
   onNoteClick,
   onNoteContextMenu,
   onCreateNote,
+  onOpenFile,
   onCreateGroup,
   onRenameGroup,
   onRemoveGroup,
@@ -234,6 +238,15 @@ export const NotesSidebar = memo(function NotesSidebar({
               >
                 <IcFolder size={16} />
               </NotesIconButton>
+              {onOpenFile ? (
+                <NotesIconButton
+                  onClick={onOpenFile}
+                  label="Open file"
+                  tooltip="Open a .md, .txt or .html file as a new note"
+                >
+                  <IcUpload size={16} />
+                </NotesIconButton>
+              ) : null}
               <NotesIconButton onClick={() => onCreateNote()} label="New note" tooltip="New note" variant="primary">
                 <IcPlus size={16} />
               </NotesIconButton>

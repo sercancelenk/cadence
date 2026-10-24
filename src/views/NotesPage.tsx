@@ -41,6 +41,11 @@ import {
   type NoteRevisionCapture,
 } from '../features/notes';
 import { addTodoItem as appendTodoItem, moveNoteToGroup } from '../core/actions';
+import {
+  importDroppedFile,
+  importFileAsNote,
+  type ImportedNoteFields,
+} from '../features/notes/noteFileActions';
 import { isAIConfigured } from '../lib/ai';
 import { useFeatures } from '../lib/features';
 import { useNotesUnlock } from '../lib/NotesUnlockContext';
@@ -201,6 +206,10 @@ export function NotesPage() {
     hideSelected,
   } = editorState;
 
+  const fileNotify = {
+    success: (title: string, description?: string) => void toast.showSuccess(title, description),
+    error: (title: string, description?: string) => void toast.showError(title, description),
+  };
   const fileActions = useNoteFileActions({
     userId: user?.id ?? '',
     selectedId: selected?.id,
@@ -213,10 +222,7 @@ export function NotesPage() {
         ? decryptedForSelected
         : null;
     },
-    notify: {
-      success: (title, description) => void toast.showSuccess(title, description),
-      error: (title, description) => void toast.showError(title, description),
-    },
+    notify: fileNotify,
   });
 
   const versionHistory = useNoteVersionHistory(
@@ -282,6 +288,44 @@ export function NotesPage() {
       if (groupId) expandGroup(groupId);
     },
     [addNote, clearBulk, expandGroup, setDecrypted, setSelectedId, setViewMode],
+  );
+
+  const createImportedNote = useCallback(
+    (fields: ImportedNoteFields) => {
+      const id = addNote();
+      patchNote(id, fields);
+      setViewMode('active');
+      setDecrypted(null);
+      clearBulk();
+      setListContextMenu(null);
+      pendingSelectNoteIdRef.current = id;
+      setSelectedId(id);
+    },
+    [addNote, patchNote, clearBulk, setDecrypted, setSelectedId, setViewMode],
+  );
+
+  const onOpenFile = useCallback(() => {
+    void importFileAsNote({
+      openFile: window.cadence?.openNoteFile,
+      createNote: createImportedNote,
+      notify: fileNotify,
+    });
+    // fileNotify only wraps the stable toast API
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createImportedNote]);
+
+  const onDropFiles = useCallback(
+    (event: React.DragEvent) => {
+      if (event.defaultPrevented) return; // the editor already took an image drop
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (files.length === 0) return;
+      event.preventDefault();
+      for (const file of files) {
+        void importDroppedFile(file, { createNote: createImportedNote, notify: fileNotify });
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [createImportedNote],
   );
 
   const selectPrimaryNote = useCallback(
@@ -466,6 +510,10 @@ export function NotesPage() {
 
   return (
     <div
+      onDragOver={(e) => {
+        if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+      }}
+      onDrop={onDropFiles}
       className={[
         'notes-page',
         selected ? 'notes-page--mobile-detail' : 'notes-page--mobile-list',
@@ -492,6 +540,7 @@ export function NotesPage() {
         onNoteClick={onNoteClick}
         onNoteContextMenu={onNoteContextMenu}
         onCreateNote={onCreate}
+        onOpenFile={window.cadence?.openNoteFile ? onOpenFile : undefined}
         onCreateGroup={onCreateGroup}
         onRenameGroup={onRenameGroup}
         onRemoveGroup={onRemoveGroup}

@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Note } from '../../model';
 import {
+  importDroppedFile,
+  importFileAsNote,
   isSaveNoteShortcut,
   saveNoteToDisk,
+  type ImportNoteDeps,
+  type ImportedNoteFields,
   type SaveNoteDeps,
   type SaveNotePayload,
 } from './noteFileActions';
@@ -136,5 +140,86 @@ describe('isSaveNoteShortcut', () => {
     expect(isSaveNoteShortcut(ev({ key: 's' }))).toBe(false);
     expect(isSaveNoteShortcut(ev({ key: 's', metaKey: true, shiftKey: true }))).toBe(false);
     expect(isSaveNoteShortcut(ev({ key: 's', metaKey: true, altKey: true }))).toBe(false);
+  });
+});
+
+
+function importDeps(over: Partial<ImportNoteDeps> = {}) {
+  const created: ImportedNoteFields[] = [];
+  const base: ImportNoteDeps = {
+    openFile: vi.fn(async () => ({ ok: true, name: 'Ideas.md', ext: 'md', text: '# Hello\n\n- a' })),
+    createNote: (fields) => {
+      created.push(fields);
+    },
+    notify: { success: vi.fn(), error: vi.fn() },
+    ...over,
+  };
+  return { base, created };
+}
+
+describe('importFileAsNote', () => {
+  it('creates a new note titled after the file with the converted body', async () => {
+    const { base, created } = importDeps();
+    await expect(importFileAsNote(base)).resolves.toBe('imported');
+    expect(created).toHaveLength(1);
+    expect(created[0]!.title).toBe('Ideas');
+    expect(created[0]!.bodyFormat).toBe('prosemirror');
+    expect(created[0]!.body).toContain('"heading"');
+    expect(created[0]!.bodyPlainText).toContain('Hello');
+    expect(base.notify.success).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates nothing when the dialog is cancelled', async () => {
+    const { base, created } = importDeps({ openFile: vi.fn(async () => ({ ok: false, canceled: true })) });
+    await expect(importFileAsNote(base)).resolves.toBe('canceled');
+    expect(created).toHaveLength(0);
+    expect(base.notify.error).not.toHaveBeenCalled();
+  });
+
+  it('reports read errors and creates nothing', async () => {
+    const { base, created } = importDeps({
+      openFile: vi.fn(async () => ({ ok: false, error: 'File is too large to open (limit 5 MB).' })),
+    });
+    await expect(importFileAsNote(base)).resolves.toBe('error');
+    expect(created).toHaveLength(0);
+    expect(base.notify.error).toHaveBeenCalledWith('Could not open file', 'File is too large to open (limit 5 MB).');
+  });
+
+  it('explains when the desktop bridge is unavailable', async () => {
+    const { base } = importDeps({ openFile: undefined });
+    await expect(importFileAsNote(base)).resolves.toBe('error');
+    expect(base.notify.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('still creates a note for an empty file', async () => {
+    const { base, created } = importDeps({
+      openFile: vi.fn(async () => ({ ok: true, name: 'Empty.txt', ext: 'txt', text: '' })),
+    });
+    await expect(importFileAsNote(base)).resolves.toBe('imported');
+    expect(created[0]!.title).toBe('Empty');
+  });
+});
+
+describe('importDroppedFile', () => {
+  const file = (name: string, text: string) => new File([text], name, { type: 'text/plain' });
+
+  it('imports a dropped markdown file as a new note', async () => {
+    const { base, created } = importDeps();
+    await expect(importDroppedFile(file('Dropped.md', '# Hi'), base)).resolves.toBe('imported');
+    expect(created[0]!.title).toBe('Dropped');
+  });
+
+  it('rejects unsupported extensions without creating a note', async () => {
+    const { base, created } = importDeps();
+    await expect(importDroppedFile(file('photo.png', 'x'), base)).resolves.toBe('error');
+    expect(created).toHaveLength(0);
+    expect(base.notify.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects files over the size cap', async () => {
+    const { base, created } = importDeps();
+    const big = { name: 'big.md', size: 6 * 1024 * 1024, text: async () => '' } as unknown as File;
+    await expect(importDroppedFile(big, base)).resolves.toBe('error');
+    expect(created).toHaveLength(0);
   });
 });
