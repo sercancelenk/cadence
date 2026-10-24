@@ -262,6 +262,19 @@ interface CadenceApi {
       exportDataBundle?: (
         data: unknown,
       ) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+      saveNoteFile?: (payload: {
+        suggestedName: string;
+        format: 'md' | 'txt' | 'html';
+        content: string;
+      }) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+      openNoteFile?: () => Promise<{
+        ok: boolean;
+        name?: string;
+        ext?: string;
+        text?: string;
+        canceled?: boolean;
+        error?: string;
+      }>;
       importDataBundle?: () => Promise<{
         ok: boolean;
         importedFrom?: string;

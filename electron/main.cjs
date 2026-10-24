@@ -139,6 +139,11 @@ const {
 const { initCrashReporting } = require('./crashReporting.cjs');
 const { requirePolicyFeature } = require('./ipc/policyGuard.cjs');
 const {
+  validateNoteSavePayload,
+  checkOpenableNoteFile,
+  decodeNoteFileText,
+} = require('./noteFileIo.cjs');
+const {
   NOTE_HISTORY_DIRNAME,
   initNoteHistory,
   appendNoteRevision,
@@ -4040,6 +4045,66 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
     }
     exportNoteHistoryToDir(uid, folder);
     return { ok: true, path: folder };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+});
+
+/**
+ * Save one note's text to a file the user picks (Cmd+S). The renderer sends the
+ * already-converted text; the destination is chosen here, never by the renderer.
+ * The user confirms overwrites in the native save dialog.
+ */
+ipcMain.handle('note:saveAs', async (_evt, payload) => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
+  if (!readSessionUserId()) return { ok: false, error: 'Not signed in.' };
+  const checked = validateNoteSavePayload(payload);
+  if (!checked.ok) return checked;
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const labels = { md: 'Markdown', txt: 'Plain text', html: 'HTML' };
+  const pick = await dialog.showSaveDialog(win, {
+    title: 'Save note',
+    defaultPath: path.join(app.getPath('documents'), checked.suggestedName),
+    filters: [
+      { name: labels[checked.format], extensions: [checked.format] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (pick.canceled || !pick.filePath) return { ok: false, canceled: true };
+  const write = writeJsonText(pick.filePath, checked.content);
+  if (!write.ok) return { ok: false, error: write.error || 'Could not write the file.' };
+  return { ok: true, path: pick.filePath };
+});
+
+/**
+ * Read a text document the user picks and hand it to the renderer, which
+ * imports it as a NEW note. Nothing existing is touched.
+ */
+ipcMain.handle('note:openFile', async () => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
+  if (!readSessionUserId()) return { ok: false, error: 'Not signed in.' };
+  // The path comes only from the native dialog, never from the renderer.
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const pick = await dialog.showOpenDialog(win, {
+    title: 'Open document as a new note',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Documents', extensions: ['md', 'markdown', 'txt', 'html', 'htm'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (pick.canceled || !pick.filePaths?.[0]) return { ok: false, canceled: true };
+  const filePath = pick.filePaths[0];
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return { ok: false, error: 'Not a file.' };
+    const name = path.basename(filePath);
+    const checked = checkOpenableNoteFile(name, stat.size);
+    if (!checked.ok) return checked;
+    const text = decodeNoteFileText(fs.readFileSync(filePath));
+    return { ok: true, name, ext: checked.ext, text };
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
   }

@@ -40,6 +40,7 @@ export { useNotesSidebarDnD } from './useNotesSidebarDnD';
 export { useNotesSelection } from './useNotesSelection';
 export { useNotesSort } from './useNotesSort';
 export { useNotesViewMode } from './useNotesViewMode';
+export { useNoteFileActions } from './useNoteFileActions';
 export { useNotesBulkSelection } from './useNotesBulkSelection';
 export { flatSidebarNoteIds } from './notesSidebarOrder';
 export { useNotesSidebarCollapse } from './useNotesSidebarCollapse';

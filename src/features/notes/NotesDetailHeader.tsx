@@ -7,12 +7,14 @@ import {
   IcKey,
   IcLock,
   IcMenu,
+  IcSave,
   IcSparkles,
   IcStar,
   IcTrash,
   IcUnlock,
 } from '../../components/icons';
 import type { Note } from '../../model';
+import { NOTE_EXPORT_FORMATS, type NoteExportFormat } from '../../lib/noteExport';
 import { Tooltip } from '../../components/ui/Tooltip';
 import { NotesIconButton } from './NotesIconButton';
 import type { PendingIntent } from './noteLockTypes';
@@ -33,6 +35,10 @@ export type NotesDetailHeaderProps = {
   onConfirmRemove: () => void;
   onOpenVersionHistory?: () => void;
   versionHistoryAvailable?: boolean;
+  exportFormat?: NoteExportFormat;
+  onExportFormatChange?: (format: NoteExportFormat) => void;
+  /** Omit to hide the save controls (e.g. no desktop bridge). */
+  onSaveToFile?: () => void;
 };
 
 export function NotesDetailHeader({
@@ -51,6 +57,9 @@ export function NotesDetailHeader({
   onConfirmRemove,
   onOpenVersionHistory,
   versionHistoryAvailable = false,
+  exportFormat = 'md',
+  onExportFormatChange,
+  onSaveToFile,
 }: NotesDetailHeaderProps) {
   const extractBlocked = selected.locked && !editorReady;
   const deleteBlocked = selected.locked;
@@ -132,6 +141,36 @@ export function NotesDetailHeader({
         >
           {selected.archived ? <IcArchiveRestore size={16} /> : <IcArchive size={16} />}
         </NotesIconButton>
+
+        {onSaveToFile ? (
+          <>
+            <select
+              className="select select--compact notes-page__export-format"
+              value={exportFormat}
+              onChange={(e) => onExportFormatChange?.(e.target.value as NoteExportFormat)}
+              aria-label="File format for saving"
+              title="File format used when saving this note to your computer"
+            >
+              {NOTE_EXPORT_FORMATS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            <NotesIconButton
+              onClick={onSaveToFile}
+              disabled={extractBlocked}
+              label="Save to file"
+              tooltip={
+                extractBlocked
+                  ? 'Unlock this note first — it must be readable to save'
+                  : 'Save this note to your computer (⌘S / Ctrl+S)'
+              }
+            >
+              <IcSave size={16} />
+            </NotesIconButton>
+          </>
+        ) : null}
 
         {!selected.locked ? (
           <NotesIconButton

@@ -35,6 +35,7 @@ import {
   useNotesSidebarCollapse,
   useNotesSidebarDnD,
   useNotesSort,
+  useNoteFileActions,
   useNotesViewMode,
   useSidebarResize,
   type NoteRevisionCapture,
@@ -73,6 +74,7 @@ export function NotesPage() {
     setNotesLock,
     update,
     flushPendingSave,
+    getLatestSnapshot,
     linkNoteTodo,
     unlinkNoteTodo,
   } = useAppDataActions();
@@ -198,6 +200,24 @@ export function NotesPage() {
     onChangeBody,
     hideSelected,
   } = editorState;
+
+  const fileActions = useNoteFileActions({
+    userId: user?.id ?? '',
+    selectedId: selected?.id,
+    getLatestSnapshot,
+    flushPendingSave,
+    getLockedBody: (noteId) => {
+      const latest = editorState.getLatestBodyFields();
+      if (latest && latest.noteId === noteId) return latest;
+      return decryptedForSelected && decryptedForSelected.noteId === noteId
+        ? decryptedForSelected
+        : null;
+    },
+    notify: {
+      success: (title, description) => void toast.showSuccess(title, description),
+      error: (title, description) => void toast.showError(title, description),
+    },
+  });
 
   const versionHistory = useNoteVersionHistory(
     selected,
@@ -559,6 +579,9 @@ export function NotesPage() {
               }}
               onOpenVersionHistory={() => versionHistory.setOpen(true)}
               versionHistoryAvailable={versionHistory.available}
+              exportFormat={fileActions.format}
+              onExportFormatChange={fileActions.setFormat}
+              onSaveToFile={fileActions.available ? () => void fileActions.saveSelected() : undefined}
             />
 
             {selected.locked && !editorReady ? (
