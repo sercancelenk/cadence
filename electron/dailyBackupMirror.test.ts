@@ -186,6 +186,44 @@ describe('pruneDailyMirrorFolders', () => {
   });
 });
 
+describe('replacing a day\'s folder when the old one cannot be removed (a program holds a file in it)', () => {
+  it('still reports the new backup as written, because it is in place', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-displaced-'));
+    const write = (force = false) =>
+      writeDailyFullExport({
+        force,
+        fs,
+        path,
+        mirrorDir: root,
+        appSlug: 'cadence',
+        userId: USER,
+        dateKey: '2026-07-23',
+        workspacePayload: { notes: [{ id: 'n1' }], todoItems: [] },
+        writeJsonText,
+        exportAttachments: () => 0,
+        exportNoteHistory: () => {},
+        countNoteHistoryRevisions: () => 0,
+      });
+    expect((await write()).ok).toBe(true); // the day already has a folder, so the next run replaces it
+
+    const realRm = fs.rmSync;
+    fs.rmSync = ((target: fs.PathLike, ...rest: unknown[]) => {
+      if (String(target).endsWith('.displaced')) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      return (realRm as (...a: unknown[]) => void)(target, ...rest);
+    }) as typeof fs.rmSync;
+    let second: Awaited<ReturnType<typeof write>>;
+    try {
+      second = await write(true); // "Backup now": replace today's folder
+    } finally {
+      fs.rmSync = realRm;
+    }
+
+    expect(second.ok, second.ok ? '' : second.error).toBe(true);
+    expect(fs.existsSync(path.join(root, 'cadence-daily-aaaaaaaa-2026-07-23', 'data.json'))).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
 describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
   it('writes a full-export shaped folder and is idempotent the same day', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-write-'));

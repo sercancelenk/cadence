@@ -18,7 +18,8 @@ Cadence is a **local-first** app. Users trust us with notes, todos, and locked c
 6. **Deletes of user content require explicit user action** (or documented restore/import). Link/unlink, UI chips, and feature flags must never cascade-delete notes or todos.
 7. **Before shipping model/persistence/sync changes:** prove with tests that legacy fixtures keep the same notes/todos (ids + content). If unsure, stop and verify — do not “ship and see”.
 
-8. **Backups, restores, imports, exports, key changes:** follow `docs/BACKUP-RECOVERY-STANDARD.md` (safety copy before any replace, earlier keys stay usable, incomplete backups say so and never prune).
+8. **Support window:** data written by the current and the two previous releases must open with nothing lost, and an older build opening newer data must not lose notes/tasks/images (`docs/COMPATIBILITY.md`; `npx vitest run electron/compat`; `node scripts/compat/downgrade-check.mjs <ref>` before a release).
+9. **Backups, restores, imports, exports, key changes:** follow `docs/BACKUP-RECOVERY-STANDARD.md` (safety copy before any replace, earlier keys stay usable, incomplete backups say so and never prune).
 
 ## Hot zones (extra care)
 

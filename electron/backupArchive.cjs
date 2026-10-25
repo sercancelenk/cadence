@@ -16,6 +16,22 @@ const ATTACHMENT_ID_RE = /^[a-zA-Z0-9_-]{8,128}$/;
 const NOTE_ID_RE = /^[\w-]{8,128}$/;
 const HISTORY_FILE_RE = /^[\w-]+\.json$/;
 const MAX_JSON_BYTES = 64 * 1024 * 1024;
+/** Names Windows reserves for devices (with or without an extension). */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
+
+/** JSON text as Windows tools write it: Notepad and PowerShell put a byte-order mark in front. */
+function parseJsonText(text) {
+  return JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+}
+
+/** Another program (antivirus, the indexer) may hold a just-written file for a moment on Windows: retry. */
+async function removeScratch(dir) {
+  try {
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+    /* swept at the next start */
+  }
+}
 
 const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -104,7 +120,7 @@ async function writeBackupArchive(deps) {
     if (writer) await writer.abort().catch(() => undefined);
     return { ok: false, error: String(err && err.message ? err.message : err) };
   } finally {
-    await fs.promises.rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+    await removeScratch(tmp);
   }
 }
 
@@ -138,7 +154,9 @@ function historyEntry(name, root) {
   if (!name.startsWith(prefix)) return null;
   const parts = name.slice(prefix.length).split('/');
   if (parts.length !== 2) return null;
-  return NOTE_ID_RE.test(parts[0]) && HISTORY_FILE_RE.test(parts[1]) ? { noteId: parts[0], file: parts[1] } : null;
+  if (!NOTE_ID_RE.test(parts[0]) || !HISTORY_FILE_RE.test(parts[1])) return null;
+  if (WINDOWS_RESERVED.test(parts[1].replace(/\.json$/, ''))) return null;
+  return { noteId: parts[0], file: parts[1] };
 }
 
 /**
@@ -154,7 +172,7 @@ async function inspectBackupFile(deps) {
     try {
       const stat = await fs.promises.stat(deps.filePath);
       if (stat.size > MAX_JSON_BYTES) return { ok: false, error: 'That file is too large to be a Cadence workspace.' };
-      raw = JSON.parse(await fs.promises.readFile(deps.filePath, 'utf8'));
+      raw = parseJsonText(await fs.promises.readFile(deps.filePath, 'utf8'));
     } catch {
       return { ok: false, error: 'File is not valid JSON.' };
     }
@@ -198,7 +216,7 @@ async function inspectBackupFile(deps) {
     }
     let workspace;
     try {
-      workspace = workspaceCandidate(JSON.parse((await zip.read(`${root}data.json`)).toString('utf8')));
+      workspace = workspaceCandidate(parseJsonText((await zip.read(`${root}data.json`)).toString('utf8')));
     } catch (err) {
       return { ok: false, error: err instanceof Error && /checksum|size|truncated/i.test(err.message) ? err.message : 'data.json is not valid JSON.' };
     }
@@ -208,7 +226,7 @@ async function inspectBackupFile(deps) {
     let manifest = null;
     if (names.includes(`${root}manifest.json`)) {
       try {
-        const m = JSON.parse((await zip.read(`${root}manifest.json`)).toString('utf8'));
+        const m = parseJsonText((await zip.read(`${root}manifest.json`)).toString('utf8'));
         if (m && m.format === BUNDLE_FORMAT) manifest = m;
       } catch {
         manifest = null;
@@ -280,9 +298,18 @@ async function applyArchiveSidecars(deps) {
     const root = resolveBundleRoot(names);
     let sinceYield = 0;
     const noteFolders = new Map();
+    const imageIds = new Map();
     for (const name of names) {
       const att = attachmentEntry(name, root);
       if (att) {
+        // `AAAA…` and `aaaa…` are the same file on Windows and on a default Mac: bring in the first, report the rest.
+        const lowerId = att.id.toLowerCase();
+        const seenAs = imageIds.get(lowerId);
+        if (seenAs !== undefined && seenAs !== att.id) {
+          result.attachmentsFailed += 1;
+          continue;
+        }
+        imageIds.set(lowerId, att.id);
         try {
           const bytes = await zip.read(name);
           if (!bytes.length) result.attachmentsSkipped += 1;
@@ -323,23 +350,21 @@ async function applyArchiveSidecars(deps) {
     return result;
   } finally {
     await zip.close().catch(() => undefined);
-    await fs.promises.rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+    await removeScratch(tmp);
   }
 }
 
 /**
- * Scratch folders (`tmp-backup-*`) are removed when their export or import ends; one is left behind only if
- * the app was stopped in the middle. Remove those older than a day when the app starts.
+ * Scratch folders (`tmp-backup-*`) are removed when their export or import ends. One is left behind only if the
+ * app was stopped in the middle, or a program held a file open. They hold readable copies of note history, so
+ * at start (when nothing of ours can be using one: the app runs once at a time) every one of them goes.
  */
-async function sweepStaleScratch(tmpRoot, now = Date.now()) {
+async function sweepStaleScratch(tmpRoot) {
   let removed = 0;
   try {
     for (const entry of await fs.promises.readdir(tmpRoot, { withFileTypes: true })) {
       if (!entry.isDirectory() || !entry.name.startsWith('tmp-backup-')) continue;
-      const dir = path.join(tmpRoot, entry.name);
-      const { mtimeMs } = await fs.promises.stat(dir);
-      if (now - mtimeMs < 24 * 60 * 60 * 1000) continue;
-      await fs.promises.rm(dir, { recursive: true, force: true });
+      await removeScratch(path.join(tmpRoot, entry.name));
       removed += 1;
     }
   } catch {

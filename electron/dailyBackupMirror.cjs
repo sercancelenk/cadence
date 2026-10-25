@@ -432,7 +432,6 @@ async function writeDailyFullExport(opts) {
       if (fs.existsSync(displaced)) fs.rmSync(displaced, { recursive: true, force: true });
       if (fs.existsSync(finalPath)) fs.renameSync(finalPath, displaced);
       fs.renameSync(partialPath, finalPath);
-      if (fs.existsSync(displaced)) fs.rmSync(displaced, { recursive: true, force: true });
     } catch (err) {
       // Roll back if rename-in failed and we still have the previous final.
       try {
@@ -444,6 +443,13 @@ async function writeDailyFullExport(opts) {
       }
       cleanupPartial();
       return { ok: false, error: String(err?.message || err) };
+    }
+    // The new folder is in place, so this run succeeded. The old one is only a leftover: if a program (Explorer,
+    // antivirus, a sync client) holds a file in it, the next run or the stray sweep removes it.
+    try {
+      if (fs.existsSync(displaced)) fs.rmSync(displaced, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch {
+      /* removed later */
     }
     return { ok: true, path: finalPath, attachmentCount, attachmentsSkipped };
   } catch (err) {

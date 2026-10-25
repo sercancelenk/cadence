@@ -65,6 +65,25 @@ describe('key history', () => {
   });
 });
 
+describe('durability', () => {
+  it('flushes the list to disk before it replaces the old one: it is the only way into older snapshots', () => {
+    const [a, b] = [k(), k()];
+    const realFsync = fs.fsyncSync;
+    const flushed: number[] = [];
+    fs.fsyncSync = ((fd: number) => {
+      flushed.push(fd);
+      return realFsync(fd);
+    }) as typeof fs.fsyncSync;
+    try {
+      stagePreviousKey(file, a, b);
+    } finally {
+      fs.fsyncSync = realFsync;
+    }
+    expect(flushed.length).toBeGreaterThanOrEqual(1);
+    expect(hex(readPreviousKeys(file, b))).toEqual(hex([a]));
+  });
+});
+
 describe('a change that is cut short', () => {
   it('leaves the live file as it was until the change is committed', () => {
     const [a, b, c] = [k(), k(), k()];

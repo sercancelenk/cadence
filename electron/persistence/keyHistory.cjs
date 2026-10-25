@@ -58,7 +58,15 @@ function atomicWrite(target, text) {
   const tmp = `${target}.${process.pid}.tmp`;
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(tmp, text);
+    // Flushed before the rename: after a power cut the list must be whole or absent, never empty. It is the only
+    // way into snapshots made under earlier passwords.
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      fs.writeFileSync(fd, text);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmp, target);
     return { ok: true };
   } catch (err) {

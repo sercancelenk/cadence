@@ -107,4 +107,10 @@ Enforced by: `persistence/zipReader.test.ts`, `mainSavePath.test.ts` › "never 
   can no longer be derived; those snapshots cannot be opened.
 - Exports are readable files. Encrypted exports are not built.
 - A single-file backup is plain ZIP: a library with 65,534 files or more, or 4 GiB or more, cannot be exported as one file; the folder export (Advanced) covers it. Importing reads the whole `data.json` into memory (at most 64 MB) and one image at a time.
+- Windows: nothing here has been run on Windows (reviewed from the code and from Node/Windows semantics). Snapshot folders for
+  note history use long names (`note-history-<label>-<timestamp>\<note id>\<revision id>.json`, about 237 characters under a
+  typical profile path); a user name of roughly 45 characters or more pushes a few of them past the classic 260-character
+  limit. Node uses extended-length paths, so the app is expected to cope, but Explorer or an antivirus may not. A password
+  change re-encrypts every image and history file one at a time and flushes each to disk (about 13 ms a file measured on a
+  Mac, 16 s for 1,200 files); Windows flushes are slower and the screen says it can take a minute.
 - While the app is fully closed no backup runs; the first one runs when it is opened (B6).

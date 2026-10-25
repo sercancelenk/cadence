@@ -1,0 +1,21 @@
+{
+  "users": [
+    {
+      "id": "f0a88918-44ce-4c5b-8244-bae7ca2fb81a",
+      "email": "compat@example.com",
+      "salt": "3ef55035a226c05e548f475174fa9567",
+      "hash": "35e02691ac7cb57cedc278e49e6c27e24bd593562f9e8aa2c8309a9342349b63d9f1085da6a8f8d5cf4aaa321f15e6f692913e561e3cf5a85495b18be0698b15",
+      "encSalt": "0d29e8722afc17dd5026d03866b7bd92",
+      "rememberMe": true,
+      "createdAt": "2026-10-25T21:13:12.580Z",
+      "recoveryEnvelope": {
+        "v": 1,
+        "kdfSaltB64": "h+6R0r4tLnB6LAS3aVQCqw==",
+        "ivB64": "831xtfNHAQRsa0a8",
+        "tagB64": "iPi/gRaw0W9Gd8ZZTYxDgg==",
+        "ctB64": "IdzrBbdtJfyBxmyRbZgFvpwadCXMjPvEHG29ljJP40k="
+      },
+      "recoveryConfiguredAt": "2026-10-25T21:13:12.689Z"
+    }
+  ]
+}

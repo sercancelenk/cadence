@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { minimatch } from 'minimatch';
+import { compareReleaseCores, isReleaseVersion } from './release-version.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const checkHelper = process.argv.includes('--check-helper');
@@ -162,24 +163,7 @@ if (checkHelper && process.platform === 'win32') {
   }
 }
 
-/**
- * Compare two dot-separated numeric versions (e.g. "2026.7.72" vs "0.3.71").
- * Both the CalVer and the legacy lines are plain numeric triples, so a simple
- * field-by-field numeric comparison is exact — no semver dependency needed.
- * @returns {number} >0 if a>b, <0 if a<b, 0 if equal.
- */
-function compareVersions(a, b) {
-  const pa = String(a).replace(/^v/i, '').split(/[-+]/)[0].split('.').map(Number);
-  const pb = String(b).replace(/^v/i, '').split(/[-+]/)[0].split('.').map(Number);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i += 1) {
-    const na = pa[i] ?? 0;
-    const nb = pb[i] ?? 0;
-    if (Number.isNaN(na) || Number.isNaN(nb)) return NaN;
-    if (na !== nb) return na - nb;
-  }
-  return 0;
-}
+const compareVersions = compareReleaseCores;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -232,9 +216,9 @@ if (checkVersion) {
   if (!expectedRepo) {
     // Can't determine the feed repo → can't compare. Fail-open with a warning.
     console.warn('⚠ version guard: could not resolve repository owner/repo — skipping (fail-open)');
-  } else if (!/^\d+\.\d+\.\d+$/.test(String(newVersion))) {
+  } else if (!isReleaseVersion(newVersion)) {
     // A malformed version WOULD break the updater — this is a hard failure.
-    fail(`version guard: package.json version "${newVersion}" is not a numeric semver triple`);
+    fail(`version guard: package.json version "${newVersion}" is not a numeric semver triple (optionally with a -beta.N tag)`);
   } else {
     const result = await fetchLatestReleaseTag(expectedRepo.owner, expectedRepo.repo, process.env.GH_TOKEN);
     if (result.outcome === 'none') {

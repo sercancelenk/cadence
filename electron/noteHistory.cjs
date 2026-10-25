@@ -641,23 +641,54 @@ function upgradeNoteHistoryToEncrypted(userId) {
   const key = resolveKey(userId);
   const root = noteHistoryRootForUser(userId);
   if (!key || !root) return result;
-  for (const file of historyJsonFiles(root)) {
-    try {
-      const text = fs.readFileSync(file, 'utf8');
-      if (isEncryptedFile(text)) continue;
-      JSON.parse(text);
-      const sealed = encryptPayload(text, key);
-      if (decryptPayload(sealed, key) !== text) {
-        result.skipped += 1;
-        continue;
-      }
-      writeTextAtomic(file, sealed);
-      result.upgraded += 1;
-    } catch {
-      result.skipped += 1;
-    }
-  }
+  for (const file of historyJsonFiles(root)) sealOneHistoryFile(file, key, result);
   return result;
+}
+
+/** One file, start to finish in one go (no await inside), so nothing can write it in between. */
+function sealOneHistoryFile(file, key, result) {
+  try {
+    const text = fs.readFileSync(file, 'utf8');
+    if (isEncryptedFile(text)) return;
+    JSON.parse(text);
+    const sealed = encryptPayload(text, key);
+    if (decryptPayload(sealed, key) !== text) {
+      result.skipped += 1;
+      return;
+    }
+    writeTextAtomic(file, sealed);
+    result.upgraded += 1;
+  } catch {
+    result.skipped += 1;
+  }
+}
+
+const upgradesInFlight = new Set();
+
+/**
+ * The same upgrade, for the moments after signing in: a large history is thousands of small files, each written
+ * and flushed to disk (about 12 ms apiece, measured), so doing it in one go froze the app for minutes.
+ * Here each file is still sealed in one uninterrupted step, but the event loop gets a turn between files, so the
+ * app stays usable and a revision written meanwhile is neither lost nor sealed twice. Only one run per account.
+ * It stops (leaving the rest as it was) if the key goes away, for example on sign-out.
+ */
+async function upgradeNoteHistoryToEncryptedAsync(userId) {
+  const result = { ok: true, upgraded: 0, skipped: 0, failed: [] };
+  if (upgradesInFlight.has(userId)) return { ...result, alreadyRunning: true };
+  const root = noteHistoryRootForUser(userId);
+  if (!resolveKey(userId) || !root) return result;
+  upgradesInFlight.add(userId);
+  try {
+    for (const file of historyJsonFiles(root)) {
+      const key = resolveKey(userId);
+      if (!key) return { ...result, stoppedEarly: true };
+      sealOneHistoryFile(file, key, result);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    return result;
+  } finally {
+    upgradesInFlight.delete(userId);
+  }
 }
 
 /** Every history json file (index and revisions) for the user. */
@@ -683,5 +714,6 @@ module.exports = {
   collectReferencedAttachmentsFromNoteHistory,
   countNoteHistoryRevisions,
   upgradeNoteHistoryToEncrypted,
+  upgradeNoteHistoryToEncryptedAsync,
   listNoteHistoryFiles,
 };

@@ -4,6 +4,7 @@ import { Button } from '../components/ui/Button';
 import { useConfirm } from '../components/ui/ConfirmProvider';
 import { useAccount } from '../AccountContext';
 import { PasswordChangedNextSteps } from '../components/auth/PasswordChangedNextSteps';
+import { PasswordChangeProgress } from '../components/auth/PasswordChangeProgress';
 import { rewrapNotesRecovery } from '../lib/notesRecovery';
 import { useAppData } from '../AppDataContext';
 
@@ -496,6 +497,7 @@ export function ProfilePage() {
                 notesRecoveryNeedsRenewal={pwNotesRecoveryNeedsRenewal}
               />
             ) : null}
+            <PasswordChangeProgress busy={pwBusy} />
             <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
               <Button type="button" variant="ghost" onClick={() => setTab('view')}>
                 Back

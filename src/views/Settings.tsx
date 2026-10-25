@@ -26,6 +26,7 @@ import type {
   SaveError,
 } from '../vite-env';
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
+import { AppVersionDetails } from '../components/settings/AppVersionDetails';
 import { BackupImportDialog } from '../components/settings/BackupImportDialog';
 import { useBackupTransfer } from '../components/settings/useBackupTransfer';
 import { AppearanceSettingsSection } from '../components/settings/AppearanceSettingsSection';
@@ -551,21 +552,7 @@ export function Settings() {
                 defaultOpen={false}
                 badge={formatAppVersion(appVersion).label}
               >
-                {(() => {
-                  const v = formatAppVersion(appVersion);
-                  return (
-                    <>
-                      <p>
-                        Installed release: <strong>{v.label}</strong>
-                      </p>
-                      <p className="muted small">
-                        {v.build !== null ? <>Build {v.build} · </> : null}
-                        {v.raw ? <>Version {v.raw} · </> : null}
-                        Data schema v{data.version}
-                      </p>
-                    </>
-                  );
-                })()}
+                <AppVersionDetails appVersion={appVersion} schemaVersion={data.version} />
               </CollapsibleCard>
               <CollapsibleCard id="user-guide" title="User guide" defaultOpen={false}>
                 <p className="muted">

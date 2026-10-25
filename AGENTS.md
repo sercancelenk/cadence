@@ -16,5 +16,6 @@ PROJECT MAP:
 
 - No schema/UI/sync change may delete, empty, or silently replace notes/todos.
 - Upgrades are additive or dual-read; failed loads must block persist, not save an empty scaffold.
+- Every change must keep working for data written by the current and the two previous releases: `docs/COMPATIBILITY.md` (fixtures in `electron/compat/`, run `npx vitest run electron/compat` after touching persistence, backup, auth or file formats).
 - Backups, restores, imports, exports and key changes follow `docs/BACKUP-RECOVERY-STANDARD.md` (rules B1–B10, guarded by `electron/backupRecoveryStandard.test.ts`).
 - See `.cursor/rules/zero-data-loss.mdc` (alwaysApply). When in doubt, stop and verify with legacy fixtures + backups paths before shipping.

@@ -1,0 +1,11 @@
+{
+  "id": "ad84c079-1c56-4285-a89f-1d55fcfbaeb6",
+  "noteId": "note-compat-0001",
+  "createdAt": "2026-10-25T21:13:14.569Z",
+  "trigger": "manual",
+  "title": "Plain note v2",
+  "summary": "Plain note v2 summary",
+  "locked": false,
+  "body": "second draft",
+  "bodyFormat": "markdown"
+}

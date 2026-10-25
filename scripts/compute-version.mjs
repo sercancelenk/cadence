@@ -15,7 +15,11 @@
  *     older versions (including the legacy `0.3.x` line — 2026 > 0) always see
  *     the release as an upgrade.
  *
- * Run from CI:  node scripts/compute-version.mjs "<run_number>"
+ * A beta build is the same number with a semver prerelease tag (`2026.10.150-beta.1`): it sorts below its own
+ * stable release and above every earlier build. electron-updater ignores prereleases for stable installs and
+ * offers them (and later stable releases) to installs that are themselves a beta.
+ *
+ * Run from CI:  node scripts/compute-version.mjs "<run_number>" [stable|beta]
  * The build argument is required so the value is explicit and reproducible.
  */
 import fs from 'node:fs';
@@ -30,13 +34,17 @@ import { fileURLToPath } from 'node:url';
  * @param {number} build  Non-negative integer build/run number.
  * @returns {string} `YYYY.M.build`
  */
-export function computeVersion(date, build) {
+export function computeVersion(date, build, channel) {
   if (!Number.isInteger(build) || build < 0) {
     throw new Error(`build must be a non-negative integer, got: ${build}`);
   }
+  if (channel !== undefined && channel !== 'beta') {
+    throw new Error(`unknown release channel: ${channel}`);
+  }
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth() + 1; // 1–12
-  return `${year}.${month}.${build}`;
+  const core = `${year}.${month}.${build}`;
+  return channel === 'beta' ? `${core}-beta.1` : core;
 }
 
 // Only touch the filesystem when invoked directly (not when imported).
@@ -44,7 +52,7 @@ const invokedDirectly = process.argv[1] && fileURLToPath(import.meta.url) === pa
 if (invokedDirectly) {
   const rawBuild = process.argv[2];
   if (rawBuild === undefined || rawBuild === '') {
-    console.error('Usage: node scripts/compute-version.mjs <build-number>');
+    console.error('Usage: node scripts/compute-version.mjs <build-number> [stable|beta]');
     process.exit(1);
   }
   const build = Number(rawBuild);
@@ -52,8 +60,13 @@ if (invokedDirectly) {
     console.error(`Invalid build number: "${rawBuild}" (expected a non-negative integer)`);
     process.exit(1);
   }
+  const rawChannel = process.argv[3] ?? 'stable';
+  if (rawChannel !== 'stable' && rawChannel !== 'beta') {
+    console.error(`Invalid channel: "${rawChannel}" (expected stable or beta)`);
+    process.exit(1);
+  }
 
-  const version = computeVersion(new Date(), build);
+  const version = computeVersion(new Date(), build, rawChannel === 'beta' ? 'beta' : undefined);
 
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
   const pkgPath = path.join(root, 'package.json');

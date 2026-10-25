@@ -190,7 +190,7 @@ const {
   exportNoteHistoryToDirAsync,
   collectReferencedAttachmentsFromNoteHistory,
   countNoteHistoryRevisions,
-  upgradeNoteHistoryToEncrypted,
+  upgradeNoteHistoryToEncryptedAsync,
   listNoteHistoryFiles,
 } = require('./noteHistory.cjs');
 const {
@@ -343,7 +343,11 @@ protocol.registerSchemesAsPrivileged([
 {
   const appDataDir = app.getPath('appData');
   const legacyDir = path.join(appDataDir, IS_DEV ? `${APP_NAME_LEGACY} (Dev)` : APP_NAME_LEGACY);
-  const newDir = path.join(appDataDir, IS_DEV ? `${APP_NAME} (Dev)` : APP_NAME);
+  // Tests and smoke runs of a packaged build name their own data folder; nothing else sets this. A relative path
+  // is ignored: it would land wherever the app happened to be started.
+  const overrideDir = process.env.CADENCE_USER_DATA_DIR;
+  const overridden = !!overrideDir && path.isAbsolute(overrideDir);
+  const newDir = overridden ? overrideDir : path.join(appDataDir, IS_DEV ? `${APP_NAME} (Dev)` : APP_NAME);
 
   try {
     fs.mkdirSync(newDir, { recursive: true });
@@ -359,7 +363,7 @@ protocol.registerSchemesAsPrivileged([
   // is the most-likely-to-exist file in any non-empty workspace, so its
   // presence is a good "we've already migrated, leave it alone" signal.
   const newAccountsFile = path.join(newDir, `${DATA_FILE_PREFIX}-accounts.json`);
-  if (fs.existsSync(legacyDir) && !fs.existsSync(newAccountsFile)) {
+  if (!overridden && fs.existsSync(legacyDir) && !fs.existsSync(newAccountsFile)) {
     try {
       migrateLegacyUserData(legacyDir, newDir);
       console.log(LOG_TAG, 'migrated legacy data from', legacyDir, '->', newDir);
@@ -5218,12 +5222,8 @@ ipcMain.handle('account:session', () => {
         finalizeUserSidecars(u.id, cached);
         // Opened after days away (or just today's first open): make today's backup in the background.
         setImmediate(() => ensureDailyBackupToday());
-        setImmediate(() => {
-          try {
-            upgradeNoteHistoryToEncrypted(u.id);
-          } catch (err) {
-            console.warn('[cadence] note-history upgrade failed (continuing)', err);
-          }
+        void upgradeNoteHistoryToEncryptedAsync(u.id).catch((err) => {
+          console.warn('[cadence] note-history upgrade failed (continuing)', err);
         });
       } else if (cached) {
         // The cache is unusable for this file. Drop it so the next
@@ -5424,12 +5424,8 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
     // Finish a password change that a crash cut short, then seal version history that an
     // older version left as plaintext.
     finalizeUserSidecars(u.id, derivedKey);
-    setImmediate(() => {
-      try {
-        upgradeNoteHistoryToEncrypted(u.id);
-      } catch (err) {
-        console.warn('[cadence] note-history upgrade failed (continuing)', err);
-      }
+    void upgradeNoteHistoryToEncryptedAsync(u.id).catch((err) => {
+      console.warn('[cadence] note-history upgrade failed (continuing)', err);
     });
 
     // Take a snapshot right after we successfully derived the key, so even

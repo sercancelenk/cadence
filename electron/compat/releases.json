@@ -1,0 +1,7 @@
+{
+  "_comment": "The releases whose data the current build must open without loss (see docs/COMPATIBILITY.md). One fixture per entry, built from the commit that was released with scripts/compat/make-fixture.mjs. When you cut a release, add it, drop the oldest, and rebuild the fixtures.",
+  "supported": [
+    { "label": "v-prev", "ref": "c193aec", "note": "the release before this one (N-1)" },
+    { "label": "v-prev2", "ref": "00156ac", "note": "two releases back (N-2); confirm against the real release history" }
+  ]
+}

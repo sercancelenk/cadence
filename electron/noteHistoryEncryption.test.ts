@@ -18,6 +18,7 @@ const {
   countNoteHistoryRevisions,
   collectReferencedAttachmentsFromNoteHistory,
   upgradeNoteHistoryToEncrypted,
+  upgradeNoteHistoryToEncryptedAsync,
   listNoteHistoryFiles,
 } = history;
 
@@ -161,6 +162,74 @@ describe('history written by an older version', () => {
     const before = diskText();
     expect(upgradeNoteHistoryToEncrypted(userId)).toMatchObject({ ok: true, upgraded: 0 });
     expect(diskText()).toBe(before);
+  });
+});
+
+describe('sealing old plaintext history in the background', () => {
+  function plaintextRevisions(count: number) {
+    key = null;
+    const ids: string[] = [];
+    for (let i = 0; i < count; i += 1) ids.push(appendNoteRevision(userId, unlockedRevision({ title: `T${i}`, body: `${MARK_BODY}-${i}` })).revisionId);
+    key = keyA;
+    return ids;
+  }
+
+  it('seals everything, with the same content, like the synchronous upgrade', async () => {
+    const ids = plaintextRevisions(6);
+    const r = await upgradeNoteHistoryToEncryptedAsync(userId);
+    expect(r).toMatchObject({ ok: true, skipped: 0 });
+    expect(r.upgraded).toBeGreaterThanOrEqual(6);
+    expect(diskText()).not.toContain(MARK_BODY);
+    ids.forEach((id, i) => expect(readNoteRevision(userId, noteId, id).revision.body).toBe(`${MARK_BODY}-${i}`));
+  });
+
+  it('gives the rest of the app a turn between files, so signing in does not freeze it for the length of the job', async () => {
+    plaintextRevisions(12);
+    let turns = 0;
+    let running = true;
+    const spin = () => {
+      turns += 1;
+      if (running) setImmediate(spin);
+    };
+    setImmediate(spin);
+    await upgradeNoteHistoryToEncryptedAsync(userId);
+    running = false;
+    // At least one turn per two files: a synchronous upgrade would give none until it was finished.
+    expect(turns).toBeGreaterThanOrEqual(12);
+  });
+
+  it('does not lose a revision written while it is running', async () => {
+    const ids = plaintextRevisions(8);
+    const job = upgradeNoteHistoryToEncryptedAsync(userId);
+    const during = appendNoteRevision(userId, unlockedRevision({ title: 'Written meanwhile', body: 'MEANWHILE-BODY' }));
+    await job;
+    const listed = listNoteRevisions(userId, noteId).revisions.map((r: { id: string }) => r.id);
+    expect(listed).toEqual(expect.arrayContaining([...ids, during.revisionId]));
+    expect(readNoteRevision(userId, noteId, during.revisionId).revision.body).toBe('MEANWHILE-BODY');
+    expect(diskText()).not.toContain(MARK_BODY);
+    expect(diskText()).not.toContain('MEANWHILE-BODY');
+  });
+
+  it('runs once at a time for an account', async () => {
+    plaintextRevisions(6);
+    const [a, b] = await Promise.all([upgradeNoteHistoryToEncryptedAsync(userId), upgradeNoteHistoryToEncryptedAsync(userId)]);
+    expect([a.alreadyRunning, b.alreadyRunning].filter(Boolean)).toHaveLength(1);
+    expect(a.upgraded + b.upgraded).toBeGreaterThanOrEqual(6);
+    expect(diskText()).not.toContain(MARK_BODY);
+  });
+
+  it('stops, leaving the rest as it was, when the key goes away (signing out)', async () => {
+    plaintextRevisions(10);
+    const job = upgradeNoteHistoryToEncryptedAsync(userId);
+    setImmediate(() => {
+      key = null;
+    });
+    const r = await job;
+    expect(r.stoppedEarly).toBe(true);
+    // Whatever was left is still plaintext and readable by the next run.
+    key = keyA;
+    await upgradeNoteHistoryToEncryptedAsync(userId);
+    expect(diskText()).not.toContain(MARK_BODY);
   });
 });
 

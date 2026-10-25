@@ -12,6 +12,12 @@ rather than per build number.
 
 ## Unreleased
 
+### Release process
+
+- **Beta channel.** *Actions → Release* now asks for a channel. **beta** (the default) publishes a GitHub *pre-release* (version `YYYY.M.<run>-beta.1`, update files `beta-mac.yml` / `beta.yml`) that only installs which are themselves a beta are offered; stable installs never see it, and a beta install moves on to the next stable release automatically. **stable** publishes a normal release as before. Settings → About shows a beta build as e.g. "October 2026 (beta)". See `docs/RELEASING.md`.
+- **Support window.** Every change must keep working for data written by the current and the two previous releases: `docs/COMPATIBILITY.md`, frozen data folders made by those releases' own code (`electron/compat/`) opened by the current build in CI, and `npm run compat:downgrade -- <ref>` to see what an older build makes of newer data before a release.
+- `scripts/smoke-packaged.mjs` starts a packaged build against a throwaway data folder (`CADENCE_USER_DATA_DIR`) and checks it comes up.
+
 ### Changed (backup)
 
 - **One export and one import.** Settings → Backup & recovery now has a single **Export backup** (one `.zip` with notes, tasks, settings, all images and, on desktop, note version history) and a single **Import backup**. Import first shows what is inside the file (counts, images, history, when it was made), then asks whether to **add it to what is here** (nothing overwritten or deleted, the default) or **replace what is here** (a safety copy is saved first). The old Full backup, Portable ZIP and Merge buttons are gone from the main view; the folder formats and text-only JSON stay under **Advanced**, and every backup made by older versions imports as before.
@@ -26,6 +32,8 @@ rather than per build number.
 - **Recovering Notes from a backup of another account no longer counts against this account's password.** The password that opens such a recovery belongs to the other account, so it is not tested here (it used to count as wrong guesses and could lock the password change for a while).
 - **Version-history snapshots no longer carry staged `.rekey`/`.tmp` files.**
 - **The import dialog is honest in a browser** (no "safety copy" is made there, so it says to export first), an incomplete *Add* no longer talks about a restored snapshot, a browser tells which encrypted images need the desktop app, the snapshot size text updates when the setting changes, and a second click in the same instant cannot start two imports.
+- **Signing in after an update no longer freezes the app for large histories.** Sealing old plaintext note history (about 12 ms per file, measured: 2,000 revisions took 25 s) used to run in one block right after sign-in; it now runs in the background one file at a time, so a revision written meanwhile is neither lost nor sealed twice. The password-change screen also says it can take a minute with a large library.
+- **Windows hardening (reviewed, not run on Windows).** The list of earlier keys is flushed to disk before it replaces the old one; a backup folder swap no longer reports failure when the new backup is in place but an old leftover is held open by another program; scratch folders with readable note history are removed with retries and all swept at start; JSON saved with a byte-order mark (Notepad, PowerShell) imports; image names that differ only in case, and history file names Windows reserves for devices, cannot overwrite or break an import.
 - **Browser export now warns instead of reporting success** when referenced images could not be found.
 
 ### Fixed

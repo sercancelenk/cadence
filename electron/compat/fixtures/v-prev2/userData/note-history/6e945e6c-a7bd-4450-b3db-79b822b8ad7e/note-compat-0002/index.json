@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "noteId": "note-compat-0002",
+  "revisions": [
+    {
+      "id": "0ac4a350-03c8-4db3-a4d5-4940018e8753",
+      "noteId": "note-compat-0002",
+      "createdAt": "2026-10-25T21:13:14.602Z",
+      "trigger": "manual",
+      "title": "Image note v1",
+      "summary": "Image note v1 summary",
+      "locked": false
+    }
+  ]
+}

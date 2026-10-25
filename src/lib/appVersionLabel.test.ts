@@ -75,4 +75,57 @@ describe('formatAppVersion', () => {
     expect(() => computeCalVerVersion(new Date(), -1)).toThrow();
     expect(() => computeCalVerVersion(new Date(), 1.5)).toThrow();
   });
+
+  describe('beta builds', () => {
+    it('computeCalVerVersion makes a beta of the same build: lower than its own stable, higher than every earlier build', () => {
+      const date = new Date(Date.UTC(2026, 9, 26));
+      expect(computeCalVerVersion(date, 150, 'beta')).toBe('2026.10.150-beta.1');
+      expect(computeCalVerVersion(date, 150)).toBe('2026.10.150');
+    });
+
+    it('shows a beta as such, in the same label everywhere', () => {
+      const r = formatAppVersion('2026.10.150-beta.1');
+      expect(r.isCalVer).toBe(true);
+      expect(r.channel).toBe('beta');
+      expect(r.build).toBe(150);
+      expect(r.label).toBe('October 2026 (beta)');
+      expect(r.raw).toBe('2026.10.150-beta.1');
+    });
+
+    it('does not call a stable build or a build-metadata suffix a beta', () => {
+      expect(formatAppVersion('2026.10.150').channel).toBeNull();
+      expect(formatAppVersion('2026.10.150+abc').channel).toBeNull();
+      expect(formatAppVersion('2026.10.150').label).toBe('October 2026');
+    });
+
+    it('keeps an unknown prerelease word out of the label, but still says it is not stable', () => {
+      const r = formatAppVersion('2026.10.150-rc.2');
+      expect(r.channel).toBe('rc');
+      expect(r.label).toBe('October 2026 (rc)');
+    });
+
+    it('round-trips with the producer for a beta', () => {
+      const v = computeCalVerVersion(new Date(Date.UTC(2026, 2, 3)), 9, 'beta');
+      const parsed = formatAppVersion(v);
+      expect(parsed).toMatchObject({ isCalVer: true, build: 9, channel: 'beta', label: 'March 2026 (beta)' });
+    });
+
+    it('rejects a channel it does not know how to publish', () => {
+      expect(() => computeCalVerVersion(new Date(), 1, 'nightly' as never)).toThrow();
+    });
+  });
+
+  it('the CI script and the app agree on every version they can produce', async () => {
+    const scriptPath = '../../scripts/compute-version.mjs';
+    const script = (await import(/* @vite-ignore */ scriptPath)) as unknown as {
+      computeVersion: (d: Date, build: number, channel?: 'beta') => string;
+    };
+    for (const channel of [undefined, 'beta'] as const) {
+      for (let m = 0; m < 12; m += 1) {
+        const date = new Date(Date.UTC(2026, m, 5));
+        expect(script.computeVersion(date, 77, channel)).toBe(computeCalVerVersion(date, 77, channel));
+      }
+    }
+    expect(() => script.computeVersion(new Date(), 1, 'nightly' as never)).toThrow();
+  });
 });

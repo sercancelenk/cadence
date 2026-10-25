@@ -1,0 +1,61 @@
+{
+  "version": 3,
+  "people": [],
+  "teams": [
+    {
+      "id": "team-compat-0001",
+      "name": "Compat team",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "status": "active"
+    }
+  ],
+  "items": [],
+  "todoGroups": [],
+  "todoItems": [
+    {
+      "id": "todo-compat-0001",
+      "text": "First task",
+      "done": false,
+      "createdAt": "2026-01-02T00:00:00.000Z",
+      "updatedAt": "2026-01-02T00:00:00.000Z"
+    },
+    {
+      "id": "todo-compat-0002",
+      "text": "Second task",
+      "done": true,
+      "createdAt": "2026-02-02T00:00:00.000Z",
+      "updatedAt": "2026-02-02T00:00:00.000Z"
+    }
+  ],
+  "notes": [
+    {
+      "id": "note-compat-0001",
+      "title": "Plain note",
+      "body": "Plain body one",
+      "createdAt": "2026-01-10T10:00:00.000Z",
+      "updatedAt": "2026-01-10T10:00:00.000Z"
+    },
+    {
+      "id": "note-compat-0002",
+      "title": "Note with image",
+      "body": "Has an image cadence-attachment://attachment-compat-0001",
+      "createdAt": "2026-01-11T10:00:00.000Z",
+      "updatedAt": "2026-01-11T10:00:00.000Z"
+    },
+    {
+      "id": "note-compat-0003",
+      "title": "February note",
+      "body": "Second month body",
+      "createdAt": "2026-02-12T10:00:00.000Z",
+      "updatedAt": "2026-02-12T10:00:00.000Z"
+    },
+    {
+      "id": "note-compat-0004",
+      "title": "Another image note",
+      "body": "cadence-attachment://attachment-compat-0002",
+      "createdAt": "2026-02-13T10:00:00.000Z",
+      "updatedAt": "2026-02-13T10:00:00.000Z"
+    }
+  ],
+  "noteGroups": []
+}

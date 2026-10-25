@@ -38,11 +38,17 @@ const CALVER_MIN_YEAR = 2000;
  * canonical scheme; `scripts/compute-version.mjs` mirrors this exact formula
  * for CI (kept intentionally in sync, verified by the round-trip test).
  */
-export function computeCalVerVersion(date: Date, build: number): string {
+export function computeCalVerVersion(date: Date, build: number, channel?: 'beta'): string {
   if (!Number.isInteger(build) || build < 0) {
     throw new Error(`build must be a non-negative integer, got: ${build}`);
   }
-  return `${date.getUTCFullYear()}.${date.getUTCMonth() + 1}.${build}`;
+  if (channel !== undefined && channel !== 'beta') {
+    throw new Error(`unknown release channel: ${String(channel)}`);
+  }
+  const core = `${date.getUTCFullYear()}.${date.getUTCMonth() + 1}.${build}`;
+  // A beta is the same build number with a semver prerelease tag: it sorts below its own stable release and
+  // above every earlier build, which is what the updater needs (see docs/RELEASING.md).
+  return channel === 'beta' ? `${core}-beta.1` : core;
 }
 
 export interface AppVersionLabel {
@@ -50,6 +56,8 @@ export interface AppVersionLabel {
   label: string;
   /** Build number (CalVer patch) when applicable, else null. */
   build: number | null;
+  /** The semver prerelease channel ("beta"), or null for a stable build. */
+  channel: string | null;
   /** The raw semver string as embedded in the build. */
   raw: string;
   /** True when `raw` parsed as a CalVer `YYYY.M.build` triple. */
@@ -64,12 +72,15 @@ export interface AppVersionLabel {
 export function formatAppVersion(raw: string | null | undefined): AppVersionLabel {
   const safeRaw = typeof raw === 'string' ? raw.trim() : '';
   if (!safeRaw) {
-    return { label: '—', build: null, raw: '', isCalVer: false };
+    return { label: '—', build: null, channel: null, raw: '', isCalVer: false };
   }
 
   // Strip a leading "v" and any build-metadata/prerelease suffix before parsing
   // the numeric core (e.g. "2026.7.72+abc" or "2026.7.72-beta" -> "2026.7.72").
-  const core = safeRaw.replace(/^v/i, '').split(/[-+]/)[0] ?? '';
+  const withoutV = safeRaw.replace(/^v/i, '');
+  const core = withoutV.split(/[-+]/)[0] ?? '';
+  // `2026.10.150-beta.1+abc` -> "beta"; build metadata (`+abc`) is not a channel.
+  const channel = /^[^-+]+-([0-9A-Za-z]+)/.exec(withoutV.split('+')[0] ?? '')?.[1]?.toLowerCase() ?? null;
   const parts = core.split('.');
 
   if (parts.length === 3) {
@@ -86,13 +97,14 @@ export function formatAppVersion(raw: string | null | undefined): AppVersionLabe
       build >= 0;
     if (isCalVer) {
       return {
-        label: `${MONTHS[month - 1]} ${year}`,
+        label: `${MONTHS[month - 1]} ${year}${channel ? ` (${channel})` : ''}`,
         build,
+        channel,
         raw: safeRaw,
         isCalVer: true,
       };
     }
   }
 
-  return { label: `v${core || safeRaw}`, build: null, raw: safeRaw, isCalVer: false };
+  return { label: `v${core || safeRaw}`, build: null, channel, raw: safeRaw, isCalVer: false };
 }

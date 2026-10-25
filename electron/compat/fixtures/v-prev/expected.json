@@ -1,0 +1,90 @@
+{
+  "email": "compat@example.com",
+  "password": "compat-password-1",
+  "pin": "1234",
+  "userId": "f0a88918-44ce-4c5b-8244-bae7ca2fb81a",
+  "recoveryCodes": [
+    "5XUC-Z8B3-U2CK-QHBF",
+    "NEHN-SXHG-E5PN-9428",
+    "E5NT-AEFF-NBTQ-WMJP",
+    "UPCZ-XK9K-WLTR-KXGT",
+    "3EDZ-Q27K-XPNF-Z94F",
+    "SVK2-4C67-NKSC-9QS3",
+    "3ZKC-BZRW-FQMA-GHQ3",
+    "MH75-FND7-DYB8-NBTG"
+  ],
+  "notes": [
+    {
+      "id": "note-compat-0001",
+      "title": "Plain note",
+      "bodySha": "9a6273f88afb87b94a1aa0caf705974c0962d5ac1f7de2d5194b8e3a7b3799aa"
+    },
+    {
+      "id": "note-compat-0002",
+      "title": "Note with image",
+      "bodySha": "0122a335619fa8c9e6b6fffe4c036ef30260da4ee8e1017a52cf3fdd5e52903e"
+    },
+    {
+      "id": "note-compat-0003",
+      "title": "February note",
+      "bodySha": "3b3582006071eb2efb917e16975e4eab4492f6c3552ec6d5dab6731e4c951744"
+    },
+    {
+      "id": "note-compat-0004",
+      "title": "Another image note",
+      "bodySha": "2f9950a23c04d32df10375c8e8fc7cbf06e47071411b71f527c4b03dfb810dca"
+    }
+  ],
+  "todos": [
+    {
+      "id": "todo-compat-0001",
+      "text": "First task",
+      "done": false
+    },
+    {
+      "id": "todo-compat-0002",
+      "text": "Second task",
+      "done": true
+    }
+  ],
+  "teams": [
+    "team-compat-0001"
+  ],
+  "images": {
+    "attachment-compat-0001": "b5f50e7cf855e251807466cd91f3e4c03033b80e01a78129b8901ab0d88b0f04",
+    "attachment-compat-0002": "fd541f4ce35ba71febc8ff9a9dbf37ba742153fd5ad1c8f9deae3ba4ab66303a"
+  },
+  "history": {
+    "note-compat-0001": [
+      {
+        "id": "05d1a7f7-facd-4fa3-9787-344670b0baa3",
+        "title": "Plain note v1",
+        "bodySha": "b500263e8e0ccbe3979fa5b5d093ace4bfcb7c55fbd5d50cfd6d32726830efaf"
+      },
+      {
+        "id": "af692f4a-1dbc-42b6-b7ae-116a10695b3d",
+        "title": "Plain note v2",
+        "bodySha": "1ce9e32decef149ee133b06654372c1a59776e453cdb1da5835434d81b9bae6e"
+      }
+    ],
+    "note-compat-0002": [
+      {
+        "id": "8a440cab-5e58-496e-b6e8-900a21fd6a4c",
+        "title": "Image note v1",
+        "bodySha": "25d45a9fc781b784a91d4a43a8418f1dcbad895b4c91b6bd8e86058ac1594f40"
+      }
+    ],
+    "note-compat-0003": [
+      {
+        "id": "a99dd309-a530-492e-b621-6ed586e7eaa0",
+        "title": "February v1",
+        "bodySha": "e6ca78707702756c7295e934694c8daaffcb42d2b87ce955a51048a261c5e34e"
+      }
+    ]
+  },
+  "exportFolder": "cadence-backup-2026-10-25T21-13-13-083Z",
+  "snapshots": [
+    "data-pre-save-2026-10-25T21-13-12-768Z.json",
+    "data-pre-save-2026-10-25T21-13-12-837Z.json"
+  ]
+}
