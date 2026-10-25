@@ -28,9 +28,14 @@ const DEFAULT_ROUTINE_KEEP = 50;
 /** Restore points taken before import / restore / password change / recovery. */
 const DEFAULT_LIFECYCLE_KEEP = 50;
 
-/** Choices offered for daily mirror folders. 30 is the long-standing size. */
-const MIRROR_KEEP_CHOICES = Object.freeze([3, 7, 14, 30]);
+/**
+ * Choices offered for daily mirror folders. 30 is the long-standing size: a folder that was set up
+ * without a choice keeps it (lowering it would trim backups). A folder set up from now on starts at
+ * today and yesterday, since every daily folder is a full, readable copy.
+ */
+const MIRROR_KEEP_CHOICES = Object.freeze([2, 3, 7, 14, 30]);
 const DEFAULT_MIRROR_KEEP = 30;
+const DEFAULT_NEW_MIRROR_KEEP = 2;
 
 /** `data-<label>-<ISO timestamp with : and . replaced by ->` */
 const SNAPSHOT_SET_RE = /^data-(.+?)-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
@@ -132,6 +137,7 @@ module.exports = {
   DEFAULT_LIFECYCLE_KEEP,
   MIRROR_KEEP_CHOICES,
   DEFAULT_MIRROR_KEEP,
+  DEFAULT_NEW_MIRROR_KEEP,
   normalizeRoutineKeep,
   normalizeMirrorKeep,
   snapshotSetLabel,

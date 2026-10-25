@@ -71,11 +71,25 @@ const chooseMirror = () => writePrefs(deps(), { mirrorDir });
 const dailyNames = () => fs.readdirSync(mirrorDir).filter((n) => n.includes('-daily-'));
 
 describe('getRetentionState', () => {
-  it('reports the long-standing sizes before anything was chosen', () => {
+  it('offers today and yesterday for a daily folder that is not set up yet, and the long-standing snapshot size', () => {
     const s = getRetentionState(deps());
-    expect(s.mirrorKeep).toBe(30);
+    expect(s.mirrorKeep).toBe(2);
+    expect(s.mirrorKeepDefault).toBe(2);
+    expect(s.mirrorKeepChoices).toEqual([2, 3, 7, 14, 30]);
     expect(s.snapshotRoutineKeep).toBe(50);
     expect(s.mirrorDirConfigured).toBe(false);
+  });
+
+  it('keeps the long-standing 30 for a folder that was already set up without a choice', () => {
+    chooseMirror();
+    const s = getRetentionState(deps());
+    expect(s.mirrorKeep).toBe(30);
+    expect(s.mirrorKeepDefault).toBe(30);
+  });
+
+  it('reports an explicit choice as it is', () => {
+    writePrefs(deps(), { mirrorDir, keepFolders: 7 });
+    expect(getRetentionState(deps()).mirrorKeep).toBe(7);
   });
 });
 

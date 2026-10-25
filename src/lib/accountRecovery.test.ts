@@ -6,6 +6,7 @@ import {
   normalizeRecoveryCode,
   normalizeRecoveryCodes,
   randomRecoveryProofSecret,
+  splitPastedRecoveryCodes,
   unwrapRecoverySecret,
   wrapRecoverySecret,
 } from './accountRecovery';
@@ -77,5 +78,42 @@ describe('accountRecovery', () => {
     const rendererUnwrappedFromNode = await unwrapRecoverySecret(nodeEnvelope, codes);
     expect(rendererUnwrappedFromNode).not.toBeNull();
     expect(Array.from(rendererUnwrappedFromNode!)).toEqual(Array.from(secret));
+  });
+});
+
+describe('splitPastedRecoveryCodes', () => {
+  const codes = generateRecoveryCodes();
+
+  it('splits the codes as the "copy all" button writes them, one per line', () => {
+    expect(splitPastedRecoveryCodes(codes.join('\n'))).toEqual(codes);
+  });
+
+  it('copes with numbering, bullets, commas, extra spaces and lower case', () => {
+    const messy = codes.map((c, i) => `${i + 1}. ${c.toLowerCase()}`).join(' , ');
+    expect(splitPastedRecoveryCodes(`Recovery codes:\n${messy}\n`)).toEqual(codes);
+  });
+
+  it('accepts codes written without dashes', () => {
+    const plain = codes.map(normalizeRecoveryCode).join('\n');
+    expect(splitPastedRecoveryCodes(plain)?.map(normalizeRecoveryCode)).toEqual(codes.map(normalizeRecoveryCode));
+  });
+
+  it('returns null for a single code, so a normal paste into one field still works', () => {
+    expect(splitPastedRecoveryCodes(codes[0]!)).toBeNull();
+    expect(splitPastedRecoveryCodes('')).toBeNull();
+    expect(splitPastedRecoveryCodes('hello world')).toBeNull();
+  });
+
+  it('never returns more than eight codes', () => {
+    expect(splitPastedRecoveryCodes([...codes, ...codes].join('\n'))).toHaveLength(RECOVERY_CODE_COUNT);
+  });
+
+  it('does not cut a code out of a longer, zero-padded numbered list', () => {
+    const padded = codes.map((c, i) => `${String(i + 1).padStart(4, '0')}-${c}`).join('\n');
+    expect(splitPastedRecoveryCodes(padded)).toBeNull();
+  });
+
+  it('does not take the tail of a longer dashed string for a code', () => {
+    expect(splitPastedRecoveryCodes(`AAAA-${codes[0]} BBBB-${codes[1]}`)).toBeNull();
   });
 });

@@ -104,6 +104,16 @@ describe('notesCrypto recovery envelope', () => {
     const wrong = await unwrapPassphraseFromRecovery(recovery, 'wrong-account');
     expect(wrong).toBeNull();
   });
+
+  it('records which account it was made for, and still opens with that account password', async () => {
+    const recovery = await wrapPassphraseForRecovery(PASS, ACCOUNT, 'acct-1');
+    expect(recovery.accountId).toBe('acct-1');
+    expect(await unwrapPassphraseFromRecovery(recovery, ACCOUNT)).toBe(PASS);
+  });
+
+  it('leaves the account out when none is given', async () => {
+    expect('accountId' in (await wrapPassphraseForRecovery(PASS, ACCOUNT))).toBe(false);
+  });
 });
 
 describe('notesCrypto encrypt/decrypt round-trip', () => {

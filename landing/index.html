@@ -7,7 +7,7 @@
 
     <meta
       name="description"
-      content="Cadence is a local-first workspace for people, tasks, notes, agenda and developer tools. AES-256-GCM encrypted on your device. Move data with encrypted backups — no cloud account. Optional BYO-key AI. Free and open source."
+      content="Cadence is a local-first workspace for people, tasks, notes, agenda and developer tools. AES-256-GCM encrypted on your device. Move data with portable backups — no cloud account. Optional BYO-key AI. Free and open source."
     />
     <meta name="theme-color" content="#0c0f15" />
     <meta name="color-scheme" content="dark" />
@@ -17,7 +17,7 @@
     <meta property="og:title" content="Cadence — local-first workspace, encrypted on your device" />
     <meta
       property="og:description"
-      content="People, tasks, notes, agenda, and ephemeral developer tools. Encrypted at rest. Encrypted backups between devices. AI when you want it."
+      content="People, tasks, notes, agenda, and ephemeral developer tools. Encrypted at rest. Portable backups between devices. AI when you want it."
     />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="./icon-512.png" />
@@ -101,7 +101,7 @@
               <strong>developer toolkit</strong> — all in one calm interface.
               <strong>Encrypted on your device</strong> with AES-256-GCM.
               No cloud account, no SaaS we forgot to renew. Move data between
-              devices with an <strong>encrypted backup file</strong> when you
+              devices with a <strong>portable backup file</strong> when you
               need to. Bring your own AI key when you want help; turn it off
               when you don't.
             </p>
@@ -123,7 +123,7 @@
 
             <ul class="hero__bullets" aria-label="Highlights">
               <li><span aria-hidden>●</span> macOS desktop · iOS / Android PWA</li>
-              <li><span aria-hidden>●</span> Encrypted backups to move between devices</li>
+              <li><span aria-hidden>●</span> Portable backups to move between devices</li>
               <li><span aria-hidden>●</span> Auto-snapshots + boot integrity checks</li>
               <li><span aria-hidden>●</span> Teams, planning, notes + activity report</li>
               <li><span aria-hidden>●</span> Developer tools: ERD, sketch, encode, codegen</li>
@@ -179,7 +179,7 @@
               counts, <em>Reveal in Finder</em>, restore confirmation). If a
               boot loads meaningfully less than your last save, an amber banner
               tells you before you panic. When you want two devices to share a
-              workspace, export an <strong>encrypted backup file</strong> and
+              workspace, export a <strong>portable backup file</strong> and
               merge it in — your bytes stay between your phone and your laptop.
             </p>
           </article>
@@ -196,8 +196,10 @@
               The desktop data file is wrapped in <strong>AES-256-GCM</strong>
               with a key derived from your account password via
               <code>scrypt</code>. Notes get an additional opt-in passphrase
-              lockbox. Portable backups use the same on-device encryption —
-              nothing leaves your machine unless you export it.
+              lockbox. Note version history and images are sealed with the same key.
+              Portable backups are <strong>not encrypted</strong> — keep the
+              file somewhere private. Nothing leaves your machine unless
+              you export it.
             </p>
           </article>
 
@@ -405,7 +407,7 @@
               <li>Portable ZIP — workspace + images across devices</li>
               <li>One-click backup &amp; recovery with snapshot counts</li>
               <li>Workspace storage breakdown on desktop</li>
-              <li>Encrypted backup export / additive merge — no cloud account</li>
+              <li>Portable backup export / additive merge — no cloud account</li>
             </ul>
           </div>
           <figure class="feature__media">
@@ -719,7 +721,7 @@ ERD / Sketch → Export PNG or JSON
         <div class="sync__inner">
           <p class="kicker">
             <span class="kicker__dot kicker__dot--slate" aria-hidden></span>
-            Encrypted backups · Additive merge · No cloud account
+            Portable backups · Additive merge · No cloud account
           </p>
           <h2 id="backup-h" class="section__title">
             Move data between devices — without a sync service.
@@ -727,7 +729,7 @@ ERD / Sketch → Export PNG or JSON
           <p class="section__sub">
             Cadence keeps your workspace on this device. When you want the
             same data on a phone or another laptop, export an
-            <strong>encrypted portable backup</strong>, carry it however you
+            <strong>portable backup</strong>, carry it however you
             already trust (AirDrop, Files, USB), and merge it in. No Google
             account, no LAN pairing, no Cadence server in the middle.
           </p>
@@ -766,13 +768,12 @@ ERD / Sketch → Export PNG or JSON
                   <path d="M10 11V9a2 2 0 0 1 4 0v2" />
                 </svg>
               </div>
-              <h3>Encrypted backup file</h3>
+              <h3>Portable backup file</h3>
               <p>
                 Export a portable ZIP — your workspace JSON plus image
-                attachments — wrapped with the same on-device encryption
-                as your data file. Move it however you already trust:
-                AirDrop, Files, a USB stick. Nothing ever touches a
-                Cadence server.
+                attachments. The file is <strong>not encrypted</strong>, so
+                move it only by ways you already trust: AirDrop, Files, a
+                USB stick. Nothing ever touches a Cadence server.
               </p>
               <p class="sync-card__hint">Portable ZIP · workspace + images</p>
             </article>
@@ -925,10 +926,10 @@ ERD / Sketch → Export PNG or JSON
           </div>
 
           <div class="privacy-card">
-            <h3>Device transfer via encrypted backup</h3>
+            <h3>Device transfer via portable backup</h3>
             <p>
               There is no cloud sync service in Cadence. To move data between
-              devices, export an encrypted portable ZIP from
+              devices, export a portable ZIP (not encrypted — keep it private) from
               <strong>Settings → Data &amp; backup</strong> and merge it on the
               other device. Merge is additive and idempotent — it never
               overwrites or deletes what you already have. See the
@@ -1018,7 +1019,7 @@ ERD / Sketch → Export PNG or JSON
           A workspace that respects your time, your data, and your evening.
         </h2>
         <p class="closing__sub">
-          Local-first storage · Encrypted backups · Developer tools · Optional AI · Free and open source.
+          Local-first storage · Portable backups · Developer tools · Optional AI · Free and open source.
         </p>
         <div class="cta-row cta-row--center">
           <a class="btn btn--primary btn--lg" href="./app/">Open the web app →</a>
@@ -1051,7 +1052,7 @@ ERD / Sketch → Export PNG or JSON
           Built with Electron, React, Vite. Encryption uses the Web Crypto
           API on every platform. Plays well with Anthropic, OpenAI, Google
           Gemini and your own gateway. <span>Made for people who like their data on their own
-          machine — moved only when they choose, via encrypted backup.</span>
+          machine — moved only when they choose, via a portable backup.</span>
         </p>
       </div>
     </footer>

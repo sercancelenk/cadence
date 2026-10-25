@@ -116,7 +116,7 @@ export const PRESET_LABELS: Record<PresetName, { title: string; description: str
   personal: {
     title: 'Personal',
     description:
-      'Use AI assistance and export backups. Your workspace stays on this device — move data between devices with encrypted backup files.',
+      'Use AI assistance and export backups. Your workspace stays on this device — move data between devices with portable backup files.',
   },
   'work-standard': {
     title: 'Work — Standard',

@@ -58,6 +58,35 @@ export function normalizeRecoveryCode(code: string): string {
     .replace(/[^A-Z0-9]/g, '');
 }
 
+const CODE_CHARS = CODE_GROUPS * CODE_GROUP_LEN;
+
+function formatCode(raw: string): string {
+  const parts: string[] = [];
+  for (let g = 0; g < CODE_GROUPS; g += 1) parts.push(raw.slice(g * CODE_GROUP_LEN, (g + 1) * CODE_GROUP_LEN));
+  return parts.join('-');
+}
+
+/**
+ * Recovery codes found in pasted text (the "copy all" list, a numbered list, a line of
+ * comma-separated codes, with or without dashes). Null unless at least two are found, so
+ * pasting a single code into one field still behaves like a normal paste.
+ */
+export function splitPastedRecoveryCodes(text: string): string[] | null {
+  if (typeof text !== 'string' || !text) return null;
+  // Anchored on both sides: a code cut out of a longer dashed string (a zero-padded list number, say)
+  // would be a wrong code, and the paste would be swallowed.
+  const dashed = text.match(/(?<![A-Za-z0-9-])[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{4}){3}(?![A-Za-z0-9-])/g) ?? [];
+  let found = dashed.map((c) => c.toUpperCase());
+  if (found.length < 2) {
+    found = text
+      .split(/[\s,;]+/)
+      .map(normalizeRecoveryCode)
+      .filter((c) => c.length === CODE_CHARS)
+      .map(formatCode);
+  }
+  return found.length >= 2 ? found.slice(0, RECOVERY_CODE_COUNT) : null;
+}
+
 export function normalizeRecoveryCodes(codes: string[]): string[] {
   return codes.map(normalizeRecoveryCode).filter((c) => c.length > 0).sort();
 }

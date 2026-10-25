@@ -157,6 +157,8 @@ type Api = {
    * import, restore). Discards pending debounced edits and clears save errors.
    */
   syncFromDisk: () => Promise<void>;
+  /** Adopt the write generation now on disk (after the main process committed the workspace itself, e.g. a password change) without reloading the data. */
+  refreshWriteGeneration: () => Promise<void>;
   /** Returns false when persist is blocked (mutation is not applied). */
   /**
    * `kind` picks the write cadence: `structural` (default) lands on disk within
@@ -1433,6 +1435,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       reload,
       importWorkspace,
       syncFromDisk,
+      refreshWriteGeneration: syncWriteGenerationFromDisk,
       lastSaveError,
       lastSavedAt,
       saving,
@@ -1628,7 +1631,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         update((x) => renameUtilitySketchDocumentFn(x, id, title)),
       removeUtilitySketchDocument: (id) => update((x) => removeUtilitySketchDocumentFn(x, id)),
     };
-  }, [data, ready, update, replaceAll, reload, importWorkspace, syncFromDisk, lastSaveError, lastSavedAt, saving, hasPendingSave, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave, flushIfPending]);
+  }, [data, ready, update, replaceAll, reload, importWorkspace, syncFromDisk, syncWriteGenerationFromDisk, lastSaveError, lastSavedAt, saving, hasPendingSave, dataLossSuspicion, dismissDataLossSuspicion, flushPendingSave, flushIfPending]);
 
   const actionsBridgeRef = useRef(api);
   actionsBridgeRef.current = api;
@@ -1639,6 +1642,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       reload: () => actionsBridgeRef.current.reload(),
       importWorkspace: (next: AppData) => actionsBridgeRef.current.importWorkspace(next),
       syncFromDisk: () => actionsBridgeRef.current.syncFromDisk(),
+      refreshWriteGeneration: () => actionsBridgeRef.current.refreshWriteGeneration(),
       update: (fn: (d: AppData) => AppData, kind?: SaveKind) => actionsBridgeRef.current.update(fn, kind),
       clearSaveError: () => actionsBridgeRef.current.clearSaveError(),
       dismissDataLossSuspicion: () => actionsBridgeRef.current.dismissDataLossSuspicion(),

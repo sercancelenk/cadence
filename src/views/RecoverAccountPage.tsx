@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { AuthLocalFirstNotice } from '../components/AuthLocalFirstNotice';
 import { Button } from '../components/ui/Button';
 import { useAccount } from '../providers/AccountContext';
-import { RECOVERY_CODE_COUNT, normalizeRecoveryCodes } from '../lib/accountRecovery';
+import { RECOVERY_CODE_COUNT, normalizeRecoveryCodes, splitPastedRecoveryCodes } from '../lib/accountRecovery';
 
 export function RecoverAccountPage() {
   const { user, loading, recoverWithCodes } = useAccount();
@@ -16,6 +16,7 @@ export function RecoverAccountPage() {
   const [showPwd, setShowPwd] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pasted, setPasted] = useState(false);
 
   if (!loading && user) {
     return <Navigate to="/" replace />;
@@ -83,6 +84,12 @@ export function RecoverAccountPage() {
           </label>
           <fieldset className="recovery-codes__fieldset">
             <legend className="small muted">Recovery codes (all {RECOVERY_CODE_COUNT})</legend>
+            <p className="small muted" style={{ gridColumn: '1 / -1', margin: '0 0 6px' }}>
+              Tip: paste the whole list into any field and it fills all {RECOVERY_CODE_COUNT}.
+            </p>
+            <p className="sr-only" role="status">
+              {pasted ? `Filled in all ${RECOVERY_CODE_COUNT} recovery codes.` : ''}
+            </p>
             {codes.map((code, i) => (
               <label key={i} className="field recovery-codes__field">
                 <span className="sr-only">Recovery code {i + 1}</span>
@@ -98,6 +105,14 @@ export function RecoverAccountPage() {
                     const next = [...codes];
                     next[i] = e.target.value;
                     setCodes(next);
+                  }}
+                  onPaste={(e) => {
+                    // The whole list pasted into any field fills all of them.
+                    const all = splitPastedRecoveryCodes(e.clipboardData.getData('text'));
+                    if (!all) return;
+                    e.preventDefault();
+                    setCodes(Array.from({ length: RECOVERY_CODE_COUNT }, (_, k) => all[k] ?? ''));
+                    setPasted(true);
                   }}
                 />
               </label>

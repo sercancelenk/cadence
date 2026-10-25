@@ -13,6 +13,7 @@
 const { isCatastrophicEmptyOverwrite } = require('./persistence/dataIntegrity.cjs');
 const {
   MIRROR_KEEP_CHOICES,
+  DEFAULT_NEW_MIRROR_KEEP,
   normalizeMirrorKeep,
   planMirrorPrune,
 } = require('./persistence/retentionPolicy.cjs');
@@ -303,14 +304,14 @@ function stripAiSecretsForMirror(payload) {
  *   dateKey: string;
  *   workspacePayload: object;
  *   writeJsonText: (filePath: string, text: string) => { ok: boolean; error?: string };
- *   exportAttachments: (destDir: string) => number;
- *   exportNoteHistory: (destFolder: string) => void;
+ *   exportAttachments: (destDir: string) => number | Promise<number>;
+ *   exportNoteHistory: (destFolder: string) => void | Promise<void>;
  *   countNoteHistoryRevisions: () => number;
  *   force?: boolean;
  * }} opts
- * @returns {{ ok: true; path: string; attachmentCount: number } | { ok: false; error: string }}
+ * @returns {Promise<{ ok: true; path: string; attachmentCount: number; attachmentsSkipped?: number } | { ok: false; error: string }>}
  */
-function writeDailyFullExport(opts) {
+async function writeDailyFullExport(opts) {
   const {
     fs,
     path,
@@ -387,10 +388,20 @@ function writeDailyFullExport(opts) {
       return { ok: false, error: dataWrite.error || 'Could not write data.json.' };
     }
 
+    // The export touches a lot of files; hand the event loop back between the steps (and the
+    // exporters do the same between files) so the app stays responsive while this runs.
+    await yieldToEventLoop();
     const attDest = path.join(partialPath, 'attachments');
-    const attachmentCount = exportAttachments(attDest);
+    const exportedAttachments = await exportAttachments(attDest);
+    // An exporter reports either a count, or a count plus how many images it could not read.
+    const attachmentCount =
+      typeof exportedAttachments === 'number' ? exportedAttachments : exportedAttachments.count;
+    const attachmentsSkipped =
+      typeof exportedAttachments === 'number' ? 0 : exportedAttachments.skipped;
+    await yieldToEventLoop();
     const noteHistoryRevisionCount = countNoteHistoryRevisions();
-    exportNoteHistory(partialPath);
+    await exportNoteHistory(partialPath);
+    await yieldToEventLoop();
 
     const manifestWrite = writeJsonText(
       path.join(partialPath, 'manifest.json'),
@@ -400,6 +411,7 @@ function writeDailyFullExport(opts) {
           exportedAt: new Date().toISOString(),
           attachmentsPortable: true,
           attachmentCount,
+          ...(attachmentsSkipped > 0 ? { attachmentsSkipped } : {}),
           noteHistoryRevisionCount,
           dailyMirror: true,
           dailyDate: dateKey,
@@ -433,15 +445,53 @@ function writeDailyFullExport(opts) {
       cleanupPartial();
       return { ok: false, error: String(err?.message || err) };
     }
-    return { ok: true, path: finalPath, attachmentCount };
+    return { ok: true, path: finalPath, attachmentCount, attachmentsSkipped };
   } catch (err) {
     cleanupPartial();
     return { ok: false, error: String(err?.message || err) };
   }
 }
 
+/** Let pending UI work and IPC run before the next step. */
+function yieldToEventLoop() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/** How long to leave a failed daily backup alone before trying again. */
+const RETRY_AFTER_FAILURE_MS = 15 * 60 * 1000;
+
 /** @type {Set<string>} */
 const inFlightUsers = new Set();
+
+/**
+ * Whether today's backup still has to be made: a folder is chosen and either today is not recorded as
+ * done or its folder is missing/incomplete. Cheap (reads the small prefs file and checks one folder),
+ * so it is safe to ask often; the work itself is `maybeRunDailyBackupMirror`.
+ *
+ * @param {{ fs: typeof import('fs'); path: typeof import('path'); userDataDir: string; filePrefix: string; userId: string; appSlug: string; now?: Date }} deps
+ */
+function dailyBackupDue(deps) {
+  const todayKey = localDateKey(deps.now);
+  const prefs = readPrefs(deps);
+  if (!prefs.mirrorDir) return false;
+  // After a failure, wait before trying again: this is asked on every focus and timer tick, and each
+  // attempt would otherwise read the whole workspace again just to fail the same way.
+  const failedAt = prefs.lastErrorAt ? Date.parse(prefs.lastErrorAt) : NaN;
+  const nowMs = (deps.now ?? new Date()).getTime();
+  if (Number.isFinite(failedAt) && nowMs - failedAt >= 0 && nowMs - failedAt < RETRY_AFTER_FAILURE_MS) return false;
+  // A folder on a drive that is not plugged in: its parent is missing too. Creating it would leave a
+  // stray folder on the local disk, so wait until the drive is back.
+  if (!deps.fs.existsSync(prefs.mirrorDir) && !deps.fs.existsSync(deps.path.dirname(prefs.mirrorDir))) return false;
+  if (shouldRunDailyMirror(prefs.mirrorDir, prefs.lastDailyDate, todayKey)) return true;
+  return !isDailyFolderComplete({
+    fs: deps.fs,
+    path: deps.path,
+    mirrorDir: prefs.mirrorDir,
+    appSlug: deps.appSlug,
+    userId: deps.userId,
+    dateKey: todayKey,
+  });
+}
 
 /**
  * Best-effort daily mirror. Never throws. No-op when unset or already done today.
@@ -455,15 +505,15 @@ const inFlightUsers = new Set();
  *   appSlug: string;
  *   workspacePayload: object;
  *   writeJsonText: (filePath: string, text: string) => { ok: boolean; error?: string };
- *   exportAttachments: (destDir: string) => number;
- *   exportNoteHistory: (destFolder: string) => void;
+ *   exportAttachments: (destDir: string) => number | Promise<number>;
+ *   exportNoteHistory: (destFolder: string) => void | Promise<void>;
  *   countNoteHistoryRevisions: () => number;
  *   now?: Date;
  *   force?: boolean;
  * }} deps
- * @returns {{ ran: boolean; skipped?: string; ok?: boolean; path?: string; error?: string }}
+ * @returns {Promise<{ ran: boolean; skipped?: string; ok?: boolean; path?: string; error?: string }>}
  */
-function maybeRunDailyBackupMirror(deps) {
+async function maybeRunDailyBackupMirror(deps) {
   const todayKey = localDateKey(deps.now);
   const prefs = readPrefs(deps);
   const force = Boolean(deps.force);
@@ -493,7 +543,7 @@ function maybeRunDailyBackupMirror(deps) {
   inFlightUsers.add(deps.userId);
 
   try {
-    const result = writeDailyFullExport({
+    const result = await writeDailyFullExport({
       fs: deps.fs,
       path: deps.path,
       mirrorDir: /** @type {string} */ (prefs.mirrorDir),
@@ -508,34 +558,45 @@ function maybeRunDailyBackupMirror(deps) {
       force,
     });
 
+    // The export takes many turns of the event loop, so the settings may have changed meanwhile
+    // (a different number to keep, a different folder). Start from what is on disk now, not from
+    // the copy read before the export, or this write would put the old settings back.
+    const fresh = readPrefs(deps);
+    const sameFolder = fresh.mirrorDir === prefs.mirrorDir;
+
     if (result.ok) {
       const next = {
-        ...prefs,
-        lastDailyDate: todayKey,
+        ...fresh,
+        // A folder the user switched to mid-run has no backup for today yet.
+        ...(sameFolder ? { lastDailyDate: todayKey } : {}),
         lastOkPath: result.path,
         lastOkAt: new Date().toISOString(),
         lastError: null,
         lastErrorAt: null,
       };
       writePrefs(deps, next);
-      try {
-        pruneDailyMirrorFolders({
-          fs: deps.fs,
-          path: deps.path,
-          mirrorDir: /** @type {string} */ (prefs.mirrorDir),
-          appSlug: deps.appSlug,
-          userId: deps.userId,
-          keepFolders: prefs.keepFolders,
-          todayKey,
-        });
-      } catch {
-        /* prune is best-effort */
+      // Older backups are only let go once this one is whole: with unreadable images skipped, an older
+      // folder may be the only one that still has them.
+      if (sameFolder && !(result.attachmentsSkipped > 0)) {
+        try {
+          pruneDailyMirrorFolders({
+            fs: deps.fs,
+            path: deps.path,
+            mirrorDir: /** @type {string} */ (fresh.mirrorDir),
+            appSlug: deps.appSlug,
+            userId: deps.userId,
+            keepFolders: fresh.keepFolders,
+            todayKey,
+          });
+        } catch {
+          /* prune is best-effort */
+        }
       }
       return { ran: true, ok: true, path: result.path };
     }
 
     const failed = {
-      ...prefs,
+      ...fresh,
       lastError: result.error,
       lastErrorAt: new Date().toISOString(),
     };
@@ -546,7 +607,34 @@ function maybeRunDailyBackupMirror(deps) {
   }
 }
 
+/**
+ * The preferences after the user picks a daily backup folder. A folder set up for the first time
+ * (no folder before, no size chosen) keeps today and yesterday; one that was already running keeps
+ * whatever it had, so choosing a new place never trims backups the user already has.
+ *
+ * It is only a first-time setup when the chosen place holds no daily backups of this account yet:
+ * someone who cleared the setting and picked the same folder again keeps their old size.
+ *
+ * @param {ReturnType<typeof normalizePrefs>} prefs
+ * @param {string} mirrorDir
+ * @param {number} [existingFolderCount] this account's daily folders already in `mirrorDir`
+ */
+function prefsAfterChoosingMirrorDir(prefs, mirrorDir, existingFolderCount = 0) {
+  const firstTime = !prefs.mirrorDir && prefs.keepFolders == null && existingFolderCount === 0;
+  return {
+    ...prefs,
+    mirrorDir,
+    keepFolders: firstTime ? DEFAULT_NEW_MIRROR_KEEP : prefs.keepFolders,
+    // Clear lastDailyDate so the next save/login (or runNow) writes today promptly.
+    lastDailyDate: null,
+    lastError: null,
+    lastErrorAt: null,
+  };
+}
+
 module.exports = {
+  prefsAfterChoosingMirrorDir,
+  dailyBackupDue,
   PREFS_VERSION,
   localDateKey,
   userIdFolderSegment,

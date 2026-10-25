@@ -41,6 +41,8 @@ import { estimateWorkspaceStorage } from '../lib/workspaceStorageStats';
 import { isElectronApp, backupPlatform, backupPlatformLabel } from '../lib/runtime';
 import { exportPortableBackupZip, importPortableBackupFile } from '../lib/backupBundle';
 import { useAppData } from '../AppDataContext';
+import { notesRecoveryIsForeign } from '../lib/notesRecovery';
+import { BACKUP_NOT_ENCRYPTED_NOTE, backupSavedDetail } from '../lib/backupPrivacyCopy';
 import {
   PRESETS,
   PRESET_LABELS,
@@ -190,6 +192,16 @@ export function Settings() {
   const { user } = useAccount();
   const { pinEnabled, refresh: refreshSession, lockSession } = useSession();
   const toast = useToast();
+  // A restored backup can bring a Notes recovery made for another account's password. It is kept (it may
+  // still open), and the user is told how to renew it.
+  const noteIfNotesRecoveryForeign = () => {
+    if (user && notesRecoveryIsForeign(getLatestSnapshot().notesLock, user.id)) {
+      toast.showInfo(
+        'Notes recovery may not open here',
+        'The backup carries a Notes recovery made for another account. Use “Renew recovery” in Notes to tie it to this account.',
+      );
+    }
+  };
   const { confirm } = useConfirm();
   const { features, managed, source, setPreset } = useFeatures();
   const [appVersion, setAppVersion] = useState<string>('');
@@ -251,7 +263,7 @@ export function Settings() {
     const r = await window.cadence.exportDataBundle(compactAppDataForPersist(stripAiSecrets(getLatestSnapshot())));
     if (r?.canceled) return;
     if (r?.ok && r.path) {
-      toast.showSuccess('Full backup saved', `Folder: ${r.path}`);
+      toast.showSuccess('Full backup saved', backupSavedDetail(`Folder: ${r.path}`));
       return;
     }
     toast.showError('Export failed', r?.error ?? 'Could not write backup folder.');
@@ -270,7 +282,7 @@ export function Settings() {
       if (r.attachmentMissing > 0) {
         detail += ` ${r.attachmentMissing} referenced image${r.attachmentMissing === 1 ? '' : 's'} were missing on this device.`;
       }
-      toast.showSuccess('Portable backup saved', detail);
+      toast.showSuccess('Portable backup saved', backupSavedDetail(detail));
     } catch (err) {
       toast.showError('Export failed', err instanceof Error ? err.message : 'Could not build ZIP backup.');
     }
@@ -313,6 +325,7 @@ export function Settings() {
         return;
       }
       await syncFromDisk();
+      noteIfNotesRecoveryForeign();
       if (isZip) {
         let detail = `${r.attachmentsImported} image${r.attachmentsImported === 1 ? '' : 's'} restored.`;
         if (r.attachmentsSkipped > 0) {
@@ -431,6 +444,7 @@ export function Settings() {
         if (skipped > 0) {
           detail += ` ${skipped} encrypted image${skipped === 1 ? '' : 's'} could not be read — re-export a full backup from the source account.`;
         }
+        noteIfNotesRecoveryForeign();
         toast.showSuccess('Backup imported', detail);
         return;
       }
@@ -521,6 +535,7 @@ export function Settings() {
                       <input
                         className="input"
                         type="password"
+                        aria-label="New PIN"
                         placeholder="New PIN"
                         value={newPin}
                         onChange={(e) => setNewPin(e.target.value)}
@@ -528,6 +543,7 @@ export function Settings() {
                       <input
                         className="input"
                         type="password"
+                        aria-label="Confirm PIN"
                         placeholder="Confirm PIN"
                         value={newPin2}
                         onChange={(e) => setNewPin2(e.target.value)}
@@ -551,13 +567,14 @@ export function Settings() {
                             'The lock screen will no longer appear at launch.',
                           );
                         } else {
-                          toast.showError('Incorrect PIN', r?.error);
+                          toast.showError(r?.lockedOut ? 'Too many attempts' : 'Incorrect PIN', r?.error);
                         }
                       }}
                     >
                       <input
                         className="input"
                         type="password"
+                        aria-label="Current PIN (to remove)"
                         placeholder="Current PIN (to remove)"
                         value={clearPin}
                         onChange={(e) => setClearPin(e.target.value)}
@@ -665,7 +682,7 @@ export function Settings() {
               </CollapsibleCard>
               <CollapsibleCard id="user-guide" title="User guide" defaultOpen={false}>
                 <p className="muted">
-                  Step-by-step help for daily use, backups, recovery codes, and sync. Nothing leaves
+                  Step-by-step help for daily use, backups, recovery codes, and moving data between devices. Nothing leaves
                   your device unless you choose.
                 </p>
                 <div className="row" style={{ marginTop: 12 }}>
@@ -1256,6 +1273,7 @@ function BackupsRecoverySection({
             Exports (JSON, portable ZIP and the full backup folder) do not contain your AI API keys or extra connection headers. Restoring on this
             device keeps the keys it already has; on a new device, enter them again in Settings → AI Assistant.
           </p>
+          <p className="muted small">{BACKUP_NOT_ENCRYPTED_NOTE}</p>
           <div className="backup-platform">
             <span className="backup-platform__badge">{backupPlatformLabel(platform)}</span>
             {platform === 'desktop' ? (
@@ -2214,7 +2232,7 @@ function AccountRecoverySection() {
     if (!state?.recoverySetupRequired) return;
     toast.showInfo(
       'Generate new recovery codes',
-      'Password reset succeeded. Create and save a fresh set of recovery codes for this device.',
+      'Password reset succeeded. Create and save a fresh set of recovery codes for this device. If you use Notes recovery, renew it from the Notes page: it still needs your previous account password.',
     );
     window.history.replaceState({}, document.title);
   }, [location.state, toast]);

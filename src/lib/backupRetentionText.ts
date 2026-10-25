@@ -4,7 +4,8 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 /** Label for one choice in the daily-folder select. */
 export function mirrorKeepLabel(keep: number, isDefault: boolean): string {
-  return `Newest ${keep} daily folders${isDefault ? ' (default)' : ''}`;
+  const base = keep === 2 ? 'Today and yesterday (newest 2 daily folders)' : `Newest ${keep} daily folders`;
+  return `${base}${isDefault ? ' (default)' : ''}`;
 }
 
 /** Label for one choice in the in-app snapshot select. */

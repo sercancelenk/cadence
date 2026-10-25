@@ -73,11 +73,11 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 > Drag tasks from your personal to-do lists into **Do first**, **Schedule**, **Delegate**, or **Eliminate**. Pin up to three for today's focus strip. The matrix is a planning view — tasks stay linked to their original lists.
 
-### Settings — grouped by relationship: security, data, sync, integrations, about
+### Settings — grouped by relationship: security, data, integrations, about
 
-![Settings page with account, backup, sync and recovery codes](docs/screenshots/settings.png)
+![Settings page with account, backup and recovery codes](docs/screenshots/settings.png)
 
-> Cards are organised into five named groups: **Account & security** (recovery codes), **Data & backup** (portable ZIP, full folder, rolling snapshots), **Sync** (LAN + Cloud), **Integrations** (AI assistant and OS notifications) and **About** (user guide, version, auto-update).
+> Cards are organised into named groups: **Account & security** (stay signed in, recovery codes, PIN), **Data & backup** (portable ZIP, full folder, merge from another device, rolling snapshots), **Integrations** (AI assistant and OS notifications) and **About** (user guide, version, auto-update).
 
 ---
 
@@ -107,7 +107,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | 🔐 **Recovery codes** | Optional MetaMask-style codes to reset your account password on this device without data loss. Generate at sign-up or in Settings; use `/recover` if you forget your password. Existing accounts without codes behave exactly as before. |
 | 📦 **Workspace storage** | Desktop app splits large workspaces into monthly files for efficiency while keeping a full copy in the base file for downgrade safety. **Settings → Storage & cache** shows a per-area size breakdown (notes, tasks, teams, archives). |
 | 🛡️ **Data-integrity guard** | After every successful save, a per-device fingerprint records how much content you had. On the next boot, if the loaded file is meaningfully smaller, an amber banner spells out the before/after counts and links straight to *Backups & recovery* — so "my data vanished" is caught before you panic. |
-| 📦 **Offline device transfer** | Move a workspace between devices with no cloud and no network link between them: export an encrypted portable backup, carry it across (AirDrop / Files / USB), and **merge it in additively**. The merge keeps every local item, dedupes by id + content signature, protects local config (passphrase, active team), and is idempotent — re-importing the same file is a no-op. |
+| 📦 **Offline device transfer** | Move a workspace between devices with no cloud and no network link between them: export a portable backup (a plain ZIP — it is **not encrypted**, so keep it private), carry it across (AirDrop / Files / USB), and **merge it in additively**. The merge keeps every local item, dedupes by id + content signature, protects local config (passphrase, active team), and is idempotent — re-importing the same file is a no-op. |
 | 🚫 **No telemetry** | Zero network calls outside of (a) the auto-updater hitting GitHub Releases, and (b) the AI assistant hitting whichever provider you configured. Nothing else dials home. |
 | 🏢 **Enterprise / shared-device ready** | Three onboarding presets (Personal / Work-Standard / Work-Strict) the user picks at first launch, plus an admin-deployable `policy.json` (cross-platform, 5-layer search) that **wins over the user preset** and gates Sync / AI / Export / Updates with defence-in-depth in the Electron main process. A separate "Cadence for Work" build flavor (`npm run build:enterprise`) ships a locked binary with its own app ID and update channel. See [docs/ENTERPRISE.md](docs/ENTERPRISE.md) and [docs/DEPLOYMENT-AND-POLICY.md](docs/DEPLOYMENT-AND-POLICY.md) (updates, fresh installs, self-restriction). |
 
@@ -193,7 +193,7 @@ Because the DMG is signed with a **Developer ID Application** certificate **and*
    **Android:** tap **⋮** → **Install app**.
 3. Launch from the home-screen icon. The app opens full-screen and jumps straight to the To-dos page.
 
-> **Mobile data is separate by default.** The PWA stores its own data in the phone's `localStorage` (independent of the desktop's encrypted file). To move data between devices use [Cloud sync (Google Drive)](#cloud-sync-google-drive-end-to-end-encrypted), or [move an encrypted backup file across](#move-data-between-devices-offline-no-cloud) (*Settings → Backup → Export*, then *Import / merge* on the other device).
+> **Mobile data is separate by default.** The PWA stores its own data in the phone's `localStorage` (independent of the desktop's encrypted file). To move data between devices [move a portable backup file across](#move-data-between-devices-offline-no-cloud) (*Settings → Backup → Export*, then *Import / merge* on the other device).
 
 ### Unsigned local builds
 
@@ -219,7 +219,7 @@ The official Releases DMG never needs this.
    - See everything due today/this week in *Agenda*.
 5. Press <kbd>⌘ K</kbd> (or <kbd>Ctrl K</kbd>) anywhere to jump to people, items or pages instantly.
 
-> Tip: install Cadence on a second machine and use *Settings → Backup → Export JSON / Import JSON* to move your data — or skip the manual step entirely with **Settings → Cloud sync (Google Drive)** for end-to-end-encrypted background sync between every device.
+> Tip: install Cadence on a second machine and use *Settings → Backup → Export JSON / Import JSON* to move your data.
 
 ---
 
@@ -485,9 +485,9 @@ This panel is purely diagnostic — you can ignore it forever and nothing degrad
 
 > **Companion guide:** For the recommended **one user, desktop + phone** workflow, troubleshooting, and golden rules, see **[docs/LAN-SYNC.md](docs/LAN-SYNC.md)**.
 
-When you don't want any cloud service involved, Cadence moves a workspace between devices with an **encrypted portable backup file** — no network connection between the devices is ever required:
+When you don't want any cloud service involved, Cadence moves a workspace between devices with a **portable backup file** (plain ZIP, not encrypted — keep it private) — no network connection between the devices is ever required:
 
-1. On the source device, open **Settings → Backup** and **Export** a portable backup (a `.zip` that bundles the encrypted workspace JSON plus image attachments, or a plain JSON export for text-only).
+1. On the source device, open **Settings → Backup** and **Export** a portable backup (a `.zip` that bundles the workspace JSON plus image attachments, unencrypted, or a plain JSON export for text-only).
 2. Carry the file across by whatever means you already trust — AirDrop, Files, a USB stick, a private chat to yourself.
 3. On the target device, open **Settings → Backup** and choose **Import / merge**.
 
@@ -498,85 +498,7 @@ There are two distinct import modes, and the difference matters for data safety:
 
 The merge is implemented by `mergeAppendWorkspace` (`src/core/model/mergeWorkspace.ts`) and deduplicates by entity `id` first, then by a stable content signature, so the same logical note created independently on both devices doesn't import as a near-duplicate. Because there are no tombstones in the model, a merge can never delete anything — the documented trade-off is that re-importing an old file can resurrect an item you had deleted locally.
 
-For an always-on, anywhere experience (not just file transfer), see **Cloud sync (Google Drive)** below.
-
----
-
-### Cloud sync (Google Drive, end-to-end encrypted)
-
-Moving a backup file by hand is great when you're at your desk, but the moment you want both devices to stay current on their own, manual transfer gets tedious. **Cloud sync** plugs Cadence into your own Google Drive so the same encrypted snapshot is reachable from anywhere — without giving Google the ability to read your notes.
-
-#### What you get
-
-- **End-to-end encryption.** Snapshots are wrapped with AES-256-GCM (PBKDF2-SHA-256 KDF, 200 000 iterations, fresh salt + IV per upload) **on your device** before they leave it. Google sees an opaque ~1 MB blob and nothing else. The decryption passphrase never touches Google's servers.
-- **Drive `appData` scope.** Cadence stores its snapshot in the hidden per-app data folder that Drive provides specifically for this purpose. The file is invisible in your Drive UI, isolated from every other app you connect, and counts against your normal Drive quota.
-- **Optimistic concurrency.** Every push compares the file's `version` against what you last saw — a conflict triggers a clear prompt with explicit "Pull first" / "Override remote" buttons instead of clobbering remote edits silently.
-- **Resilient HTTP.** Transient Drive errors (5xx, 429 rate-limit, network blips) are retried automatically — three attempts with full-jitter exponential backoff before the UI sees a failure. Persistent errors surface as a clear banner in Settings rather than dying silently.
-- **OAuth PKCE.** No client secret ships in the bundle. The browser proves possession of a random code verifier at token-exchange time, so an intercepted auth code is useless to an attacker.
-- **Self-defending pulls.** The remote snapshot is validated by `parseRemoteSnapshot` before it can replace local data — a malformed or empty blob is rejected and the user keeps editing locally instead of waking up to an empty workspace.
-- **Workspace shared drives** (advanced). Power users can carry the same model into Google Workspace shared drives by extending the backend in `src/lib/syncBackends/gdrive.ts` — the appData design already isolates per-user data, and shared drives just slot in as scoped parents.
-
-#### Setup (~5 minutes, free)
-
-You only need to do this if you forked Cadence or are running a build that did not ship with an OAuth client ID embedded. The official build ships with a working client ID baked in; on that build, **Settings → Cloud sync** opens straight to a "Sign in with Google" button and you can skip this section entirely.
-
-There are two ways to wire in your own client ID:
-
-##### A. In-app (recommended — DMG / portable / non-rebuilt installs)
-
-Cadence supports user-supplied client IDs at runtime, so you do **not** have to fork the repo or set environment variables. Just open the app:
-
-1. **Settings → Cloud sync (Google Drive)** — the card shows the "Setup required" banner.
-2. Walk through the 5 numbered steps shown in the card (or follow the same steps below — they're identical) to create a Google Cloud project and an OAuth Web client ID.
-3. Tap **"I have my client ID — paste it here"**, paste the value, **Save client ID**.
-4. The card flips into the connected-state UI. Click **Sign in with Google**.
-
-The client ID is stored in `localStorage` under `cadence.sync.gdrive.clientId.v1`. To clear it later, expand the same card and use **Clear saved ID**.
-
-##### B. Build-time env (fork maintainers)
-
-If you're publishing your own build of Cadence and want every install to come pre-configured, embed the client ID at compile time:
-
-1. Open the [Google Cloud Console](https://console.cloud.google.com/) and create a new project (any name works — "cadence-sync" is fine).
-2. In the new project: **APIs & Services → Library → Google Drive API → Enable**.
-3. **APIs & Services → OAuth consent screen**. Choose "External" (for personal use) or "Internal" (only your Google Workspace organisation will sign in). Fill in:
-   - App name: anything you'll recognise
-   - User support email: your email
-   - Developer contact: your email
-   - Scopes: add `…/auth/drive.appdata` (no other scopes — keeps the consent screen lean)
-   - Test users (External only): add the Google accounts you want to sign in with, until you publish
-4. **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
-   - Application type: **Web application**
-   - Authorized JavaScript origins: every PWA host you'll use, for example:
-     - `https://<your-github-user>.github.io`
-     - `http://localhost:5173` (dev)
-   - Authorized redirect URIs (same origins with the PWA path):
-     - `https://<your-github-user>.github.io/cadence/app/?oauth=google`
-     - `http://localhost:5173/?oauth=google`
-   - Copy the resulting **Client ID** (looks like `1234567890-abcdef.apps.googleusercontent.com`).
-5. Drop it into your `.env`:
-   ```bash
-   # .env (or .env.local — both are git-ignored)
-   VITE_GOOGLE_OAUTH_CLIENT_ID=1234567890-abcdef.apps.googleusercontent.com
-   ```
-6. Rebuild (`npm run build:pwa`) and deploy. The new build picks up the client ID at import time.
-
-> The client ID is **public information**, not a secret. The PKCE flow is what proves it's your app each time — see [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636) if you're curious. Don't commit a service-account JSON file or an OAuth client *secret* — Cadence doesn't need either.
-
-#### Using it
-
-1. Open the PWA, **Settings → Cloud sync (Google Drive)**.
-2. Tap **Sign in with Google**. The OAuth popup opens; consent on the screen Google shows.
-3. Set a **sync passphrase** the first time. 8+ characters. Cadence uses it to derive the encryption key — write it down, because losing it makes the Drive snapshot unrecoverable. (There is no recovery — that's the whole point of E2E encryption.)
-4. Use **Auto-sync provider** to pick LAN, Drive, or Off. The provider you pick drives the background sync loop; the other one stays available for manual push/pull.
-
-On a new device (same Google account, same passphrase): sign in to Drive, enter the passphrase, hit **Pull now**. Cadence reads the encrypted blob, decrypts it locally, and seeds the workspace.
-
-#### Limitations (today)
-
-- **Desktop Electron build**: Drive sync is browser-only for now. The desktop card shows a placeholder. The LAN card keeps doing its job and a future release will add Drive sign-in via a custom protocol callback so the Electron app gets the same flow.
-- **One snapshot per Drive**: Versioned restore points are on the roadmap (Drive keeps history on its side, but we don't surface it in the UI yet). For belt-and-braces redundancy, use **Settings → Export backup** alongside cloud sync — that's a fully decrypted JSON, on your own disk.
-- **Conflict resolution is manual**: if two devices push at the same time, one wins on the server, the other sees a conflict banner and chooses whether to pull-first or override. Future work will offer field-level merge for the obvious cases (different teams edited on different devices).
+There is no sync service: Cadence is local-first, so a second device gets your data only when you carry a file across. Live LAN pairing and Google Drive sync were retired.
 
 ---
 
@@ -1052,11 +974,11 @@ The signed binary uses the entitlements at [`build/entitlements.mac.plist`](./bu
 │       ├── AnalyticsPage.tsx       # Local analytics dashboard (SVG charts)
 │       ├── People.tsx              # Person workspace + Timeline + 1:1 Mode tabs
 │       ├── ProfilePage.tsx         # Avatar, view/edit toggle, change-password tab
-│       ├── Settings.tsx            # Theme, PIN, AI key, backups & recovery, cloud sync
+│       ├── Settings.tsx            # Theme, PIN, AI key, backups & recovery
 │       └── LoginPage.tsx / RegisterPage.tsx
 ├── public/                         # PWA static assets (manifest, sw.js, icons)
 ├── docs/
-│   ├── LAN-SYNC.md                 # Offline device-to-device transfer (encrypted backup + merge)
+│   ├── LAN-SYNC.md                 # Offline device-to-device transfer (portable backup + merge)
 │   ├── HEALTH-CHECK-AND-ROADMAP.md # Living health score + phased roadmap
 │   ├── electron-guide.md           # Practical Electron tutorial walking through this codebase
 │   ├── DEPLOYMENT-AND-POLICY.md
@@ -1086,7 +1008,7 @@ that doubles as a hands-on Electron tutorial:
 > **[docs/electron-guide.md](docs/electron-guide.md)** — a practical Electron
 > tutorial walking through this codebase: the two-process model, the preload
 > bridge, IPC patterns, the security checklist, AES-256-GCM encryption at
-> rest, the auto-update flow, the Google Drive OAuth loopback server, the build pipeline,
+> rest, the auto-update flow, the build pipeline,
 > debugging tips and the most common pitfalls.
 
 It's written so a developer who has never touched Electron can read it

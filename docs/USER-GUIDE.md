@@ -160,12 +160,12 @@ Cadence is designed so **existing users are never forced to migrate**:
 
 ---
 
-## Sync (optional)
+## Moving data between devices
 
-Both are off by default. See [LAN-SYNC.md](./LAN-SYNC.md) and README for setup.
+Cadence has no sync service. Live LAN pairing and Google Drive sync were retired.
 
-- **Offline device transfer** — export an encrypted backup file, carry it across (AirDrop / Files / USB), and **merge it in** on the other device. Additive and lossless; no cloud, no network link between devices.
-- **Cloud sync (Google Drive)** — end-to-end encrypted backup to *your* Drive with a sync passphrase you choose.
+- **Offline device transfer** — export a portable backup file (a plain ZIP, **not encrypted**, so keep it private), carry it across (AirDrop / Files / USB), and **merge it in** on the other device (*Settings → Data & backup → Merge from another device*). Additive and lossless; no cloud, no network link between devices.
+- Merge keeps what is on the target device. If the same item was edited on both devices, the copy already on the target stays. Deletions do not travel.
 
 ---
 
@@ -225,7 +225,7 @@ Native macOS menus expose additional shortcuts when running the desktop build, i
 
 ## Privacy in one paragraph
 
-Your workspace is encrypted on disk (desktop), stored locally, and never sent to Cadence servers. Network use is limited to: GitHub Releases (auto-update), your chosen AI provider (if configured), and Google Drive (if cloud sync is enabled). No telemetry.
+Your workspace data file, images and note version history are encrypted on disk (desktop). Everything is stored locally, and never sent to Cadence servers. Network use is limited to: GitHub Releases (auto-update) and your chosen AI provider (if configured). No telemetry.
 
 ---
 

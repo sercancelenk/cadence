@@ -40,6 +40,7 @@ const {
   shell,
   session,
   safeStorage,
+  powerMonitor,
   utilityProcess,
 } = require('electron');
 
@@ -118,6 +119,7 @@ const {
   encryptBuffer,
   decryptBuffer,
 } = require('./persistence/dataEnvelope.cjs');
+const { stageRekey, commitStaged, discardStaged, finalizeStaged } = require('./persistence/sidecarRekey.cjs');
 const { unwrapStoredWorkspace, wrapCommitEnvelope } = require('./persistence/commitEnvelope.cjs');
 const {
   splitWorkspaceForMonthlyShards,
@@ -170,8 +172,11 @@ const {
   pairedNoteHistoryBackupDir,
   importNoteHistoryFromDir,
   exportNoteHistoryToDir,
-  collectReferencedAttachmentIdsFromNoteHistory,
+  exportNoteHistoryToDirAsync,
+  collectReferencedAttachmentsFromNoteHistory,
   countNoteHistoryRevisions,
+  upgradeNoteHistoryToEncrypted,
+  listNoteHistoryFiles,
 } = require('./noteHistory.cjs');
 const {
   RECOVERY_CODE_COUNT,
@@ -185,6 +190,9 @@ const {
   writePrefs: writeDailyBackupPrefs,
   normalizePrefs: normalizeDailyBackupPrefs,
   maybeRunDailyBackupMirror,
+  prefsAfterChoosingMirrorDir,
+  dailyBackupDue,
+  listDailyMirrorFolders,
 } = require('./dailyBackupMirror.cjs');
 const { getRetentionState, changeRetention } = require('./backupRetention.cjs');
 const { pruneSnapshotDir, readSnapshotPrefs } = require('./persistence/snapshotRetention.cjs');
@@ -831,7 +839,13 @@ function pruneOrphanAttachments(userId, payload) {
       return { ok: true, pruned: 0, skipped: 'locked-notes-unscannable' };
     }
     const referenced = collectReferencedAttachmentIdsFromPayload(payload);
-    for (const id of collectReferencedAttachmentIdsFromNoteHistory(userId)) {
+    // A revision we cannot open might still use an image; deleting on a guess
+    // would lose it for good, so skip deletion entirely.
+    const historyRefs = collectReferencedAttachmentsFromNoteHistory(userId);
+    if (!historyRefs.complete) {
+      return { ok: true, pruned: 0, skipped: 'note-history-unreadable' };
+    }
+    for (const id of historyRefs.ids) {
       referenced.add(id);
     }
     const now = Date.now();
@@ -928,6 +942,31 @@ function exportAttachmentsPortableToDir(userId, destDir) {
     exported += 1;
   }
   return exported;
+}
+
+/**
+ * Same files as `exportAttachmentsPortableToDir`, but hands the event loop back after each image so
+ * a big library does not freeze the app while the background daily backup runs.
+ */
+async function exportAttachmentsPortableToDirAsync(userId, destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  const account = readAccounts().users.find((x) => x.id === userId);
+  const sealed = !!account && typeof account.encSalt === 'string' && !!account.encSalt;
+  let exported = 0;
+  let skipped = 0;
+  for (const id of listAttachmentIdsOnDisk(userId)) {
+    // The key can go away while this runs (signing out). Stop rather than write a backup without images.
+    if (sealed && !dataKeys.has(userId)) throw new Error('Signed out during the backup.');
+    const bytes = readAttachmentBytes(userId, id);
+    if (!bytes?.length) {
+      skipped += 1;
+    } else {
+      fs.writeFileSync(path.join(destDir, `${id}.bin`), bytes);
+      exported += 1;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  return { count: exported, skipped };
 }
 
 /**
@@ -1122,12 +1161,18 @@ function writeThrottle(map) {
       delete map[k];
     }
   }
-  // Hard cap: if a flood of distinct emails still bloats the map, evict the
-  // least-recently-touched entries (never an actively-locked one if avoidable).
+  // Hard cap: if a flood of distinct emails still bloats the map, evict the least-recently-touched
+  // entries (never an actively-locked one if avoidable). Buckets named after an email are the only
+  // ones an attacker can create at will, so they go first; the PIN and per-account password buckets
+  // stay unless nothing else is left, or a flood could reset the counter it is meant to defeat.
   const keys = Object.keys(map);
   if (keys.length > THROTTLE_MAX_BUCKETS) {
+    const isEmailBucket = (k) => k.startsWith('acct:') || k.startsWith('recover:');
     keys
-      .sort((a, b) => (map[a].lastAttempt || 0) - (map[b].lastAttempt || 0))
+      .sort((a, b) => {
+        const byKind = Number(isEmailBucket(b)) - Number(isEmailBucket(a));
+        return byKind || (map[a].lastAttempt || 0) - (map[b].lastAttempt || 0);
+      })
       .slice(0, keys.length - THROTTLE_MAX_BUCKETS)
       .forEach((k) => {
         if ((map[k].lockedUntil || 0) <= now) delete map[k];
@@ -1141,7 +1186,11 @@ function checkAuthThrottle(bucket) {
   const e = readThrottle()[bucket];
   if (!e) return { allowed: true, retryAfterMs: 0 };
   const now = Date.now();
-  if ((e.lockedUntil || 0) > now) return { allowed: false, retryAfterMs: e.lockedUntil - now };
+  const remaining = (e.lockedUntil || 0) - now;
+  // No lock is ever set for longer than the cap, so a longer one means the clock was set ahead and
+  // corrected. The record is wrong, not the user: let the attempt through (a miss starts a fresh count).
+  if (remaining > THROTTLE_MAX_LOCK_MS) return { allowed: true, retryAfterMs: 0 };
+  if (remaining > 0) return { allowed: false, retryAfterMs: remaining };
   return { allowed: true, retryAfterMs: 0 };
 }
 
@@ -1149,7 +1198,8 @@ function recordAuthFailure(bucket) {
   const map = readThrottle();
   const now = Date.now();
   let e = map[bucket];
-  if (!e || now - (e.lastAttempt || 0) > THROTTLE_RESET_MS) {
+  // A record dated in the future (clock moved back) is stale: start counting again.
+  if (!e || now - (e.lastAttempt || 0) > THROTTLE_RESET_MS || (e.lastAttempt || 0) > now) {
     e = { fails: 0, lockedUntil: 0, lastAttempt: now };
   }
   e.fails += 1;
@@ -1218,6 +1268,9 @@ function deriveDataKey(password, encSaltHex) {
  * Electron process; cleared on logout / password change. Never persisted.
  */
 const dataKeys = new Map();
+
+// Version history is sealed under the same per-user key as the workspace.
+initNoteHistory(() => app.getPath('userData'), (uid) => dataKeys.get(uid) || null);
 
 /**
  * Atomic binary write (same durability guarantees as `writeJsonText`).
@@ -1289,6 +1342,71 @@ function writeAttachmentBytes(userId, attachmentId, buffer, mimeType) {
   const ok = writeBinaryFile(filePath, out);
   if (!ok) return { ok: false, error: 'Could not write attachment file.' };
   return { ok: true, mimeType: mimeType || 'application/octet-stream' };
+}
+
+// Images and note history are sealed under the password-derived key, so a flow that rotates that
+// key has to carry them along. See persistence/sidecarRekey.cjs for why it is done in stages.
+const ATTACHMENT_CODEC = { open: decryptBuffer, seal: encryptBuffer, sealPlain: false };
+const HISTORY_CODEC = {
+  open: (text, key) => {
+    const plain = decryptPayload(text, key);
+    return plain == null ? null : Buffer.from(plain, 'utf8');
+  },
+  seal: (bytes, key) => encryptPayload(bytes.toString('utf8'), key),
+  sealPlain: true,
+};
+
+function listAttachmentFiles(userId) {
+  const dir = attachmentsDirForUser(userId);
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((name) => /\.(cadenc|bin)$/.test(name))
+    .map((name) => path.join(dir, name));
+}
+
+/** Step 1: write copies under the new key next to the live files. Changes nothing the user can see. */
+function stageUserSidecars(userId, fromKey, toKey) {
+  try {
+    const images = stageRekey(listAttachmentFiles(userId), fromKey, toKey, ATTACHMENT_CODEC, writeBinaryFile);
+    const history = stageRekey(listNoteHistoryFiles(userId), fromKey, toKey, HISTORY_CODEC, writeBinaryFile);
+    return { ok: images.ok && history.ok, images, history };
+  } catch (err) {
+    console.error('[cadence] sidecar staging threw', err);
+    return { ok: false };
+  }
+}
+
+/** Step 3: swap the copies in. Anything left over is finished at the next sign-in. */
+function commitUserSidecars(userId, toKey) {
+  try {
+    const images = commitStaged(listAttachmentFiles(userId), toKey, ATTACHMENT_CODEC);
+    const history = commitStaged(listNoteHistoryFiles(userId), toKey, HISTORY_CODEC);
+    if (!images.ok || !history.ok) {
+      console.warn('[cadence] some re-keyed files were not swapped in; they are finished at the next sign-in');
+    }
+  } catch (err) {
+    console.error('[cadence] sidecar commit threw', err);
+  }
+}
+
+function discardUserSidecars(userId) {
+  try {
+    discardStaged(listAttachmentFiles(userId));
+    discardStaged(listNoteHistoryFiles(userId));
+  } catch (err) {
+    console.warn('[cadence] sidecar discard failed', err);
+  }
+}
+
+/** Finish a swap that a crash cut short; cheap when there is nothing to do. */
+function finalizeUserSidecars(userId, key) {
+  try {
+    finalizeStaged(listAttachmentFiles(userId), key, ATTACHMENT_CODEC);
+    finalizeStaged(listNoteHistoryFiles(userId), key, HISTORY_CODEC);
+  } catch (err) {
+    console.warn('[cadence] sidecar finalize failed', err);
+  }
 }
 
 function detectAttachmentMime(bytes) {
@@ -2947,10 +3065,9 @@ function dailyBackupMirrorDeps(userId) {
     userId,
     appSlug: APP_SLUG,
     writeJsonText,
-    exportAttachments: (destDir) => exportAttachmentsPortableToDir(userId, destDir),
-    exportNoteHistory: (destFolder) => {
-      exportNoteHistoryToDir(userId, destFolder);
-    },
+    // The daily backup runs in the background: both exporters give the event loop back between files.
+    exportAttachments: (destDir) => exportAttachmentsPortableToDirAsync(userId, destDir),
+    exportNoteHistory: (destFolder) => exportNoteHistoryToDirAsync(userId, destFolder),
     countNoteHistoryRevisions: () => countNoteHistoryRevisions(userId),
   };
 }
@@ -2959,21 +3076,62 @@ function scheduleDailyBackupMirror(userId, workspacePayload, { force = false } =
   if (!userId || !workspacePayload || typeof workspacePayload !== 'object') return;
   // Same policy gate as manual export — never auto-dump when dataExport is off.
   if (!isFeatureAllowed('dataExport')) return;
+  mirrorScheduled.add(userId);
   setImmediate(() => {
-    try {
-      const result = maybeRunDailyBackupMirror({
-        ...dailyBackupMirrorDeps(userId),
-        workspacePayload,
-        force,
-      });
-      if (result.ran && !result.ok) {
-        console.warn('[cadence] daily backup mirror failed', result.error);
+    void (async () => {
+      try {
+        const result = await maybeRunDailyBackupMirror({
+          ...dailyBackupMirrorDeps(userId),
+          workspacePayload,
+          force,
+        });
+        if (result.ran && !result.ok) {
+          console.warn('[cadence] daily backup mirror failed', result.error);
+        }
+      } catch (err) {
+        console.warn('[cadence] daily backup mirror threw (ignored)', err);
+      } finally {
+        mirrorScheduled.delete(userId);
       }
-    } catch (err) {
-      console.warn('[cadence] daily backup mirror threw (ignored)', err);
-    }
+    })();
   });
 }
+
+/** Accounts whose daily backup is queued or running, so repeated triggers do not pile up. */
+const mirrorScheduled = new Set();
+
+/**
+ * Make today's backup if it is still missing. Safe to call as often as we like: it answers from a small
+ * prefs file unless a backup is due, and the work itself runs in the background in small steps. Called when
+ * the app starts or resumes a session, comes back to the foreground, wakes from sleep, and on a timer.
+ *
+ * @returns {{ ok: true, started: boolean }}
+ */
+function ensureDailyBackupToday() {
+  const none = { ok: true, started: false };
+  try {
+    const uid = readSessionUserId();
+    if (!uid || mirrorScheduled.has(uid)) return none;
+    if (!isFeatureAllowed('dataExport')) return none;
+    if (!dailyBackupDue(dailyBackupMirrorDeps(uid))) return none;
+    // Images are sealed with the data key. Without it they would be skipped and the backup would
+    // still look complete, so wait until the key is in memory.
+    const account = readAccounts().users.find((x) => x.id === uid);
+    const sealed = !!account && typeof account.encSalt === 'string' && !!account.encSalt;
+    if (sealed && !dataKeys.has(uid)) return none;
+    const workspace = readUserData(uid);
+    if (!workspace || typeof workspace !== 'object') return none;
+    scheduleDailyBackupMirror(uid, workspace);
+    return { ok: true, started: true };
+  } catch (err) {
+    console.warn('[cadence] ensureDailyBackupToday failed (ignored)', err);
+    return none;
+  }
+}
+
+// Not exposed through the preload bridge on purpose: the app triggers this itself (see the callers above).
+// The handler exists so the same entry point can be exercised end to end in electron/mainSavePath.test.ts.
+ipcMain.handle('backupMirror:ensureToday', () => ensureDailyBackupToday());
 
 function getDailyBackupMirrorStatus(userId) {
   if (!userId) {
@@ -3023,14 +3181,15 @@ ipcMain.handle('backupMirror:chooseDir', async () => {
   const mirrorDir = pick.filePaths[0];
   const deps = dailyBackupMirrorDeps(uid);
   const prefs = readDailyBackupPrefs(deps);
-  // Clear lastDailyDate so the next save/login (or runNow) writes today promptly.
-  const next = {
-    ...prefs,
-    mirrorDir,
-    lastDailyDate: null,
-    lastError: null,
-    lastErrorAt: null,
-  };
+  // A first-time folder keeps today and yesterday; one already running keeps its size.
+  let existingFolderCount = 0;
+  try {
+    existingFolderCount = listDailyMirrorFolders({ fs, path, mirrorDir, appSlug: APP_SLUG, userId: uid }).folders.length;
+  } catch {
+    // Cannot tell: assume there are backups, so no size is imposed.
+    existingFolderCount = 1;
+  }
+  const next = prefsAfterChoosingMirrorDir(prefs, mirrorDir, existingFolderCount);
   const written = writeDailyBackupPrefs(deps, next);
   if (!written.ok) {
     return { ok: false, error: written.error || 'Could not save backup folder preference.' };
@@ -3057,7 +3216,7 @@ ipcMain.handle('backupMirror:clearDir', () => {
   return { ok: true, prefs: normalizeDailyBackupPrefs(next) };
 });
 
-ipcMain.handle('backupMirror:runNow', (_evt, { data: payload } = {}) => {
+ipcMain.handle('backupMirror:runNow', async (_evt, { data: payload } = {}) => {
   const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
   if (blocked) return blocked;
   const uid = readSessionUserId();
@@ -3081,7 +3240,7 @@ ipcMain.handle('backupMirror:runNow', (_evt, { data: payload } = {}) => {
       return { ok: false, error: 'No workspace data available to back up.' };
     }
     // Force rewrite via .partial → rename (never delete today's final first).
-    const result = maybeRunDailyBackupMirror({
+    const result = await maybeRunDailyBackupMirror({
       ...deps,
       workspacePayload,
       force: true,
@@ -4450,15 +4609,37 @@ ipcMain.handle('auth:status', () => {
   return { enabled: fs.existsSync(authPath()) };
 });
 
-ipcMain.handle('auth:setPin', (_evt, { pin } = {}) => {
+ipcMain.handle('auth:setPin', (_evt, { pin, currentPin } = {}) => {
   const safe = normalizePin(pin);
   if (safe.length < 4) {
     return { ok: false, error: 'PIN must be at least 4 characters.' };
+  }
+  // Replacing a PIN is as sensitive as removing one: it needs the current PIN.
+  const existing = readAuth();
+  if (existing && typeof existing.salt === 'string' && typeof existing.hash === 'string') {
+    const gate = checkAuthThrottle('pin');
+    if (!gate.allowed) return { ok: false, lockedOut: true, retryAfterMs: gate.retryAfterMs, error: authLockoutMessage(gate.retryAfterMs) };
+    const current = normalizePin(currentPin);
+    let matches = false;
+    try {
+      const got = hashWithSalt(current, existing.salt);
+      const exp = Buffer.from(existing.hash, 'hex');
+      matches = !!current && got.length === exp.length && crypto.timingSafeEqual(got, exp);
+    } catch {
+      matches = false;
+    }
+    if (!matches) {
+      recordAuthFailure('pin');
+      return { ok: false, error: 'The current PIN is required to set a new one.' };
+    }
+    clearAuthFailures('pin');
   }
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = hashWithSalt(safe, salt).toString('hex');
   const wrote = writeJsonSafe(authPath(), { salt, hash });
   if (!wrote) return { ok: false, error: 'Could not save PIN.' };
+  // A new PIN starts with a clean slate; failures against the old one say nothing about it.
+  clearAuthFailures('pin');
 
   // Self-verify: read the file back and re-hash with the exact same plaintext.
   // If the round-trip fails for any reason (encoding, FS quirk, antivirus
@@ -4506,21 +4687,12 @@ ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
     const got = hashWithSalt(safe, d.salt);
     const exp = Buffer.from(d.hash, 'hex');
     if (got.length !== exp.length) {
-      console.warn(
-        '[cadence] auth:verify length mismatch — got', got.length, 'expected', exp.length,
-        'salt[0..6]=', d.salt.slice(0, 6), 'authPath=', authPath(),
-      );
+      console.warn('[cadence] auth:verify length mismatch — got', got.length, 'expected', exp.length);
       recordAuthFailure('pin');
       return { ok: false };
     }
     const matched = crypto.timingSafeEqual(got, exp);
     if (!matched) {
-      console.warn(
-        '[cadence] auth:verify mismatch — pin.length=', safe.length,
-        'salt[0..6]=', d.salt.slice(0, 6),
-        'storedHash[0..8]=', d.hash.slice(0, 8),
-        'authPath=', authPath(),
-      );
       recordAuthFailure('pin');
       return { ok: false };
     }
@@ -4535,14 +4707,21 @@ ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
 ipcMain.handle('auth:clear', (_evt, { pin } = {}) => {
   const d = readAuth();
   if (!d) return { ok: true };
+  // Same budget as unlocking: removal must not be a way around the PIN lockout.
+  const gate = checkAuthThrottle('pin');
+  if (!gate.allowed) {
+    return { ok: false, lockedOut: true, retryAfterMs: gate.retryAfterMs, error: authLockoutMessage(gate.retryAfterMs) };
+  }
   const safe = normalizePin(pin);
   if (!safe) return { ok: false, error: 'PIN required.' };
   try {
     const got = hashWithSalt(safe, d.salt);
     const exp = Buffer.from(d.hash, 'hex');
     if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
+      recordAuthFailure('pin');
       return { ok: false, error: 'Incorrect PIN.' };
     }
+    clearAuthFailures('pin');
     fs.unlinkSync(authPath());
     return { ok: true };
   } catch (e) {
@@ -4559,18 +4738,23 @@ ipcMain.handle('auth:clear', (_evt, { pin } = {}) => {
 // password). We still add a small in-memory rate limit so an unattended
 // machine doesn't let an attacker test thousands of passwords by mashing
 // "Reset PIN".
-const pinResetAttempts = { count: 0, blockedUntil: 0 };
-const PIN_RESET_MAX_ATTEMPTS = 5;
-const PIN_RESET_BLOCK_MS = 30_000;
+// Every check that takes the signed-in account password shares this one persisted
+// budget, so none of them is a way around the others and a restart does not reset it.
+function sessionPasswordBucket(uid) {
+  return `session-password:${uid}`;
+}
+
+// The lock screen's "Forgot PIN" gets its own budget so typos elsewhere (Notes recovery setup, say)
+// can never leave a user without a way past a forgotten PIN.
+function pinResetBucket(uid) {
+  return `pin-reset:${uid}`;
+}
 
 ipcMain.handle('auth:resetWithAccountPassword', (_evt, { password } = {}) => {
-  const now = Date.now();
-  if (pinResetAttempts.blockedUntil > now) {
-    const remainingSec = Math.ceil((pinResetAttempts.blockedUntil - now) / 1000);
-    return {
-      ok: false,
-      error: `Too many attempts. Try again in ${remainingSec}s.`,
-    };
+  const resetUid = readSessionUserId();
+  if (resetUid) {
+    const gate = checkAuthThrottle(pinResetBucket(resetUid));
+    if (!gate.allowed) return { ok: false, lockedOut: true, retryAfterMs: gate.retryAfterMs, error: authLockoutMessage(gate.retryAfterMs) };
   }
   if (typeof password !== 'string' || !password) {
     return { ok: false, error: 'Account password is required.' };
@@ -4586,15 +4770,12 @@ ipcMain.handle('auth:resetWithAccountPassword', (_evt, { password } = {}) => {
     const got = hashWithSalt(password, u.salt);
     const exp = Buffer.from(u.hash, 'hex');
     if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
-      pinResetAttempts.count += 1;
-      if (pinResetAttempts.count >= PIN_RESET_MAX_ATTEMPTS) {
-        pinResetAttempts.blockedUntil = now + PIN_RESET_BLOCK_MS;
-        pinResetAttempts.count = 0;
-      }
+      recordAuthFailure(pinResetBucket(uid));
       return { ok: false, error: 'Incorrect account password.' };
     }
-    pinResetAttempts.count = 0;
-    pinResetAttempts.blockedUntil = 0;
+    clearAuthFailures(pinResetBucket(uid));
+    // Proving the account password also lifts a PIN lockout: the old PIN is being thrown away.
+    clearAuthFailures('pin');
     if (fs.existsSync(authPath())) {
       try { fs.unlinkSync(authPath()); } catch (err) {
         return { ok: false, error: `Could not remove PIN file: ${String(err)}` };
@@ -4672,6 +4853,16 @@ ipcMain.handle('account:session', () => {
       if (cached && encryptedHead && decryptPayload(encryptedHead, cached) != null) {
         dataKeys.set(u.id, cached);
         dataFileIsEncrypted = false; // Resumed — no re-auth needed.
+        finalizeUserSidecars(u.id, cached);
+        // Opened after days away (or just today's first open): make today's backup in the background.
+        setImmediate(() => ensureDailyBackupToday());
+        setImmediate(() => {
+          try {
+            upgradeNoteHistoryToEncrypted(u.id);
+          } catch (err) {
+            console.warn('[cadence] note-history upgrade failed (continuing)', err);
+          }
+        });
       } else if (cached) {
         // The cache is unusable for this file. Drop it so the next
         // successful login can rewrite a valid one.
@@ -4804,6 +4995,12 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
   const accounts = readAccounts();
   const u = accounts.users.find((x) => x.email === em);
   if (!u || typeof u.salt !== 'string' || typeof u.hash !== 'string') {
+    // Pay for one hash anyway so an unknown email takes as long as a wrong password.
+    try {
+      hashWithSalt(password, '00'.repeat(16));
+    } catch {
+      /* timing only */
+    }
     recordAuthFailure(bucket);
     return { ok: false, error: 'Incorrect email or password.' };
   }
@@ -4861,6 +5058,17 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
         }
       }
     }
+
+    // Finish a password change that a crash cut short, then seal version history that an
+    // older version left as plaintext.
+    finalizeUserSidecars(u.id, derivedKey);
+    setImmediate(() => {
+      try {
+        upgradeNoteHistoryToEncrypted(u.id);
+      } catch (err) {
+        console.warn('[cadence] note-history upgrade failed (continuing)', err);
+      }
+    });
 
     // Take a snapshot right after we successfully derived the key, so even
     // a buggy in-session save can never destroy this known-good baseline.
@@ -4940,15 +5148,21 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
     return { ok: false, error: 'Account not found.' };
   }
 
+  const changeGate = checkAuthThrottle(sessionPasswordBucket(uid));
+  if (!changeGate.allowed) {
+    return { ok: false, lockedOut: true, retryAfterMs: changeGate.retryAfterMs, error: authLockoutMessage(changeGate.retryAfterMs) };
+  }
   try {
     const got = hashWithSalt(oldPassword, u.salt);
     const exp = Buffer.from(u.hash, 'hex');
     if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
+      recordAuthFailure(sessionPasswordBucket(uid));
       return { ok: false, error: 'Current password is incorrect.' };
     }
   } catch {
     return { ok: false, error: 'Current password is incorrect.' };
   }
+  clearAuthFailures(sessionPasswordBucket(uid));
 
   // Read merged workspace (base + monthly shards, CDNC1 envelope unwrapped) under the current key.
   const previousKey = dataKeys.get(uid);
@@ -4970,10 +5184,23 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
   const newKey = deriveDataKey(newPassword, newEncSalt);
 
   const preChangeSnapshot = snapshotCurrentDataFile(uid, 'pre-pwchange');
+  // Images and note history are carried to the new key as copies first; the live files are not
+  // touched until the new password is safely on disk.
+  if (previousKey) {
+    const staged = stageUserSidecars(uid, previousKey, newKey);
+    if (!staged.ok) {
+      discardUserSidecars(uid);
+      return {
+        ok: false,
+        error: 'Could not prepare your images and note history for the new password. Nothing was changed.',
+      };
+    }
+  }
   dataKeys.set(uid, newKey);
   if (workspacePayload != null) {
     const commitResult = commitUserData(uid, workspacePayload, { allowOverwriteUnreadable: true });
     if (!commitResult?.ok) {
+      discardUserSidecars(uid);
       if (previousKey) dataKeys.set(uid, previousKey);
       else dataKeys.delete(uid);
       return {
@@ -4992,6 +5219,7 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
     delete u.recoveryConfiguredAt;
   }
   if (!writeAccounts(accounts)) {
+    discardUserSidecars(uid);
     if (previousKey) dataKeys.set(uid, previousKey);
     else dataKeys.delete(uid);
     let restoredOk = false;
@@ -5009,6 +5237,9 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
         : 'Could not save your new password to disk and automatic restore failed. Use Settings → Backups & Recovery to restore from a snapshot.',
     };
   }
+
+  // The new password is on disk: now the copies replace the live files.
+  commitUserSidecars(uid, newKey);
 
   if (getUserRememberMe(u)) {
     persistDataKey(uid, newKey);
@@ -5032,21 +5263,14 @@ ipcMain.handle('account:hasLegacyData', () => {
 // data to the account password and want to catch a typo at setup time rather
 // than at recovery time. Rate-limited identically to `auth:resetWithAccountPassword`
 // since the brute-force surface is the same.
-const verifyAttempts = { count: 0, blockedUntil: 0 };
-const VERIFY_MAX_ATTEMPTS = 5;
-const VERIFY_BLOCK_MS = 30_000;
-
 ipcMain.handle('account:verifyPassword', (_evt, { password } = {}) => {
-  const now = Date.now();
-  if (verifyAttempts.blockedUntil > now) {
-    const remainingSec = Math.ceil((verifyAttempts.blockedUntil - now) / 1000);
-    return { ok: false, error: `Too many attempts. Try again in ${remainingSec}s.` };
-  }
   if (typeof password !== 'string' || !password) {
     return { ok: false, error: 'Account password is required.' };
   }
   const uid = readSessionUserId();
   if (!uid) return { ok: false, error: 'No active account session on this device.' };
+  const gate = checkAuthThrottle(sessionPasswordBucket(uid));
+  if (!gate.allowed) return { ok: false, lockedOut: true, retryAfterMs: gate.retryAfterMs, error: authLockoutMessage(gate.retryAfterMs) };
   const accounts = readAccounts();
   const u = accounts.users.find((x) => x.id === uid);
   if (!u || typeof u.salt !== 'string' || typeof u.hash !== 'string') {
@@ -5056,41 +5280,27 @@ ipcMain.handle('account:verifyPassword', (_evt, { password } = {}) => {
     const got = hashWithSalt(password, u.salt);
     const exp = Buffer.from(u.hash, 'hex');
     if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
-      verifyAttempts.count += 1;
-      if (verifyAttempts.count >= VERIFY_MAX_ATTEMPTS) {
-        verifyAttempts.blockedUntil = now + VERIFY_BLOCK_MS;
-        verifyAttempts.count = 0;
-      }
+      recordAuthFailure(sessionPasswordBucket(uid));
       return { ok: false, error: 'Incorrect account password.' };
     }
-    verifyAttempts.count = 0;
+    clearAuthFailures(sessionPasswordBucket(uid));
     return { ok: true };
   } catch {
     return { ok: false, error: 'Could not verify account password.' };
   }
 });
 
-const recoverWithCodesAttempts = new Map();
-
-function recoverAttemptsFor(email) {
-  const key = String(email || '').toLowerCase();
-  if (!recoverWithCodesAttempts.has(key)) {
-    recoverWithCodesAttempts.set(key, { count: 0, blockedUntil: 0 });
-  }
-  return recoverWithCodesAttempts.get(key);
+function recoverBucket(email) {
+  return `recover:${String(email || '').toLowerCase()}`;
 }
-const RECOVER_WITH_CODES_MAX_ATTEMPTS = 5;
-const RECOVER_WITH_CODES_BLOCK_MS = 60_000;
 
 /** Pending recovery envelopes — not persisted until user confirms they saved codes. */
 const pendingRecoveryEnvelopes = new Map();
 
 ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } = {}) => {
-  const now = Date.now();
-  const attempts = recoverAttemptsFor(normalizeEmail(email));
-  if (attempts.blockedUntil > now) {
-    const remainingSec = Math.ceil((attempts.blockedUntil - now) / 1000);
-    return { ok: false, error: `Too many attempts. Try again in ${remainingSec}s.` };
+  const recoverGate = checkAuthThrottle(recoverBucket(normalizeEmail(email)));
+  if (!recoverGate.allowed) {
+    return { ok: false, lockedOut: true, retryAfterMs: recoverGate.retryAfterMs, error: authLockoutMessage(recoverGate.retryAfterMs) };
   }
 
   const em = normalizeEmail(email);
@@ -5114,14 +5324,10 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
     dataKey = null;
   }
   if (!dataKey) {
-    attempts.count += 1;
-    if (attempts.count >= RECOVER_WITH_CODES_MAX_ATTEMPTS) {
-      attempts.blockedUntil = now + RECOVER_WITH_CODES_BLOCK_MS;
-      attempts.count = 0;
-    }
+    recordAuthFailure(recoverBucket(em));
     return { ok: false, error: 'Recovery codes are incorrect.' };
   }
-  attempts.count = 0;
+  clearAuthFailures(recoverBucket(em));
 
   dataKeys.set(u.id, dataKey);
   const loaded = readUserDataResult(u.id);
@@ -5146,10 +5352,21 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
   const newKey = deriveDataKey(newPassword, newEncSalt);
 
   const preRecoverySnapshot = snapshotCurrentDataFile(u.id, 'pre-recovery');
+  const stagedForRecovery = stageUserSidecars(u.id, dataKey, newKey);
+  if (!stagedForRecovery.ok) {
+    discardUserSidecars(u.id);
+    dataKeys.delete(u.id);
+    lastCommittedByUser.delete(u.id);
+    return {
+      ok: false,
+      error: 'Could not prepare your images and note history for the new password. Nothing was changed.',
+    };
+  }
   dataKeys.set(u.id, newKey);
   if (workspacePayload != null) {
     const commitResult = commitUserData(u.id, workspacePayload, { allowOverwriteUnreadable: true });
     if (!commitResult?.ok) {
+      discardUserSidecars(u.id);
       dataKeys.set(u.id, dataKey);
       return {
         ok: false,
@@ -5165,6 +5382,7 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
   delete u.recoveryEnvelope;
   delete u.recoveryConfiguredAt;
   if (!writeAccounts(accounts)) {
+    discardUserSidecars(u.id);
     dataKeys.set(u.id, dataKey);
     let restoredOk = false;
     if (preRecoverySnapshot) {
@@ -5183,6 +5401,8 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
   }
 
   dataKeys.set(u.id, newKey);
+  // The new password is on disk: now the copies replace the live files.
+  commitUserSidecars(u.id, newKey);
 
   if (getUserRememberMe(u)) {
     persistDataKey(u.id, newKey);
@@ -5218,15 +5438,21 @@ ipcMain.handle('account:setupRecovery', (_evt, { password } = {}) => {
     return { ok: false, error: 'Account not found.' };
   }
 
+  const setupGate = checkAuthThrottle(sessionPasswordBucket(uid));
+  if (!setupGate.allowed) {
+    return { ok: false, lockedOut: true, retryAfterMs: setupGate.retryAfterMs, error: authLockoutMessage(setupGate.retryAfterMs) };
+  }
   try {
     const got = hashWithSalt(password, u.salt);
     const exp = Buffer.from(u.hash, 'hex');
     if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
+      recordAuthFailure(sessionPasswordBucket(uid));
       return { ok: false, error: 'Incorrect account password.' };
     }
   } catch {
     return { ok: false, error: 'Incorrect account password.' };
   }
+  clearAuthFailures(sessionPasswordBucket(uid));
 
   let dataKey = dataKeys.get(uid);
   if (!dataKey) {
@@ -5573,7 +5799,16 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.whenReady().then(() => {
   initCrashReporting(app.getPath('userData'));
-  initNoteHistory(() => app.getPath('userData'));
+  // Daily backup: besides sign-in and every save, check again when the window comes back, after the
+  // computer wakes, and every half hour while the app (or its tray icon) is running.
+  app.on('browser-window-focus', () => ensureDailyBackupToday());
+  try {
+    powerMonitor.on('resume', () => ensureDailyBackupToday());
+  } catch {
+    /* powerMonitor is not available everywhere; the other triggers still run */
+  }
+  const dailyBackupTimer = setInterval(() => ensureDailyBackupToday(), 30 * 60 * 1000);
+  if (typeof dailyBackupTimer.unref === 'function') dailyBackupTimer.unref();
   if (!process.defaultApp) {
     app.setAsDefaultProtocolClient('cadence');
   }

@@ -15,12 +15,17 @@ import { Button } from '../components/ui/Button';
 
 export type AuthPhase = 'loading' | 'open' | 'locked';
 
+/** `lockedOut` means too many wrong tries: the PIN was not even checked, and `error` says how long to wait. */
+export type PinUnlockResult = { ok: boolean; lockedOut?: boolean; error?: string };
+
 type Ctx = {
   phase: AuthPhase;
   pinEnabled: boolean;
   /** Re-read the on-disk PIN status. Does NOT change phase after the first boot — see comment below. */
   refresh: () => Promise<void>;
-  unlockWithPin: (pin: string) => Promise<boolean>;
+  unlockWithPin: (pin: string) => Promise<PinUnlockResult>;
+  /** Leave the lock screen without a PIN, after the PIN was removed. */
+  openSession: () => void;
   lockSession: () => void;
 };
 
@@ -72,18 +77,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const r = await window.cadence?.authVerify?.({ pin });
     if (r?.ok) {
       setPhase('open');
-      return true;
+      return { ok: true };
     }
-    return false;
+    return { ok: false, lockedOut: r?.lockedOut === true, error: r?.error };
   }, []);
+
+  const openSession = useCallback(() => setPhase('open'), []);
 
   const lockSession = useCallback(() => {
     if (pinEnabled) setPhase('locked');
   }, [pinEnabled]);
 
   const v = useMemo(
-    () => ({ phase, pinEnabled, refresh, unlockWithPin, lockSession }),
-    [phase, pinEnabled, refresh, unlockWithPin, lockSession],
+    () => ({ phase, pinEnabled, refresh, unlockWithPin, openSession, lockSession }),
+    [phase, pinEnabled, refresh, unlockWithPin, openSession, lockSession],
   );
 
   return <SessionCtx.Provider value={v}>{children}</SessionCtx.Provider>;
@@ -96,7 +103,7 @@ export function useSession(): Ctx {
 }
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { phase, unlockWithPin, refresh } = useSession();
+  const { phase, unlockWithPin, openSession, refresh } = useSession();
   const [pin, setPin] = useState('');
   const [err, setErr] = useState('');
   const [attempts, setAttempts] = useState(0);
@@ -126,22 +133,30 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setErr('');
-    const ok = await unlockWithPin(pin);
-    if (ok) {
+    const result = await unlockWithPin(pin);
+    if (result.ok) {
       setPin('');
       setAttempts(0);
       return;
     }
+    if (result.lockedOut) {
+      // Not a wrong guess: the lock did not look at the PIN, so it does not count toward opening the reset form.
+      setErr(result.error || 'Too many attempts. Try again in a little while.');
+      return;
+    }
     const next = attempts + 1;
     setAttempts(next);
-    if (next >= 3) {
-      // After 3 failed attempts, surface recovery upfront — typing the wrong
-      // PIN three times almost always means the user has forgotten it (or hit
-      // the now-fixed normalize bug) and would otherwise be locked out.
+    if (next === 3) {
+      // After 3 failed attempts, surface recovery upfront once — typing the wrong PIN three times
+      // almost always means the user has forgotten it. Later tries stay on the PIN form (the
+      // "Forgot PIN?" link below is always there), so someone who does know it can keep trying
+      // and, in the end, sees the lockout message instead of being sent away each time.
       setErr('Incorrect PIN. Reset it with your account password below.');
       setRecovering(true);
-    } else {
+    } else if (next < 3) {
       setErr(`Incorrect PIN. ${3 - next} more attempt${3 - next === 1 ? '' : 's'} before recovery opens.`);
+    } else {
+      setErr('Incorrect PIN. Forgot it? Use “Forgot PIN?” below to reset it with your account password.');
     }
   };
 
@@ -159,6 +174,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setRecoveryPwd('');
         setRecovering(false);
         await refresh();
+        // The PIN is gone, so there is nothing left to unlock. `refresh` never changes the phase after
+        // boot, so without this the lock screen stays up and accepts anything.
+        openSession();
       } else {
         setRecoveryErr(r.error || 'Could not reset PIN.');
       }

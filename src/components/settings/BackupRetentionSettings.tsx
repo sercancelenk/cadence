@@ -95,7 +95,7 @@ export function BackupRetentionSettings() {
         >
           {state.mirrorKeepChoices.map((n) => (
             <option key={n} value={n}>
-              {mirrorKeepLabel(n, n === DEFAULT_MIRROR_KEEP)}
+              {mirrorKeepLabel(n, n === (state.mirrorKeepDefault ?? DEFAULT_MIRROR_KEEP))}
             </option>
           ))}
         </select>

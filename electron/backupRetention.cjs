@@ -25,6 +25,8 @@ const {
 } = require('./dailyBackupMirror.cjs');
 const {
   DEFAULT_LIFECYCLE_KEEP,
+  DEFAULT_MIRROR_KEEP,
+  DEFAULT_NEW_MIRROR_KEEP,
   MIRROR_KEEP_CHOICES,
   ROUTINE_KEEP_CHOICES,
   normalizeMirrorKeep,
@@ -50,13 +52,26 @@ const {
  */
 
 /**
+ * The size nobody chose: the long-standing 30 for a folder that is already running, and today plus
+ * yesterday for one that is not set up yet (it becomes explicit when the folder is chosen).
+ */
+function defaultMirrorKeep(mirror) {
+  return mirror.mirrorDir ? DEFAULT_MIRROR_KEEP : DEFAULT_NEW_MIRROR_KEEP;
+}
+
+function effectiveMirrorKeep(mirror) {
+  return MIRROR_KEEP_CHOICES.includes(mirror.keepFolders) ? mirror.keepFolders : defaultMirrorKeep(mirror);
+}
+
+/**
  * @param {RetentionDeps} deps
  */
 function getRetentionState(deps) {
   const mirror = readMirrorPrefs(deps);
   const snapshots = readSnapshotPrefs(deps);
   return {
-    mirrorKeep: normalizeMirrorKeep(mirror.keepFolders),
+    mirrorKeep: effectiveMirrorKeep(mirror),
+    mirrorKeepDefault: defaultMirrorKeep(mirror),
     mirrorKeepChoices: [...MIRROR_KEEP_CHOICES],
     snapshotRoutineKeep: snapshots.routineKeep,
     snapshotRoutineKeepChoices: [...ROUTINE_KEEP_CHOICES],

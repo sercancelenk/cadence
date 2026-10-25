@@ -1,7 +1,10 @@
 /**
  * Per-note version history sidecar store (Notes only).
  *
- * Lives outside workspace JSON so older Cadence builds ignore it safely.
+ * Lives outside workspace JSON. Files are sealed with the account's data key. Builds from
+ * before that cannot read sealed files (they see no history there) and must not be run against
+ * a data folder that a newer build has sealed: an older build's attachment cleanup does not
+ * know the sealed revisions, so it can delete images only those revisions use.
  * Full backup / rolling snapshots copy this tree alongside attachments/.
  */
 
@@ -11,6 +14,7 @@ const crypto = require('crypto');
 
 const { cloneTreeSync } = require('./persistence/sidecarSnapshot.cjs');
 const { writeAllSync } = require('./persistence/writeAllSync.cjs');
+const { isEncryptedFile, encryptPayload, decryptPayload } = require('./persistence/dataEnvelope.cjs');
 
 const NOTE_HISTORY_DIRNAME = 'note-history';
 const INDEX_VERSION = 1;
@@ -47,9 +51,16 @@ let resolveUserData = () => {
   throw new Error('noteHistory: initNoteHistory() not called');
 };
 
-function initNoteHistory(getUserDataPathFn) {
+/** The data key of a signed-in user, or null (plaintext account / not signed in). */
+let resolveKey = () => null;
+
+function initNoteHistory(getUserDataPathFn, getDataKeyFn) {
   resolveUserData = getUserDataPathFn;
+  resolveKey = typeof getDataKeyFn === 'function' ? getDataKeyFn : () => null;
 }
+
+/** Returned by `readStoredJson` for a sealed file that cannot be opened with the key in hand. */
+const UNREADABLE = Symbol('note-history-unreadable');
 
 function sanitizeNoteId(noteId) {
   if (typeof noteId !== 'string') return null;
@@ -82,16 +93,40 @@ function revisionPathForNote(userId, noteId, revisionId) {
   return path.join(dir, `${revisionId}.json`);
 }
 
-function readJsonFile(filePath) {
+/**
+ * Parsed JSON of a history file. Files written by older versions are plaintext
+ * and read as before; sealed files need the user's key. `null` means absent or
+ * not JSON; `UNREADABLE` means sealed and not openable, which callers must treat
+ * as "do not overwrite, do not delete", never as empty.
+ */
+function readStoredJson(userId, filePath) {
   if (!filePath || !fs.existsSync(filePath)) return null;
+  let text;
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    text = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return null;
+  }
+  if (isEncryptedFile(text)) {
+    const key = resolveKey(userId);
+    if (!key) return UNREADABLE;
+    const plain = decryptPayload(text, key);
+    if (plain == null) return UNREADABLE;
+    try {
+      return JSON.parse(plain);
+    } catch {
+      // It opened but is not JSON: something other than us wrote it. Never read it as "empty".
+      return UNREADABLE;
+    }
+  }
+  try {
+    return JSON.parse(text);
   } catch {
     return null;
   }
 }
 
-function writeJsonAtomic(filePath, value) {
+function writeTextAtomic(filePath, text) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -101,7 +136,7 @@ function writeJsonAtomic(filePath, value) {
   // note revision the user believed was saved.
   const fd = fs.openSync(tmp, 'w');
   try {
-    writeAllSync(fs, fd, JSON.stringify(value, null, 2));
+    writeAllSync(fs, fd, text);
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
@@ -119,6 +154,13 @@ function writeJsonAtomic(filePath, value) {
   }
 }
 
+/** Sealed under the user's key when there is one (title, summary and body included), plaintext otherwise. */
+function writeStoredJson(userId, filePath, value) {
+  const json = JSON.stringify(value, null, 2);
+  const key = resolveKey(userId);
+  writeTextAtomic(filePath, key ? encryptPayload(json, key) : json);
+}
+
 function emptyIndex(noteId) {
   return { version: INDEX_VERSION, noteId, revisions: [] };
 }
@@ -126,7 +168,8 @@ function emptyIndex(noteId) {
 function readIndex(userId, noteId) {
   const indexPath = indexPathForNote(userId, noteId);
   if (!indexPath) return null;
-  const raw = readJsonFile(indexPath);
+  const raw = readStoredJson(userId, indexPath);
+  if (raw === UNREADABLE) return { ...emptyIndex(noteId), unreadable: true };
   if (!raw || typeof raw !== 'object') return emptyIndex(noteId);
   const revisions = Array.isArray(raw.revisions) ? raw.revisions : [];
   return {
@@ -214,15 +257,21 @@ function collectAttachmentIdsFromBody(body, bodyFormat) {
   return ids;
 }
 
-function collectReferencedAttachmentIdsFromNoteHistory(userId) {
+/**
+ * Attachment ids still referenced by saved revisions. `complete` is false when
+ * some revision could not be opened: the caller must then not delete anything
+ * on the strength of this list.
+ */
+function collectReferencedAttachmentsFromNoteHistory(userId) {
   const ids = new Set();
+  let complete = true;
   const root = noteHistoryRootForUser(userId);
-  if (!root || !fs.existsSync(root)) return ids;
+  if (!root || !fs.existsSync(root)) return { ids, complete };
   let noteDirs;
   try {
     noteDirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
   } catch {
-    return ids;
+    return { ids, complete: false };
   }
   for (const noteDir of noteDirs) {
     const dir = path.join(root, noteDir.name);
@@ -230,11 +279,16 @@ function collectReferencedAttachmentIdsFromNoteHistory(userId) {
     try {
       files = fs.readdirSync(dir);
     } catch {
+      complete = false;
       continue;
     }
     for (const name of files) {
       if (!name.endsWith('.json') || name === 'index.json') continue;
-      const payload = readJsonFile(path.join(dir, name));
+      const payload = readStoredJson(userId, path.join(dir, name));
+      if (payload === UNREADABLE) {
+        complete = false;
+        continue;
+      }
       if (!payload) continue;
       if (payload.locked && payload.cipher) {
         if (Array.isArray(payload.attachmentIds)) {
@@ -248,7 +302,11 @@ function collectReferencedAttachmentIdsFromNoteHistory(userId) {
       for (const id of collectAttachmentIdsFromBody(payload.body, payload.bodyFormat)) ids.add(id);
     }
   }
-  return ids;
+  return { ids, complete };
+}
+
+function collectReferencedAttachmentIdsFromNoteHistory(userId) {
+  return collectReferencedAttachmentsFromNoteHistory(userId).ids;
 }
 
 function appendNoteRevision(userId, payload) {
@@ -258,6 +316,11 @@ function appendNoteRevision(userId, payload) {
   const noteId = valid.noteId;
   const dir = noteHistoryDirForNote(userId, noteId);
   if (!dir) return { ok: false, error: 'invalid note path' };
+
+  // An index we cannot open must not be replaced by a fresh one: that would orphan every saved revision.
+  if (readIndex(userId, noteId).unreadable) {
+    return { ok: false, error: 'note history is sealed under another key and cannot be extended' };
+  }
 
   const revisionId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
@@ -295,13 +358,13 @@ function appendNoteRevision(userId, payload) {
   try {
     fs.mkdirSync(dir, { recursive: true });
     const revPath = path.join(dir, `${revisionId}.json`);
-    writeJsonAtomic(revPath, revisionFile);
+    writeStoredJson(userId, revPath, revisionFile);
 
     const index = readIndex(userId, noteId);
     index.revisions.unshift(meta);
     const { kept, prunedIds } = pruneRevisionList(index.revisions);
     index.revisions = kept;
-    writeJsonAtomic(path.join(dir, 'index.json'), index);
+    writeStoredJson(userId, path.join(dir, 'index.json'), index);
 
     for (const oldId of prunedIds) {
       const oldPath = path.join(dir, `${oldId}.json`);
@@ -324,14 +387,15 @@ function listNoteRevisions(userId, noteId) {
   const safe = sanitizeNoteId(noteId);
   if (!safe) return { ok: false, error: 'invalid noteId', revisions: [] };
   const index = readIndex(userId, safe);
+  if (index.unreadable) return { ok: false, error: 'note history is sealed under another key', revisions: [] };
   return { ok: true, revisions: index.revisions };
 }
 
 function readNoteRevision(userId, noteId, revisionId) {
   const revPath = revisionPathForNote(userId, noteId, revisionId);
   if (!revPath || !fs.existsSync(revPath)) return { ok: false, error: 'revision not found' };
-  const payload = readJsonFile(revPath);
-  if (!payload) return { ok: false, error: 'revision unreadable' };
+  const payload = readStoredJson(userId, revPath);
+  if (!payload || payload === UNREADABLE) return { ok: false, error: 'revision unreadable' };
   return { ok: true, revision: payload };
 }
 
@@ -356,7 +420,7 @@ function snapshotNoteHistoryForUser(userId, label, ts) {
     fs.mkdirSync(backupsRoot, { recursive: true });
     const targetDir = path.join(backupsRoot, `note-history-${label}-${ts}`);
     // Hardlinked, not copied: revisions are only ever written via
-    // `writeJsonAtomic` (tmp + rename), so links never see later edits.
+    // `writeTextAtomic` (tmp + rename), so links never see later edits.
     cloneTreeSync(fs, path, srcDir, targetDir);
     return targetDir;
   } catch (err) {
@@ -372,48 +436,39 @@ function pairedNoteHistoryBackupDir(dataBackupPath) {
   return fs.existsSync(dir) ? dir : null;
 }
 
-function mergeNoteHistoryNoteDir(destNoteDir, srcNoteDir) {
+function mergeNoteHistoryNoteDir(userId, destNoteDir, srcNoteDir) {
   fs.mkdirSync(destNoteDir, { recursive: true });
-  const destIndex = readJsonFile(path.join(destNoteDir, 'index.json')) || {
+  const destIndexRaw = readStoredJson(userId, path.join(destNoteDir, 'index.json'));
+  // Cannot read what is already here: adding to it could replace it. Leave both sides alone.
+  if (destIndexRaw === UNREADABLE) return false;
+  const destIndex = destIndexRaw || {
     version: INDEX_VERSION,
     noteId: path.basename(destNoteDir),
     revisions: [],
   };
-  const srcIndex = readJsonFile(path.join(srcNoteDir, 'index.json'));
-  if (!srcIndex || !Array.isArray(srcIndex.revisions)) {
-    return;
+  const srcIndex = readStoredJson(userId, path.join(srcNoteDir, 'index.json'));
+  if (!srcIndex || srcIndex === UNREADABLE || !Array.isArray(srcIndex.revisions)) {
+    return false;
   }
   const known = new Set(
     (Array.isArray(destIndex.revisions) ? destIndex.revisions : []).map((r) => r.id),
   );
   for (const meta of srcIndex.revisions) {
     if (!meta?.id || known.has(meta.id)) continue;
-    const srcRev = path.join(srcNoteDir, `${meta.id}.json`);
+    const payload = readStoredJson(userId, path.join(srcNoteDir, `${meta.id}.json`));
+    if (!payload || payload === UNREADABLE) continue;
     const destRev = path.join(destNoteDir, `${meta.id}.json`);
-    if (!fs.existsSync(srcRev)) continue;
-    // Via tmp + rename: a revision file can already exist here without being
-    // in the index (a prune whose unlink failed), and it is hardlinked into
-    // every note-history snapshot. `copyFileSync` truncates in place, which
-    // would rewrite those snapshots; a rename only moves the directory entry.
-    const tmp = `${destRev}.merge.tmp`;
-    try {
-      fs.copyFileSync(srcRev, tmp);
-      fs.renameSync(tmp, destRev);
-    } catch (err) {
-      try {
-        fs.unlinkSync(tmp);
-      } catch {
-        /* never created, or already gone */
-      }
-      throw err;
-    }
+    // Written via tmp + rename: a revision file can already exist here without
+    // being in the index (a prune whose unlink failed), and it is hardlinked
+    // into every note-history snapshot. A rename only moves the directory entry.
+    writeStoredJson(userId, destRev, payload);
     destIndex.revisions.push(meta);
     known.add(meta.id);
   }
   destIndex.revisions.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   const { kept, prunedIds } = pruneRevisionList(destIndex.revisions);
   destIndex.revisions = kept;
-  writeJsonAtomic(path.join(destNoteDir, 'index.json'), destIndex);
+  writeStoredJson(userId, path.join(destNoteDir, 'index.json'), destIndex);
   for (const oldId of prunedIds) {
     const p = path.join(destNoteDir, `${oldId}.json`);
     if (fs.existsSync(p)) {
@@ -424,6 +479,7 @@ function mergeNoteHistoryNoteDir(destNoteDir, srcNoteDir) {
       }
     }
   }
+  return true;
 }
 
 function importNoteHistoryFromDir(userId, srcRoot) {
@@ -440,10 +496,78 @@ function importNoteHistoryFromDir(userId, srcRoot) {
       continue;
     }
     if (!sanitizeNoteId(name)) continue;
-    mergeNoteHistoryNoteDir(path.join(destRoot, name), srcNoteDir);
-    merged += 1;
+    if (mergeNoteHistoryNoteDir(userId, path.join(destRoot, name), srcNoteDir)) merged += 1;
   }
   return { ok: true, merged };
+}
+
+/**
+ * Copy the tree, writing each history file as plain JSON like the rest of a full
+ * backup. A file that cannot be opened is copied as it is, never dropped.
+ */
+function copyHistoryTreeReadable(userId, srcDir, destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    const from = path.join(srcDir, entry.name);
+    const to = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copyHistoryTreeReadable(userId, from, to);
+      continue;
+    }
+    if (isHistoryLeftover(entry.name)) continue;
+    copyHistoryFileReadable(userId, from, to);
+  }
+}
+
+/** Staged copies and half-written temp files are not history; they must not travel into a backup. */
+function isHistoryLeftover(name) {
+  return name.endsWith('.rekey') || name.endsWith('.tmp');
+}
+
+/** One history file as plain JSON; a file that cannot be opened is copied as it is, never dropped. */
+function copyHistoryFileReadable(userId, from, to) {
+  if (from.endsWith('.json')) {
+    const value = readStoredJson(userId, from);
+    if (value && value !== UNREADABLE) {
+      fs.writeFileSync(to, JSON.stringify(value, null, 2));
+      return;
+    }
+  }
+  fs.copyFileSync(from, to);
+}
+
+/**
+ * Same result as `exportNoteHistoryToDir`, but hands the event loop back every few files so a large
+ * history does not freeze the app (used by the background daily backup).
+ */
+async function exportNoteHistoryToDirAsync(userId, destFolder) {
+  const srcDir = noteHistoryRootForUser(userId);
+  const target = path.join(destFolder, NOTE_HISTORY_DIRNAME);
+  if (!srcDir || !fs.existsSync(srcDir)) {
+    fs.mkdirSync(target, { recursive: true });
+    return { ok: true, copied: false };
+  }
+  let sinceYield = 0;
+  const walk = async (from, to) => {
+    fs.mkdirSync(to, { recursive: true });
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      const src = path.join(from, entry.name);
+      const dest = path.join(to, entry.name);
+      if (entry.isDirectory()) {
+        await walk(src, dest);
+        continue;
+      }
+      if (isHistoryLeftover(entry.name)) continue;
+      copyHistoryFileReadable(userId, src, dest);
+      sinceYield += 1;
+      if (sinceYield >= 20) {
+        sinceYield = 0;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+  };
+  await walk(srcDir, target);
+  return { ok: true, copied: true };
 }
 
 function exportNoteHistoryToDir(userId, destFolder) {
@@ -453,7 +577,7 @@ function exportNoteHistoryToDir(userId, destFolder) {
     fs.mkdirSync(target, { recursive: true });
     return { ok: true, copied: false };
   }
-  fs.cpSync(srcDir, target, { recursive: true });
+  copyHistoryTreeReadable(userId, srcDir, target);
   return { ok: true, copied: true };
 }
 
@@ -462,10 +586,57 @@ function countNoteHistoryRevisions(userId) {
   if (!root || !fs.existsSync(root)) return 0;
   let count = 0;
   for (const name of fs.readdirSync(root)) {
-    const index = readJsonFile(path.join(root, name, 'index.json'));
-    if (index && Array.isArray(index.revisions)) count += index.revisions.length;
+    const index = readStoredJson(userId, path.join(root, name, 'index.json'));
+    if (index && index !== UNREADABLE && Array.isArray(index.revisions)) count += index.revisions.length;
   }
   return count;
+}
+
+function historyJsonFiles(root) {
+  const out = [];
+  if (!root || !fs.existsSync(root)) return out;
+  for (const noteDir of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!noteDir.isDirectory()) continue;
+    const dir = path.join(root, noteDir.name);
+    for (const name of fs.readdirSync(dir)) {
+      if (name.endsWith('.json')) out.push(path.join(dir, name));
+    }
+  }
+  return out;
+}
+
+/**
+ * Seal history files that an older version left as plaintext, in place. Each
+ * file is read back and compared before the swap, one that is not valid JSON is
+ * left alone, and running it again does nothing.
+ */
+function upgradeNoteHistoryToEncrypted(userId) {
+  const result = { ok: true, upgraded: 0, skipped: 0, failed: [] };
+  const key = resolveKey(userId);
+  const root = noteHistoryRootForUser(userId);
+  if (!key || !root) return result;
+  for (const file of historyJsonFiles(root)) {
+    try {
+      const text = fs.readFileSync(file, 'utf8');
+      if (isEncryptedFile(text)) continue;
+      JSON.parse(text);
+      const sealed = encryptPayload(text, key);
+      if (decryptPayload(sealed, key) !== text) {
+        result.skipped += 1;
+        continue;
+      }
+      writeTextAtomic(file, sealed);
+      result.upgraded += 1;
+    } catch {
+      result.skipped += 1;
+    }
+  }
+  return result;
+}
+
+/** Every history json file (index and revisions) for the user. */
+function listNoteHistoryFiles(userId) {
+  return historyJsonFiles(noteHistoryRootForUser(userId));
 }
 
 module.exports = {
@@ -481,6 +652,10 @@ module.exports = {
   pairedNoteHistoryBackupDir,
   importNoteHistoryFromDir,
   exportNoteHistoryToDir,
+  exportNoteHistoryToDirAsync,
   collectReferencedAttachmentIdsFromNoteHistory,
+  collectReferencedAttachmentsFromNoteHistory,
   countNoteHistoryRevisions,
+  upgradeNoteHistoryToEncrypted,
+  listNoteHistoryFiles,
 };

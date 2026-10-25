@@ -12,6 +12,11 @@ const {
   shouldRunDailyMirror,
   isDailyFolderComplete,
   normalizePrefs,
+  prefsAfterChoosingMirrorDir,
+  dailyBackupDue,
+  listDailyMirrorFolders,
+  readPrefs,
+  writePrefs,
   pruneDailyMirrorFolders,
   planDailyMirrorTrim,
   writeDailyFullExport,
@@ -176,18 +181,18 @@ describe('pruneDailyMirrorFolders', () => {
       makeCompleteFolder(root, `cadence-daily-aaaaaaaa-2026-06-${String(d).padStart(2, '0')}`);
     }
     expect(prune(root, null)).toBe(1);
-    expect(prune(root, 2)).toBe(0); // 2 is not an offered choice → default, nothing more to trim
+    expect(prune(root, 5)).toBe(0); // 5 is not an offered choice → default, nothing more to trim
     fs.rmSync(root, { recursive: true, force: true });
   });
 });
 
 describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
-  it('writes a full-export shaped folder and is idempotent the same day', () => {
+  it('writes a full-export shaped folder and is idempotent the same day', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-write-'));
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-ud-'));
     const payload = { notes: [{ id: 'n1' }], todoItems: [] };
 
-    const first = writeDailyFullExport({
+    const first = await writeDailyFullExport({
       fs,
       path,
       mirrorDir: root,
@@ -214,7 +219,7 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
     expect(fs.existsSync(path.join(first.path, 'manifest.json'))).toBe(true);
     expect(fs.existsSync(path.join(first.path, 'attachments', 'att.bin'))).toBe(true);
 
-    const again = maybeRunDailyBackupMirror({
+    const again = await maybeRunDailyBackupMirror({
       fs,
       path,
       userDataDir: userData,
@@ -235,7 +240,7 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
       path.join(userData, `cadence-daily-backup-${USER}.json`),
       JSON.stringify({ mirrorDir: root }),
     );
-    const ran = maybeRunDailyBackupMirror({
+    const ran = await maybeRunDailyBackupMirror({
       fs,
       path,
       userDataDir: userData,
@@ -252,7 +257,7 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
     expect(ran.ran).toBe(true);
     expect(ran.ok).toBe(true);
 
-    const skipped = maybeRunDailyBackupMirror({
+    const skipped = await maybeRunDailyBackupMirror({
       fs,
       path,
       userDataDir: userData,
@@ -272,7 +277,7 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
     expect(skipped.skipped).toBe('already-today');
 
     // force replaces without deleting final first (displaced swap).
-    const forced = maybeRunDailyBackupMirror({
+    const forced = await maybeRunDailyBackupMirror({
       fs,
       path,
       userDataDir: userData,
@@ -295,7 +300,7 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
     expect(data.notes[0].id).toBe('n2');
 
     // Force must refuse empty overwrite of a populated daily folder.
-    const emptyForce = maybeRunDailyBackupMirror({
+    const emptyForce = await maybeRunDailyBackupMirror({
       fs,
       path,
       userDataDir: userData,
@@ -321,7 +326,7 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
     fs.rmSync(userData, { recursive: true, force: true });
   });
 
-  it('writes no AI keys or header tokens into the mirror, and leaves notes and the rest of the settings alone', () => {
+  it('writes no AI keys or header tokens into the mirror, and leaves notes and the rest of the settings alone', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-secrets-'));
     const payload = {
       notes: [{ id: 'n1', title: 'keep me' }],
@@ -337,7 +342,7 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
         unreadConnections: [{ id: 'c2', baseUrl: 'https://x:unread-pw@h.example.com', apiKey: 'sk-unread-secret', extraHeaders: [{ name: 'A', value: 'unread-hdr' }] }],
       },
     };
-    const ran = writeDailyFullExport({
+    const ran = await writeDailyFullExport({
       fs,
       path,
       mirrorDir: root,
@@ -366,7 +371,7 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
     expect(payload.aiSettings.apiKey).toBe('sk-top-secret');
   });
 
-  it('rewrites when lastDailyDate says done but today’s folder is missing', () => {
+  it('rewrites when lastDailyDate says done but today’s folder is missing', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-retry-'));
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-ud-'));
     fs.writeFileSync(
@@ -385,7 +390,7 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
       }),
     ).toBe(false);
 
-    const ran = maybeRunDailyBackupMirror({
+    const ran = await maybeRunDailyBackupMirror({
       fs,
       path,
       userDataDir: userData,
@@ -414,5 +419,267 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
 
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(userData, { recursive: true, force: true });
+  });
+});
+
+describe('prefsAfterChoosingMirrorDir', () => {
+  const base = normalizePrefs({});
+
+  it('sets up a first-time folder to keep today and yesterday', async () => {
+    const next = prefsAfterChoosingMirrorDir(base, '/backups');
+    expect(next).toMatchObject({ mirrorDir: '/backups', keepFolders: 2, lastDailyDate: null, lastError: null });
+  });
+
+  it('leaves the size alone for a folder that was already set up without a choice, so nothing gets trimmed', async () => {
+    const existing = { ...base, mirrorDir: '/old', lastDailyDate: '2026-01-01' };
+    const next = prefsAfterChoosingMirrorDir(existing, '/new');
+    expect(next.keepFolders).toBeNull();
+    expect(next.mirrorDir).toBe('/new');
+  });
+
+  it('keeps an explicit choice', async () => {
+    const next = prefsAfterChoosingMirrorDir({ ...base, keepFolders: 14 }, '/backups');
+    expect(next.keepFolders).toBe(14);
+  });
+});
+
+describe('daily backup running without getting in the way', () => {
+  const deps = (userData: string) => ({ fs, path, userDataDir: userData, filePrefix: 'cadence', userId: USER, appSlug: 'cadence', writeJsonText });
+  const payload = { notes: [{ id: 'n1' }], todoItems: [] };
+
+  async function runExport(root: string, extra: Record<string, unknown> = {}) {
+    return writeDailyFullExport({
+      fs,
+      path,
+      mirrorDir: root,
+      appSlug: 'cadence',
+      userId: USER,
+      dateKey: '2026-07-23',
+      workspacePayload: payload,
+      writeJsonText,
+      exportAttachments: () => 0,
+      exportNoteHistory: () => {},
+      countNoteHistoryRevisions: () => 0,
+      ...extra,
+    });
+  }
+
+  it('waits for attachment and history exports that work asynchronously', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-async-'));
+    let historyDone = false;
+    const r = await runExport(root, {
+      exportAttachments: async (dest: string) => {
+        fs.mkdirSync(dest, { recursive: true });
+        await new Promise((res) => setImmediate(res));
+        fs.writeFileSync(path.join(dest, 'a.bin'), Buffer.from([1]));
+        return 1;
+      },
+      exportNoteHistory: async (folder: string) => {
+        await new Promise((res) => setImmediate(res));
+        fs.mkdirSync(path.join(folder, 'note-history'), { recursive: true });
+        historyDone = true;
+      },
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.attachmentCount).toBe(1);
+    expect(historyDone).toBe(true);
+    expect(fs.existsSync(path.join(r.path, 'attachments', 'a.bin'))).toBe(true);
+    expect(fs.existsSync(path.join(r.path, 'note-history'))).toBe(true);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('lets the event loop run between its steps, so the app stays responsive', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-yield-'));
+    let turns = 0;
+    let done = false;
+    const spin = () => {
+      turns += 1;
+      if (!done) setImmediate(spin);
+    };
+    setImmediate(spin);
+    await runExport(root);
+    done = true;
+    expect(turns).toBeGreaterThanOrEqual(2);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  describe('dailyBackupDue', () => {
+    const TODAY = new Date(2026, 6, 23);
+    const setup = () => {
+      const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-due-ud-'));
+      const mirror = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-due-'));
+      return { userData, mirror };
+    };
+
+    it('is false when no folder was chosen', () => {
+      const { userData } = setup();
+      expect(dailyBackupDue({ ...deps(userData), now: TODAY })).toBe(false);
+    });
+
+    it('is true when a folder is chosen and nothing was backed up yet', () => {
+      const { userData, mirror } = setup();
+      writePrefs(deps(userData), { mirrorDir: mirror });
+      expect(dailyBackupDue({ ...deps(userData), now: TODAY })).toBe(true);
+    });
+
+    it('is true after days of not opening the app', () => {
+      const { userData, mirror } = setup();
+      writePrefs(deps(userData), { mirrorDir: mirror, lastDailyDate: '2026-07-10' });
+      expect(dailyBackupDue({ ...deps(userData), now: TODAY })).toBe(true);
+    });
+
+    it('is false once today is done and its folder is complete', async () => {
+      const { userData, mirror } = setup();
+      writePrefs(deps(userData), { mirrorDir: mirror });
+      const ran = await maybeRunDailyBackupMirror({
+        ...deps(userData),
+        workspacePayload: payload,
+        exportAttachments: () => 0,
+        exportNoteHistory: () => {},
+        countNoteHistoryRevisions: () => 0,
+        now: TODAY,
+      });
+      expect(ran.ok).toBe(true);
+      expect(dailyBackupDue({ ...deps(userData), now: TODAY })).toBe(false);
+    });
+
+    it('is true when today was recorded as done but its folder is gone', async () => {
+      const { userData, mirror } = setup();
+      writePrefs(deps(userData), { mirrorDir: mirror, lastDailyDate: '2026-07-23' });
+      expect(dailyBackupDue({ ...deps(userData), now: TODAY })).toBe(true);
+      expect(readPrefs(deps(userData)).mirrorDir).toBe(mirror);
+    });
+  });
+});
+
+describe('a daily backup that is cut short or changed under it', () => {
+  const NOW = new Date(2026, 6, 23);
+  const mk = () => ({
+    userData: fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-x-ud-')),
+    mirror: fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-x-')),
+  });
+  const base = (userData: string) => ({ fs, path, userDataDir: userData, filePrefix: 'cadence', userId: USER, appSlug: 'cadence', writeJsonText });
+  const run = (userData: string, over: Record<string, unknown> = {}) =>
+    maybeRunDailyBackupMirror({
+      ...base(userData),
+      workspacePayload: { notes: [{ id: 'n1' }], todoItems: [] },
+      exportAttachments: () => 0,
+      exportNoteHistory: () => {},
+      countNoteHistoryRevisions: () => 0,
+      now: NOW,
+      ...over,
+    });
+
+  it('keeps the older backups when some images could not be read, since this one is missing them', async () => {
+    const { userData, mirror } = mk();
+    writePrefs(base(userData), { mirrorDir: mirror, keepFolders: 2 });
+    for (const d of [18, 19, 20, 21]) makeCompleteFolder(mirror, day(USER.slice(0, 8), d));
+
+    const r = await run(userData, { exportAttachments: async () => ({ count: 3, skipped: 2 }) });
+
+    expect(r.ok).toBe(true);
+    expect(fs.readdirSync(mirror).filter((n) => n.includes('-daily-') && !n.endsWith('.partial'))).toHaveLength(5);
+    const manifest = JSON.parse(fs.readFileSync(path.join(r.path as string, 'manifest.json'), 'utf8'));
+    expect(manifest).toMatchObject({ attachmentCount: 3, attachmentsSkipped: 2 });
+  });
+
+  it('still trims to the chosen size when every image was copied', async () => {
+    const { userData, mirror } = mk();
+    writePrefs(base(userData), { mirrorDir: mirror, keepFolders: 2 });
+    for (const d of [18, 19, 20, 21]) makeCompleteFolder(mirror, day(USER.slice(0, 8), d));
+
+    const r = await run(userData, { exportAttachments: async () => ({ count: 3, skipped: 0 }) });
+
+    expect(r.ok).toBe(true);
+    expect(fs.readdirSync(mirror).filter((n) => n.includes('-daily-') && !n.endsWith('.partial'))).toHaveLength(2);
+  });
+
+  it('leaves no folder and records the failure when the export stops half way', async () => {
+    const { userData, mirror } = mk();
+    writePrefs(base(userData), { mirrorDir: mirror });
+
+    const r = await run(userData, {
+      exportAttachments: async () => {
+        throw new Error('Signed out during the backup.');
+      },
+    });
+
+    expect(r).toMatchObject({ ran: true, ok: false });
+    expect(fs.readdirSync(mirror)).toEqual([]);
+    expect(readPrefs(base(userData)).lastError).toMatch(/Signed out/);
+    expect(readPrefs(base(userData)).lastDailyDate).toBeNull();
+  });
+
+  it('does not overwrite settings the user changed while the backup was running', async () => {
+    const { userData, mirror } = mk();
+    writePrefs(base(userData), { mirrorDir: mirror, keepFolders: 2 });
+    for (const d of [18, 19, 20, 21]) makeCompleteFolder(mirror, day(USER.slice(0, 8), d));
+
+    const r = await run(userData, {
+      exportAttachments: async () => {
+        // The user raises the number to keep while the export is in progress.
+        writePrefs(base(userData), { ...readPrefs(base(userData)), keepFolders: 30 });
+        return 0;
+      },
+    });
+
+    expect(r.ok).toBe(true);
+    expect(readPrefs(base(userData)).keepFolders).toBe(30);
+    expect(fs.readdirSync(mirror).filter((n) => n.includes('-daily-') && !n.endsWith('.partial'))).toHaveLength(5);
+  });
+
+  it('does not mark today as done for a folder the user switched to mid-run', async () => {
+    const { userData, mirror } = mk();
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-other-'));
+    writePrefs(base(userData), { mirrorDir: mirror });
+
+    await run(userData, {
+      exportAttachments: async () => {
+        writePrefs(base(userData), { ...readPrefs(base(userData)), mirrorDir: other });
+        return 0;
+      },
+    });
+
+    const prefs = readPrefs(base(userData));
+    expect(prefs.mirrorDir).toBe(other);
+    expect(prefs.lastDailyDate).toBeNull();
+    expect(dailyBackupDue({ ...base(userData), now: NOW })).toBe(true);
+  });
+
+  describe('dailyBackupDue after trouble', () => {
+    it('waits a while after a failure instead of retrying on every focus and timer tick', () => {
+      const { userData, mirror } = mk();
+      writePrefs(base(userData), { mirrorDir: mirror, lastError: 'disk full', lastErrorAt: new Date(NOW.getTime() - 60_000).toISOString() });
+      expect(dailyBackupDue({ ...base(userData), now: NOW })).toBe(false);
+    });
+
+    it('tries again once the wait is over', () => {
+      const { userData, mirror } = mk();
+      writePrefs(base(userData), { mirrorDir: mirror, lastError: 'disk full', lastErrorAt: new Date(NOW.getTime() - 20 * 60_000).toISOString() });
+      expect(dailyBackupDue({ ...base(userData), now: NOW })).toBe(true);
+    });
+
+    it('does not create a stray folder where an unplugged drive should be', () => {
+      const { userData } = mk();
+      writePrefs(base(userData), { mirrorDir: path.join(os.tmpdir(), 'cadence-no-such-drive-xyz', 'Backups') });
+      expect(dailyBackupDue({ ...base(userData), now: NOW })).toBe(false);
+    });
+
+    it('still makes the folder when only the backup folder itself was deleted', () => {
+      const { userData } = mk();
+      writePrefs(base(userData), { mirrorDir: path.join(os.tmpdir(), 'cadence-deleted-backups-xyz') });
+      expect(dailyBackupDue({ ...base(userData), now: NOW })).toBe(true);
+    });
+  });
+});
+
+describe('listDailyMirrorFolders (existing backups of this account)', () => {
+  it('lists this account\'s daily folders', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-list-'));
+    makeCompleteFolder(root, day(USER.slice(0, 8), 1));
+    makeCompleteFolder(root, day('bbbbbbbb', 1));
+    const r = listDailyMirrorFolders({ fs, path, mirrorDir: root, appSlug: 'cadence', userId: USER });
+    expect(r.folders).toHaveLength(1);
   });
 });

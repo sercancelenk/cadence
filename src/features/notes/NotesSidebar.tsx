@@ -208,11 +208,15 @@ export const NotesSidebar = memo(function NotesSidebar({
               </option>
             ))}
           </select>
-          {hasLock && !hasRecovery ? (
+          {hasLock ? (
             <NotesIconButton
               onClick={onOpenAddRecovery}
-              label="Add recovery"
-              tooltip="Allow recovery using your account password"
+              label={hasRecovery ? 'Renew recovery' : 'Add recovery'}
+              tooltip={
+                hasRecovery
+                  ? 'Tie recovery to your current account password (for example after a backup from another account)'
+                  : 'Allow recovery using your account password'
+              }
             >
               <IcKey size={16} />
             </NotesIconButton>

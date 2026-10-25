@@ -255,7 +255,7 @@ export function WelcomeTour() {
         <ul className="welcome-tour__bullets">
           <li>
             Use <Link to="/settings">Settings → Data &amp; backup</Link> to export or merge an
-            encrypted backup when you want to move data between devices.
+            portable backup when you want to move data between devices.
           </li>
           {features.ai ? (
             <li>

@@ -81,6 +81,8 @@ export type DailyBackupMirrorStatus = {
 
 export type BackupRetentionState = {
   mirrorKeep: number;
+  /** The size nobody chose: today and yesterday for a folder not set up yet, the long-standing 30 for one already running. */
+  mirrorKeepDefault?: number;
   mirrorKeepChoices: number[];
   snapshotRoutineKeep: number;
   snapshotRoutineKeepChoices: number[];
@@ -364,10 +366,10 @@ interface CadenceApi {
       installUpdate: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
       onUpdaterEvent: (cb: (event: UpdaterEvent) => void) => () => void;
       authStatus: () => Promise<{ enabled: boolean }>;
-      authSetPin: (payload: { pin: string }) => Promise<{ ok: boolean; error?: string }>;
-      authVerify: (payload: { pin: string }) => Promise<{ ok: boolean }>;
-      authClear: (payload: { pin: string }) => Promise<{ ok: boolean; error?: string }>;
-      authResetWithAccountPassword: (payload: { password: string }) => Promise<{ ok: boolean; error?: string }>;
+      authSetPin: (payload: { pin: string; currentPin?: string }) => Promise<{ ok: boolean; error?: string; lockedOut?: boolean }>;
+      authVerify: (payload: { pin: string }) => Promise<{ ok: boolean; lockedOut?: boolean; retryAfterMs?: number; error?: string }>;
+      authClear: (payload: { pin: string }) => Promise<{ ok: boolean; error?: string; lockedOut?: boolean }>;
+      authResetWithAccountPassword: (payload: { password: string }) => Promise<{ ok: boolean; error?: string; lockedOut?: boolean }>;
       accountSession: () => Promise<{
         user: AccountUser | null;
         /**

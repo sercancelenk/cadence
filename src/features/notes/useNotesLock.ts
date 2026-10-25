@@ -18,6 +18,7 @@ import type { RichTextBodyFields } from '../../lib/richTextBody';
 import type { NoteRevisionCapture } from './useNotesEditor';
 import { FORCE_RESET_PHRASE, MIN_NOTES_PASSPHRASE_LENGTH, type PendingIntent } from './noteLockTypes';
 import { prepareForRemoteApply } from '../../lib/syncApplyGuard';
+import { notesRecoveryNeedsRenewal } from '../../lib/notesRecovery';
 import { runBeforeFlushHooks } from '../../lib/pendingSaveFlush';
 import { patchNoteLockState } from '../../core/actions';
 import { PLACEHOLDER_TITLE } from './notePreferences';
@@ -369,7 +370,7 @@ export function useNotesLock({
           setSetupErr(v.error ?? 'Could not verify account password.');
           return;
         }
-        recovery = await wrapPassphraseForRecovery(a, accountPw);
+        recovery = await wrapPassphraseForRecovery(a, accountPw, account.user?.id);
       }
       const { lock, masterKey } = await createNotesLock(a);
       const fullLock: NotesLock = recovery ? { ...lock, recovery } : lock;
@@ -401,7 +402,9 @@ export function useNotesLock({
     try {
       const passphrase = await unwrapPassphraseFromRecovery(data.notesLock.recovery, accountPw);
       if (!passphrase) {
-        setRecoverErr('That account password is not correct (or the recovery envelope is corrupt).');
+        setRecoverErr(
+          'That account password does not open this recovery. If these notes came from a backup of another account, enter that account\u2019s password; otherwise the recovery may be corrupt.',
+        );
         return;
       }
       const key = await unlockMaster(passphrase, data.notesLock);
@@ -414,6 +417,23 @@ export function useNotesLock({
       setRecoverPw('');
       setUnlockOpen(false);
       setUnlockPw('');
+      // The recovery was made for another account (a restored backup): offer to tie it to this account now,
+      // with the Notes passphrase we just recovered filled in, so the user only types the current account password.
+      if (account.user && notesRecoveryNeedsRenewal(data.notesLock, account.user.id)) {
+        // If the password that just opened it is this account's own, the envelope was fine all along (made
+        // before the account was recorded): stamp it quietly. Otherwise it came from another account's backup:
+        // offer to tie it to this one, with the passphrase filled in so only the current password is typed.
+        const own = await account.verifyPassword(accountPw);
+        if (own.ok) {
+          const recovery = await wrapPassphraseForRecovery(passphrase, accountPw, account.user.id);
+          setNotesLock({ ...data.notesLock, recovery });
+        } else {
+          setAddRecoveryNotesPw(passphrase);
+          setAddRecoveryAccountPw('');
+          setAddRecoveryErr(null);
+          setAddRecoveryOpen(true);
+        }
+      }
       const intent = pendingIntent;
       setPendingIntent(null);
       if (intent === 'disable-locking') {
@@ -447,7 +467,7 @@ export function useNotesLock({
         setAddRecoveryErr(v.error ?? 'Incorrect account password.');
         return;
       }
-      const recovery = await wrapPassphraseForRecovery(notesPw, accountPw);
+      const recovery = await wrapPassphraseForRecovery(notesPw, accountPw, account.user?.id);
       setNotesLock({ ...data.notesLock, recovery });
       unlock.remember(key);
       setAddRecoveryOpen(false);

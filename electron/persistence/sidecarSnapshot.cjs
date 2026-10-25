@@ -11,7 +11,7 @@
  *
  * WHY THIS IS SAFE — the invariant it depends on:
  *   Every writer of these files writes to a temp file and `rename()`s it into
- *   place (`writeBinaryFile` in main.cjs, `writeJsonAtomic` in noteHistory.cjs).
+ *   place (`writeBinaryFile` in main.cjs, `writeTextAtomic` in noteHistory.cjs).
  *   A rename swaps the directory entry and leaves the old inode untouched, so a
  *   snapshot's hardlink keeps pointing at exactly the bytes that existed when
  *   the snapshot was taken. Deleting the live file (attachment GC, prune) only

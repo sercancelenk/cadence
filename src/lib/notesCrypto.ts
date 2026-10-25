@@ -83,6 +83,8 @@ export type PassphraseRecovery = {
   ivB64: string;
   /** AES-GCM ciphertext + tag of the Notes passphrase. */
   cipherB64: string;
+  /** The account whose password wrapped it. Absent on envelopes made before this was recorded. */
+  accountId?: string;
 };
 
 export type NoteCipher = {
@@ -242,6 +244,7 @@ async function deriveRecoveryKey(accountPassword: string, salt: Uint8Array): Pro
 export async function wrapPassphraseForRecovery(
   notesPassphrase: string,
   accountPassword: string,
+  accountId?: string,
 ): Promise<PassphraseRecovery> {
   const c = getCrypto();
   const salt = c.getRandomValues(new Uint8Array(16));
@@ -252,7 +255,12 @@ export async function wrapPassphraseForRecovery(
     key,
     new TextEncoder().encode(notesPassphrase) as unknown as BufferSource,
   );
-  return { saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(cipher) };
+  return {
+    saltB64: toB64(salt),
+    ivB64: toB64(iv),
+    cipherB64: toB64(cipher),
+    ...(accountId ? { accountId } : {}),
+  };
 }
 
 /**

@@ -123,6 +123,37 @@ describe('normalizeData — notesLock orphan cleanup', () => {
     expect(norm.notes[0].locked).toBe(true);
   });
 
+  it('keeps which account a Notes recovery envelope was made for', () => {
+    const raw: Partial<AppData> = {
+      version: 3,
+      teams: [],
+      people: [],
+      items: [],
+      notifiedReminderIds: [],
+      todoGroups: [],
+      todoItems: [],
+      notes: [
+        {
+          id: 'n1',
+          title: 'secret',
+          body: '',
+          locked: true,
+          cipher: { ivB64: 'iv', cipherB64: 'ct' },
+          pinned: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      notesLock: {
+        saltB64: 'AAAA',
+        verifierIvB64: 'BBBB',
+        verifierCipherB64: 'CCCC',
+        recovery: { saltB64: 'r1', ivB64: 'r2', cipherB64: 'r3', accountId: 'acct-1' },
+      },
+    };
+    expect(normalizeData(raw).notesLock?.recovery).toEqual({ saltB64: 'r1', ivB64: 'r2', cipherB64: 'r3', accountId: 'acct-1' });
+  });
+
   it('a missing notesLock stays missing (no-op)', () => {
     const raw: Partial<AppData> = {
       version: 3,

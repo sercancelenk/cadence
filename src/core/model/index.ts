@@ -541,6 +541,8 @@ export interface NotesLock {
     ivB64: string;
     /** AES-GCM ciphertext (+ tag) of the Notes passphrase. */
     cipherB64: string;
+    /** The account whose password wrapped it. Absent on envelopes made before this was recorded. */
+    accountId?: string;
   };
 }
 
@@ -2097,7 +2099,12 @@ function parseNotesLock(raw: unknown): NotesLock | undefined {
       typeof r.ivB64 === 'string' &&
       typeof r.cipherB64 === 'string'
     ) {
-      recovery = { saltB64: r.saltB64, ivB64: r.ivB64, cipherB64: r.cipherB64 };
+      recovery = {
+        saltB64: r.saltB64,
+        ivB64: r.ivB64,
+        cipherB64: r.cipherB64,
+        ...(typeof r.accountId === 'string' && r.accountId ? { accountId: r.accountId } : {}),
+      };
     }
   }
   return {

@@ -41,6 +41,7 @@ describe('normalize*Keep', () => {
     expect(normalizeRoutineKeep('30')).toBe(DEFAULT_ROUTINE_KEEP);
     expect(normalizeRoutineKeep(undefined)).toBe(DEFAULT_ROUTINE_KEEP);
     expect(normalizeMirrorKeep(7)).toBe(7);
+    expect(normalizeMirrorKeep(2)).toBe(2);
     expect(normalizeMirrorKeep(0)).toBe(DEFAULT_MIRROR_KEEP);
     expect(normalizeMirrorKeep(null)).toBe(DEFAULT_MIRROR_KEEP);
   });
@@ -139,6 +140,6 @@ describe('planMirrorPrune', () => {
       dateKey: `2026-05-${String(i + 1).padStart(2, '0')}`,
       complete: true,
     }));
-    expect(planMirrorPrune(folders, 2).remove).toEqual(['f0']);
+    expect(planMirrorPrune(folders, 5).remove).toEqual(['f0']);
   });
 });

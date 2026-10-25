@@ -262,7 +262,9 @@ export function NotesLockDialogs({ notes, data, lock }: NotesLockDialogsProps) {
         >
           <p>
             Enter your <strong>account password</strong> (the one you log in with). We'll use it to decrypt the
-            Notes passphrase that was stored at setup time, then unlock the workspace.
+            Notes passphrase that was stored at setup time, then unlock the workspace. If these notes came from a
+            backup of <strong>another account</strong>, enter that account's password; you can then tie the recovery
+            to this account.
           </p>
           <label className="field">
             <span>Account password</span>

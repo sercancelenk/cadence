@@ -218,7 +218,7 @@ Reference implementations in:
 - Production CSP: `script-src 'self'` (strict); dev relaxes for Vite HMR
 - Password: scrypt hash; data key: AES-256-GCM derived at login
 - Cloud sync: E2E encrypted snapshots before upload; Drive sees ciphertext only
-- Offline transfer: encrypted backup file moved by the user; additive merge never overwrites local data
+- Offline transfer: portable (unencrypted) backup file moved by the user; additive merge never overwrites local data
 
 ### Open questions
 

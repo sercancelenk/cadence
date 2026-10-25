@@ -12,19 +12,26 @@ export function AuthLocalFirstNotice({ variant }: { variant: 'login' | 'register
           mail.
         </li>
         {variant === 'register' ? (
-          <li>
-            Your password <strong>encrypts your data</strong> on desktop. Recovery codes are created
-            automatically — you will save them in the setup walkthrough right after sign-up.
-          </li>
+          <>
+            <li>
+              Your password <strong>encrypts your data</strong> on desktop. Recovery codes are created
+              automatically — you will save them in the setup walkthrough right after sign-up.
+            </li>
+            <li>
+              If you lose the password and the recovery codes and have no backup, your data{' '}
+              <strong>cannot be restored</strong> — nobody, including us, can open it. Export a backup now and
+              then (backups are readable files, so keep them private).
+            </li>
+          </>
         ) : variant === 'recover' ? (
           <li>
-            Recovery works only on <strong>this device</strong> where you saved recovery codes. No cloud
-            service is involved — same model as a browser wallet.
+            Recovery works only on <strong>this device</strong> where you saved recovery codes, and it needs{' '}
+            <strong>all 8</strong> of them. No cloud service is involved — same model as a browser wallet.
           </li>
         ) : (
           <li>
             Forgot your password? Use your <strong>recovery codes</strong> (if you saved them) or a{' '}
-            <strong>backup export</strong> from Settings.
+            <strong>backup export</strong> from Settings. With neither, your data cannot be opened.
           </li>
         )}
       </ul>

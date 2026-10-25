@@ -147,13 +147,6 @@ beforeAll(() => {
   };
 
   require('./main.cjs');
-
-  // Normally wired up in `app.whenReady()`, which this stub never resolves.
-  // Without it the deferred attachment GC that follows every save throws.
-  const { initNoteHistory } = require('./noteHistory.cjs') as {
-    initNoteHistory: (getUserDataPath: () => string) => void;
-  };
-  initNoteHistory(() => userDataDir);
 });
 
 afterAll(() => {
@@ -799,6 +792,552 @@ describe('account:changePassword', () => {
       expect(decryptPayload(envelope, newKey), `${name} is unreadable`).not.toBeNull();
     }
     expect(load()?.notes?.map((n) => n.id).sort()).toEqual(['new', 'old']);
+  });
+});
+
+describe('attachments across a key change', () => {
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+
+  function call<T>(channel: string, payload: unknown): T {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+
+  function writeImage(id: string) {
+    const r = call<{ ok: boolean }>('attachment:write', { attachmentId: id, dataBase64: PNG.toString('base64') });
+    expect(r.ok).toBe(true);
+  }
+
+  function readImage(id: string) {
+    const r = call<{ ok: boolean; dataBase64?: string }>('attachment:read', { attachmentId: id });
+    return r.ok ? Buffer.from(r.dataBase64 as string, 'base64') : null;
+  }
+
+  /** Images are encrypted under the password-derived key, so a new key must carry them along. */
+  it('still reads every image after the password changes', () => {
+    expect(call<{ ok: boolean }>('account:register', { email: 'img@example.com', password: 'old-password-1' }).ok).toBe(true);
+    writeImage('attachment-0001');
+    writeImage('attachment-0002');
+
+    const changed = call<{ ok: boolean; error?: string }>('account:changePassword', {
+      oldPassword: 'old-password-1',
+      newPassword: 'new-password-2',
+    });
+    expect(changed.ok).toBe(true);
+
+    expect(readImage('attachment-0001')?.equals(PNG)).toBe(true);
+    expect(readImage('attachment-0002')?.equals(PNG)).toBe(true);
+  });
+
+  it('still reads every image after a reset with recovery codes', () => {
+    const reg = call<{ ok: boolean; recoveryCodes?: string[] }>('account:register', {
+      email: 'rec@example.com',
+      password: 'old-password-1',
+    });
+    expect(reg.ok).toBe(true);
+    writeImage('attachment-0003');
+
+    const reset = call<{ ok: boolean; error?: string }>('account:recoverWithCodes', {
+      email: 'rec@example.com',
+      codes: reg.recoveryCodes,
+      newPassword: 'brand-new-pass-3',
+    });
+    expect(reset.ok).toBe(true);
+
+    expect(readImage('attachment-0003')?.equals(PNG)).toBe(true);
+  });
+
+  it('leaves no staging files behind after a password change', () => {
+    expect(call<{ ok: boolean }>('account:register', { email: 'tidy@example.com', password: 'old-password-1' }).ok).toBe(true);
+    writeImage('attachment-0010');
+    expect(
+      call<{ ok: boolean }>('account:changePassword', { oldPassword: 'old-password-1', newPassword: 'new-password-2' }).ok,
+    ).toBe(true);
+    const leftovers: string[] = [];
+    const walk = (d: string) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.rekey')) leftovers.push(p);
+      }
+    };
+    walk(userDataDir);
+    expect(leftovers).toEqual([]);
+  });
+
+  it('changes nothing when the copies cannot be written', () => {
+    const reg = call<{ ok: boolean; user?: { id: string } }>('account:register', { email: 'ro@example.com', password: 'old-password-1' });
+    expect(reg.ok).toBe(true);
+    writeImage('attachment-0011');
+    const dir = path.join(userDataDir, 'attachments', reg.user?.id as string);
+    fs.chmodSync(dir, 0o500);
+    try {
+      const changed = call<{ ok: boolean; error?: string }>('account:changePassword', {
+        oldPassword: 'old-password-1',
+        newPassword: 'new-password-2',
+      });
+      expect(changed.ok).toBe(false);
+    } finally {
+      fs.chmodSync(dir, 0o700);
+    }
+    expect(readImage('attachment-0011')?.equals(PNG)).toBe(true);
+    call('account:logout', {});
+    expect(call<{ ok: boolean }>('account:login', { email: 'ro@example.com', password: 'old-password-1' }).ok).toBe(true);
+    expect(readImage('attachment-0011')?.equals(PNG)).toBe(true);
+  });
+
+  it('finishes a swap that a crash cut short when the user signs in with the new password', () => {
+    const reg = call<{ ok: boolean; user?: { id: string } }>('account:register', { email: 'cut@example.com', password: 'old-password-1' });
+    writeImage('attachment-0012');
+    const file = path.join(userDataDir, 'attachments', reg.user?.id as string, 'attachment-0012.cadenc');
+    const beforeChange = fs.readFileSync(file);
+    expect(
+      call<{ ok: boolean }>('account:changePassword', { oldPassword: 'old-password-1', newPassword: 'new-password-2' }).ok,
+    ).toBe(true);
+    // The state a crash right after the account record was saved would leave: the live file still
+    // under the old key, the copy under the new one.
+    fs.writeFileSync(`${file}.rekey`, fs.readFileSync(file));
+    fs.writeFileSync(file, beforeChange);
+    call('account:logout', {});
+
+    expect(call<{ ok: boolean }>('account:login', { email: 'cut@example.com', password: 'new-password-2' }).ok).toBe(true);
+
+    expect(readImage('attachment-0012')?.equals(PNG)).toBe(true);
+    expect(fs.existsSync(`${file}.rekey`)).toBe(false);
+  });
+
+  it('leaves an image it cannot read with the old key exactly as it was', () => {
+    expect(call<{ ok: boolean }>('account:register', { email: 'odd@example.com', password: 'old-password-1' }).ok).toBe(true);
+    writeImage('attachment-0004');
+    const dir = path.join(userDataDir, 'attachments');
+    const userDir = path.join(dir, fs.readdirSync(dir)[0] as string);
+    const stray = path.join(userDir, 'attachment-0005.cadenc');
+    fs.writeFileSync(stray, 'not-an-envelope');
+
+    expect(
+      call<{ ok: boolean }>('account:changePassword', { oldPassword: 'old-password-1', newPassword: 'new-password-2' }).ok,
+    ).toBe(true);
+
+    expect(fs.readFileSync(stray, 'utf8')).toBe('not-an-envelope');
+    expect(readImage('attachment-0004')?.equals(PNG)).toBe(true);
+  });
+});
+
+describe('auth guesses', () => {
+  function call<T>(channel: string, payload: unknown): T {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+
+  type Reply = { ok: boolean; error?: string; lockedOut?: boolean };
+
+  function signUp(email = 'guess@example.com') {
+    expect(call<Reply>('account:register', { email, password: 'right-password-1' }).ok).toBe(true);
+  }
+
+  /** Six wrong guesses is one past the free budget. */
+  function guessWrong(channel: string, payload: unknown) {
+    let last: Reply = { ok: true };
+    for (let i = 0; i < 6; i += 1) last = call<Reply>(channel, payload);
+    return last;
+  }
+
+  it('locks PIN removal after repeated wrong PINs, even for the right one', () => {
+    signUp();
+    expect(call<Reply>('auth:setPin', { pin: '1234' }).ok).toBe(true);
+
+    guessWrong('auth:clear', { pin: '0000' });
+
+    const right = call<Reply>('auth:clear', { pin: '1234' });
+    expect(right.ok).toBe(false);
+    expect(right.error).toMatch(/too many attempts/i);
+    expect(call<{ enabled: boolean }>('auth:status', {}).enabled).toBe(true);
+  });
+
+  it('counts wrong PINs from unlock and removal against the same budget', () => {
+    signUp();
+    call('auth:setPin', { pin: '1234' });
+    for (let i = 0; i < 3; i += 1) call('auth:verify', { pin: '0000' });
+    for (let i = 0; i < 3; i += 1) call('auth:clear', { pin: '0000' });
+
+    expect(call<Reply>('auth:verify', { pin: '1234' }).lockedOut).toBe(true);
+  });
+
+  it('will not replace an existing PIN without the current one', () => {
+    signUp();
+    expect(call<Reply>('auth:setPin', { pin: '1234' }).ok).toBe(true);
+
+    expect(call<Reply>('auth:setPin', { pin: '9999' }).ok).toBe(false);
+    expect(call<Reply>('auth:setPin', { pin: '9999', currentPin: '0000' }).ok).toBe(false);
+    expect(call<Reply>('auth:verify', { pin: '1234' }).ok).toBe(true);
+
+    expect(call<Reply>('auth:setPin', { pin: '9999', currentPin: '1234' }).ok).toBe(true);
+    expect(call<Reply>('auth:verify', { pin: '9999' }).ok).toBe(true);
+  });
+
+  it('locks password checks after repeated wrong passwords', () => {
+    signUp();
+    const last = guessWrong('account:changePassword', {
+      oldPassword: 'wrong-password-9',
+      newPassword: 'another-password-2',
+    });
+    expect(last.ok).toBe(false);
+
+    const right = call<Reply>('account:changePassword', {
+      oldPassword: 'right-password-1',
+      newPassword: 'another-password-2',
+    });
+    expect(right.ok).toBe(false);
+    expect(right.error).toMatch(/too many attempts/i);
+  });
+
+  it('shares one password budget across the checks that take the account password', () => {
+    signUp();
+    for (let i = 0; i < 3; i += 1) call('account:verifyPassword', { password: 'wrong-password-9' });
+    for (let i = 0; i < 3; i += 1) call('account:setupRecovery', { password: 'wrong-password-9' });
+
+    const right = call<Reply>('account:verifyPassword', { password: 'right-password-1' });
+    expect(right.ok).toBe(false);
+    expect(right.error).toMatch(/too many attempts/i);
+  });
+
+  it('clears the PIN lockout when the PIN is reset with the account password', () => {
+    signUp();
+    call('auth:setPin', { pin: '1234' });
+    guessWrong('auth:verify', { pin: '0000' });
+    expect(call<Reply>('auth:verify', { pin: '1234' }).lockedOut).toBe(true);
+
+    expect(call<Reply>('auth:resetWithAccountPassword', { password: 'right-password-1' }).ok).toBe(true);
+    expect(call<Reply>('auth:setPin', { pin: '5678' }).ok).toBe(true);
+
+    expect(call<Reply>('auth:verify', { pin: '5678' }).ok).toBe(true);
+  });
+
+  it('keeps the PIN reset available when other password checks have used up their budget', () => {
+    signUp();
+    call('auth:setPin', { pin: '1234' });
+    guessWrong('account:verifyPassword', { password: 'wrong-password-9' });
+    expect(call<Reply>('account:verifyPassword', { password: 'right-password-1' }).ok).toBe(false);
+
+    expect(call<Reply>('auth:resetWithAccountPassword', { password: 'right-password-1' }).ok).toBe(true);
+  });
+
+  it('lets the right PIN in when a lock is dated further ahead than any lock can last (clock set ahead, then corrected)', () => {
+    signUp();
+    call('auth:setPin', { pin: '1234' });
+    const year = 365 * 24 * 60 * 60 * 1000;
+    fs.writeFileSync(
+      path.join(userDataDir, 'auth-throttle.json'),
+      JSON.stringify({ pin: { fails: 9, lockedUntil: Date.now() + year, lastAttempt: Date.now() + year } }),
+    );
+
+    expect(call<Reply>('auth:verify', { pin: '1234' }).ok).toBe(true);
+  });
+
+  it('still honours a real lock that is within the cap', () => {
+    signUp();
+    call('auth:setPin', { pin: '1234' });
+    fs.writeFileSync(
+      path.join(userDataDir, 'auth-throttle.json'),
+      JSON.stringify({ pin: { fails: 6, lockedUntil: Date.now() + 10 * 60 * 1000, lastAttempt: Date.now() } }),
+    );
+    expect(call<Reply & { retryAfterMs?: number }>('auth:verify', { pin: '1234' })).toMatchObject({ ok: false, lockedOut: true });
+  });
+
+  it('keeps the PIN and password counters when a flood of made-up emails fills the file', () => {
+    signUp();
+    const now = Date.now();
+    const map: Record<string, unknown> = { pin: { fails: 5, lockedUntil: 0, lastAttempt: now - 10 * 60 * 1000 } };
+    for (let i = 0; i < 300; i += 1) map[`acct:flood${i}@example.com`] = { fails: 1, lockedUntil: 0, lastAttempt: now - 60 * 1000 + i };
+    fs.writeFileSync(path.join(userDataDir, 'auth-throttle.json'), JSON.stringify(map));
+
+    call('account:login', { email: 'another-made-up@example.com', password: 'whatever-password' });
+
+    const stored = JSON.parse(fs.readFileSync(path.join(userDataDir, 'auth-throttle.json'), 'utf8')) as Record<string, { fails: number }>;
+    expect(stored.pin?.fails).toBe(5);
+    expect(Object.keys(stored).length).toBeLessThanOrEqual(256);
+  });
+
+  it('forgets a failure record dated in the future so it can cool down', () => {
+    signUp();
+    call('auth:setPin', { pin: '1234' });
+    const hour = 60 * 60 * 1000;
+    fs.writeFileSync(
+      path.join(userDataDir, 'auth-throttle.json'),
+      JSON.stringify({ pin: { fails: 9, lockedUntil: 0, lastAttempt: Date.now() + 10 * hour } }),
+    );
+    call('auth:verify', { pin: '0000' });
+    const stored = JSON.parse(fs.readFileSync(path.join(userDataDir, 'auth-throttle.json'), 'utf8')) as Record<string, { fails: number }>;
+    expect(stored.pin?.fails).toBe(1);
+  });
+
+  it('keeps the lockout across an app restart', () => {
+    signUp();
+    guessWrong('account:verifyPassword', { password: 'wrong-password-9' });
+
+    const file = path.join(userDataDir, 'auth-throttle.json');
+    expect(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8'))).length).toBeGreaterThan(0);
+  });
+
+  it('does not write the stored hash or salt to the log on a wrong PIN', () => {
+    signUp();
+    call('auth:setPin', { pin: '1234' });
+    const stored = JSON.parse(fs.readFileSync(path.join(userDataDir, 'auth-lock.json'), 'utf8')) as {
+      salt: string;
+      hash: string;
+    };
+    const lines: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      call('auth:verify', { pin: '0000' });
+    } finally {
+      console.warn = original;
+    }
+    const logged = lines.join('\n');
+    expect(logged).not.toContain(stored.hash.slice(0, 8));
+    expect(logged).not.toContain(stored.salt.slice(0, 6));
+  });
+});
+
+describe('note history across a key change', () => {
+  const NOTE = 'note-hist-000001';
+  const MARK = 'HISTORY-BODY-MARKER';
+
+  function call<T>(channel: string, payload: unknown): T {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+
+  function append() {
+    const r = call<{ ok: boolean; revisionId?: string }>('noteHistory:append', {
+      noteId: NOTE,
+      trigger: 'manual',
+      title: 'History title',
+      summary: 'History summary',
+      locked: false,
+      body: MARK,
+      bodyFormat: 'markdown',
+    });
+    expect(r.ok).toBe(true);
+    return r.revisionId as string;
+  }
+
+  function readBody(revisionId: string) {
+    const r = call<{ ok: boolean; revision?: { body?: string } }>('noteHistory:read', { noteId: NOTE, revisionId });
+    return r.ok ? r.revision?.body : null;
+  }
+
+  function onDisk() {
+    const root = path.join(userDataDir, 'note-history');
+    const out: string[] = [];
+    const walk = (d: string) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else out.push(fs.readFileSync(p, 'utf8'));
+      }
+    };
+    if (fs.existsSync(root)) walk(root);
+    return out.join('\n');
+  }
+
+  it('is sealed on disk for a signed-in account', () => {
+    call('account:register', { email: 'h1@example.com', password: 'old-password-1' });
+    append();
+    expect(onDisk()).not.toContain(MARK);
+    expect(onDisk()).not.toContain('History title');
+  });
+
+  it('is still readable after the password changes', () => {
+    call('account:register', { email: 'h2@example.com', password: 'old-password-1' });
+    const id = append();
+    expect(
+      call<{ ok: boolean }>('account:changePassword', { oldPassword: 'old-password-1', newPassword: 'new-password-2' }).ok,
+    ).toBe(true);
+    expect(readBody(id)).toBe(MARK);
+    expect(onDisk()).not.toContain(MARK);
+  });
+
+  it('is still readable after a reset with recovery codes', () => {
+    const reg = call<{ ok: boolean; recoveryCodes?: string[] }>('account:register', {
+      email: 'h3@example.com',
+      password: 'old-password-1',
+    });
+    const id = append();
+    expect(
+      call<{ ok: boolean }>('account:recoverWithCodes', {
+        email: 'h3@example.com',
+        codes: reg.recoveryCodes,
+        newPassword: 'brand-new-pass-3',
+      }).ok,
+    ).toBe(true);
+    expect(readBody(id)).toBe(MARK);
+  });
+
+  it('seals history an older version left as plaintext when the user signs in', async () => {
+    const reg = call<{ ok: boolean; user?: { id: string } }>('account:register', { email: 'h5@example.com', password: 'old-password-1' });
+    const dir = path.join(userDataDir, 'note-history', reg.user?.id as string, NOTE);
+    fs.mkdirSync(dir, { recursive: true });
+    const rev = {
+      id: 'legacy-rev-000001',
+      noteId: NOTE,
+      createdAt: new Date().toISOString(),
+      trigger: 'manual',
+      title: 'Legacy title',
+      summary: 'Legacy summary',
+      locked: false,
+      body: MARK,
+      bodyFormat: 'markdown',
+    };
+    fs.writeFileSync(path.join(dir, 'legacy-rev-000001.json'), JSON.stringify(rev));
+    fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({ version: 1, noteId: NOTE, revisions: [{ ...rev, body: undefined }] }));
+    call('account:logout', {});
+
+    expect(call<{ ok: boolean }>('account:login', { email: 'h5@example.com', password: 'old-password-1' }).ok).toBe(true);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(onDisk()).not.toContain(MARK);
+    expect(readBody('legacy-rev-000001')).toBe(MARK);
+  });
+
+  it('keeps an older user\'s plaintext history intact through sign-in, the upgrade and a password change', async () => {
+    const reg = call<{ ok: boolean; user?: { id: string } }>('account:register', { email: 'h6@example.com', password: 'old-password-1' });
+    const dir = path.join(userDataDir, 'note-history', reg.user?.id as string, NOTE);
+    fs.mkdirSync(dir, { recursive: true });
+    const rev = {
+      id: 'legacy-rev-000009',
+      noteId: NOTE,
+      createdAt: new Date().toISOString(),
+      trigger: 'manual',
+      title: 'Legacy title',
+      summary: 'Legacy summary',
+      locked: false,
+      body: MARK,
+      bodyFormat: 'markdown',
+    };
+    fs.writeFileSync(path.join(dir, 'legacy-rev-000009.json'), JSON.stringify(rev));
+    fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({ version: 1, noteId: NOTE, revisions: [{ ...rev, body: undefined }] }));
+    call('account:logout', {});
+    call('account:login', { email: 'h6@example.com', password: 'old-password-1' });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(
+      call<{ ok: boolean }>('account:changePassword', { oldPassword: 'old-password-1', newPassword: 'new-password-2' }).ok,
+    ).toBe(true);
+
+    expect(readBody('legacy-rev-000009')).toBe(MARK);
+    expect(onDisk()).not.toContain(MARK);
+    const list = call<{ ok: boolean; revisions: Array<{ id: string; title: string }> }>('noteHistory:list', { noteId: NOTE });
+    expect(list.revisions.map((r) => r.id)).toEqual(['legacy-rev-000009']);
+  });
+
+  it('does not let attachment cleanup delete images when a revision cannot be opened', () => {
+    const reg4 = call<{ ok: boolean; user?: { id: string } }>('account:register', { email: 'h4@example.com', password: 'old-password-1' });
+    const saved = handlers.get('data:save')?.({}, workspace([note('n1', 'First')]), reg4.user?.id, undefined) as SaveResult;
+    expect(saved.ok).toBe(true);
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64');
+    expect(call<{ ok: boolean }>('attachment:write', { attachmentId: 'attachment-hist01', dataBase64: png }).ok).toBe(true);
+    // A revision sealed under some other key: unreadable here.
+    const dir = path.join(userDataDir, 'note-history', fs.readdirSync(path.join(userDataDir, 'attachments'))[0] as string, NOTE);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'foreign-rev-000001.json'),
+      JSON.stringify({ magic: 'LDMN1', v: 1, alg: 'AES-256-GCM', iv: 'AAAAAAAAAAAAAAAA', tag: 'AAAAAAAAAAAAAAAAAAAAAA==', ct: 'AAAA' }),
+    );
+
+    const gc = call<{ ok: boolean; pruned?: number; skipped?: string; error?: string }>('attachment:gc', {});
+
+    expect(gc).toMatchObject({ ok: true, pruned: 0, skipped: 'note-history-unreadable' });
+    expect(call<{ ok: boolean }>('attachment:read', { attachmentId: 'attachment-hist01' }).ok).toBe(true);
+  });
+});
+
+describe('daily backup without waiting for a save', () => {
+  type Reply = { ok: boolean; started?: boolean; error?: string; user?: { id: string } };
+
+  function call<T>(channel: string, payload?: unknown): T {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const NOTE = 'note-daily-00001';
+
+  async function setup(email: string) {
+    const reg = call<Reply>('account:register', { email, password: 'right-password-1' });
+    const uid = reg.user?.id as string;
+    const saved = handlers.get('data:save')?.({}, workspace([note('n1', 'Daily note')]), uid, undefined) as SaveResult;
+    expect(saved.ok).toBe(true);
+    expect(call<{ ok: boolean }>('attachment:write', { attachmentId: 'attachment-new-daily1', dataBase64: PNG.toString('base64') }).ok).toBe(true);
+    expect(
+      call<{ ok: boolean }>('noteHistory:append', { noteId: NOTE, trigger: 'manual', title: 'T', summary: 'S', locked: false, body: 'DAILY-HISTORY-BODY', bodyFormat: 'markdown' }).ok,
+    ).toBe(true);
+    // The save above queues its own (not-configured) backup check; let it finish before choosing a folder.
+    await new Promise((r) => setTimeout(r, 50));
+    const mirror = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-mirror-'));
+    fs.writeFileSync(path.join(userDataDir, `cadence-daily-backup-${uid}.json`), JSON.stringify({ mirrorDir: mirror }));
+    return { uid, mirror };
+  }
+
+  const dailyFolders = (mirror: string) => fs.readdirSync(mirror).filter((n) => n.includes('-daily-') && !n.endsWith('.partial'));
+
+  async function until(check: () => boolean, ms = 4000) {
+    const end = Date.now() + ms;
+    while (!check() && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+    return check();
+  }
+
+  const { localDateKey } = require('./dailyBackupMirror.cjs') as { localDateKey: (d?: Date) => string };
+  const prefsFile = (uid: string) => path.join(userDataDir, `cadence-daily-backup-${uid}.json`);
+  const recordedDone = (uid: string) => {
+    try {
+      return JSON.parse(fs.readFileSync(prefsFile(uid), 'utf8')).lastDailyDate === localDateKey();
+    } catch {
+      return false;
+    }
+  };
+
+  it('makes today\'s backup, with readable images and history, when asked at startup or on return', async () => {
+    const { mirror } = await setup('daily1@example.com');
+
+    call<Reply>('backupMirror:ensureToday');
+
+    expect(await until(() => dailyFolders(mirror).length === 1)).toBe(true);
+    const folder = path.join(mirror, dailyFolders(mirror)[0] as string);
+    expect(JSON.parse(fs.readFileSync(path.join(folder, 'data.json'), 'utf8')).notes[0].title).toBe('Daily note');
+    expect(fs.readFileSync(path.join(folder, 'attachments', 'attachment-new-daily1.bin')).equals(PNG)).toBe(true);
+    const historyFiles = fs.readdirSync(path.join(folder, 'note-history', NOTE));
+    expect(historyFiles.length).toBeGreaterThan(0);
+    const revisionFile = historyFiles.find((n) => n.endsWith('.json') && n !== 'index.json') as string;
+    expect(fs.readFileSync(path.join(folder, 'note-history', NOTE, revisionFile), 'utf8')).toContain('DAILY-HISTORY-BODY');
+  });
+
+  it('does nothing the second time the same day, and starts again if the folder was removed', async () => {
+    const { uid, mirror } = await setup('daily2@example.com');
+    call<Reply>('backupMirror:ensureToday');
+    expect(await until(() => recordedDone(uid))).toBe(true);
+
+    expect(call<Reply>('backupMirror:ensureToday')).toMatchObject({ ok: true, started: false });
+
+    for (const name of dailyFolders(mirror)) fs.rmSync(path.join(mirror, name), { recursive: true, force: true });
+    expect(call<Reply>('backupMirror:ensureToday')).toMatchObject({ ok: true, started: true });
+    expect(await until(() => dailyFolders(mirror).length === 1)).toBe(true);
+  });
+
+  it('does nothing when no folder was chosen', () => {
+    call<Reply>('account:register', { email: 'daily3@example.com', password: 'right-password-1' });
+    expect(call<Reply>('backupMirror:ensureToday')).toMatchObject({ ok: true, started: false });
+  });
+
+  it('does nothing when nobody is signed in', () => {
+    expect(call<Reply>('backupMirror:ensureToday')).toMatchObject({ ok: true, started: false });
   });
 });
 

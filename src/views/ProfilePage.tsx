@@ -3,6 +3,8 @@ import { IcCheck, IcLock, IcPencil, IcTrash, IcX } from '../components/icons';
 import { Button } from '../components/ui/Button';
 import { useConfirm } from '../components/ui/ConfirmProvider';
 import { useAccount } from '../AccountContext';
+import { PasswordChangedNextSteps } from '../components/auth/PasswordChangedNextSteps';
+import { rewrapNotesRecovery } from '../lib/notesRecovery';
 import { useAppData } from '../AppDataContext';
 
 const MAX_AVATAR_BYTES = 1_500_000; // ~1.5 MB safety limit before downscale.
@@ -40,7 +42,7 @@ type Tab = 'view' | 'edit' | 'password';
 export function ProfilePage() {
   const { confirm } = useConfirm();
   const { user, changePassword, hasElectronAccounts } = useAccount();
-  const { data, updateUserProfile, flushPendingSave, lastSaveError, setNotesLock } = useAppData();
+  const { data, updateUserProfile, flushPendingSave, lastSaveError, setNotesLock, refreshWriteGeneration } = useAppData();
   const profile = data.profile ?? { displayName: 'Me', favoriteTeamIds: [] };
 
   const [tab, setTab] = useState<Tab>('view');
@@ -62,7 +64,7 @@ export function ProfilePage() {
   const [pwBusy, setPwBusy] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwSuccess, setPwSuccess] = useState(false);
-  const [pwNotesRecoveryCleared, setPwNotesRecoveryCleared] = useState(false);
+  const [pwNotesRecoveryNeedsRenewal, setPwNotesRecoveryNeedsRenewal] = useState(false);
 
   // Detect "user has typed but not saved yet" so:
   //   1. We can warn them if they try to navigate away.
@@ -197,7 +199,7 @@ export function ProfilePage() {
     e.preventDefault();
     setPwError(null);
     setPwSuccess(false);
-    setPwNotesRecoveryCleared(false);
+    setPwNotesRecoveryNeedsRenewal(false);
     if (newPassword !== newPassword2) {
       setPwError('The two new passwords do not match.');
       return;
@@ -209,15 +211,25 @@ export function ProfilePage() {
         setPwError(r.error ?? 'Could not change password.');
         return;
       }
-      // The Notes recovery envelope was wrapped with the OLD account password,
-      // so after a change it can only be opened by the old password — a
-      // confusing UX and a lingering exposure. We cannot re-wrap it (that needs
-      // the plaintext Notes passphrase, only available while unlocked), so drop
-      // it. The user re-enables Notes recovery from the Notes page.
+      // The main process re-encrypted and committed the workspace itself, so our write generation is
+      // behind; adopt it or the next edit is refused as a write conflict.
+      try {
+        await refreshWriteGeneration();
+      } catch {
+        /* the next save will say if it was refused */
+      }
+      // The Notes recovery envelope was wrapped with the OLD account password. We hold both passwords
+      // right now, so move it to the new one. If the old password does not open it, leave it as it is
+      // (it may still open with the old password) and point the user to "Renew recovery" in Notes.
       if (data.notesLock?.recovery) {
-        const { recovery: _drop, ...lockWithoutRecovery } = data.notesLock;
-        setNotesLock(lockWithoutRecovery);
-        setPwNotesRecoveryCleared(true);
+        // The password is already changed: whatever happens here must not hide that.
+        try {
+          const moved = await rewrapNotesRecovery(data.notesLock, oldPassword, newPassword, user?.id ?? '');
+          if (moved.rewrapped && moved.lock) setNotesLock(moved.lock);
+          else setPwNotesRecoveryNeedsRenewal(true);
+        } catch {
+          setPwNotesRecoveryNeedsRenewal(true);
+        }
       }
       setPwSuccess(true);
       setOldPassword('');
@@ -479,15 +491,10 @@ export function ProfilePage() {
             </label>
             {pwError ? <p className="form-msg form-msg--err small">{pwError}</p> : null}
             {pwSuccess ? (
-              <p className="form-msg form-msg--ok small">
-                Password updated.
-                {hasElectronAccounts
-                  ? ' Generate new recovery codes in Settings — your previous codes no longer work after a password change.'
-                  : ' Generate new recovery codes in Settings if you use them.'}
-                {pwNotesRecoveryCleared
-                  ? ' Notes passphrase recovery was reset because it was tied to your old password — re-enable it on the Notes page.'
-                  : ''}
-              </p>
+              <PasswordChangedNextSteps
+                recoveryCodesInvalidated={hasElectronAccounts}
+                notesRecoveryNeedsRenewal={pwNotesRecoveryNeedsRenewal}
+              />
             ) : null}
             <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
               <Button type="button" variant="ghost" onClick={() => setTab('view')}>
