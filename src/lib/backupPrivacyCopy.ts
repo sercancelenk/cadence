@@ -8,3 +8,9 @@ const SAVED_REMINDER = 'The file is not encrypted — keep it private.';
 export function backupSavedDetail(detail: string): string {
   return detail.includes(SAVED_REMINDER) ? detail : `${detail} ${SAVED_REMINDER}`;
 }
+
+/** Extra line for a backup that left images out because they could not be read. Empty when none were missed. */
+export function skippedImagesNote(skipped: number | undefined): string {
+  if (!skipped || skipped < 1) return '';
+  return `${skipped} image${skipped === 1 ? '' : 's'} could not be read and ${skipped === 1 ? 'is' : 'are'} not in this backup, so it is not complete. Keep your current data too.`;
+}

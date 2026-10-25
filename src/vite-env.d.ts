@@ -238,7 +238,15 @@ interface CadenceApi {
       notifyFlushDone?: () => void;
       dataListSources?: () => Promise<DataSources>;
       dataPreviewSource?: (payload: { filePath: string }) => Promise<{ ok: boolean; info?: DataFileInfo; error?: string }>;
-      dataRestoreFromSource?: (payload: { filePath: string }) => Promise<{ ok: boolean; restoredFrom?: string; error?: string; reason?: string }>;
+      dataRestoreFromSource?: (payload: { filePath: string }) => Promise<{
+        ok: boolean;
+        restoredFrom?: string;
+        error?: string;
+        reason?: string;
+        attachmentsRestored?: number;
+        attachmentsFailed?: number;
+        historyIncomplete?: boolean;
+      }>;
       openUserDataFolder?: () => Promise<{ ok: boolean }>;
       revealInOS?: (payload: { filePath: string }) => Promise<{ ok: boolean; error?: string }>;
       backupMirrorGet?: () => Promise<DailyBackupMirrorStatus>;
@@ -297,7 +305,7 @@ interface CadenceApi {
       }) => Promise<{ ok: boolean; purged?: boolean; error?: string }>;
       exportDataBundle?: (
         data: unknown,
-      ) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
+      ) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string; attachmentsSkipped?: number }>;
       saveToolFile?: (payload: {
         suggestedName: string;
         defaultExt: string;
@@ -319,6 +327,7 @@ interface CadenceApi {
         error?: string;
         attachmentsRestored?: number;
         attachmentsSkipped?: number;
+        historyIncomplete?: boolean;
       }>;
       importWorkspace?: (
         payload: unknown,

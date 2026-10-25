@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeRetentionLoss, mirrorKeepLabel, snapshotKeepLabel } from './backupRetentionText';
+import { describeRetentionLoss, mirrorKeepLabel, snapshotKeepLabel, snapshotSafetyNetText } from './backupRetentionText';
 
 describe('describeRetentionLoss', () => {
   it('names both kinds of backup, their counts and what stays', () => {
@@ -24,5 +24,17 @@ describe('choice labels', () => {
     expect(mirrorKeepLabel(30, true)).toBe('Newest 30 daily folders (default)');
     expect(mirrorKeepLabel(7, false)).toBe('Newest 7 daily folders');
     expect(snapshotKeepLabel(50, true)).toBe('Newest 50 routine snapshots (default)');
+  });
+});
+
+describe('snapshotSafetyNetText', () => {
+  it('follows the number the user chose', () => {
+    expect(snapshotSafetyNetText(20)).toContain('20');
+    expect(snapshotSafetyNetText(20)).not.toContain('50');
+  });
+
+  it('says 50 when the choice is not known yet, the long-standing size', () => {
+    expect(snapshotSafetyNetText(null)).toContain('50');
+    expect(snapshotSafetyNetText(undefined)).toContain('50');
   });
 });

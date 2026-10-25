@@ -53,10 +53,12 @@ let resolveUserData = () => {
 
 /** The data key of a signed-in user, or null (plaintext account / not signed in). */
 let resolveKey = () => null;
+let resolvePreviousKeys = () => [];
 
-function initNoteHistory(getUserDataPathFn, getDataKeyFn) {
+function initNoteHistory(getUserDataPathFn, getDataKeyFn, getPreviousKeysFn) {
   resolveUserData = getUserDataPathFn;
   resolveKey = typeof getDataKeyFn === 'function' ? getDataKeyFn : () => null;
+  resolvePreviousKeys = typeof getPreviousKeysFn === 'function' ? getPreviousKeysFn : () => [];
 }
 
 /** Returned by `readStoredJson` for a sealed file that cannot be opened with the key in hand. */
@@ -110,7 +112,14 @@ function readStoredJson(userId, filePath) {
   if (isEncryptedFile(text)) {
     const key = resolveKey(userId);
     if (!key) return UNREADABLE;
-    const plain = decryptPayload(text, key);
+    let plain = decryptPayload(text, key);
+    if (plain == null) {
+      // A snapshot made before a password change is sealed under an earlier key.
+      for (const earlier of resolvePreviousKeys(userId)) {
+        plain = decryptPayload(text, earlier);
+        if (plain != null) break;
+      }
+    }
     if (plain == null) return UNREADABLE;
     try {
       return JSON.parse(plain);
@@ -488,6 +497,7 @@ function importNoteHistoryFromDir(userId, srcRoot) {
   if (!destRoot) return { ok: false, error: 'invalid user' };
   fs.mkdirSync(destRoot, { recursive: true });
   let merged = 0;
+  let skipped = 0;
   for (const name of fs.readdirSync(srcRoot)) {
     const srcNoteDir = path.join(srcRoot, name);
     try {
@@ -497,8 +507,10 @@ function importNoteHistoryFromDir(userId, srcRoot) {
     }
     if (!sanitizeNoteId(name)) continue;
     if (mergeNoteHistoryNoteDir(userId, path.join(destRoot, name), srcNoteDir)) merged += 1;
+    // A note whose history was there but could not be opened is a gap the caller must be able to report.
+    else if (fs.existsSync(path.join(srcNoteDir, 'index.json'))) skipped += 1;
   }
-  return { ok: true, merged };
+  return { ok: true, merged, skipped };
 }
 
 /**

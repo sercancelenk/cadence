@@ -35,6 +35,7 @@ import { AppearanceSettingsSection } from '../components/settings/AppearanceSett
 import { PreferencesShell } from '../components/settings/PreferencesShell';
 import { SaveDiagnosticsSection } from '../components/settings/SaveDiagnosticsSection';
 import { BackupRetentionSettings } from '../components/settings/BackupRetentionSettings';
+import { snapshotSafetyNetText } from '../lib/backupRetentionText';
 import { RecoveryCodesPanel } from '../components/RecoveryCodesPanel';
 import { prepareForRemoteApply } from '../lib/syncApplyGuard';
 import { estimateWorkspaceStorage } from '../lib/workspaceStorageStats';
@@ -42,7 +43,8 @@ import { isElectronApp, backupPlatform, backupPlatformLabel } from '../lib/runti
 import { exportPortableBackupZip, importPortableBackupFile } from '../lib/backupBundle';
 import { useAppData } from '../AppDataContext';
 import { notesRecoveryIsForeign } from '../lib/notesRecovery';
-import { BACKUP_NOT_ENCRYPTED_NOTE, backupSavedDetail } from '../lib/backupPrivacyCopy';
+import { describeRestoreOutcome } from '../lib/backupOutcome';
+import { BACKUP_NOT_ENCRYPTED_NOTE, backupSavedDetail, skippedImagesNote } from '../lib/backupPrivacyCopy';
 import {
   PRESETS,
   PRESET_LABELS,
@@ -186,6 +188,25 @@ function RemindersSettingsSection() {
   );
 }
 
+/** The routine-snapshot size the user chose (null until known, or outside the desktop app). */
+function useSnapshotKeep(): number | null {
+  const [keep, setKeep] = useState<number | null>(null);
+  useEffect(() => {
+    if (!window.cadence?.backupRetentionGet) return;
+    let alive = true;
+    void window.cadence
+      .backupRetentionGet()
+      .then((r) => {
+        if (alive && r.ok) setKeep(r.state.snapshotRoutineKeep);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return keep;
+}
+
 export function Settings() {
   const navigate = useNavigate();
   const { data, importWorkspace, syncFromDisk, flushPendingSave, getLatestSnapshot } = useAppData();
@@ -263,7 +284,9 @@ export function Settings() {
     const r = await window.cadence.exportDataBundle(compactAppDataForPersist(stripAiSecrets(getLatestSnapshot())));
     if (r?.canceled) return;
     if (r?.ok && r.path) {
-      toast.showSuccess('Full backup saved', backupSavedDetail(`Folder: ${r.path}`));
+      const missed = skippedImagesNote(r.attachmentsSkipped);
+      if (missed) toast.showWarning('Backup saved, but incomplete', backupSavedDetail(`Folder: ${r.path}. ${missed}`));
+      else toast.showSuccess('Full backup saved', backupSavedDetail(`Folder: ${r.path}`));
       return;
     }
     toast.showError('Export failed', r?.error ?? 'Could not write backup folder.');
@@ -437,15 +460,11 @@ export function Settings() {
             toast.showWarning('AI keys not restored', 'The backup was restored, but your AI keys could not be put back. Enter them again in Settings → AI Assistant.');
           }
         }
-        const att = typeof r.attachmentsRestored === 'number' ? r.attachmentsRestored : null;
-        const skipped = typeof r.attachmentsSkipped === 'number' && r.attachmentsSkipped > 0 ? r.attachmentsSkipped : 0;
-        let detail = r.importedFrom ? `Restored from ${r.importedFrom}.` : 'Workspace restored.';
-        if (att != null) detail += ` ${att} image${att === 1 ? '' : 's'} imported.`;
-        if (skipped > 0) {
-          detail += ` ${skipped} encrypted image${skipped === 1 ? '' : 's'} could not be read — re-export a full backup from the source account.`;
-        }
+        const outcome = describeRestoreOutcome(r);
+        const detail = `${r.importedFrom ? `Restored from ${r.importedFrom}.` : 'Workspace restored.'} ${outcome.detail}`.trim();
         noteIfNotesRecoveryForeign();
-        toast.showSuccess('Backup imported', detail);
+        if (outcome.incomplete) toast.showWarning('Backup imported, but incomplete', detail);
+        else toast.showSuccess('Backup imported', detail);
         return;
       }
       toast.showError('Import failed', r?.error ?? 'Could not read backup folder.');
@@ -1096,7 +1115,7 @@ export function AISettingsSection() {
 // into the live file. Every restore takes a "pre-restore" snapshot of the
 // current state so the operation is itself undoable.
 
-function BackupsRecoverySection({
+export function BackupsRecoverySection({
   canExport,
   importBusy,
   onSetImportBusy,
@@ -1130,6 +1149,7 @@ function BackupsRecoverySection({
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [saveError, setSaveError] = useState<SaveError | null>(null);
+  const snapshotKeep = useSnapshotKeep();
 
   const supportsDailyMirror =
     isElectron && typeof window !== 'undefined' && !!window.cadence?.backupMirrorGet;
@@ -1168,6 +1188,19 @@ function BackupsRecoverySection({
     const off = window.cadence.onSaveError((e) => setSaveError(e));
     return off;
   }, []);
+
+  // A daily backup runs in the background (start, wake, focus, timer), so the "last backup" line is
+  // refreshed while this page is open instead of staying as it was when the page loaded.
+  const refreshMirrorRef = useRef(refreshMirror);
+  refreshMirrorRef.current = refreshMirror;
+  const watchingMirror = supportsDailyMirror && !!mirrorPrefs?.mirrorDir;
+  useEffect(() => {
+    if (!watchingMirror) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'hidden') void refreshMirrorRef.current();
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [watchingMirror]);
 
   if (!isElectron && !canExport) {
     return null;
@@ -1223,12 +1256,9 @@ function BackupsRecoverySection({
         // of the "uyarı çıktı ama data yüklemiş" confusion.
         setSaveError(null);
         const headline = `Restored from ${r.restoredFrom ?? label}.`;
-        setMsg({
-          kind: 'ok',
-          text: restoredShapeText
-            ? `${headline} Loaded: ${restoredShapeText}.`
-            : `${headline} Reloading…`,
-        });
+        const outcome = describeRestoreOutcome(r);
+        const loaded = restoredShapeText ? `${headline} Loaded: ${restoredShapeText}.` : `${headline} Reloading…`;
+        setMsg({ kind: outcome.incomplete ? 'error' : 'ok', text: `${loaded} ${outcome.detail}`.trim() });
         await reload();
         await refresh();
       } else {
@@ -1500,7 +1530,7 @@ function BackupsRecoverySection({
                         return;
                       }
                       if (r.prefs) setMirrorPrefs(r.prefs);
-                                      toast.showSuccess('Daily backup folder set', 'A full export will run once per day.');
+                                      toast.showSuccess('Daily backup folder set', 'The first full backup is starting now; after that one runs per day.');
                     } finally {
                       setBusy(false);
                     }
@@ -1641,7 +1671,7 @@ function BackupsRecoverySection({
             <div className="backup-snapshots">
               <h3 className="backup-snapshots__title">Automatic snapshots</h3>
               <p className="muted small backup-snapshots__lead">
-                {sources.backups.length} local safety cop{sources.backups.length === 1 ? 'y' : 'ies'} (up to 50).
+                {sources.backups.length} local safety cop{sources.backups.length === 1 ? 'y' : 'ies'} ({snapshotSafetyNetText(snapshotKeep)}).
                 Pick one to preview or restore — same coverage as a full local backup.
               </p>
               <label className="backup-snapshots__picker">
@@ -1727,6 +1757,7 @@ function StorageCacheSection() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [swStatus, setSwStatus] = useState<'idle' | 'reloading'>('idle');
+  const snapshotKeep = useSnapshotKeep();
 
   const refresh = async () => {
     if (!isElectron) return;
@@ -1895,7 +1926,7 @@ function StorageCacheSection() {
             <CacheRow
               label={`Backups · ${stats.backupsSelfCount} snapshot${stats.backupsSelfCount === 1 ? '' : 's'}`}
               bytes={stats.backupsSelfBytes}
-              hint="Rolling 50-snapshot safety net (data + attachment sidecars). Auto-pruned."
+              hint={`Automatic snapshots of data and images — ${snapshotSafetyNetText(snapshotKeep)}. Older ones are removed automatically.`}
             />
             {'attachmentsSelfBytes' in stats && stats.attachmentsSelfBytes > 0 ? (
               <CacheRow

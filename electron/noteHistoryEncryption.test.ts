@@ -232,9 +232,18 @@ describe('moving history between folders', () => {
     fs.rmSync(path.join(root, 'note-history'), { recursive: true, force: true });
 
     key = keyB;
-    expect(importNoteHistoryFromDir(userId, staged)).toMatchObject({ ok: true });
+    // Reported as not brought back, so a restore can say its history is incomplete.
+    expect(importNoteHistoryFromDir(userId, staged)).toMatchObject({ ok: true, merged: 0, skipped: 1 });
     expect(listNoteRevisions(userId, noteId).revisions).toHaveLength(0);
     expect(allFiles(staged).map((f) => fs.readFileSync(f, 'utf8'))).toEqual(before);
+  });
+
+  it('reports no skipped notes when everything was brought back', () => {
+    appendNoteRevision(userId, unlockedRevision());
+    const staged = path.join(root, 'staged');
+    fs.cpSync(path.join(root, 'note-history', userId), staged, { recursive: true });
+    fs.rmSync(path.join(root, 'note-history'), { recursive: true, force: true });
+    expect(importNoteHistoryFromDir(userId, staged)).toMatchObject({ ok: true, merged: 1, skipped: 0 });
   });
 
   it('exports the same readable files without holding up the event loop', async () => {

@@ -120,6 +120,14 @@ const {
   decryptBuffer,
 } = require('./persistence/dataEnvelope.cjs');
 const { stageRekey, commitStaged, discardStaged, finalizeStaged } = require('./persistence/sidecarRekey.cjs');
+const {
+  readPreviousKeys,
+  stagePreviousKey,
+  commitPreviousKey,
+  discardPreviousKey,
+  finalizePreviousKeys,
+} = require('./persistence/keyHistory.cjs');
+const { createInspectCache } = require('./persistence/inspectCache.cjs');
 const { unwrapStoredWorkspace, wrapCommitEnvelope } = require('./persistence/commitEnvelope.cjs');
 const {
   splitWorkspaceForMonthlyShards,
@@ -587,7 +595,43 @@ function userDataFilesBytes(userId) {
  * Read a single on-disk JSON blob (encrypted or plaintext) into a parsed object.
  * @returns {{ ok: true; parsed: unknown; encrypted: boolean } | { ok: false; reason: string; error?: string; encrypted?: boolean }}
  */
-function readParsedFile(userId, filePath) {
+/** Keys this account used before its password last changed (empty when it never changed). */
+function keyHistoryPath(userId) {
+  return path.join(app.getPath('userData'), `cadence-keyhistory-${userId}.bin`);
+}
+
+function previousKeysFor(userId) {
+  const key = dataKeys.get(userId);
+  return key ? readPreviousKeys(keyHistoryPath(userId), key) : [];
+}
+
+/**
+ * Step 1 of remembering the key a password change replaces, before the account record is saved.
+ * Keep it staged until `commitKeyHistory`, or drop it with `discardKeyHistory` if the change is abandoned.
+ * See persistence/keyHistory.cjs.
+ */
+function stageKeyHistory(userId, previousKey, newKey) {
+  if (!previousKey) return { ok: true };
+  const r = stagePreviousKey(keyHistoryPath(userId), previousKey, newKey);
+  if (r.ok && r.setAsideUnreadable) {
+    console.warn('[cadence] the previous-key list could not be opened; it was kept aside and a new one started');
+  }
+  return r;
+}
+
+function commitKeyHistory(userId) {
+  commitPreviousKey(keyHistoryPath(userId));
+}
+
+function discardKeyHistory(userId) {
+  discardPreviousKey(keyHistoryPath(userId));
+}
+
+/**
+ * @param {{ tryPreviousKeys?: boolean }} [options] `tryPreviousKeys`: a backup made before a password
+ *   change is sealed under an earlier key; try those when the current key does not open it.
+ */
+function readParsedFile(userId, filePath, { tryPreviousKeys = false } = {}) {
   if (!fs.existsSync(filePath)) {
     return { ok: false, reason: 'missing', error: 'File not found.' };
   }
@@ -602,7 +646,13 @@ function readParsedFile(userId, filePath) {
     if (!key) {
       return { ok: false, reason: 'no-key', encrypted: true };
     }
-    const plain = decryptPayload(text, key);
+    let plain = decryptPayload(text, key);
+    if (plain == null && tryPreviousKeys) {
+      for (const earlier of previousKeysFor(userId)) {
+        plain = decryptPayload(text, earlier);
+        if (plain != null) break;
+      }
+    }
     if (plain == null) {
       return { ok: false, reason: 'bad-key', encrypted: true };
     }
@@ -896,11 +946,47 @@ function snapshotAttachmentsForUser(userId, label, ts) {
   }
 }
 
+/**
+ * What to do with one image from a snapshot:
+ *  - `{ seal }`  it was sealed under an earlier password: these bytes, sealed under the current key;
+ *  - `{ skip }`  it opens under no key we hold while the image already in place opens fine, so copying
+ *                it over would trade a good image for one nobody can open;
+ *  - `{}`        copy it as it is (opens now, is not sealed, or there is nothing in place to protect).
+ */
+function planBackupImage(userId, backupFile, liveFile) {
+  const key = dataKeys.get(userId);
+  if (!key) return {};
+  let text;
+  try {
+    text = fs.readFileSync(backupFile, 'utf8');
+  } catch {
+    return {};
+  }
+  if (!isEncryptedEnvelope(text) || decryptBuffer(text, key) != null) return {};
+  for (const earlier of previousKeysFor(userId)) {
+    const plain = decryptBuffer(text, earlier);
+    if (plain != null) return { seal: Buffer.from(encryptBuffer(plain, key), 'utf8') };
+  }
+  try {
+    const inPlace = fs.readFileSync(liveFile, 'utf8');
+    if (isEncryptedEnvelope(inPlace) && decryptBuffer(inPlace, key) != null) return { skip: true };
+  } catch {
+    /* nothing in place: keep the copy, it is all there is */
+  }
+  return {};
+}
+
+/**
+ * Copy a snapshot's images back. One image that cannot be copied does not stop the rest: the workspace
+ * has already been replaced, so bringing back as many as possible is the safest outcome, and the count
+ * of those that failed is reported to the caller.
+ */
 function restoreAttachmentsFromBackupDir(userId, backupAttDir) {
-  if (!backupAttDir || !fs.existsSync(backupAttDir)) return { ok: true, restored: 0 };
+  if (!backupAttDir || !fs.existsSync(backupAttDir)) return { ok: true, restored: 0, failed: 0 };
   const liveDir = attachmentsDirForUser(userId);
   fs.mkdirSync(liveDir, { recursive: true });
   let restored = 0;
+  let failed = 0;
   for (const name of fs.readdirSync(backupAttDir)) {
     if (!name.endsWith('.cadenc') && !name.endsWith('.bin')) continue;
     // Copied through a tmp and renamed, never straight onto the live path.
@@ -913,7 +999,14 @@ function restoreAttachmentsFromBackupDir(userId, backupAttDir) {
     const live = path.join(liveDir, name);
     const tmp = `${live}.restore.tmp`;
     try {
-      fs.copyFileSync(path.join(backupAttDir, name), tmp);
+      const plan = planBackupImage(userId, path.join(backupAttDir, name), live);
+      if (plan.skip) {
+        console.warn('[cadence] kept the current image; the snapshot copy cannot be opened', name);
+        failed += 1;
+        continue;
+      }
+      if (plan.seal) fs.writeFileSync(tmp, plan.seal);
+      else fs.copyFileSync(path.join(backupAttDir, name), tmp);
       fs.renameSync(tmp, live);
     } catch (err) {
       try {
@@ -921,11 +1014,13 @@ function restoreAttachmentsFromBackupDir(userId, backupAttDir) {
       } catch {
         /* never created, or already gone */
       }
-      throw err;
+      console.warn('[cadence] could not restore an image from the snapshot', name, err);
+      failed += 1;
+      continue;
     }
     restored += 1;
   }
-  return { ok: true, restored };
+  return { ok: true, restored, failed };
 }
 
 /**
@@ -935,13 +1030,17 @@ function restoreAttachmentsFromBackupDir(userId, backupAttDir) {
 function exportAttachmentsPortableToDir(userId, destDir) {
   fs.mkdirSync(destDir, { recursive: true });
   let exported = 0;
+  let skipped = 0;
   for (const id of listAttachmentIdsOnDisk(userId)) {
     const bytes = readAttachmentBytes(userId, id);
-    if (!bytes?.length) continue;
+    if (!bytes?.length) {
+      skipped += 1;
+      continue;
+    }
     fs.writeFileSync(path.join(destDir, `${id}.bin`), bytes);
     exported += 1;
   }
-  return exported;
+  return { count: exported, skipped };
 }
 
 /**
@@ -1005,6 +1104,17 @@ function importAttachmentsPortableFromDir(userId, srcDir) {
     else skipped += 1;
   }
   return { ok: true, restored, skipped };
+}
+
+/** Note history from a backup folder, after the workspace was replaced: a failure is reported, never thrown. */
+function mergeNoteHistorySafely(userId, srcDir) {
+  try {
+    const r = importNoteHistoryFromDir(userId, srcDir);
+    return { incomplete: r?.ok === false || (r?.skipped ?? 0) > 0 };
+  } catch (err) {
+    console.warn('[cadence] could not bring back note history from the backup', err);
+    return { incomplete: true };
+  }
 }
 
 function pairedAttachmentsBackupDir(dataBackupPath) {
@@ -1270,7 +1380,7 @@ function deriveDataKey(password, encSaltHex) {
 const dataKeys = new Map();
 
 // Version history is sealed under the same per-user key as the workspace.
-initNoteHistory(() => app.getPath('userData'), (uid) => dataKeys.get(uid) || null);
+initNoteHistory(() => app.getPath('userData'), (uid) => dataKeys.get(uid) || null, (uid) => previousKeysFor(uid));
 
 /**
  * Atomic binary write (same durability guarantees as `writeJsonText`).
@@ -1401,6 +1511,11 @@ function discardUserSidecars(userId) {
 
 /** Finish a swap that a crash cut short; cheap when there is nothing to do. */
 function finalizeUserSidecars(userId, key) {
+  try {
+    finalizePreviousKeys(keyHistoryPath(userId), key);
+  } catch (err) {
+    console.warn('[cadence] key history finalize failed', err);
+  }
   try {
     finalizeStaged(listAttachmentFiles(userId), key, ATTACHMENT_CODEC);
     finalizeStaged(listNoteHistoryFiles(userId), key, HISTORY_CODEC);
@@ -1611,6 +1726,33 @@ function snapshotCurrentDataFile(userId, label = 'pre-write', contentBytes = nul
     console.warn('[cadence] snapshot failed (continuing)', err);
     return null;
   }
+}
+
+/**
+ * The safety copy taken before a restore or import replaces the workspace. The "you can undo this" promise
+ * depends on it, so a copy that could not be made stops the operation. Nothing to copy (no data file yet)
+ * is not a failure.
+ *
+ * @returns {{ ok: true } | { ok: false, error: string }}
+ */
+function snapshotBeforeReplace(userId, label, contentBytes = null, options = {}) {
+  const hasData = (file) => {
+    try {
+      return fs.existsSync(file) && fs.statSync(file).size > 0;
+    } catch {
+      return true;
+    }
+  };
+  const hadData =
+    hasData(dataPathForUser(userId)) || listMonthlyShardPathsForUser(userId).some(({ path: shard }) => hasData(shard));
+  const made = snapshotCurrentDataFile(userId, label, contentBytes, options);
+  if (hadData && !made) {
+    return {
+      ok: false,
+      error: 'Could not save a safety copy of your current data first, so nothing was changed. Free some disk space and try again.',
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -3194,6 +3336,8 @@ ipcMain.handle('backupMirror:chooseDir', async () => {
   if (!written.ok) {
     return { ok: false, error: written.error || 'Could not save backup folder preference.' };
   }
+  // The first backup is made now, not whenever the next window focus or timer tick happens to come.
+  ensureDailyBackupToday();
   return { ok: true, prefs: normalizeDailyBackupPrefs(next) };
 });
 
@@ -3328,10 +3472,20 @@ ipcMain.handle('data:loadResult', () => {
 /**
  * Inspect a single on-disk file and return safe metadata. Never throws.
  */
-function inspectDataFile(filePath, uid) {
+const snapshotInspectCache = createInspectCache();
+
+/**
+ * @param {{ cache?: boolean }} [options] `cache`: the file is a snapshot, which is not edited after it is
+ *   written, so what was learned about it last time still holds while its size and time are unchanged.
+ */
+function inspectDataFile(filePath, uid, { cache = false } = {}) {
   try {
     if (!fs.existsSync(filePath)) return null;
     const stat = fs.statSync(filePath);
+    if (cache) {
+      const known = snapshotInspectCache.get(filePath, stat);
+      if (known) return known;
+    }
     const text = fs.readFileSync(filePath, 'utf8');
     const encrypted = isEncryptedFile(text);
     let decryptable = !encrypted;
@@ -3346,7 +3500,13 @@ function inspectDataFile(filePath, uid) {
     } else if (uid) {
       const key = dataKeys.get(uid);
       if (key) {
-        const plain = decryptPayload(text, key);
+        let plain = decryptPayload(text, key);
+        if (plain == null) {
+          for (const earlier of previousKeysFor(uid)) {
+            plain = decryptPayload(text, earlier);
+            if (plain != null) break;
+          }
+        }
         if (plain != null) {
           decryptable = true;
           try {
@@ -3357,7 +3517,7 @@ function inspectDataFile(filePath, uid) {
         }
       }
     }
-    return {
+    const info = {
       path: filePath,
       name: path.basename(filePath),
       bytes: stat.size,
@@ -3367,6 +3527,8 @@ function inspectDataFile(filePath, uid) {
       parsedOk,
       counts,
     };
+    if (cache) snapshotInspectCache.set(filePath, stat, info);
+    return info;
   } catch (err) {
     return { path: filePath, name: path.basename(filePath), error: String(err) };
   }
@@ -3426,7 +3588,7 @@ function loadWorkspaceFromBackupSet(uid, backupPath) {
   if (!resolved.ok) return { ok: false, reason: 'invalid-backup', error: resolved.error };
 
   const baseBackupPath = resolved.basePath;
-  const r = readParsedFile(uid, baseBackupPath);
+  const r = readParsedFile(uid, baseBackupPath, { tryPreviousKeys: true });
   if (!r.ok) return r;
 
   const dir = path.dirname(baseBackupPath);
@@ -3445,7 +3607,7 @@ function loadWorkspaceFromBackupSet(uid, backupPath) {
     if (name === path.basename(baseBackupPath)) continue;
     if (backupSnapshotKey(name) !== setKey) continue;
     if (!name.includes('-shard-')) continue;
-    const sr = readParsedFile(uid, path.join(dir, name));
+    const sr = readParsedFile(uid, path.join(dir, name), { tryPreviousKeys: true });
     if (!sr.ok) {
       // The base file decrypted fine, so the key is correct — an unreadable
       // sibling shard means this backup set is genuinely incomplete/corrupt.
@@ -3527,7 +3689,7 @@ ipcMain.handle('data:listSources', () => {
         const entries = fs
           .readdirSync(backupsDir)
           .filter((n) => n.endsWith('.json') && !isMonthlyShardBackupFilename(n))
-          .map((n) => inspectDataFile(path.join(backupsDir, n), uid))
+          .map((n) => inspectDataFile(path.join(backupsDir, n), uid, { cache: true }))
           .filter(Boolean)
           .sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
         out.backups = entries;
@@ -3647,7 +3809,8 @@ ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
   // can undo the restore if they picked the wrong source.
   // The snapshot prunes, and the restore still has to read this set's attachments and note
   // history afterwards, so the set being restored is exempt.
-  snapshotCurrentDataFile(uid, 'pre-restore', null, { protectSetKey: backupSnapshotKey(path.basename(resolved)) });
+  const safety = snapshotBeforeReplace(uid, 'pre-restore', null, { protectSetKey: backupSnapshotKey(path.basename(resolved)) });
+  if (!safety.ok) return safety;
   workspaceImportLockUid = uid;
   try {
     // Commit the workspace FIRST. `writeUserData` preflights the data version
@@ -3659,11 +3822,19 @@ ipcMain.handle('data:restoreFromSource', (_evt, { filePath } = {}) => {
     const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
     if (!w.ok) return w;
 
+    // The workspace is already replaced, so a problem past this point is a gap to report, not a failure.
     const attBackup = pairedAttachmentsBackupDir(resolved);
-    if (attBackup) restoreAttachmentsFromBackupDir(uid, attBackup);
+    const images = attBackup ? restoreAttachmentsFromBackupDir(uid, attBackup) : { restored: 0, failed: 0 };
     const histBackup = pairedNoteHistoryBackupDir(resolved);
-    if (histBackup) importNoteHistoryFromDir(uid, histBackup);
-    return { ok: true, restoredFrom: path.basename(resolved), writeGeneration: w.writeGeneration };
+    const history = histBackup ? mergeNoteHistorySafely(uid, histBackup) : { incomplete: false };
+    return {
+      ok: true,
+      restoredFrom: path.basename(resolved),
+      writeGeneration: w.writeGeneration,
+      attachmentsRestored: images.restored,
+      attachmentsFailed: images.failed,
+      historyIncomplete: history.incomplete,
+    };
   } finally {
     workspaceImportLockUid = null;
   }
@@ -4019,7 +4190,7 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
       return { ok: false, error: dataWrite.error || 'Could not write backup durably.' };
     }
     const attDest = path.join(folder, 'attachments');
-    const attachmentCount = exportAttachmentsPortableToDir(uid, attDest);
+    const { count: attachmentCount, skipped: attachmentsSkipped } = exportAttachmentsPortableToDir(uid, attDest);
     const manifestWrite = writeJsonText(
       path.join(folder, 'manifest.json'),
       JSON.stringify(
@@ -4028,6 +4199,7 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
           exportedAt: new Date().toISOString(),
           attachmentsPortable: true,
           attachmentCount,
+          attachmentsSkipped,
           noteHistoryRevisionCount: countNoteHistoryRevisions(uid),
         },
         null,
@@ -4038,7 +4210,7 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
       return { ok: false, error: manifestWrite.error || 'Could not write backup manifest durably.' };
     }
     exportNoteHistoryToDir(uid, folder);
-    return { ok: true, path: folder };
+    return { ok: true, path: folder, attachmentsSkipped };
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
   }
@@ -4147,7 +4319,8 @@ ipcMain.handle('data:importBundle', async () => {
       error: 'data.json does not look like a Cadence workspace export (no recognised collections).',
     };
   }
-  snapshotCurrentDataFile(uid, 'pre-import');
+  const safety = snapshotBeforeReplace(uid, 'pre-import');
+  if (!safety.ok) return safety;
   snapshotNoteHistoryForUser(uid, 'pre-import', Date.now());
   workspaceImportLockUid = uid;
   try {
@@ -4163,13 +4336,14 @@ ipcMain.handle('data:importBundle', async () => {
       ? importAttachmentsPortableFromDir(uid, attSrc)
       : { restored: 0, skipped: 0 };
     const histSrc = path.join(folder, NOTE_HISTORY_DIRNAME);
-    if (fs.existsSync(histSrc)) importNoteHistoryFromDir(uid, histSrc);
+    const history = fs.existsSync(histSrc) ? mergeNoteHistorySafely(uid, histSrc) : { incomplete: false };
     return {
       ok: true,
       importedFrom: path.basename(folder),
       writeGeneration: w.writeGeneration,
       attachmentsRestored: attResult.restored,
       attachmentsSkipped: attResult.skipped ?? 0,
+      historyIncomplete: history.incomplete,
     };
   } finally {
     workspaceImportLockUid = null;
@@ -4200,7 +4374,8 @@ ipcMain.handle('data:importWorkspace', (_evt, payload) => {
       error: 'Workspace exceeds 25 MB. Compact attachments or archive old items before importing.',
     };
   }
-  snapshotCurrentDataFile(uid, 'pre-import');
+  const safety = snapshotBeforeReplace(uid, 'pre-import');
+  if (!safety.ok) return safety;
   workspaceImportLockUid = uid;
   try {
     const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
@@ -5196,11 +5371,20 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
       };
     }
   }
+  const keyHistory = stageKeyHistory(uid, previousKey, newKey);
+  if (!keyHistory.ok) {
+    discardUserSidecars(uid);
+    return {
+      ok: false,
+      error: 'Could not prepare your older backups for the new password. Nothing was changed.',
+    };
+  }
   dataKeys.set(uid, newKey);
   if (workspacePayload != null) {
     const commitResult = commitUserData(uid, workspacePayload, { allowOverwriteUnreadable: true });
     if (!commitResult?.ok) {
       discardUserSidecars(uid);
+      discardKeyHistory(uid);
       if (previousKey) dataKeys.set(uid, previousKey);
       else dataKeys.delete(uid);
       return {
@@ -5220,6 +5404,7 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
   }
   if (!writeAccounts(accounts)) {
     discardUserSidecars(uid);
+    discardKeyHistory(uid);
     if (previousKey) dataKeys.set(uid, previousKey);
     else dataKeys.delete(uid);
     let restoredOk = false;
@@ -5238,6 +5423,7 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
     };
   }
 
+  commitKeyHistory(uid);
   // The new password is on disk: now the copies replace the live files.
   commitUserSidecars(uid, newKey);
 
@@ -5362,11 +5548,22 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
       error: 'Could not prepare your images and note history for the new password. Nothing was changed.',
     };
   }
+  const recoveryKeyHistory = stageKeyHistory(u.id, dataKey, newKey);
+  if (!recoveryKeyHistory.ok) {
+    discardUserSidecars(u.id);
+    dataKeys.delete(u.id);
+    lastCommittedByUser.delete(u.id);
+    return {
+      ok: false,
+      error: 'Could not prepare your older backups for the new password. Nothing was changed.',
+    };
+  }
   dataKeys.set(u.id, newKey);
   if (workspacePayload != null) {
     const commitResult = commitUserData(u.id, workspacePayload, { allowOverwriteUnreadable: true });
     if (!commitResult?.ok) {
       discardUserSidecars(u.id);
+      discardKeyHistory(u.id);
       dataKeys.set(u.id, dataKey);
       return {
         ok: false,
@@ -5383,6 +5580,7 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
   delete u.recoveryConfiguredAt;
   if (!writeAccounts(accounts)) {
     discardUserSidecars(u.id);
+    discardKeyHistory(u.id);
     dataKeys.set(u.id, dataKey);
     let restoredOk = false;
     if (preRecoverySnapshot) {
@@ -5401,6 +5599,7 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
   }
 
   dataKeys.set(u.id, newKey);
+  commitKeyHistory(u.id);
   // The new password is on disk: now the copies replace the live files.
   commitUserSidecars(u.id, newKey);
 

@@ -36,3 +36,9 @@ export function describeRetentionLoss(
   }
   return `This permanently deletes ${parts.join(' and ')}. The newest backup is always kept. This cannot be undone.`;
 }
+
+/** The size of the in-app snapshot safety net: the user's choice, or the long-standing 50 until it is known. */
+export function snapshotSafetyNetText(keep: number | null | undefined): string {
+  const n = typeof keep === 'number' && keep > 0 ? keep : 50;
+  return `routine copies, newest ${n} kept`;
+}

@@ -18,6 +18,6 @@ describe('workspace import isolation', () => {
 
   it('answers a JSON-only import with zero restored images', () => {
     const handler = main.slice(main.indexOf("ipcMain.handle('data:importWorkspace'"));
-    expect(handler.slice(0, 1200)).toMatch(/attachmentsRestored:\s*0/);
+    expect(handler.slice(0, 2000)).toMatch(/attachmentsRestored:\s*0/);
   });
 });

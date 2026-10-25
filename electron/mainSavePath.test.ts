@@ -60,6 +60,7 @@ class StubWorker extends EventEmitter {
   }
 }
 
+let pickedFolder: { canceled: boolean; filePaths: string[] } = { canceled: true, filePaths: [] };
 let crashWorkerAfterStaging = false;
 let holdWorkerReplies = false;
 let heldRequest: { id: number } | null = null;
@@ -108,7 +109,7 @@ const electronStub = {
     },
     { isSupported: () => false },
   ),
-  dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+  dialog: { showOpenDialog: async () => pickedFolder },
   ipcMain: {
     handle: (channel: string, handler: Handler) => handlers.set(channel, handler),
     on: (channel: string, handler: Handler) => listeners.set(channel, handler),
@@ -177,6 +178,7 @@ afterEach(() => {
   crashWorkerAfterStaging = false;
   holdWorkerReplies = false;
   heldRequest = null;
+  pickedFolder = { canceled: true, filePaths: [] };
 });
 
 function workspace(notes: { id: string; title: string; updatedAt: string }[]) {
@@ -1331,6 +1333,17 @@ describe('daily backup without waiting for a save', () => {
     expect(await until(() => dailyFolders(mirror).length === 1)).toBe(true);
   });
 
+  it('starts the first backup as soon as a folder is chosen, without waiting for a later trigger', async () => {
+    const { mirror } = await setup('daily5@example.com');
+    fs.rmSync(path.join(userDataDir, `cadence-daily-backup-${(JSON.parse(fs.readFileSync(path.join(userDataDir, 'cadence-session.json'), 'utf8')) as { userId: string }).userId}.json`), { force: true });
+    pickedFolder = { canceled: false, filePaths: [mirror] };
+
+    const chosen = (await call<Promise<{ ok: boolean; error?: string }>>('backupMirror:chooseDir'));
+
+    expect(chosen.ok, chosen.error).toBe(true);
+    expect(await until(() => dailyFolders(mirror).length === 1)).toBe(true);
+  });
+
   it('does nothing when no folder was chosen', () => {
     call<Reply>('account:register', { email: 'daily3@example.com', password: 'right-password-1' });
     expect(call<Reply>('backupMirror:ensureToday')).toMatchObject({ ok: true, started: false });
@@ -1516,5 +1529,369 @@ describe('CADENCE_ASYNC_PERSIST', () => {
     // the workspace behind for the next launch to sweep.
     expect(fs.readdirSync(userDataDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
     expect(load()?.notes?.[0]?.title).toBe('After the crash');
+  });
+});
+
+describe('snapshots across a key change', () => {
+  function call<T>(channel: string, payload?: unknown): T {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+
+  function sessionUid(): string {
+    return JSON.parse(fs.readFileSync(path.join(userDataDir, 'cadence-session.json'), 'utf8')).userId as string;
+  }
+
+  /** Signs up, saves two notes, then drops one so a routine snapshot of the two-note state exists. */
+  async function accountWithOlderSnapshot(email: string) {
+    expect(call<{ ok: boolean }>('account:register', { email, password: 'old-password-1' }).ok).toBe(true);
+    const uid = sessionUid();
+    const handler = handlers.get('data:save') as Handler;
+    const first = (await handler({}, workspace([note('n1', 'One'), note('n2', 'Two')]), uid)) as SaveResult;
+    expect(first.ok).toBe(true);
+    const second = (await handler({}, workspace([note('n1', 'One')]), uid, first.writeGeneration)) as SaveResult;
+    expect(second.ok).toBe(true);
+    const dir = path.join(userDataDir, 'backups', uid);
+    const snapshots = fs.readdirSync(dir).filter((n) => n.startsWith('data-') && n.endsWith('.json'));
+    expect(snapshots.length).toBeGreaterThan(0);
+    return { uid, dir, snapshots };
+  }
+
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const HIST_NOTE = 'note-hist-000002';
+
+  /** Like `accountWithOlderSnapshot`, with an image and a history entry in the snapshot. */
+  async function accountWithImageAndHistory(email: string) {
+    expect(call<{ ok: boolean }>('account:register', { email, password: 'old-password-1' }).ok).toBe(true);
+    const uid = sessionUid();
+    expect(call<{ ok: boolean }>('attachment:write', { attachmentId: 'attachment-new-0001', dataBase64: PNG.toString('base64') }).ok).toBe(true);
+    const appended = call<{ ok: boolean; revisionId?: string }>('noteHistory:append', {
+      noteId: HIST_NOTE,
+      trigger: 'manual',
+      title: 'Old title',
+      summary: 'Old summary',
+      locked: false,
+      body: 'OLD-BODY',
+      bodyFormat: 'markdown',
+    });
+    expect(appended.ok).toBe(true);
+    const handler = handlers.get('data:save') as Handler;
+    const first = (await handler({}, workspace([note('n1', 'One'), note('n2', 'Two')]), uid)) as SaveResult;
+    const second = (await handler({}, workspace([note('n1', 'One')]), uid, first.writeGeneration)) as SaveResult;
+    expect(second.ok).toBe(true);
+    const dir = path.join(userDataDir, 'backups', uid);
+    const snapshots = fs.readdirSync(dir).filter((n) => n.startsWith('data-') && n.endsWith('.json') && !n.includes('-shard-'));
+    return { dir, snapshots, revisionId: appended.revisionId as string };
+  }
+
+  function restoreAll(dir: string, snapshots: string[]) {
+    for (const name of snapshots) {
+      const restored = call<{ ok: boolean; error?: string }>('data:restoreFromSource', { filePath: path.join(dir, name) });
+      expect(restored.ok, `${name}: ${restored.error}`).toBe(true);
+    }
+  }
+
+  function imageNow() {
+    const r = call<{ ok: boolean; dataBase64?: string }>('attachment:read', { attachmentId: 'attachment-new-0001' });
+    return r.ok ? Buffer.from(r.dataBase64 as string, 'base64') : null;
+  }
+
+  function historyBodyNow(revisionId: string) {
+    const r = call<{ ok: boolean; revision?: { body?: string } }>('noteHistory:read', { noteId: HIST_NOTE, revisionId });
+    return r.ok ? r.revision?.body : null;
+  }
+
+  it('brings back the images and history of an earlier snapshot after the password changes', async () => {
+    const { dir, snapshots, revisionId } = await accountWithImageAndHistory('snap2@example.com');
+    expect(
+      call<{ ok: boolean }>('account:changePassword', { oldPassword: 'old-password-1', newPassword: 'new-password-2' }).ok,
+    ).toBe(true);
+
+    // The live history is carried to the new key, so only a history that is gone from the
+    // live folder shows whether the snapshot's own copy can be opened.
+    expect(call<{ ok: boolean }>('noteHistory:purge', { noteId: HIST_NOTE }).ok).toBe(true);
+    expect(historyBodyNow(revisionId)).toBeFalsy();
+
+    restoreAll(dir, snapshots);
+
+    expect(imageNow()?.equals(PNG)).toBe(true);
+    expect(historyBodyNow(revisionId)).toBe('OLD-BODY');
+  });
+
+  it('still opens a snapshot after two password changes in a row', async () => {
+    const { dir, snapshots, revisionId } = await accountWithImageAndHistory('snap3@example.com');
+    expect(call<{ ok: boolean }>('account:changePassword', { oldPassword: 'old-password-1', newPassword: 'new-password-2' }).ok).toBe(true);
+    expect(call<{ ok: boolean }>('account:changePassword', { oldPassword: 'new-password-2', newPassword: 'third-password-3' }).ok).toBe(true);
+
+    restoreAll(dir, snapshots);
+
+    expect(imageNow()?.equals(PNG)).toBe(true);
+    expect(historyBodyNow(revisionId)).toBe('OLD-BODY');
+  });
+
+  it('does not replace an image that opens today with a snapshot copy that opens under no key', async () => {
+    const { dir, snapshots } = await accountWithImageAndHistory('snap5@example.com');
+    const uid = sessionUid();
+    // Damage the snapshot's copy (a new file, so the live image is not touched through the hardlink).
+    const attBackup = fs
+      .readdirSync(dir)
+      .filter((n) => n.startsWith('attachments-'))
+      .map((n) => path.join(dir, n))
+      .find((d) => fs.readdirSync(d).length > 0) as string;
+    const file = path.join(attBackup, fs.readdirSync(attBackup)[0] as string);
+    const good = fs.readFileSync(file, 'utf8');
+    fs.rmSync(file);
+    const envelope = JSON.parse(good) as { ct: string };
+    envelope.ct = `${envelope.ct.slice(0, -6)}AAAAAA`; // still an envelope, but it no longer authenticates
+    fs.writeFileSync(file, JSON.stringify(envelope));
+    const live = path.join(userDataDir, 'attachments', uid, fs.readdirSync(attBackup)[0] as string);
+    const liveBefore = fs.readFileSync(live, 'utf8');
+
+    const restored = call<{ ok: boolean; attachmentsFailed?: number; error?: string }>('data:restoreFromSource', {
+      filePath: path.join(dir, `${path.basename(attBackup).replace(/^attachments-/, 'data-')}.json`),
+    });
+
+    expect(snapshots.length).toBeGreaterThan(0);
+    expect(restored.ok, restored.error).toBe(true);
+    expect(restored.attachmentsFailed).toBe(1);
+    expect(fs.readFileSync(live, 'utf8')).toBe(liveBefore);
+    expect(imageNow()?.equals(PNG)).toBe(true);
+  });
+
+  it('opens a snapshot made before a reset with recovery codes', async () => {
+    const reg = call<{ ok: boolean; recoveryCodes?: string[] }>('account:register', { email: 'snap4@example.com', password: 'old-password-1' });
+    expect(reg.ok).toBe(true);
+    const uid = sessionUid();
+    const handler = handlers.get('data:save') as Handler;
+    const first = (await handler({}, workspace([note('n1', 'One'), note('n2', 'Two')]), uid)) as SaveResult;
+    await handler({}, workspace([note('n1', 'One')]), uid, first.writeGeneration);
+    const dir = path.join(userDataDir, 'backups', uid);
+    const snapshots = fs.readdirSync(dir).filter((n) => n.startsWith('data-') && n.endsWith('.json'));
+    expect(call<{ ok: boolean }>('account:recoverWithCodes', { email: 'snap4@example.com', codes: reg.recoveryCodes, newPassword: 'brand-new-pass-3' }).ok).toBe(true);
+
+    restoreAll(dir, snapshots);
+  });
+
+  it('lets an earlier snapshot be restored after the password changes', async () => {
+    const { dir, snapshots } = await accountWithOlderSnapshot('snap1@example.com');
+    expect(
+      call<{ ok: boolean }>('account:changePassword', { oldPassword: 'old-password-1', newPassword: 'new-password-2' }).ok,
+    ).toBe(true);
+
+    for (const name of snapshots) {
+      const restored = call<{ ok: boolean; error?: string }>('data:restoreFromSource', { filePath: path.join(dir, name) });
+      expect(restored.ok, `${name}: ${restored.error}`).toBe(true);
+    }
+  });
+});
+
+describe('replacing the workspace needs a safety copy first', () => {
+  function call<T>(channel: string, payload?: unknown): T {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+
+  /** The disk refuses every write into backups/ (full, read-only, unplugged). */
+  function withBackupsUnwritable<T>(run: () => T): T {
+    const realCopy = fs.copyFileSync;
+    fs.copyFileSync = ((src: fs.PathLike, dest: fs.PathLike, ...rest: unknown[]) => {
+      if (String(dest).includes(`${path.sep}backups${path.sep}`)) throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+      return (realCopy as (...a: unknown[]) => void)(src, dest, ...rest);
+    }) as typeof fs.copyFileSync;
+    try {
+      return run();
+    } finally {
+      fs.copyFileSync = realCopy;
+    }
+  }
+
+  async function seed() {
+    const first = await save(workspace([note('n1', 'Mine'), note('n2', 'Also mine')]));
+    expect(first.ok).toBe(true);
+    // A backup to restore from, taken while the disk still worked.
+    const dir = path.join(userDataDir, 'backups', USER_ID);
+    await save(workspace([note('n1', 'Mine')]), first.writeGeneration);
+    return fs.readdirSync(dir).find((n) => n.startsWith('data-') && n.endsWith('.json') && !n.includes('-shard-')) as string;
+  }
+
+  it('does not import a JSON workspace when the safety copy cannot be made', async () => {
+    await seed();
+    const r = withBackupsUnwritable(() =>
+      call<{ ok: boolean; error?: string }>('data:importWorkspace', workspace([note('x1', 'Foreign')])),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/safety copy/i);
+    expect(load()?.notes?.map((n) => n.id)).toEqual(['n1']);
+  });
+
+  it('does not restore a snapshot when the safety copy cannot be made', async () => {
+    const snapshot = await seed();
+    const r = withBackupsUnwritable(() =>
+      call<{ ok: boolean; error?: string }>('data:restoreFromSource', {
+        filePath: path.join(userDataDir, 'backups', USER_ID, snapshot),
+      }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/safety copy/i);
+    expect(load()?.notes?.map((n) => n.id)).toEqual(['n1']);
+  });
+
+  it('goes ahead when the data copy was made and only the image part of the safety copy failed', async () => {
+    await seed();
+    expect(call<{ ok: boolean }>('attachment:write', { attachmentId: 'attachment-new-0009', dataBase64: 'iVBORw0KGgo=' }).ok).toBe(true);
+    const realMkdir = fs.mkdirSync;
+    fs.mkdirSync = ((target: fs.PathLike, ...rest: unknown[]) => {
+      if (String(target).includes('attachments-pre-import')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      return (realMkdir as (...a: unknown[]) => unknown)(target, ...rest);
+    }) as typeof fs.mkdirSync;
+    let r: { ok: boolean; error?: string };
+    try {
+      r = call('data:importWorkspace', workspace([note('x1', 'Imported')]));
+    } finally {
+      fs.mkdirSync = realMkdir;
+    }
+    expect(r.ok, r.error).toBe(true);
+    const copies = fs.readdirSync(path.join(userDataDir, 'backups', USER_ID));
+    expect(copies.some((n) => n.startsWith('data-pre-import-'))).toBe(true);
+  });
+
+  it('still imports when there is no data file yet to copy', () => {
+    const r = call<{ ok: boolean; error?: string }>('data:importWorkspace', workspace([note('x1', 'First import')]));
+    expect(r.ok, r.error).toBe(true);
+  });
+});
+
+describe('data:exportBundle', () => {
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+
+  function call<T>(channel: string, payload?: unknown): T | Promise<T> {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+
+  it('says how many images it could not include', async () => {
+    expect((call('account:register', { email: 'exp@example.com', password: 'old-password-1' }) as { ok: boolean }).ok).toBe(true);
+    for (const id of ['attachment-new-0001', 'attachment-new-0002']) {
+      expect((call('attachment:write', { attachmentId: id, dataBase64: PNG.toString('base64') }) as { ok: boolean }).ok).toBe(true);
+    }
+    // One image gets damaged on disk: it opens under no key.
+    const uid = JSON.parse(fs.readFileSync(path.join(userDataDir, 'cadence-session.json'), 'utf8')).userId as string;
+    const dir = path.join(userDataDir, 'attachments', uid);
+    const victim = fs.readdirSync(dir).find((n) => n.startsWith('attachment-new-0002')) as string;
+    fs.writeFileSync(path.join(dir, victim), 'CDNC1:not-a-real-envelope');
+
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-export-'));
+    pickedFolder = { canceled: false, filePaths: [target] };
+    try {
+      const r = (await call('data:exportBundle', { data: workspace([note('n1', 'One')]) })) as {
+        ok: boolean;
+        path?: string;
+        attachmentsSkipped?: number;
+        error?: string;
+      };
+      expect(r.ok, r.error).toBe(true);
+      expect(r.attachmentsSkipped).toBe(1);
+      const manifest = JSON.parse(fs.readFileSync(path.join(r.path as string, 'manifest.json'), 'utf8'));
+      expect(manifest.attachmentCount).toBe(1);
+      expect(manifest.attachmentsSkipped).toBe(1);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('what a restore reports about the images and history it could not bring back', () => {
+  function call<T>(channel: string, payload?: unknown): T {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+
+  const IDS = ['aaaaaaaa', 'bbbbbbbb'];
+  const attDir = () => path.join(userDataDir, 'attachments', USER_ID);
+  const backups = () => path.join(userDataDir, 'backups', USER_ID);
+
+  function put(id: string, bytes: string) {
+    fs.mkdirSync(attDir(), { recursive: true });
+    const live = path.join(attDir(), `${id}.bin`);
+    fs.writeFileSync(`${live}.tmp`, bytes);
+    fs.renameSync(`${live}.tmp`, live);
+  }
+
+  async function snapshotWithTwoImages() {
+    const holding = (id: string, title: string) => ({ ...note(id, title), body: IDS.map((x) => `cadence-attachment://${x}`).join(' ') });
+    const first = await save(workspace([holding('n1', 'One'), note('n2', 'Two'), note('n3', 'Three')]));
+    IDS.forEach((id) => put(id, `bytes-of-${id}`));
+    const second = await save(workspace([holding('n1', 'One'), note('n2', 'Two')]), first.writeGeneration);
+    await save(workspace([holding('n1', 'One')]), second.writeGeneration);
+    return fs
+      .readdirSync(backups())
+      .filter((n) => n.startsWith('data-pre-save-') && n.endsWith('.json') && !n.includes('-shard-'))
+      .sort()
+      .pop() as string;
+  }
+
+  it('counts the images it brought back', async () => {
+    const snapshot = await snapshotWithTwoImages();
+    fs.rmSync(attDir(), { recursive: true, force: true });
+    const r = call<{ ok: boolean; attachmentsRestored?: number; attachmentsFailed?: number; error?: string }>(
+      'data:restoreFromSource',
+      { filePath: path.join(backups(), snapshot) },
+    );
+    expect(r.ok, r.error).toBe(true);
+    expect(r.attachmentsRestored).toBe(2);
+    expect(r.attachmentsFailed).toBe(0);
+  });
+
+  it('keeps going when one image cannot be copied, and says which count was lost', async () => {
+    const snapshot = await snapshotWithTwoImages();
+    fs.rmSync(attDir(), { recursive: true, force: true });
+    const realCopy = fs.copyFileSync;
+    fs.copyFileSync = ((src: fs.PathLike, dest: fs.PathLike, ...rest: unknown[]) => {
+      if (String(src).endsWith('aaaaaaaa.bin')) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+      return (realCopy as (...a: unknown[]) => void)(src, dest, ...rest);
+    }) as typeof fs.copyFileSync;
+    let r: { ok: boolean; attachmentsRestored?: number; attachmentsFailed?: number; error?: string };
+    try {
+      r = call('data:restoreFromSource', { filePath: path.join(backups(), snapshot) });
+    } finally {
+      fs.copyFileSync = realCopy;
+    }
+    // The workspace was already replaced, so this is a finished restore with a gap, not a failure.
+    expect(r.ok, r.error).toBe(true);
+    expect(r.attachmentsRestored).toBe(1);
+    expect(r.attachmentsFailed).toBe(1);
+    expect(fs.existsSync(path.join(attDir(), 'bbbbbbbb.bin'))).toBe(true);
+    expect(fs.readdirSync(attDir()).filter((n) => n.endsWith('.tmp'))).toEqual([]);
+  });
+});
+
+describe('data:listSources', () => {
+  function call<T>(channel: string, payload?: unknown): T {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+  type Source = { name: string; counts: { notes: number } | null; decryptable: boolean };
+
+  it('lists a snapshot with its counts, again from memory, and re-reads one that changed', async () => {
+    const first = await save(workspace([note('n1', 'One'), note('n2', 'Two'), note('n3', 'Three')]));
+    await save(workspace([note('n1', 'One'), note('n2', 'Two')]), first.writeGeneration);
+    const listed = () => call<{ backups: Source[] }>('data:listSources').backups;
+
+    const before = listed();
+    expect(before.length).toBeGreaterThan(0);
+    expect(before.every((b) => b.decryptable && b.counts)).toBe(true);
+    expect(listed()).toEqual(before);
+
+    // A file rewritten under the same name must not be answered from memory.
+    const dir = path.join(userDataDir, 'backups', USER_ID);
+    const target = before[0]!.name;
+    fs.writeFileSync(path.join(dir, target), JSON.stringify(workspace([note('only', 'Only')])));
+    const after = listed().find((b) => b.name === target);
+    expect(after?.counts?.notes).toBe(1);
   });
 });
