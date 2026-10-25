@@ -103,6 +103,22 @@
   --cm-invalid: var(--danger);
   --cm-fold: #727272;
   --cm-fold-hover: #b3b3b3;
+
+  /* AI icon gradient (amber to orange to pink); see IcSparkles. */
+  --ai-ic-a: #ffd24a;
+  --ai-ic-b: #ff8a3d;
+  --ai-ic-c: #ff4f8b;
+  --ai-mark: #22d3ee; /* cool mark on the warm AI tile */
+  /* Menu icon tones: one hue per kind of destination, lifted for the dark surface. */
+  --tone-amber: #fbbf24;
+  --tone-coral: #fb7185;
+  --tone-orange: #ff8a3d;
+  --tone-green: #4ade80;
+  --tone-blue: #60a5fa;
+  --tone-pink: #f472b6;
+  --tone-violet: #a78bfa;
+  --tone-teal: #2dd4bf;
+  --tone-slate: #94a3b8;
 }
 
 :root[data-theme='light'] {
@@ -182,6 +198,21 @@
   --cm-invalid: var(--danger);
   --cm-fold: #64748b;
   --cm-fold-hover: #1e293b;
+
+  --ai-ic-a: #f59e0b;
+  --ai-ic-b: #ff6a1a;
+  --ai-ic-c: #e11d74;
+  --ai-mark: #0891b2; /* cool mark on the warm AI tile */
+  /* Menu icon tones on the light surface: deeper so each stays above 3:1. */
+  --tone-amber: #b45309;
+  --tone-coral: #e11d48;
+  --tone-orange: #ea580c;
+  --tone-green: #16a34a;
+  --tone-blue: #2563eb;
+  --tone-pink: #db2777;
+  --tone-violet: #7c3aed;
+  --tone-teal: #0d9488;
+  --tone-slate: #64748b;
 }
 
 /* Light-theme component patches (migrated from monolithic app.css) */

@@ -1,12 +1,18 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AISettings } from '../model';
 
 const runAiTask = vi.hoisted(() => vi.fn());
+const navigate = vi.hoisted(() => vi.fn());
 let aiSettings: AISettings | undefined;
 let flags = { ai: true, aiPeople: true, aiFocusNote: true };
 
 vi.mock('../lib/ai/runTask', () => ({ runAiTask }));
+vi.mock('react-router-dom', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('react-router-dom')>()),
+  useNavigate: () => navigate,
+}));
 vi.mock('../AppDataContext', () => ({ useAppData: () => ({ data: { aiSettings } }) }));
 vi.mock('../lib/features', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/features')>()),
@@ -30,13 +36,15 @@ function mount(props: Partial<React.ComponentProps<typeof AIAssistantDialog>> = 
   const onClose = vi.fn();
   const onAppendToBody = vi.fn();
   render(
-    <AIAssistantDialog
-      open
-      onClose={onClose}
-      onAppendToBody={onAppendToBody}
-      task={{ title: 'Ship the release', body: 'Uses pnpm and Docker' }}
-      {...props}
-    />,
+    <MemoryRouter>
+      <AIAssistantDialog
+        open
+        onClose={onClose}
+        onAppendToBody={onAppendToBody}
+        task={{ title: 'Ship the release', body: 'Uses pnpm and Docker' }}
+        {...props}
+      />
+    </MemoryRouter>,
   );
   return { onClose, onAppendToBody };
 }
@@ -53,6 +61,7 @@ const followUp = (text: string) => {
 
 beforeEach(() => {
   runAiTask.mockReset();
+  navigate.mockClear();
   aiSettings = cloud;
   flags = { ai: true, aiPeople: true, aiFocusNote: true };
 });
@@ -201,10 +210,84 @@ describe('follow-ups', () => {
     expect(screen.queryByText('You')).toBeNull();
   });
 
+  it('a failed follow-up gives the question back, and the retry sends no two user turns in a row', async () => {
+    mount();
+    await firstAnswer('FIRST ANSWER');
+    runAiTask.mockResolvedValueOnce({ ok: false, reason: 'engine', message: 'Boom', diagnostic: '' });
+    followUp('make it shorter');
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Boom/));
+    expect((screen.getByLabelText('Follow-up question') as HTMLTextAreaElement).value).toBe('make it shorter');
+    expect(screen.queryByText('You')).toBeNull();
+    runAiTask.mockResolvedValueOnce(answer('SECOND ANSWER'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByText('SECOND ANSWER')).toBeTruthy());
+    expect(runAiTask.mock.calls[2][0].conversation).toEqual([
+      { role: 'assistant', content: 'FIRST ANSWER' },
+      { role: 'user', content: 'make it shorter' },
+    ]);
+  });
+
   it('shows Continue only when the reply was cut off', async () => {
     mount();
     await firstAnswer();
     expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+  });
+});
+
+describe('blocked runs offer the way out', () => {
+  it.each([
+    ['not-configured', 'AI is not set up yet. Connect a provider in Settings.'],
+    ['capability', '“Local” did not return reliable JSON when tested.'],
+    ['blocked-people', 'This uses 1:1 or feedback data, and “Cloud” is not allowed for it.'],
+  ])('%s shows the message and an Open AI settings button', async (reason, message) => {
+    mount({ dataClass: 'people' });
+    runAiTask.mockResolvedValueOnce({ ok: false, reason, message });
+    fireEvent.click(askButton());
+    await waitFor(() => expect(screen.getByText(message)).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Open AI settings/ }));
+    expect(navigate).toHaveBeenCalledWith(expect.stringContaining('#ai'));
+  });
+
+  it('a policy block says so and offers no settings button (the user cannot change it)', async () => {
+    mount({ dataClass: 'people' });
+    runAiTask.mockResolvedValueOnce({ ok: false, reason: 'policy', message: 'Your organization does not allow AI on 1:1 notes and feedback.' });
+    fireEvent.click(askButton());
+    await waitFor(() => expect(screen.getByText(/does not allow AI/)).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /Open AI settings/ })).toBeNull();
+  });
+
+  it('with no provider connected there is a button to Settings', () => {
+    aiSettings = undefined;
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: /Open AI settings/ }));
+    expect(navigate).toHaveBeenCalledWith(expect.stringContaining('#ai'));
+  });
+});
+
+describe('while it works', () => {
+  it('announces the wait to assistive technology and offers Stop from the first request', async () => {
+    mount();
+    let release: (v: unknown) => void = () => {};
+    runAiTask.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+    fireEvent.click(askButton());
+    await waitFor(() => expect(screen.getByRole('status')).toBeTruthy());
+    expect(screen.getByRole('status').textContent).toMatch(/Thinking/);
+    const stop = screen.getByRole('button', { name: 'Stop' });
+    const signal = (runAiTask.mock.calls[0][0] as { signal: AbortSignal }).signal;
+    expect(signal.aborted).toBe(false);
+    fireEvent.click(stop);
+    expect(signal.aborted).toBe(true);
+    release(answer('late'));
+  });
+});
+
+describe('people data is visible as people data', () => {
+  it('adds a chip when the task belongs to a person, and none otherwise', () => {
+    mount({ dataClass: 'people' });
+    expect(screen.getByText('People data')).toBeTruthy();
+    cleanup();
+    mount();
+    expect(screen.queryByText('People data')).toBeNull();
   });
 });
 
@@ -214,6 +297,16 @@ describe('saving', () => {
     await firstAnswer('PLAN ANSWER');
     fireEvent.click(screen.getByRole('button', { name: 'Save to task' }));
     expect(onAppendToBody).toHaveBeenCalledWith('PLAN ANSWER');
+  });
+
+  it('when the task could not be saved, the dialog stays open and says so', async () => {
+    const { onClose, onAppendToBody } = mount();
+    onAppendToBody.mockReturnValueOnce(false);
+    await firstAnswer('PLAN ANSWER');
+    fireEvent.click(screen.getByRole('button', { name: 'Save to task' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/could not be saved/i));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText('PLAN ANSWER')).toBeTruthy();
   });
 
   it('there is no Save button without a handler', async () => {
@@ -256,8 +349,8 @@ describe('when it does not work', () => {
   });
 });
 
-it('names the connection quietly after an answer', async () => {
+it('names the connection and the model quietly after an answer', async () => {
   mount();
   await firstAnswer();
-  expect(screen.getByText(/via Company gateway/)).toBeTruthy();
+  expect(screen.getByText(/via Company gateway · team\/x/)).toBeTruthy();
 });

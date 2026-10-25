@@ -12,6 +12,8 @@ export type ConnectionView = {
   capabilities: AICapability[];
   /** A capability probe has run, so an absent capability means "does not do it", not "unknown". */
   probed: boolean;
+  /** The user allows JSON tasks although the JSON check found the connection unreliable. */
+  jsonOverride: boolean;
   allowsPeopleData: boolean;
   isDefault: boolean;
 };
@@ -48,13 +50,14 @@ function providerLabel(p: AIProvider): string {
 }
 
 function extraView(c: AIConnection): ConnectionView {
-  const { id: _id, name: _name, capabilities: _caps, probedAt: _probed, allowPeopleData: _allow, ...engine } = c;
+  const { id: _id, name: _name, capabilities: _caps, probedAt: _probed, allowPeopleData: _allow, jsonOverride: _json, ...engine } = c;
   return {
     id: c.id,
     name: c.name,
     settings: engine,
     capabilities: c.capabilities ?? [],
     probed: !!c.probedAt,
+    jsonOverride: c.jsonOverride === true,
     allowsPeopleData: connectionAllowsPeopleData(c),
     isDefault: false,
   };
@@ -68,6 +71,7 @@ function defaultView(s: AISettings & { provider: AIProvider }): ConnectionView {
     settings: engine,
     capabilities: defaultMeta?.capabilities ?? [],
     probed: !!defaultMeta?.probedAt,
+    jsonOverride: defaultMeta?.jsonOverride === true,
     allowsPeopleData: connectionAllowsPeopleData({
       provider: s.provider,
       baseUrl: s.baseUrl,

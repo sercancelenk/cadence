@@ -17,6 +17,8 @@
 
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_CHARS = 4_000_000;
+/** Largest request body accepted from the renderer (characters). */
+const MAX_REQUEST_CHARS = 8_000_000;
 
 /** Mirrors `src/lib/aiGatewayUrl.ts` — keep the two in sync. */
 function isPrivateHttpHost(hostname) {
@@ -138,7 +140,7 @@ function validateGatewayHeaders(input) {
     if (seen.has(lower)) return { ok: false, error: `The "${name}" header appears twice.` };
     seen.add(lower);
     // eslint-disable-next-line no-control-regex
-    if (typeof value !== 'string' || value.length > MAX_HEADER_VALUE || /[\u0000-\u001f\u007f]/.test(value)) {
+    if (typeof value !== 'string' || value.length > MAX_HEADER_VALUE || /[^\t\x20-\x7e]/.test(value)) {
       return { ok: false, error: `The value of the "${name}" header is not valid.` };
     }
     out[name] = value;
@@ -155,26 +157,35 @@ function validateGatewayHeaders(input) {
  * @param {number} maxChars
  * @returns {Promise<string | null>}
  */
-async function readCapped(res, maxChars) {
+async function readCapped(res, maxChars, onPiece) {
   const declared = Number(res.headers?.get?.('content-length'));
   if (Number.isFinite(declared) && declared > maxChars * 4) return null;
   const reader = res.body?.getReader?.();
   if (!reader) {
     const text = await res.text();
-    return text.length > maxChars ? null : text;
+    if (text.length > maxChars) return null;
+    if (text && onPiece) onPiece(text);
+    return text;
   }
   const decoder = new TextDecoder();
   let text = '';
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    text += decoder.decode(value, { stream: true });
+    const piece = decoder.decode(value, { stream: true });
+    text += piece;
     if (text.length > maxChars) {
       await reader.cancel().catch(() => {});
       return null;
     }
+    if (piece && onPiece) onPiece(piece);
   }
-  return text + decoder.decode();
+  const tail = decoder.decode();
+  if (tail) {
+    text += tail;
+    if (onPiece) onPiece(tail);
+  }
+  return text;
 }
 
 /**
@@ -187,9 +198,12 @@ function createGatewayClient(deps) {
 
   /**
    * @param {{ requestId?: unknown; baseUrl?: unknown; path?: unknown; headers?: unknown; body?: unknown }} req
+   * @param {((piece: string) => void) | undefined} [onChunk] When given, a 2xx reply is delivered
+   *   to it in pieces and the result carries no text; the time limit then applies to silence
+   *   between pieces instead of the whole reply.
    * @returns {Promise<{ ok: true; status: number; text: string } | { ok: false; error: string; aborted?: boolean }>}
    */
-  async function chat(req) {
+  async function chat(req, onChunk) {
     const base = normalizeGatewayBaseUrl(req?.baseUrl);
     if (!base.ok) return { ok: false, error: base.error };
     const path = validateGatewayPath(req.path);
@@ -197,15 +211,25 @@ function createGatewayClient(deps) {
     const headers = validateGatewayHeaders(req.headers ?? {});
     if (!headers.ok) return { ok: false, error: headers.error };
     if (typeof req.body !== 'string' || !req.body) return { ok: false, error: 'Empty request body.' };
+    if (req.body.length > MAX_REQUEST_CHARS) return { ok: false, error: 'The request is too large.' };
     const requestId = typeof req.requestId === 'string' ? req.requestId : '';
+    // A reused id would hide the first request from `abort`.
+    if (requestId && inflight.has(requestId)) return { ok: false, error: 'A request with this id is already running.' };
 
     const ctrl = new AbortController();
     if (requestId) inflight.set(requestId, ctrl);
     let timedOut = false;
-    const timer = setTimeout(() => {
+    let timer = setTimeout(() => {
       timedOut = true;
       ctrl.abort();
     }, timeoutMs);
+    const restartTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        timedOut = true;
+        ctrl.abort();
+      }, timeoutMs);
+    };
     try {
       const res = await deps.fetch(`${base.url}${path.path}`, {
         method: 'POST',
@@ -215,9 +239,19 @@ function createGatewayClient(deps) {
         // A redirect could carry the bearer token to another host.
         redirect: 'error',
       });
-      const text = await readCapped(res, MAX_RESPONSE_CHARS);
+      const streamed = typeof onChunk === 'function' && res.status >= 200 && res.status < 300;
+      const text = await readCapped(
+        res,
+        MAX_RESPONSE_CHARS,
+        streamed
+          ? (piece) => {
+              restartTimer();
+              onChunk(piece);
+            }
+          : undefined,
+      );
       if (text === null) return { ok: false, error: 'The gateway response was too large.' };
-      return { ok: true, status: res.status, text };
+      return { ok: true, status: res.status, text: streamed ? '' : text };
     } catch (err) {
       if (timedOut) {
         return { ok: false, error: `The gateway did not answer within ${Math.round(timeoutMs / 1000)} seconds.` };
@@ -240,7 +274,17 @@ function createGatewayClient(deps) {
     return true;
   }
 
-  return { chat, abort };
+  /** Cancels every request in flight (the window that asked for them is gone). Returns how many. */
+  function abortAll() {
+    let count = 0;
+    for (const ctrl of inflight.values()) {
+      ctrl.abort();
+      count += 1;
+    }
+    return count;
+  }
+
+  return { chat, abort, abortAll };
 }
 
 module.exports = {

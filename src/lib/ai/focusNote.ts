@@ -5,11 +5,13 @@
  * the reply emphasises.
  */
 
+import { clip } from './prompts/shared';
+
 export const FOCUS_NOTE_MAX_CHARS = 200;
 
 export function sanitizeFocusNote(raw: string): string {
   if (typeof raw !== 'string') return '';
-  const clean = raw
+  const clean = clip(raw, 4 * FOCUS_NOTE_MAX_CHARS) // bound the work: only the first 200 characters survive anyway
     .replace(/```[\s\S]*?```/g, ' ') // code fences
     .replace(/<[^>]*>/g, ' ') // tags, including a closing </focus_note>
     .replace(/https?:\/\/\S+/gi, ' ') // URLs
@@ -18,7 +20,7 @@ export function sanitizeFocusNote(raw: string): string {
     .replace(/[`*#]/g, '') // markdown marks
     .replace(/\s+/g, ' ')
     .trim();
-  return clean.slice(0, FOCUS_NOTE_MAX_CHARS).trim();
+  return clip(clean, FOCUS_NOTE_MAX_CHARS).trim();
 }
 
 export function wrapFocusNote(note: string): string {

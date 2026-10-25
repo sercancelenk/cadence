@@ -1,3 +1,4 @@
+import { hashFragment } from '../../lib/hashFragment';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { STORAGE_PREFIX } from '../../lib/appBranding';
@@ -59,7 +60,7 @@ export function CollapsibleCard({
   useEffect(() => {
     const focusFromHash = () => {
       if (typeof window === 'undefined') return;
-      const target = window.location.hash.replace(/^#/, '');
+      const target = hashFragment(window.location.hash);
       if (target !== id) return;
       setOpen(true);
       requestAnimationFrame(() => {

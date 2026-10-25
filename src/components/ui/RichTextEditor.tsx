@@ -16,7 +16,8 @@ import {
 } from '../../lib/richTextExternalSync';
 import { createSlashCommandExtension } from '../../lib/richTextSlashCommand';
 import { createAiSlashItems } from '../../lib/richTextSlashItems';
-import { availableAiActions } from '../../lib/ai/entryPoints';
+import { availableAiActions, type AiHost } from '../../lib/ai/entryPoints';
+import type { AiEditorTarget } from '../../lib/ai/editorTarget';
 import { readRichTextToolbarState } from '../../lib/richTextToolbarState';
 import { useEditorToolbarState } from '../../hooks/useEditorToolbarState';
 import { RichTextBubbleToolbar } from './RichTextBubbleToolbar';
@@ -101,7 +102,9 @@ export type RichTextEditorProps = {
    * action id and the selection (or the whole note for the slash menu when nothing is selected).
    */
   aiEnabled?: boolean;
-  onAiAction?: (actionId: string, text: string) => void;
+  /** Which editor this is, so it only offers the actions that fit (default `notes`). */
+  aiHost?: AiHost;
+  onAiAction?: (actionId: string, text: string, target: AiEditorTarget) => void;
 };
 
 function contentKey(
@@ -239,6 +242,7 @@ export function RichTextEditor({
   onCreateTaskFromSelection,
   aiEnabled = false,
   onAiAction,
+  aiHost,
   onAutoFocusHandled,
 }: RichTextEditorProps) {
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
@@ -335,11 +339,11 @@ export function RichTextEditor({
   const aiSlashItems = useMemo(
     () =>
       aiOn
-        ? createAiSlashItems(availableAiActions('slash', { aiEnabled: true }), (id, text) =>
-            onAiActionRef.current?.(id, text),
+        ? createAiSlashItems(availableAiActions('slash', { aiEnabled: true, host: aiHost }), (id, text, target) =>
+            onAiActionRef.current?.(id, text, target),
           )
         : [],
-    [aiOn],
+    [aiOn, aiHost],
   );
   const aiSlashItemsRef = useRef(aiSlashItems);
   aiSlashItemsRef.current = aiSlashItems;
@@ -889,7 +893,7 @@ export function RichTextEditor({
         <RichTextBubbleToolbar
           editor={editor}
           onCreateTaskFromSelection={onCreateTaskFromSelection}
-          aiActions={aiOn ? availableAiActions('bubble', { aiEnabled: true }) : undefined}
+          aiActions={aiOn ? availableAiActions('bubble', { aiEnabled: true, host: aiHost }) : undefined}
           onAiAction={aiOn ? onAiAction : undefined}
         />
       ) : null}

@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppData } from '../AppDataContext';
 import { useConfirm } from '../components/ui/ConfirmProvider';
 import { StructuredTextDiffPane } from '../components/ui/StructuredTextDiffPane';
 import { StructuredTextEditor } from '../components/ui/StructuredTextEditor';
 import { StructuredTextHelpDialog } from '../components/ui/StructuredTextHelpDialog';
-import { IcFileText, IcHelpCircle, IcLayoutGrid, IcPencil } from '../components/icons';
+import { IcFileText, IcHelpCircle, IcLayoutGrid, IcPencil, IcSparkles } from '../components/icons';
+import { hasUsableConnection } from '../lib/ai/connections';
+import { useFeatures } from '../lib/features';
 import { UtilityTabStrip } from '../features/tools/UtilityTabStrip';
 import { useMoveTabToNote } from '../features/tools/useMoveTabToNote';
 import { useToolFileSave } from '../features/tools/useToolFileSave';
@@ -12,6 +14,10 @@ import { useToast } from '../components/ui/Toast';
 import { structuredTabFile } from '../lib/toolFileExport';
 import type { StructuredTextLanguage } from '../lib/structuredText';
 import type { UtilityStructuredTab } from '../core/model';
+
+const AIMockDataDialog = lazy(() =>
+  import('../components/AIMockDataDialog').then((m) => ({ default: m.AIMockDataDialog })),
+);
 
 const DEFAULT_JSON = '{\n}\n';
 
@@ -32,6 +38,7 @@ export function UtilitiesStructuredPage() {
   const {
     data,
     addStructuredTab,
+    addStructuredTabWithContent,
     closeStructuredTab,
     renameStructuredTab,
     setActiveStructuredTab,
@@ -41,6 +48,9 @@ export function UtilitiesStructuredPage() {
   } = useAppData();
   const { confirm } = useConfirm();
   const move = useMoveTabToNote('structured');
+  const { features } = useFeatures();
+  const aiEnabled = features.ai && hasUsableConnection(data.aiSettings);
+  const [mockOpen, setMockOpen] = useState(false);
 
   const tabs = useMemo(() => data.utilityStructuredTabs ?? [], [data.utilityStructuredTabs]);
   const activeTab =
@@ -190,9 +200,31 @@ export function UtilitiesStructuredPage() {
             <IcFileText size={14} aria-hidden />
             Move to Notes
           </button>
+          {aiEnabled && language === 'json' && tabHasContent(activeTab) ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--small"
+              title="Generate more records shaped like this JSON, as a new tab"
+              onClick={() => setMockOpen(true)}
+            >
+              <IcSparkles size={14} aria-hidden />
+              Mock data with AI
+            </button>
+          ) : null}
         </div>
       </header>
       {move.dialog}
+      {mockOpen ? (
+        <Suspense fallback={null}>
+          <AIMockDataDialog
+            open
+            onClose={() => setMockOpen(false)}
+            tabTitle={activeTab.title}
+            sampleText={content}
+            onApply={(title, text) => addStructuredTabWithContent({ title, content: text, language: 'json' })}
+          />
+        </Suspense>
+      ) : null}
 
       {helpOpen ? <StructuredTextHelpDialog onClose={() => setHelpOpen(false)} /> : null}
 

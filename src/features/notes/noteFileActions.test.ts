@@ -9,8 +9,8 @@ import {
   type ImportNoteDeps,
   type ImportedNoteFields,
   type SaveNoteDeps,
-  type SaveNotePayload,
 } from './noteFileActions';
+import type { ToolFilePayload } from '../../lib/toolFileExport';
 
 const doc = (text: string) =>
   JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
@@ -30,7 +30,7 @@ function note(over: Partial<Note> = {}): Note {
 
 function deps(over: Partial<SaveNoteDeps> = {}) {
   const calls: string[] = [];
-  const saveFile = vi.fn(async (_payload: SaveNotePayload) => {
+  const saveFile = vi.fn(async (_payload: ToolFilePayload) => {
     calls.push('save');
     return { ok: true, path: '/tmp/Plan.md' };
   });
@@ -41,7 +41,6 @@ function deps(over: Partial<SaveNoteDeps> = {}) {
       calls.push('flush');
     }),
     saveFile,
-    format: 'md',
     notify: { success: vi.fn(), error: vi.fn() },
     ...over,
   };
@@ -53,22 +52,22 @@ describe('saveNoteToDisk', () => {
     const { base, calls, saveFile } = deps();
     await expect(saveNoteToDisk(base)).resolves.toBe('saved');
     expect(calls).toEqual(['flush', 'save']);
-    expect(saveFile).toHaveBeenCalledWith({
-      suggestedName: 'Plan.md',
-      format: 'md',
-      content: '# Plan\n\nhello\n',
-    });
+    expect(saveFile).toHaveBeenCalledTimes(1);
+    const payload = saveFile.mock.calls[0]![0];
+    expect(payload.suggestedName).toBe('Plan.md');
+    expect(payload.defaultExt).toBe('md');
+    expect(payload.extensions).toEqual(['md', 'txt', 'html']);
+    expect(payload.variants.md).toBe('# Plan\n\nhello\n');
     expect(base.notify.success).toHaveBeenCalledTimes(1);
   });
 
-  it('honours the chosen format', async () => {
-    const { base, saveFile } = deps({ format: 'txt' });
+  it('sends every format, so the extension typed in the save dialog decides what is written', async () => {
+    const { base, saveFile } = deps();
     await saveNoteToDisk(base);
-    expect(saveFile).toHaveBeenCalledWith({
-      suggestedName: 'Plan.txt',
-      format: 'txt',
-      content: 'Plan\n\nhello\n',
-    });
+    const { variants } = saveFile.mock.calls[0]![0];
+    expect(variants.txt).toBe('Plan\n\nhello\n');
+    expect(variants.html).toContain('hello');
+    expect(Object.keys(variants).sort()).toEqual(['html', 'md', 'txt']);
   });
 
   it('reads the note after the flush so the latest keystrokes are saved', async () => {
@@ -80,7 +79,7 @@ describe('saveNoteToDisk', () => {
       },
     });
     await saveNoteToDisk(base);
-    expect(saveFile.mock.calls[0]![0].content).toContain('new');
+    expect(saveFile.mock.calls[0]![0].variants.md).toContain('new');
   });
 
   it('refuses to write a locked note whose body is not unlocked', async () => {
@@ -96,24 +95,24 @@ describe('saveNoteToDisk', () => {
       getLockedBody: () => ({ body: doc('secret'), bodyFormat: 'prosemirror' }),
     });
     await expect(saveNoteToDisk(base)).resolves.toBe('saved');
-    expect(saveFile.mock.calls[0]![0].content).toContain('secret');
+    expect(saveFile.mock.calls[0]![0].variants.md).toContain('secret');
   });
 
   it('writes a valid file for an empty note', async () => {
     const { base, saveFile } = deps({ getNote: () => note({ title: '', body: '', bodyFormat: undefined }) });
     await expect(saveNoteToDisk(base)).resolves.toBe('saved');
-    expect(saveFile.mock.calls[0]![0]).toMatchObject({ suggestedName: 'New note.md', content: '# New note\n' });
+    expect(saveFile.mock.calls[0]![0]).toMatchObject({ suggestedName: 'New note.md', variants: expect.objectContaining({ md: '# New note\n' }) });
   });
 
   it('stays silent when the user cancels the dialog', async () => {
-    const { base } = deps({ saveFile: vi.fn(async (_p: SaveNotePayload) => ({ ok: false, canceled: true })) });
+    const { base } = deps({ saveFile: vi.fn(async (_p: ToolFilePayload) => ({ ok: false, canceled: true })) });
     await expect(saveNoteToDisk(base)).resolves.toBe('canceled');
     expect(base.notify.success).not.toHaveBeenCalled();
     expect(base.notify.error).not.toHaveBeenCalled();
   });
 
   it('reports write failures', async () => {
-    const { base } = deps({ saveFile: vi.fn(async (_p: SaveNotePayload) => ({ ok: false, error: 'disk full' })) });
+    const { base } = deps({ saveFile: vi.fn(async (_p: ToolFilePayload) => ({ ok: false, error: 'disk full' })) });
     await expect(saveNoteToDisk(base)).resolves.toBe('error');
     expect(base.notify.error).toHaveBeenCalledWith('Could not save note', 'disk full');
   });

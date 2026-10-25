@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState } from 'react';
+import type { AiEditorTarget } from '../../lib/ai/editorTarget';
 import { EntityLinkPills } from '../../components/ui/EntityLinkPills';
 import { EntityLinkPicker } from '../../components/ui/EntityLinkPicker';
 import { RichTextDocumentPane } from '../../components/ui/RichTextDocumentPane';
@@ -32,7 +33,7 @@ export type NotesBodyEditorProps = {
   onCreateTaskFromSelection?: (title: string) => void;
   /** AI actions in the slash menu and selection bubble. */
   aiEnabled?: boolean;
-  onAiAction?: (actionId: string, text: string) => void;
+  onAiAction?: (actionId: string, text: string, target: AiEditorTarget) => void;
 };
 
 /**

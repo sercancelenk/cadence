@@ -63,6 +63,10 @@
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--panel);
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
@@ -519,12 +523,8 @@
 }
 
 .utility-saved__menu {
-  position: absolute;
-  right: 0;
-  /* Open upward so bottom rows aren't clipped by the scrollport. */
-  bottom: calc(100% + 2px);
-  top: auto;
-  z-index: 20;
+  /* Placed by script (position: fixed, in the page body) so no scrolling list can clip or cover it. */
+  z-index: 400;
   min-width: 120px;
   border: 1px solid var(--border);
   border-radius: 8px;

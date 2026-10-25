@@ -1,30 +1,12 @@
 /**
- * Pure validation for note ⇄ disk file IPC (`note:saveAs`, `note:openFile`).
+ * Pure validation for note ⇄ disk file IPC (`tools:saveAs`, `note:openFile`).
  * Kept free of Electron so it is unit-testable; the handlers in main.cjs only
  * add dialogs and the durable write around it.
  */
 
 const NOTE_FILE_MAX_BYTES = 5 * 1024 * 1024;
-const SAVE_FORMATS = new Set(['md', 'txt', 'html']);
 const OPEN_EXTENSIONS = new Set(['md', 'markdown', 'txt', 'html', 'htm']);
 const MAX_NAME_LENGTH = 180;
-
-/** @param {unknown} payload */
-function validateNoteSavePayload(payload) {
-  if (!payload || typeof payload !== 'object') return { ok: false, error: 'Invalid payload.' };
-  const { suggestedName, format, content } = /** @type {Record<string, unknown>} */ (payload);
-  if (typeof format !== 'string' || !SAVE_FORMATS.has(format)) {
-    return { ok: false, error: 'Unsupported format.' };
-  }
-  if (typeof content !== 'string') return { ok: false, error: 'Content must be text.' };
-  if (Buffer.byteLength(content, 'utf8') > NOTE_FILE_MAX_BYTES) {
-    return { ok: false, error: 'Note is too large to save as a file.' };
-  }
-  const rawName = typeof suggestedName === 'string' ? suggestedName : '';
-  const base = rawName.split(/[\\/]/).pop() ?? '';
-  const name = base.replace(/[\u0000-\u001f]/g, '-').trim().slice(0, MAX_NAME_LENGTH) || `note.${format}`;
-  return { ok: true, suggestedName: name, format, content };
-}
 
 /**
  * @param {string} fileName
@@ -149,7 +131,6 @@ module.exports = {
   pickSaveVariant,
   NOTE_FILE_MAX_BYTES,
   checkSaveTargetFree,
-  validateNoteSavePayload,
   checkOpenableNoteFile,
   decodeNoteFileText,
 };

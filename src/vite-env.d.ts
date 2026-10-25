@@ -296,11 +296,6 @@ interface CadenceApi {
       exportDataBundle?: (
         data: unknown,
       ) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
-      saveNoteFile?: (payload: {
-        suggestedName: string;
-        format: 'md' | 'txt' | 'html';
-        content: string;
-      }) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>;
       saveToolFile?: (payload: {
         suggestedName: string;
         defaultExt: string;
@@ -334,6 +329,18 @@ interface CadenceApi {
       }>;
       getAppVersion: () => Promise<string>;
       checkForUpdates: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
+      /** Same request as `aiGatewayChat`, but the reply is delivered in pieces to `onChunk`. */
+      aiGatewayStream?: (
+        req: {
+          requestId: string;
+          baseUrl: string;
+          path: string;
+          headers: Record<string, string>;
+          body: string;
+          dataClass?: 'content' | 'people';
+        },
+        onChunk: (piece: string) => void,
+      ) => Promise<{ ok: true; status: number; text: string } | { ok: false; error: string; aborted?: boolean }>;
       /**
        * Custom-gateway AI request, performed by the main process (no CSP/CORS).
        * Resolves with the raw HTTP status and body text, or `ok: false` for

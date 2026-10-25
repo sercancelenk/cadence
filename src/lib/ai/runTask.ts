@@ -1,6 +1,7 @@
 import type { AISettings } from '../../model';
 import { AIError, askAI, defaultModel } from '../ai';
 import type { AIMessage, AIStopReason } from '../ai';
+import type { AiImage } from './images';
 import { resolveConnection } from './connections';
 import { sanitizeFocusNote } from './focusNote';
 import type { AiOptions, AiTask, DataClass, PromptContext } from './types';
@@ -21,6 +22,10 @@ export type RunTaskArgs<In, Out> = {
   legacyFocusNote?: string;
   /** Turns after the opening message (assistant, user, …), for follow-ups in a conversation. */
   conversation?: AIMessage[];
+  /** Called with the text so far while the first reply streams in (the final value still comes from the parse). */
+  onText?: (textSoFar: string) => void;
+  /** Images for a `needsVision` task, sent with the first message only. */
+  images?: AiImage[];
   signal?: AbortSignal;
   now?: Date;
 };
@@ -75,11 +80,21 @@ export async function runAiTask<In, Out>(args: RunTaskArgs<In, Out>): Promise<Ru
       `This uses 1:1 or feedback data, and “${connection.name}” is not allowed for it. Allow it in Settings → AI, or use a local model.`,
     );
   }
-  if (task.needsJson && connection.probed && !connection.capabilities.includes('json')) {
+  if (task.needsJson && connection.probed && !connection.capabilities.includes('json') && !connection.jsonOverride) {
     return fail(
       'capability',
       `“${connection.name}” did not return reliable JSON when tested. Choose a larger model or another connection in Settings → AI.`,
     );
+  }
+
+  if (task.needsVision) {
+    if (!args.images?.length) return fail('invalid-output', 'Add an image first.');
+    if (!connection.capabilities.includes('vision')) {
+      return fail(
+        'capability',
+        `“${connection.name}” has not been confirmed for images. Open Settings → AI and use “Check images” on it first, or choose a model that can read images.`,
+      );
+    }
   }
 
   const focus =
@@ -106,10 +121,13 @@ export async function runAiTask<In, Out>(args: RunTaskArgs<In, Out>): Promise<Ru
   };
   const model = connection.settings.model?.trim() || (connection.settings.provider ? defaultModel(connection.settings.provider) : '');
 
-  const messages: AIMessage[] = [{ role: 'user', content: parts.user }, ...(args.conversation ?? [])];
+  const messages: AIMessage[] = [
+    { role: 'user', content: parts.user, ...(task.needsVision && args.images?.length ? { images: args.images } : {}) },
+    ...(args.conversation ?? []),
+  ];
   try {
-    const first = await askAI({ ...base, messages });
-    const parsed = task.parse(first.text);
+    const first = await askAI({ ...base, messages, onText: args.onText });
+    const parsed = task.parse(first.text, ctx);
     if (parsed.ok) {
       return {
         ok: true,
@@ -132,7 +150,7 @@ export async function runAiTask<In, Out>(args: RunTaskArgs<In, Out>): Promise<Ru
         },
       ],
     });
-    const again = task.parse(retry.text);
+    const again = task.parse(retry.text, ctx);
     if (again.ok) {
       return {
         ok: true,
@@ -144,7 +162,7 @@ export async function runAiTask<In, Out>(args: RunTaskArgs<In, Out>): Promise<Ru
         stopReason: retry.stopReason,
       };
     }
-    return fail('invalid-output', 'The AI did not return a usable result. Try again, or use a larger model.');
+    return fail('invalid-output', 'The AI did not return a usable result. Try again, or choose a larger model or another connection in Settings → AI.');
   } catch (err) {
     if ((err as DOMException)?.name === 'AbortError') return fail('cancelled', 'Cancelled.');
     if (err instanceof AIError) return fail('engine', err.message, err.diagnostic);

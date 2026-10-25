@@ -7,6 +7,7 @@ import { runAiTask } from '../lib/ai/runTask';
 import { useFeatures } from '../lib/features';
 import { fromLocalDatetimeValue } from '../lib/datetime';
 import { PATH_SETTINGS } from '../lib/routes';
+import { defaultTodoGroupId } from '../lib/todoGroupPick';
 import type { Priority, TodoGroup } from '../model';
 import { PRIORITY_OPTIONS } from '../model';
 import { noteDisplayTitle } from '../features/notes/noteDisplay';
@@ -76,7 +77,9 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId, sourceNot
   const [error, setError] = useState<{ message: string; diagnostic?: string } | null>(null);
   const [blocked, setBlocked] = useState<{ message: string; canOpenSettings: boolean } | null>(null);
   const [connectionLabel, setConnectionLabel] = useState('');
+  const [modelLabel, setModelLabel] = useState('');
   const [fellBack, setFellBack] = useState(false);
+  const [truncated, setTruncated] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const rowSeq = useRef(0);
 
@@ -92,6 +95,7 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId, sourceNot
     setBlocked(null);
     setConnectionLabel('');
     setFellBack(false);
+    setTruncated(false);
     abortRef.current?.abort();
     abortRef.current = null;
   }, [open, initialNotes]);
@@ -100,7 +104,8 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId, sourceNot
 
   const fallbackGroupId = useMemo(() => {
     if (defaultGroupId && groups.some((g) => g.id === defaultGroupId)) return defaultGroupId;
-    return groups[0]?.id ?? '';
+    // The first list in the lists' own order that is not archived, so added tasks stay visible.
+    return defaultTodoGroupId(groups) ?? '';
   }, [defaultGroupId, groups]);
 
   const listsForModel = useMemo(
@@ -148,7 +153,9 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId, sourceNot
         return;
       }
       setConnectionLabel(result.connectionName);
+      setModelLabel(result.model);
       setFellBack(result.fellBack);
+      setTruncated(result.stopReason === 'length');
       // Tasks already added stay as they are. A new run must not offer them again, or Add all
       // would create them twice.
       const keptAdded = rows.filter((r) => r.added);
@@ -166,8 +173,11 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId, sourceNot
       }
       setRows([...keptAdded, ...fresh]);
     } finally {
-      setBusy(false);
-      abortRef.current = null;
+      // Only the newest request may clear the busy flag and the abort handle.
+      if (abortRef.current === ctrl) {
+        setBusy(false);
+        abortRef.current = null;
+      }
     }
   };
 
@@ -199,19 +209,33 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId, sourceNot
     return Object.keys(out).length ? out : undefined;
   };
 
+  const notSaved = {
+    message:
+      'A task could not be saved (saving is blocked right now). Nothing was marked as added for it; try again in a moment.',
+  };
+
   const addRow = (row: Row) => {
-    if (!row.groupId || row.added || !row.title.trim()) return;
-    addTodoItem(row.groupId, row.title.trim(), extrasFor(row));
+    if (truncated || !row.groupId || row.added || !row.title.trim()) return;
+    if (addTodoItem(row.groupId, row.title.trim(), extrasFor(row)) === false) {
+      setError(notSaved);
+      return;
+    }
     patchRow(row.rowId, { added: true });
   };
 
   const addAll = () => {
+    if (truncated) return;
     const target = rows.filter((r) => !r.added && r.title.trim() && r.groupId);
     if (target.length === 0) return;
+    const done = new Set<string>();
     for (const r of target) {
-      addTodoItem(r.groupId, r.title.trim(), extrasFor(r));
+      if (addTodoItem(r.groupId, r.title.trim(), extrasFor(r)) === false) {
+        setError(notSaved);
+        break;
+      }
+      done.add(r.rowId);
     }
-    setRows((cur) => cur.map((r) => (target.includes(r) ? { ...r, added: true } : r)));
+    setRows((cur) => cur.map((r) => (done.has(r.rowId) ? { ...r, added: true } : r)));
   };
 
   const setBulkGroup = (groupId: string) => {
@@ -235,7 +259,14 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId, sourceNot
       sent: listsForModel.map((l) => l.name).join('\n') || undefined,
     },
     ...(sourceNoteId
-      ? [{ label: 'From note', detail: sourceNote ? noteDisplayTitle(sourceNote) : 'Untitled note' }]
+      ? [
+          {
+            label: 'From note',
+            detail: `${sourceNote ? noteDisplayTitle(sourceNote) : 'Untitled note'}${
+              sourceNote?.locked ? ' (unlocked this session, so its text is included)' : ''
+            }`,
+          },
+        ]
       : []),
   ];
 
@@ -259,12 +290,16 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId, sourceNot
       open
       title="Extract tasks from notes"
       connectionLabel={connectionLabel || undefined}
+      modelLabel={modelLabel || undefined}
       chips={chips}
       status={blockedView ? 'blocked' : busy ? 'running' : 'ready'}
       message={blockedView?.message}
       blockedAction={blockedView?.canOpenSettings ? { label: 'Open AI settings', onClick: openSettings } : undefined}
+      truncated={truncated}
+      closeLabel={addedCount > 0 ? 'Close' : undefined}
       applyLabel={`Add all (${pendingCount})`}
       onApply={rows.length > 0 && pendingCount > 0 ? addAll : undefined}
+      applyDisabled={truncated}
       onRegenerate={rows.length > 0 ? () => void extract() : undefined}
       onClose={onClose}
     >
@@ -418,7 +453,7 @@ export function AITaskExtractorDialog({ open, onClose, defaultGroupId, sourceNot
                             variant="primary"
                             icon={<IcPlus size={14} />}
                             onClick={() => addRow(r)}
-                            disabled={!r.title.trim() || !r.groupId}
+                            disabled={truncated || !r.title.trim() || !r.groupId}
                           >
                             Add
                           </Button>

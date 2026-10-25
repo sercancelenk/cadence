@@ -83,6 +83,38 @@ describe('portable backup', () => {
     expect(result.filename).toMatch(/\.zip$/);
   });
 
+  it('writes no API key and no extra-header value into the exported data.json', async () => {
+    attachmentMocks.collectReferencedAttachmentIds.mockReturnValue([]);
+    const data = normalizeData({
+      ...minimalWorkspace(),
+      aiSettings: {
+        provider: 'openai',
+        apiKey: 'sk-export-secret-default',
+        model: 'gpt-5.4-mini',
+        connections: [
+          {
+            id: 'c1',
+            name: 'Company',
+            provider: 'gateway',
+            baseUrl: 'https://ai.corp.example.com/v1',
+            apiKey: 'sk-export-secret-company',
+            extraHeaders: [{ name: 'x-tenant', value: 'tenant-export-secret' }],
+          },
+        ],
+      },
+    } as never);
+    const zipStore = await import('./zipStore');
+    const pack = vi.spyOn(zipStore, 'zipStorePack');
+    const { exportPortableBackupZip } = await import('./portable');
+    await exportPortableBackupZip('user-1', data);
+    const files = pack.mock.calls[0][0] as Record<string, Uint8Array>;
+    const json = new TextDecoder().decode(files[BACKUP_DATA_FILE]);
+    expect(json).not.toMatch(/secret/);
+    const saved = JSON.parse(json).aiSettings;
+    expect(saved.provider).toBe('openai');
+    expect(saved.connections[0]).toMatchObject({ id: 'c1', name: 'Company', baseUrl: 'https://ai.corp.example.com/v1' });
+  });
+
   it('counts missing attachments during export', async () => {
     attachmentMocks.collectReferencedAttachmentIds.mockReturnValue(['note-missing12345']);
     attachmentMocks.readAttachmentBlobForSync.mockResolvedValue(null);

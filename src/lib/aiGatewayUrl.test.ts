@@ -282,3 +282,19 @@ describe('resolveGatewayRequest: {apiKey}, query strings and no-auth', () => {
     expect(r.ok && r.headers).toEqual({});
   });
 });
+
+describe('validateGatewayHeaders: values must be plain visible ASCII', () => {
+  it.each([
+    ['a zero-width space pasted with the key', 'Bearer sk\u200Babc'],
+    ['a non-breaking space', 'Bearer\u00A0sk-abc'],
+    ['an accented letter', 'Bearer sk-ünï'],
+    ['a right-to-left mark', 'Bearer \u200Fsk'],
+  ])('rejects %s', (_n, value) => {
+    expect(validateGatewayHeaders({ Authorization: value }).ok).toBe(false);
+  });
+
+  it('still accepts a normal token, spaces and a tab', () => {
+    expect(validateGatewayHeaders({ Authorization: 'Bearer sk-abc_123.XYZ~+/=' }).ok).toBe(true);
+    expect(validateGatewayHeaders({ 'x-note': 'a b\tc' }).ok).toBe(true);
+  });
+});

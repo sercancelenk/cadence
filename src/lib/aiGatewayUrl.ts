@@ -150,7 +150,7 @@ export function validateGatewayHeaders(input: Record<string, string>): GatewayHe
     if (seen.has(lower)) return { ok: false, error: `The "${name}" header appears twice.` };
     seen.add(lower);
     // eslint-disable-next-line no-control-regex
-    if (typeof value !== 'string' || value.length > MAX_HEADER_VALUE || /[\u0000-\u001f\u007f]/.test(value)) {
+    if (typeof value !== 'string' || value.length > MAX_HEADER_VALUE || /[^\t\x20-\x7e]/.test(value)) {
       return { ok: false, error: `The value of the "${name}" header is not valid.` };
     }
     out[name] = value;

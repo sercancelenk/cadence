@@ -768,7 +768,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 4px 8px 16px;
+  /* Same left edge as the menu items (.app-sidebar__link) below. */
+  padding: 4px 12px 16px;
   margin-bottom: 4px;
   border-bottom: 1px solid var(--border);
 }
@@ -837,6 +838,72 @@
   line-height: 1.2;
 }
 
+.app-sidebar__link--button {
+  width: 100%;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.app-sidebar__section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.app-sidebar__section-toggle:hover {
+  color: var(--text);
+}
+
+.app-sidebar__section-chevron {
+  display: inline-flex;
+  transition: transform 0.15s ease;
+}
+
+.app-sidebar__section-chevron--closed {
+  transform: rotate(-90deg);
+}
+
+.app-sidebar__group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-sidebar__group-items[hidden] {
+  display: none;
+}
+
+.app-sidebar__team {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0 10px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar__section-chevron {
+    transition: none;
+  }
+}
+
+.app-shell--nav-collapsed .app-sidebar__team {
+  /* The icon-only rail has no room for the indent and guide line; icons stay in one column. */
+  margin: 4px 0 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
 .app-sidebar__team-name {
   display: block;
   margin-top: 4px;
@@ -882,6 +949,43 @@
   height: 22px;
   flex-shrink: 0;
   opacity: 0.92;
+  position: relative;
+}
+
+/* Small sparkle in the corner of an AI tool's icon: the icon is the topic, the sparkle marks it as AI. */
+.app-sidebar__ai-mark {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: inline-flex;
+  line-height: 0;
+  pointer-events: none;
+}
+
+.app-sidebar__ai-mark .ui-ic {
+  width: 14px;
+  height: 14px;
+}
+
+/* One cool colour against the warm tile, instead of the warm gradient the icon draws elsewhere. */
+.app-sidebar__ai-mark .ui-ic--ai path {
+  stroke: var(--ai-mark);
+  fill: var(--ai-mark);
+  fill-opacity: 0.85;
+}
+
+.app-sidebar__ai-mark .ui-ic--ai {
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--ai-mark) 70%, transparent));
+}
+
+/* A soft tile in the tone of the destination, with the icon in the full tone. */
+.app-sidebar__ic[data-tone] {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  opacity: 1;
+  color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 16%, transparent);
 }
 
 /* Small count chip on the right side of a sidebar link. Used to surface

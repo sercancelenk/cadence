@@ -26,9 +26,10 @@ import {
   IcX,
 } from '../components/icons';
 // Lazy-loaded: only fetched the first time the user clicks "Ask AI" on a note.
-const AIAssistantDialog = lazy(() =>
-  import('../components/AIAssistantDialog').then((m) => ({ default: m.AIAssistantDialog })),
+const PersonAIAssistantDialog = lazy(() =>
+  import('../components/PersonAIAssistantDialog').then((m) => ({ default: m.PersonAIAssistantDialog })),
 );
+const AISbiDialog = lazy(() => import('../components/AISbiDialog').then((m) => ({ default: m.AISbiDialog })));
 import { useAccount } from '../AccountContext';
 import { AutoResizeTextarea } from '../components/ui/AutoResizeTextarea';
 import { Button } from '../components/ui/Button';
@@ -36,7 +37,11 @@ import { useConfirm } from '../components/ui/ConfirmProvider';
 import { SchedulePopover } from '../components/ui/SchedulePopover';
 import { OneOnOneHelpDialog } from '../features/people/OneOnOneHelpDialog';
 import { hasUsableConnection } from '../lib/ai/connections';
+import type { AiEditorTarget } from '../lib/ai/editorTarget';
+import { feedbackAiAvailable, peopleAiAvailable } from '../lib/ai/entryPoints';
 import { useFeatures } from '../lib/features';
+import { PersonPrepButton } from '../components/PersonPrepButton';
+import { UpwardUpdateButton } from '../components/UpwardUpdateButton';
 import {
   carryOverHeading,
   defaultAgenda,
@@ -183,12 +188,16 @@ function ItemBodyField({
   itemId,
   attachmentUserId,
   onCommit,
+  feedbackAi,
 }: {
   initial: RichTextBodyFields;
   itemId: string;
   attachmentUserId: string;
   onCommit: (next: RichTextBodyFields) => void;
+  /** Set for feedback items when AI is available: the selection menu offers the SBI rewrite. */
+  feedbackAi?: { kind?: FeedbackKind };
 }) {
+  const [sbi, setSbi] = useState<{ text: string; target: AiEditorTarget } | null>(null);
   const [fields, setFields] = useState(initial);
   const lastCommitted = useRef(initial);
   const fieldsRef = useRef(fields);
@@ -230,6 +239,7 @@ function ItemBodyField({
   }, [commitPending]);
 
   return (
+    <>
     <Suspense fallback={<div className="muted small">Loading editor…</div>}>
       <RichTextEditor
         value={fields.body}
@@ -240,8 +250,24 @@ function ItemBodyField({
         minHeight={160}
         attachmentScope={{ documentKind: 'item', documentId: itemId }}
         attachmentUserId={attachmentUserId}
+        aiEnabled={!!feedbackAi}
+        aiHost="feedback"
+        onAiAction={
+          feedbackAi
+            ? (actionId, text, target) => {
+                if (actionId === 'feedback-sbi' && text.trim()) setSbi({ text, target });
+              }
+            : undefined
+        }
       />
     </Suspense>
+    {/* Its own boundary: loading the dialog must not swap the open editor for "Loading editor…". */}
+    {sbi && feedbackAi ? (
+      <Suspense fallback={null}>
+        <AISbiDialog open onClose={() => setSbi(null)} text={sbi.text} kind={feedbackAi.kind} target={sbi.target} />
+      </Suspense>
+    ) : null}
+    </>
   );
 }
 
@@ -613,6 +639,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
             </div>
           </div>
           <div className="person-workspace__head-actions">
+            {isLeader || isSkipLevel ? <UpwardUpdateButton /> : null}
             <Button type="button" variant="secondary" size="sm" onClick={() => setTab('meeting')}>
               1:1 Mode
             </Button>
@@ -1110,7 +1137,7 @@ function KindSection({
         | 'feedbackKind'
       >
     >,
-  ) => void;
+  ) => boolean | void;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
   attachmentUserId: string;
@@ -1128,7 +1155,8 @@ function KindSection({
   // Hide AI affordances entirely when the active policy/preset disables AI
   // (e.g. work-strict). Otherwise fall back to the per-account API-key gate.
   const { features: appFeatures } = useFeatures();
-  const aiEnabled = appFeatures.ai && hasUsableConnection(data.aiSettings);
+  // Ask AI on a person's task or goal is people data, so it needs the people switch as well.
+  const aiEnabled = peopleAiAvailable({ features: appFeatures, hasConnection: hasUsableConnection(data.aiSettings) });
   const listId = `cat-${teamId}-${kind}`;
   const submittingRef = useRef(false);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -1518,6 +1546,15 @@ function KindSection({
                       itemId={it.id}
                       attachmentUserId={attachmentUserId}
                       onCommit={(v) => onUpdate(it.id, itemBodyPatchFromFields(v))}
+                      feedbackAi={
+                        feedbackAiAvailable({
+                          itemKind: it.kind,
+                          features: appFeatures,
+                          hasConnection: hasUsableConnection(data.aiSettings),
+                        })
+                          ? { kind: it.feedbackKind }
+                          : undefined
+                      }
                     />
                   </div>
                   {it.kind === 'goal' ? (
@@ -1565,20 +1602,20 @@ function KindSection({
       )}
       {aiTarget ? (
         <Suspense fallback={null}>
-          <AIAssistantDialog
+          <PersonAIAssistantDialog
             open={!!aiTarget}
             onClose={() => setAiTarget(null)}
             task={{
               title: aiTarget.title,
               body: plainTextFromBodyFields(aiTarget) || undefined,
             }}
-            // A person's task or goal is people data: it needs a connection allowed for it.
-            dataClass="people"
             context={{
               dueAt: aiTarget.dueAt ? toLocalDatetimeValue(aiTarget.dueAt).slice(0, 10) || undefined : undefined,
             }}
             onAppendToBody={(markdown) => {
-              const t = aiTarget;
+              // Append to the item as it is now, not as it was when the dialog opened.
+              const t = items.find((i) => i.id === aiTarget.id);
+              if (!t) return false;
               const next = appendPlainTextToBodyFields(
                 {
                   body: t.body,
@@ -1587,8 +1624,9 @@ function KindSection({
                 },
                 markdown,
               );
-              onUpdate(t.id, itemBodyPatchFromFields(next));
+              if (onUpdate(t.id, itemBodyPatchFromFields(next)) === false) return false;
               setAiTarget(null);
+              return true;
             }}
           />
         </Suspense>
@@ -1970,6 +2008,7 @@ function PersonMeetingMode({
           <Button type="button" variant="primary" icon={<IcCheck size={17} />} onClick={archive}>
             {lang === 'tr' ? 'Arşivle' : 'Archive'}
           </Button>
+          <PersonPrepButton personId={person.id} addItem={addItem} />
         </div>
       </section>
 

@@ -37,6 +37,16 @@ describe('AiActionsMenu', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
+  it('closes when the host says the selection it belongs to changed (resetKey)', () => {
+    const { rerender } = render(<AiActionsMenu actions={actions} onSelect={() => {}} resetKey={1} />);
+    fireEvent.click(screen.getByRole('button', { name: 'AI actions' }));
+    expect(screen.getByRole('menu')).toBeTruthy();
+    rerender(<AiActionsMenu actions={actions} onSelect={() => {}} resetKey={1} />);
+    expect(screen.getByRole('menu')).toBeTruthy();
+    rerender(<AiActionsMenu actions={actions} onSelect={() => {}} resetKey={2} />);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
   it('Escape closes the menu', () => {
     render(<AiActionsMenu actions={actions} onSelect={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'AI actions' }));

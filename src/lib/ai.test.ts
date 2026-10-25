@@ -71,6 +71,15 @@ describe('askAI', () => {
     });
   });
 
+  it('treats a stored provider named after an Object property as unknown, never as a connection', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      askAI({ settings: { provider: 'constructor' as never, apiKey: 'sk-some-long-key', model: 'm' }, messages: [{ role: 'user', content: 'hi' }] }),
+    ).rejects.toMatchObject({ name: 'AIError', message: expect.stringMatching(/Unknown AI provider|not configured/) });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('throws when the conversation is empty', async () => {
     await expect(askAI({ settings: configured, messages: [] })).rejects.toMatchObject({
       name: 'AIError',
@@ -857,13 +866,15 @@ describe('data class on the desktop bridge', () => {
   const settings = { provider: 'gateway' as const, baseUrl: 'https://gw.example.com/v1', model: 'm' };
   const ask = { role: 'user' as const, content: 'hi' };
 
-  it('sends dataClass people when the caller says so, and content by default', async () => {
+  it('sends the data class the caller gives and never invents one (the main process rejects a request without it)', async () => {
     const bridge = mount();
     await askAI({ settings, messages: [ask], dataClass: 'people' });
+    await askAI({ settings, messages: [ask], dataClass: 'content' });
     await askAI({ settings, messages: [ask] });
     const calls = bridge.mock.calls as unknown as Array<[{ dataClass?: string }]>;
     expect(calls[0][0].dataClass).toBe('people');
     expect(calls[1][0].dataClass).toBe('content');
+    expect(calls[2][0].dataClass).toBeUndefined();
   });
 });
 
@@ -898,5 +909,50 @@ describe('system text in the engine', () => {
 
   it('cuts an over-long system text at 4,000 characters', async () => {
     expect((await sentSystem({ fallbackSystem: 'x'.repeat(5000) })).length).toBe(4000);
+  });
+});
+
+describe('refusals, blocks and oversized replies are explained, not called empty', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  const ask = { role: 'user' as const, content: 'Help me' };
+  const gw = { provider: 'gateway' as const, baseUrl: 'https://gw.example.com/v1', model: 'm', apiKey: 'sk-gw-secret-key' };
+  const reply = (json: unknown) => vi.stubGlobal('fetch', vi.fn(async () => Response.json(json)));
+
+  it('OpenAI Chat: a refusal with no content says the model declined, with its words', async () => {
+    reply({ choices: [{ message: { content: null, refusal: 'I can\u2019t help with that.' }, finish_reason: 'stop' }] });
+    await expect(askAI({ settings: gw, messages: [ask] })).rejects.toMatchObject({
+      message: expect.stringMatching(/declined.*can\u2019t help with that/i),
+    });
+  });
+
+  it('Gemini: a blocked prompt names the block reason', async () => {
+    reply({ promptFeedback: { blockReason: 'SAFETY' } });
+    await expect(askAI({ settings: { ...gw, gatewayFormat: 'gemini' }, messages: [ask] })).rejects.toMatchObject({
+      message: expect.stringMatching(/blocked.*SAFETY/i),
+    });
+  });
+
+  it('Gemini: a candidate stopped for safety with no text says so', async () => {
+    reply({ candidates: [{ finishReason: 'SAFETY' }] });
+    await expect(askAI({ settings: { ...gw, gatewayFormat: 'gemini' }, messages: [ask] })).rejects.toMatchObject({
+      message: expect.stringMatching(/stopped.*SAFETY/i),
+    });
+  });
+
+  it('Anthropic: a refusal stop with no content says the model declined', async () => {
+    reply({ content: [], stop_reason: 'refusal' });
+    await expect(askAI({ settings: { ...gw, gatewayFormat: 'anthropic' }, messages: [ask] })).rejects.toMatchObject({
+      message: expect.stringMatching(/declined/i),
+    });
+  });
+
+  it('the web path stops reading a reply larger than 4 million characters', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('x'.repeat(4_100_000), { status: 200 })));
+    await expect(askAI({ settings: gw, messages: [ask] })).rejects.toMatchObject({
+      name: 'AIError',
+      message: expect.stringMatching(/too large/i),
+    });
   });
 });

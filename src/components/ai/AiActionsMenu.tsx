@@ -15,12 +15,19 @@ function keepSelection(event: MouseEvent) {
 export function AiActionsMenu({
   actions,
   onSelect,
+  resetKey,
 }: {
   actions: readonly AiActionsMenuItem[];
   onSelect: (id: string) => void;
+  /** When this value changes (the selection moved), the menu closes. */
+  resetKey?: number;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [resetKey]);
 
   // The editor keeps focus (so the selection survives), so Escape and clicks elsewhere are
   // watched on the document while the menu is open.

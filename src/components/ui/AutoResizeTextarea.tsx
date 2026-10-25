@@ -82,6 +82,8 @@ export const AutoResizeTextarea = forwardRef<HTMLTextAreaElement, Props>(functio
       onChange={(e: ChangeEvent<HTMLTextAreaElement>) => onChange(e.target.value)}
       onBlur={(_e: FocusEvent<HTMLTextAreaElement>) => onBlur?.()}
       onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+        // Keys that confirm or cancel an IME composition belong to the IME, not to this field.
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         if (e.key === 'Escape') {
           e.preventDefault();
           onCancel?.();

@@ -244,6 +244,14 @@ describe('AI slash items', () => {
     expect(calls).toEqual([['extract-tasks', 'Send the brief']]);
   });
 
+  it('hands the action a target that knows the selected text (or none for the whole note)', () => {
+    const targets: Array<{ selectedText: string }> = [];
+    const [item] = createAiSlashItems([action], (_id, _text, target) => targets.push(target));
+    item.run(fakeEditor({ selected: 'Send the brief', whole: 'whole note' }).editor, { from: 1, to: 3 });
+    item.run(fakeEditor({ flat: 'whole note /e' }).editor, { from: 11, to: 13 });
+    expect(targets.map((t) => t.selectedText)).toEqual(['Send the brief', '']);
+  });
+
   it('falls back to the whole note when nothing is selected', () => {
     const calls: Array<[string, string]> = [];
     const [item] = createAiSlashItems([action], (id, text) => calls.push([id, text]));

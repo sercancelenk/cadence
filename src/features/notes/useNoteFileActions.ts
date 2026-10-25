@@ -6,10 +6,8 @@ import {
   saveNoteToDisk,
   type SaveNoteDeps,
 } from './noteFileActions';
-import { useNoteExportFormat } from './useNoteExportFormat';
 
 export type UseNoteFileActionsArgs = {
-  userId: string;
   selectedId: string | undefined;
   getLatestSnapshot: () => AppData;
   flushPendingSave: () => Promise<void>;
@@ -19,12 +17,10 @@ export type UseNoteFileActionsArgs = {
 
 /** "Save to file" for the selected note: toolbar button and ⌘S / Ctrl+S. */
 export function useNoteFileActions(args: UseNoteFileActionsArgs) {
-  const { format, setFormat } = useNoteExportFormat(args.userId);
-
   // Everything the save reads must be current at call time, including when it
   // is fired from the window listener registered once per selection.
-  const latest = useRef({ ...args, format });
-  latest.current = { ...args, format };
+  const latest = useRef(args);
+  latest.current = args;
   const busyRef = useRef(false);
 
   const saveSelected = useCallback(async () => {
@@ -38,8 +34,7 @@ export function useNoteFileActions(args: UseNoteFileActionsArgs) {
         },
         getLockedBody: (noteId) => latest.current.getLockedBody(noteId),
         flush: () => latest.current.flushPendingSave(),
-        saveFile: window.cadence?.saveNoteFile,
-        format: latest.current.format,
+        saveFile: window.cadence?.saveToolFile,
         notify: latest.current.notify,
       });
     } finally {
@@ -59,5 +54,5 @@ export function useNoteFileActions(args: UseNoteFileActionsArgs) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [hasSelection, saveSelected]);
 
-  return { format, setFormat, saveSelected, available: Boolean(window.cadence?.saveNoteFile) };
+  return { saveSelected, available: Boolean(window.cadence?.saveToolFile) };
 }

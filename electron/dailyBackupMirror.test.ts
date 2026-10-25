@@ -321,6 +321,51 @@ describe('writeDailyFullExport / maybeRunDailyBackupMirror', () => {
     fs.rmSync(userData, { recursive: true, force: true });
   });
 
+  it('writes no AI keys or header tokens into the mirror, and leaves notes and the rest of the settings alone', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-secrets-'));
+    const payload = {
+      notes: [{ id: 'n1', title: 'keep me' }],
+      todoItems: [],
+      aiSettings: {
+        provider: 'openai',
+        model: 'm',
+        apiKey: 'sk-top-secret',
+        extraHeaders: [{ name: 'X-Token', value: 'hdr-secret' }],
+        connections: [
+          { id: 'c1', name: 'Gateway', provider: 'custom', apiKey: 'sk-conn-secret', baseUrl: 'https://u:pw-secret@gw.example.com/v1?token=url-secret', requestPath: '/v1/x?api_key=lit-secret&api-version=1' },
+        ],
+        unreadConnections: [{ id: 'c2', baseUrl: 'https://x:unread-pw@h.example.com', apiKey: 'sk-unread-secret', extraHeaders: [{ name: 'A', value: 'unread-hdr' }] }],
+      },
+    };
+    const ran = writeDailyFullExport({
+      fs,
+      path,
+      mirrorDir: root,
+      appSlug: 'cadence',
+      userId: USER,
+      dateKey: '2026-07-24',
+      workspacePayload: payload,
+      writeJsonText,
+      exportAttachments: () => 0,
+      exportNoteHistory: () => {},
+      countNoteHistoryRevisions: () => 0,
+    });
+    expect(ran.ok).toBe(true);
+    if (!ran.ok) return;
+    const text = fs.readFileSync(path.join(ran.path, 'data.json'), 'utf8');
+    for (const secret of ['sk-top-secret', 'hdr-secret', 'sk-conn-secret', 'lit-secret', 'sk-unread-secret', 'unread-hdr', 'pw-secret', 'url-secret', 'unread-pw']) {
+      expect(text).not.toContain(secret);
+    }
+    const saved = JSON.parse(text);
+    expect(saved.notes).toEqual([{ id: 'n1', title: 'keep me' }]);
+    expect(saved.aiSettings.provider).toBe('openai');
+    expect(saved.aiSettings.connections[0].requestPath).toBe('/v1/x?api-version=1');
+    expect(saved.aiSettings.unreadConnections[0].id).toBe('c2');
+    expect(saved.aiSettings.connections[0].baseUrl).toBe('https://gw.example.com/v1');
+    // The caller's object is not mutated.
+    expect(payload.aiSettings.apiKey).toBe('sk-top-secret');
+  });
+
   it('rewrites when lastDailyDate says done but today’s folder is missing', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-retry-'));
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-daily-ud-'));

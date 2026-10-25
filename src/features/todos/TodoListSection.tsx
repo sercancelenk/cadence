@@ -60,6 +60,7 @@ export type TodoListSectionCallbacks = {
   onLinkNote: (noteId: string, todoId: string) => void;
   onUnlinkNote: (noteId: string, todoId: string) => void;
   onAskAI: (item: TodoItem) => void;
+  onBreakDown: (item: TodoItem) => void;
 };
 
 export type TodoListSectionProps = {
@@ -218,6 +219,7 @@ export function TodoListSection(props: TodoListSectionProps) {
     isFocused: focusedTaskId === it.id,
     attachmentUserId,
     onAskAI: actions.onAskAI,
+    onBreakDown: actions.onBreakDown,
     onOpenLinkedNote: actions.onOpenSourceNote,
     onLinkNote: (noteId: string) => actions.onLinkNote(noteId, it.id),
     onUnlinkNote: (noteId: string) => actions.onUnlinkNote(noteId, it.id),

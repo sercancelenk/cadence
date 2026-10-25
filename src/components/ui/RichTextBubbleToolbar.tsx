@@ -1,8 +1,9 @@
 import type { Range } from '@tiptap/core';
 import { BubbleMenu, type Editor } from '@tiptap/react';
-import { useCallback, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { IcListTodo } from '../icons';
 import { AiActionsMenu } from '../ai/AiActionsMenu';
+import { createEditorTarget, type AiEditorTarget } from '../../lib/ai/editorTarget';
 import { isSafeEditorLinkUrl } from '../../lib/richTextEditorExtensions';
 import { taskTitleFromEditorSelection } from '../../lib/richTextSelectionTask';
 import { readRichTextBubbleToolbarState } from '../../lib/richTextToolbarState';
@@ -17,7 +18,7 @@ type Props = {
   onCreateTaskFromSelection?: (title: string) => void;
   /** AI actions valid for a selection; shown as one ✨ menu. */
   aiActions?: readonly { id: string; label: string; hint: string }[];
-  onAiAction?: (actionId: string, selectionText: string) => void;
+  onAiAction?: (actionId: string, selectionText: string, target: AiEditorTarget) => void;
 };
 
 /** Keep editor focus + selection when interacting with the bubble. */
@@ -35,6 +36,23 @@ function keepSelection(event: MouseEvent) {
 export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection, aiActions, onAiAction }: Props) {
   const active = useEditorToolbarState(editor, readRichTextBubbleToolbarState);
   const [linkOpen, setLinkOpen] = useState(false);
+  // The AI menu must not stay expanded when the selection moves and the bubble comes back later.
+  const [selectionNonce, setSelectionNonce] = useState(0);
+  const lastSelectionKey = useRef('');
+  useEffect(() => {
+    // Typing moves the caret on every key; only a changed range (or the selection going away) counts.
+    const bump = () => {
+      const { from, to, empty } = editor.state.selection;
+      const key = empty ? 'empty' : `${from}-${to}`;
+      if (key === lastSelectionKey.current) return;
+      lastSelectionKey.current = key;
+      setSelectionNonce((n) => n + 1);
+    };
+    editor.on('selectionUpdate', bump);
+    return () => {
+      editor.off('selectionUpdate', bump);
+    };
+  }, [editor]);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
   const linkOpenRef = useRef(linkOpen);
@@ -271,10 +289,12 @@ export function RichTextBubbleToolbar({ editor, onCreateTaskFromSelection, aiAct
             <>
               <span className="rich-bubble-menu__sep" aria-hidden="true" />
               <AiActionsMenu
+                resetKey={selectionNonce}
                 actions={aiActions}
                 onSelect={(id) => {
                   const { from, to } = editor.state.selection;
-                  onAiAction(id, editor.state.doc.textBetween(from, to, '\n'));
+                  const text = editor.state.doc.textBetween(from, to, '\n');
+                  onAiAction(id, text, createEditorTarget(editor, { from, to }, text));
                 }}
               />
             </>

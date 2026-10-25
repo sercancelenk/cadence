@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCopy } from '../../lib/clipboard';
 import { Button } from '../ui/Button';
 import { IcRefresh, IcTrash } from '../icons';
 import { useConfirm } from '../ui/ConfirmProvider';
 import { AiProviderInfo } from './AiProviderInfo';
 import { askAI, AIError, defaultModel } from '../../lib/ai';
-import { mergeCapabilities, probeJsonCapability } from '../../lib/ai/capabilities';
+import { mergeCapabilities, probeJsonCapability, probeStreamingCapability, probeVisionCapability } from '../../lib/ai/capabilities';
 import { GATEWAY_TEMPLATES } from '../../lib/aiPresets';
 import {
   formatHeaderLines,
@@ -30,6 +31,7 @@ export type ConnectionFormSaved = Partial<
     | 'authScheme'
     | 'requestPath'
     | 'maxTokensField'
+    | 'embeddingModel'
     | 'extraHeaders'
   >
 >;
@@ -42,7 +44,7 @@ export type ConnectionFormProps = {
   /** What to clear when the user removes this connection (the caller decides what that means). */
   onRemove: (patch: AISettingsPatch) => void;
   /** A capability probe ran for the saved form. */
-  onProbed: (meta: { capabilities: AICapability[]; probedAt: string }) => void;
+  onProbed: (meta: { capabilities: AICapability[]; probedAt?: string }) => void;
   /** Show the Remove button regardless of what is saved (extra connections). */
   canRemove?: boolean;
   removeCopy?: { title: string; description: string; button: string };
@@ -80,6 +82,7 @@ export function ConnectionForm({
   const [provider, setProvider] = useState<AIProvider | ''>(ai?.provider ?? '');
   const [apiKey, setApiKey] = useState(ai?.apiKey ?? '');
   const [model, setModel] = useState(ai?.model ?? '');
+  const [embeddingModel, setEmbeddingModel] = useState(ai?.embeddingModel ?? '');
   const [baseUrl, setBaseUrl] = useState(ai?.baseUrl ?? '');
   const [gatewayFormat, setGatewayFormat] = useState<GatewayFormat>(ai?.gatewayFormat ?? 'openai-chat');
   const [authHeader, setAuthHeader] = useState(ai?.authHeader ?? '');
@@ -91,6 +94,7 @@ export function ConnectionForm({
   const [showKey, setShowKey] = useState(false);
   const [jsonProbe, setJsonProbe] = useState<{ state: 'ok' | 'no-json' | 'unknown'; remembered: boolean } | null>(null);
   const [savedAt, setSavedAt] = useState<string>('');
+  const { copy, statusOf } = useCopy();
   const [testStatus, setTestStatus] = useState<{
     kind: 'idle' | 'running' | 'ok' | 'error';
     message?: string;
@@ -110,6 +114,7 @@ export function ConnectionForm({
     setAuthScheme(ai?.authScheme ?? '');
     setRequestPath(ai?.requestPath ?? '');
     setMaxTokensField(ai?.maxTokensField ?? '');
+    setEmbeddingModel(ai?.embeddingModel ?? '');
     setHeadersText(savedHeadersText);
   }, [
     ai?.provider,
@@ -121,6 +126,7 @@ export function ConnectionForm({
     ai?.authScheme,
     ai?.requestPath,
     ai?.maxTokensField,
+    ai?.embeddingModel,
     // A string, not the array: normalizeData builds a new array on every load,
     // which would reset unsaved drafts even when nothing changed.
     savedHeadersText,
@@ -158,6 +164,7 @@ export function ConnectionForm({
     setProvider(next);
     setApiKey(same ? (ai?.apiKey ?? '') : '');
     setModel(same ? (ai?.model ?? '') : '');
+    setEmbeddingModel(same ? (ai?.embeddingModel ?? '') : '');
     setTestStatus({ kind: 'idle' });
   };
   const gatewayUrl = isGateway ? normalizeGatewayBaseUrl(baseUrl) : null;
@@ -224,10 +231,20 @@ export function ConnectionForm({
       (ai?.requestPath ?? '') !== requestPath.trim() ||
       (ai?.maxTokensField ?? '') !== maxTokensField ||
       savedHeadersText !== (parsedHeaders?.ok ? formatHeaderLines(parsedHeaders.headers) : headersText.trim()));
+  // What a test result is about. Edit any of it and the result no longer describes the form.
+  const draftKey = JSON.stringify([provider, apiKey, model, baseUrl, gatewayFormat, authHeader, authScheme, requestPath, maxTokensField, headersText]);
+  const testedKeyRef = useRef(draftKey);
+  useEffect(() => {
+    if (testStatus.kind !== 'ok' && testStatus.kind !== 'error') return;
+    if (draftKey === testedKeyRef.current) return;
+    setTestStatus({ kind: 'idle' });
+    setJsonProbe(null);
+  }, [draftKey, testStatus.kind]);
   const dirty =
     (ai?.provider ?? '') !== provider ||
     (ai?.apiKey ?? '') !== apiKey.trim() ||
     (ai?.model ?? '') !== model.trim() ||
+    (ai?.embeddingModel ?? '') !== embeddingModel.trim() ||
     gatewayDirty;
   // A gateway needs a valid configuration and a model (it has no default one);
   // its key is optional. Hosted providers need a key.
@@ -243,6 +260,7 @@ export function ConnectionForm({
       provider,
       apiKey: apiKey.trim(),
       model: model.trim(),
+      embeddingModel: embeddingModel.trim(),
       // Only touched for a gateway; another provider leaves any saved gateway
       // configuration alone.
       ...(isGateway && gatewayUrl?.ok && parsedHeaders?.ok
@@ -281,6 +299,7 @@ export function ConnectionForm({
       provider: '',
       apiKey: '',
       model: '',
+      embeddingModel: '',
       // Gateway settings are cleared whenever any are saved, matching the dialog above
       // (they can hold tokens in headers, so they must not linger after Remove).
       ...(savedIsGateway || hasSavedGatewayFields
@@ -315,6 +334,7 @@ export function ConnectionForm({
 
   const test = async () => {
     if (!provider || !canSave) return;
+    testedKeyRef.current = draftKey;
     setTestStatus({ kind: 'running' });
     setJsonProbe(null);
     // Test connection takes seconds. What was tested is stored only if, when it finishes, the saved
@@ -338,6 +358,7 @@ export function ConnectionForm({
         // Newer models may spend part of the limit on hidden reasoning, so a tiny limit can
         // come back empty; this is a connection check, not a cost concern.
         maxOutputTokens: 256,
+        dataClass: 'content',
       });
       setTestStatus({
         kind: 'ok',
@@ -366,6 +387,36 @@ export function ConnectionForm({
         message,
         diagnostic: err instanceof AIError ? err.diagnostic : undefined,
       });
+    }
+  };
+
+  const [capCheck, setCapCheck] = useState<{
+    kind: 'vision' | 'streaming';
+    state: 'running' | 'ok' | 'no' | 'unknown';
+    remembered: boolean;
+  } | null>(null);
+
+  /** Same rules as the JSON check: stored only if the saved connection is still the one checked and nothing is unsaved. */
+  const checkCapability = async (kind: 'vision' | 'streaming') => {
+    if (!provider || !canSave) return;
+    setCapCheck({ kind, state: 'running', remembered: false });
+    const checkedIdentity = identityOf(ai);
+    const draft = {
+      provider: provider as AIProvider,
+      apiKey: apiKey.trim(),
+      model: model.trim(),
+      ...(isGateway ? gatewaySettings : {}),
+    };
+    const verdict = kind === 'vision' ? await probeVisionCapability(draft) : await probeStreamingCapability(draft);
+    if (verdict === 'unknown') {
+      setCapCheck({ kind, state: 'unknown', remembered: false });
+      return;
+    }
+    const latest = latestRef.current;
+    const remembered = !latest.dirty && latest.identity === checkedIdentity;
+    setCapCheck({ kind, state: verdict, remembered });
+    if (remembered) {
+      onProbed({ capabilities: mergeCapabilities(latest.capabilities, { [kind]: verdict === 'ok' }) });
     }
   };
 
@@ -575,7 +626,13 @@ export function ConnectionForm({
             onChange={(e) => setApiKey(e.target.value)}
             style={{ flex: 1 }}
           />
-          <Button type="button" variant="ghost" onClick={() => setShowKey((v) => !v)}>
+          <Button
+            type="button"
+            variant="ghost"
+            aria-pressed={showKey}
+            aria-label={showKey ? 'Hide API key' : 'Show API key'}
+            onClick={() => setShowKey((v) => !v)}
+          >
             {showKey ? 'Hide' : 'Show'}
           </Button>
         </div>
@@ -639,6 +696,26 @@ export function ConnectionForm({
         ) : null}
       </label>
 
+      {provider && provider !== 'anthropic' && !(isGateway && gatewayFormat === 'anthropic') ? (
+        <label className="field">
+          <span>
+            Embedding model <em className="muted">(optional, for search by meaning)</em>
+          </span>
+          <input
+            className="input"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder={
+              provider === 'openai' ? 'text-embedding-3-small' : provider === 'gemini' ? 'gemini-embedding-001' : 'Embedding model your gateway offers'
+            }
+            value={embeddingModel}
+            onChange={(e) => setEmbeddingModel(e.target.value)}
+          />
+        </label>
+      ) : null}
+
       <div className="row" style={{ marginTop: 12, flexWrap: 'wrap' }}>
         <Button type="button" variant="primary" disabled={!canSave || saveBlocked || (!dirty && !extraDirty)} onClick={save}>
           Save
@@ -659,14 +736,29 @@ export function ConnectionForm({
         ) : null}
         {savedAt ? <span className="muted small">Saved at {savedAt}</span> : null}
       </div>
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+        <Button type="button" variant="ghost" disabled={!provider || !canSave || capCheck?.state === 'running'} onClick={() => void checkCapability('vision')}>
+          Check images
+        </Button>
+        <Button type="button" variant="ghost" disabled={!provider || !canSave || capCheck?.state === 'running'} onClick={() => void checkCapability('streaming')}>
+          Check live replies
+        </Button>
+      </div>
+      {capCheck && capCheck.state !== 'running' ? (
+        <p className="muted small" role="status" style={{ marginTop: 4 }}>
+          {capCheck.kind === 'vision' ? 'Images' : 'Live replies'}:{' '}
+          {capCheck.state === 'ok' ? 'ok' : capCheck.state === 'no' ? 'not supported' : 'could not be checked (try again)'}
+          {capCheck.state !== 'unknown' && !capCheck.remembered ? ' · Not saved: save the connection, then check again.' : ''}
+        </p>
+      ) : null}
 
       {testStatus.kind === 'ok' && testStatus.message ? (
-        <p className="muted small" style={{ marginTop: 8, color: 'var(--ok, #6cf38d)' }}>
+        <p className="muted small" role="status" style={{ marginTop: 8, color: 'var(--ok)' }}>
           {testStatus.message}
         </p>
       ) : null}
       {testStatus.kind === 'ok' && jsonProbe ? (
-        <p className="muted small" style={{ marginTop: 4 }}>
+        <p className="muted small" role="status" style={{ marginTop: 4 }}>
           JSON replies:{' '}
           {jsonProbe.state === 'ok'
             ? 'ok'
@@ -679,12 +771,13 @@ export function ConnectionForm({
       {testStatus.kind === 'error' && testStatus.message ? (
         <pre
           className="pre"
+          role="alert"
           style={{
             marginTop: 8,
             padding: 8,
             borderRadius: 8,
-            background: 'rgba(255,99,99,0.12)',
-            color: '#ff8d8d',
+            background: 'color-mix(in srgb, var(--danger) 14%, transparent)',
+            color: 'var(--danger)',
             whiteSpace: 'pre-wrap',
             maxHeight: 160,
             overflow: 'auto',
@@ -701,18 +794,12 @@ export function ConnectionForm({
           <pre className="pre small" style={{ marginTop: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
             {testStatus.diagnostic}
           </pre>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => {
-              try {
-                void navigator.clipboard.writeText(testStatus.diagnostic ?? '');
-              } catch {
-                // Clipboard unavailable (insecure context); the text above can be selected by hand.
-              }
-            }}
-          >
-            Copy diagnostic
+          <Button type="button" variant="ghost" onClick={() => void copy('diagnostic', testStatus.diagnostic ?? '')}>
+            {statusOf('diagnostic') === 'copied'
+              ? 'Copied'
+              : statusOf('diagnostic') === 'failed'
+                ? 'Could not copy: select the text above'
+                : 'Copy diagnostic'}
           </Button>
         </details>
       ) : null}

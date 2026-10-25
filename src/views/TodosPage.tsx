@@ -23,7 +23,9 @@ import {
   type InlineAddDraft,
 } from '../features/todos';
 import { noteDisplayTitle } from '../features/notes/noteDisplay';
-import { appendPlainTextToBodyFields } from '../lib/richTextBody';
+import { stepsForTopInsert } from '../lib/ai/breakdownTasks';
+import { bodyRestorePatch } from '../features/todos/bodyUndo';
+import { appendChecklistToBodyFields, appendPlainTextToBodyFields } from '../lib/richTextBody';
 import { hasUsableConnection } from '../lib/ai/connections';
 import { aiIntentFromSearch } from '../lib/ai/entryPoints';
 import { toLocalDatetimeValue } from '../lib/datetime';
@@ -35,6 +37,9 @@ const AIAssistantDialog = lazy(() =>
 );
 const AITaskExtractorDialog = lazy(() =>
   import('../components/AITaskExtractorDialog').then((m) => ({ default: m.AITaskExtractorDialog })),
+);
+const AIBreakDownDialog = lazy(() =>
+  import('../components/AIBreakDownDialog').then((m) => ({ default: m.AIBreakDownDialog })),
 );
 
 export function TodosPage() {
@@ -48,6 +53,7 @@ export function TodosPage() {
     removeTodoGroup,
     addTodoItem,
     updateTodoItem,
+    getLatestSnapshot,
     toggleTodoItem,
     removeTodoItem,
     reorderTodoItem,
@@ -86,6 +92,7 @@ export function TodosPage() {
   const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [dropItemTargetId, setDropItemTargetId] = useState<string | null>(null);
   const [aiTask, setAiTask] = useState<TodoItem | null>(null);
+  const [breakTask, setBreakTask] = useState<TodoItem | null>(null);
   const [extractorOpen, setExtractorOpen] = useState(false);
 
   const prefs = useTodoPagePreferences(userId);
@@ -196,6 +203,7 @@ export function TodosPage() {
       onLinkNote: linkNoteTodo,
       onUnlinkNote: unlinkNoteTodo,
       onAskAI: setAiTask,
+      onBreakDown: setBreakTask,
     }),
     [
       addTodoItem,
@@ -215,6 +223,42 @@ export function TodosPage() {
       unlinkNoteTodo,
     ],
   );
+
+  /**
+   * After an AI change appended to a task's details, offer Undo for a while. It puts the details
+   * back as they were, and only if the task has not been edited since.
+   */
+  const offerBodyUndo = (
+    title: string,
+    description: string,
+    taskId: string,
+    applied: Parameters<typeof bodyRestorePatch>[1],
+    previous: Parameters<typeof bodyRestorePatch>[2],
+  ) => {
+    toast.show({
+      kind: 'success',
+      title,
+      description,
+      durationMs: 10_000,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const current = getLatestSnapshot().todoItems.find((t) => t.id === taskId);
+          const restore = bodyRestorePatch(current, applied, previous);
+          if (!restore.ok) {
+            toast.showWarning(
+              'Not undone',
+              restore.reason === 'changed' ? 'The task was edited since, so its details were left as they are.' : 'The task no longer exists.',
+            );
+            return;
+          }
+          if (updateTodoItem(taskId, restore.patch) === false) {
+            toast.showWarning('Not undone', 'Saving is temporarily blocked. Try again in a moment.');
+          }
+        },
+      },
+    });
+  };
 
   return (
     <div className="page page--wide todos-route">
@@ -340,7 +384,7 @@ export function TodosPage() {
 
       {allGroupsSorted.length === 0 ? <TodosNoListsHint /> : null}
 
-      {aiTask || extractorOpen ? (
+      {aiTask || extractorOpen || breakTask ? (
         <Suspense fallback={null}>
           {aiTask ? (
             <AIAssistantDialog
@@ -357,14 +401,63 @@ export function TodosPage() {
                 linkedNoteTitle: linkedNoteTitle(workspace.notes, aiTask.sourceNoteId),
               }}
               onAppendToBody={(markdown) => {
-                const targetId = aiTask.id;
-                const nextFields = appendPlainTextToBodyFields(aiTask, markdown);
-                updateTodoItem(targetId, todoBodyPatchFromFields(nextFields));
-                toast.showSuccess(
+                // Append to the task as it is now, not as it was when the dialog opened.
+                const latest = getLatestSnapshot().todoItems.find((t) => t.id === aiTask.id);
+                if (!latest) return false;
+                const applied = appendPlainTextToBodyFields(latest, markdown);
+                const saved = updateTodoItem(aiTask.id, todoBodyPatchFromFields(applied));
+                if (saved === false) return false;
+                offerBodyUndo(
                   'Saved to task notes',
                   'The assistant\u2019s reply was appended to this task\u2019s details.',
+                  aiTask.id,
+                  applied,
+                  latest,
                 );
                 setAiTask(null);
+                return true;
+              }}
+            />
+          ) : null}
+          {breakTask ? (
+            <AIBreakDownDialog
+              open
+              onClose={() => setBreakTask(null)}
+              task={{ title: breakTask.title, body: legacyBodyPlainText(breakTask) || undefined }}
+              context={{
+                listName: workspace.todoGroups.find((g) => g.id === breakTask.groupId)?.name,
+                dueAt: breakTask.dueAt ? toLocalDatetimeValue(breakTask.dueAt).slice(0, 10) || undefined : undefined,
+                priority: breakTask.priority,
+                linkedNoteTitle: linkedNoteTitle(workspace.notes, breakTask.sourceNoteId),
+              }}
+              onAppendChecklist={(titles) => {
+                // Append to the task as it is now, not as it was when the dialog opened.
+                const latest = getLatestSnapshot().todoItems.find((t) => t.id === breakTask.id);
+                if (!latest) return false;
+                const applied = appendChecklistToBodyFields(latest, titles);
+                const saved = updateTodoItem(breakTask.id, todoBodyPatchFromFields(applied));
+                if (saved === false) return false;
+                offerBodyUndo('Checklist added', 'The steps were added to this task\u2019s details.', breakTask.id, applied, latest);
+                return true;
+              }}
+              onCreateTasks={(steps) => {
+                // New tasks go to the top of the list, so add them last to first to keep the order.
+                let created = 0;
+                for (const step of stepsForTopInsert(steps)) {
+                  const note = step.detail?.trim();
+                  const added = addTodoItem(
+                    breakTask.groupId,
+                    step.title,
+                    note ? { body: note, bodyFormat: 'markdown', bodyPlainText: note } : undefined,
+                  );
+                  if (added === false) return created > 0 ? { created } : false;
+                  created += 1;
+                }
+                toast.showSuccess(
+                  `${steps.length} ${steps.length === 1 ? 'task' : 'tasks'} created`,
+                  'They are in the same list as the original task.',
+                );
+                return true;
               }}
             />
           ) : null}

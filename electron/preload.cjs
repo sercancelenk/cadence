@@ -99,7 +99,6 @@ const api = {
   noteHistoryPurge: (payload) => ipcRenderer.invoke('noteHistory:purge', payload),
   exportDataBundle: (data) => ipcRenderer.invoke('data:exportBundle', { data }),
   importDataBundle: () => ipcRenderer.invoke('data:importBundle'),
-  saveNoteFile: (payload) => ipcRenderer.invoke('note:saveAs', payload),
   saveToolFile: (payload) => ipcRenderer.invoke('tools:saveAs', payload),
   openNoteFile: () => ipcRenderer.invoke('note:openFile'),
   importWorkspace: (payload) => ipcRenderer.invoke('data:importWorkspace', payload),
@@ -112,6 +111,14 @@ const api = {
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   checkForUpdates: () => ipcRenderer.invoke('app:checkUpdates'),
   aiGatewayChat: (req) => ipcRenderer.invoke('ai:gatewayChat', req),
+  // Streamed reply: `onChunk` gets each piece as the main process reads it; resolves like aiGatewayChat.
+  aiGatewayStream: (req, onChunk) => {
+    const listener = (_event, msg) => {
+      if (msg && msg.requestId === req.requestId && typeof msg.piece === 'string') onChunk(msg.piece);
+    };
+    ipcRenderer.on('ai:gatewayChunk', listener);
+    return ipcRenderer.invoke('ai:gatewayStream', req).finally(() => ipcRenderer.removeListener('ai:gatewayChunk', listener));
+  },
   aiGatewayAbort: (requestId) => ipcRenderer.invoke('ai:gatewayAbort', requestId),
   installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
   onUpdaterEvent: (cb) => {

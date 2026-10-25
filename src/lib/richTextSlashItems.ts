@@ -1,5 +1,6 @@
 import type { ChainedCommands, Editor, Range } from '@tiptap/core';
 import type { AiAction } from './ai/entryPoints';
+import { createEditorTarget, type AiEditorTarget } from './ai/editorTarget';
 
 export type SlashCommandItem = {
   id: string;
@@ -151,7 +152,7 @@ export const SLASH_COMMAND_ITEMS: readonly SlashCommandItem[] = [
  */
 export function createAiSlashItems(
   actions: readonly AiAction[],
-  onAction: (actionId: string, text: string) => void,
+  onAction: (actionId: string, text: string, target: AiEditorTarget) => void,
 ): SlashCommandItem[] {
   return actions.map((a) => ({
     id: `ai-${a.id}`,
@@ -169,7 +170,8 @@ export function createAiSlashItems(
         ? selected
         : (doc.textBetween(0, range.from, '\n\n') + doc.textBetween(range.to, doc.content.size, '\n\n')).trim();
       runSlashCommand(editor, range, (chain) => chain);
-      onAction(a.id, text);
+      const after = editor.state.selection;
+      onAction(a.id, text, createEditorTarget(editor, { from: after.from, to: after.to }, selected.trim() ? selected : ''));
     },
   }));
 }

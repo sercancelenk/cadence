@@ -1,6 +1,6 @@
 import { wrapFocusNote } from '../focusNote';
 import type { AiTask, ParseResult, PromptParts } from '../types';
-import { DATA_RULE, dataBlock, localDate, readJson } from './shared';
+import { DATA_RULE, clip, dataBlock, isBlankText, localDate, readJson } from './shared';
 
 export type ExtractInput = {
   notes: string;
@@ -18,6 +18,9 @@ export type ExtractedRow = {
 };
 
 const MAX_NOTES_CHARS = 16_000;
+const MAX_ROWS = 50;
+const MAX_NOTE_CHARS = 160;
+const MAX_LIST_CHARS = 80;
 
 const SYSTEM = [
   'ROLE',
@@ -46,6 +49,16 @@ const SYSTEM = [
 
 const PRIORITIES = new Set(['urgent', 'high', 'normal', 'low']);
 
+/** A real calendar day as `YYYY-MM-DD` (so 2026-02-31 is not turned into 3 March by the caller). */
+function isRealDate(value: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (y < 1900) return false;
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
+}
+
 export const extractTask: AiTask<ExtractInput, ExtractedRow[]> = {
   id: 'ai.extract',
   promptVersion: 1,
@@ -60,7 +73,7 @@ export const extractTask: AiTask<ExtractInput, ExtractedRow[]> = {
     const focus = wrapFocusNote(ctx.focusNote ?? '');
     const user = [
       `Today: ${localDate(ctx)} (${ctx.timeZone})`,
-      dataBlock(`Lists:\n${lists || '(none)'}\n\nNotes:\n${input.notes.trim().slice(0, MAX_NOTES_CHARS)}`),
+      dataBlock(`Lists:\n${lists || '(none)'}\n\nNotes:\n${clip(input.notes.trim(), MAX_NOTES_CHARS)}`),
       ...(focus ? [focus] : []),
       'Return the JSON object now.',
     ].join('\n\n');
@@ -74,18 +87,22 @@ export const extractTask: AiTask<ExtractInput, ExtractedRow[]> = {
     if (!Array.isArray(list)) return { ok: false, error: 'The reply did not contain a "tasks" list.' };
     const rows: ExtractedRow[] = [];
     for (const raw of list) {
+      if (rows.length === MAX_ROWS) break;
       if (!raw || typeof raw !== 'object') continue;
       const o = raw as Record<string, unknown>;
       const title = typeof o.title === 'string' ? o.title.trim() : '';
-      if (!title) continue;
-      const row: ExtractedRow = { title: title.slice(0, 200) };
-      if (typeof o.notes === 'string' && o.notes.trim()) row.notes = o.notes.trim();
+      if (!title || isBlankText(title)) continue;
+      const row: ExtractedRow = { title: clip(title.replace(/\s+/g, ' '), 200) };
+      if (typeof o.notes === 'string' && o.notes.trim()) row.notes = clip(o.notes.trim(), MAX_NOTE_CHARS);
       const prio = typeof o.priority === 'string' ? o.priority.toLowerCase() : '';
       if (PRIORITIES.has(prio)) row.priority = prio as ExtractedRow['priority'];
-      if (typeof o.list === 'string' && o.list.trim()) row.list = o.list.trim();
-      if (typeof o.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.due.trim())) row.due = o.due.trim();
+      if (typeof o.list === 'string' && o.list.trim()) row.list = clip(o.list.trim().replace(/\s+/g, ' '), MAX_LIST_CHARS);
+      if (typeof o.due === 'string' && isRealDate(o.due.trim())) row.due = o.due.trim();
       rows.push(row);
     }
+    // A reply that is not empty but holds no task at all (prose with a stray "[1]", a list of
+    // numbers) is not an answer; the repair attempt should run.
+    if (list.length > 0 && rows.length === 0) return { ok: false, error: 'The "tasks" list had no usable task.' };
     return { ok: true, value: rows };
   },
 };

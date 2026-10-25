@@ -143,6 +143,7 @@ const { requirePolicyFeature, requireDataClassPolicy } = require('./ipc/policyGu
 const {
   parseAllowedHosts,
   requireAiHost,
+  guardAiGatewayRequest,
   parseAiPolicyFlags,
   resolveAiSubFlag,
 } = require('./ipc/aiHostPolicy.cjs');
@@ -152,7 +153,6 @@ const {
   collectReferencedAttachmentIdsFromPayload,
 } = require('./attachmentRefs.cjs');
 const {
-  validateNoteSavePayload,
   checkOpenableNoteFile,
   checkSaveTargetFree,
   decodeNoteFileText,
@@ -3886,38 +3886,9 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
 });
 
 /**
- * Save one note's text to a file the user picks (Cmd+S). The renderer sends the
- * already-converted text; the destination is chosen here, never by the renderer.
- * The user confirms overwrites in the native save dialog.
- */
-ipcMain.handle('note:saveAs', async (_evt, payload) => {
-  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
-  if (blocked) return blocked;
-  if (!readSessionUserId()) return { ok: false, error: 'Not signed in.' };
-  const checked = validateNoteSavePayload(payload);
-  if (!checked.ok) return checked;
-  const win = BrowserWindow.getFocusedWindow() || mainWindow;
-  const labels = { md: 'Markdown', txt: 'Plain text', html: 'HTML' };
-  const pick = await dialog.showSaveDialog(win, {
-    title: 'Save note',
-    defaultPath: path.join(app.getPath('documents'), checked.suggestedName),
-    filters: [
-      { name: labels[checked.format], extensions: [checked.format] },
-      { name: 'All files', extensions: ['*'] },
-    ],
-  });
-  if (pick.canceled || !pick.filePath) return { ok: false, canceled: true };
-  const free = checkSaveTargetFree(pick.filePath, (p) => fs.existsSync(p));
-  if (!free.ok) return free;
-  const write = writeJsonText(pick.filePath, checked.content);
-  if (!write.ok) return { ok: false, error: write.error || 'Could not write the file.' };
-  return { ok: true, path: pick.filePath };
-});
-
-/**
- * Save a Tools document (Document tab or JSON / YAML tab) to a file. Unlike
- * `note:saveAs`, the renderer sends every format it can produce and the
- * extension the user types in the system dialog decides which one is written.
+ * Save a Tools document (Document tab or JSON / YAML tab) or a note to a file. The
+ * renderer sends every format it can produce and the extension the user types in
+ * the system dialog decides which one is written.
  * The destination is chosen here, never by the renderer.
  */
 ipcMain.handle('tools:saveAs', async (_evt, payload) => {
@@ -4096,16 +4067,36 @@ const aiGatewayClient = createGatewayClient({
   fetch: (...args) => require('electron').net.fetch(...args),
 });
 
-ipcMain.handle('ai:gatewayChat', async (_event, req) => {
-  const blocked = requirePolicyFeature('ai', isFeatureAllowed);
+// Requests still running when their window goes away are cancelled, not left to run for minutes.
+const aiGatewaySenders = new WeakSet();
+function trackAiGatewaySender(sender) {
+  if (aiGatewaySenders.has(sender)) return;
+  aiGatewaySenders.add(sender);
+  sender.once('destroyed', () => aiGatewayClient.abortAll());
+}
+
+ipcMain.handle('ai:gatewayChat', async (event, req) => {
+  trackAiGatewaySender(event.sender);
+  const blocked = guardAiGatewayRequest(req, {
+    isFeatureAllowed,
+    allowedHosts: getCachedPolicy()?.features?.aiAllowedHosts,
+  });
   if (blocked) return blocked;
-  // An organization may also pin AI to specific hosts (`features.aiAllowedHosts`).
-  const hostBlocked = requireAiHost(req?.baseUrl, getCachedPolicy()?.features?.aiAllowedHosts);
-  if (hostBlocked) return hostBlocked;
-  // People data (1:1 notes, feedback) needs its own switch on top of `ai`.
-  const classBlocked = requireDataClassPolicy(req?.dataClass, isFeatureAllowed);
-  if (classBlocked) return classBlocked;
   return aiGatewayClient.chat(req);
+});
+
+// Same request and the same checks, but the reply is sent back in pieces as they arrive.
+ipcMain.handle('ai:gatewayStream', async (event, req) => {
+  trackAiGatewaySender(event.sender);
+  const blocked = guardAiGatewayRequest(req, {
+    isFeatureAllowed,
+    allowedHosts: getCachedPolicy()?.features?.aiAllowedHosts,
+  });
+  if (blocked) return blocked;
+  const requestId = typeof req?.requestId === 'string' ? req.requestId : '';
+  return aiGatewayClient.chat(req, (piece) => {
+    if (!event.sender.isDestroyed()) event.sender.send('ai:gatewayChunk', { requestId, piece });
+  });
 });
 
 ipcMain.handle('ai:gatewayAbort', (_event, requestId) => aiGatewayClient.abort(requestId));

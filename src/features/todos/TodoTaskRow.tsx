@@ -5,6 +5,7 @@ import {
   IcCheck,
   IcClock,
   IcGrip,
+  IcListTodo,
   IcSparkles,
   IcTrash,
 } from '../../components/icons';
@@ -58,6 +59,7 @@ export type TodoTaskRowProps = {
   isFocused?: boolean;
   attachmentUserId: string;
   onAskAI: (item: TodoItem) => void;
+  onBreakDown: (item: TodoItem) => void;
   onOpenLinkedNote?: (noteId: string) => void;
   onLinkNote?: (noteId: string) => void;
   onUnlinkNote?: (noteId: string) => void;
@@ -103,6 +105,7 @@ export function TodoTaskRow({
   isFocused,
   attachmentUserId,
   onAskAI,
+  onBreakDown,
   onOpenLinkedNote,
   onLinkNote,
   onUnlinkNote,
@@ -613,14 +616,25 @@ export function TodoTaskRow({
 
           <div className="todos-row__toolbar">
             {aiEnabled ? (
-              <button
-                type="button"
-                className="todos-row__ai-btn"
-                title="Ask AI for recommendations"
-                onClick={() => onAskAI(item)}
-              >
-                <IcSparkles size={15} />
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="todos-row__ai-btn"
+                  title="Ask AI for recommendations"
+                  onClick={() => onAskAI(item)}
+                >
+                  <IcSparkles size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="todos-row__icon-btn"
+                  title="Break this task into steps"
+                  aria-label="Break down this task"
+                  onClick={() => onBreakDown(item)}
+                >
+                  <IcListTodo size={15} />
+                </button>
+              </>
             ) : null}
             <button
               type="button"

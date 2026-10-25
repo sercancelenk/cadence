@@ -513,6 +513,9 @@
   background: var(--panel);
   color: inherit;
   text-decoration: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   transition:
     border-color 0.18s ease,
     background 0.18s ease,
@@ -541,6 +544,11 @@
   border-radius: 10px;
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
+}
+
+.home-tile__ic[data-tone] {
+  background: color-mix(in srgb, var(--tone) 16%, transparent);
+  color: var(--tone);
 }
 
 .home-tile__desc {

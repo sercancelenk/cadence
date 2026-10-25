@@ -35,6 +35,7 @@ import {
   validateSketchSceneForSave,
 } from '../../lib/utilityDiagrams';
 import {
+  DEFAULT_CONNECTION_ID,
   MAX_AI_CONNECTIONS,
   isSyntheticPerson,
   nowIso,
@@ -518,6 +519,8 @@ export function routingWithout(routing: AIRouting | undefined, id: string): AIRo
  * never put a removed connection back or undo another connection's change.
  */
 export function upsertAIConnection(data: AppData, connection: AIConnection): AppData {
+  // What the loader would drop on the next start is refused here, so a save is never silently lossy.
+  if (!connection.id.trim() || connection.id === DEFAULT_CONNECTION_ID || !connection.name.trim()) return data;
   const list = data.aiSettings?.connections ?? [];
   const exists = list.some((c) => c.id === connection.id);
   if (!exists && list.length >= MAX_AI_CONNECTIONS) return data;
@@ -537,6 +540,7 @@ export function patchAIConnection(
     connections: list.map((c) => {
       if (c.id !== id) return c;
       const merged: Record<string, unknown> = { ...c, ...patch };
+      if (typeof merged.name !== 'string' || !merged.name.trim()) merged.name = c.name;
       for (const [key, value] of Object.entries(merged)) {
         if (value === undefined || (Array.isArray(value) && value.length === 0)) delete merged[key];
       }
@@ -545,13 +549,28 @@ export function patchAIConnection(
   });
 }
 
+/** Points `content` or `people` data at a connection (or back at the default), on the latest routing. */
+export function setAIRoute(data: AppData, key: 'content' | 'people', id: string): AppData {
+  const next: AIRouting = { ...(data.aiSettings?.routing ?? {}) };
+  if (id === DEFAULT_CONNECTION_ID) delete next[key];
+  else next[key] = id;
+  return updateAISettings(data, { routing: next });
+}
+
 export function removeAIConnection(data: AppData, id: string): AppData {
   const s = data.aiSettings;
   if (!s?.connections?.some((c) => c.id === id)) return data;
-  return updateAISettings(data, {
+  const out = updateAISettings(data, {
     connections: s.connections.filter((c) => c.id !== id),
     routing: routingWithout(s.routing, id),
   });
+  // An entry kept aside under the same id would be read as a connection again on the next load.
+  const unread = out.aiSettings?.unreadConnections;
+  if (out.aiSettings && unread?.some((c) => String(c.id ?? '').trim() === id)) {
+    const rest = unread.filter((c) => String(c.id ?? '').trim() !== id);
+    return { ...out, aiSettings: { ...out.aiSettings, unreadConnections: rest.length ? rest : undefined } };
+  }
+  return out;
 }
 
 function mergeDefaultMeta(
@@ -564,6 +583,7 @@ function mergeDefaultMeta(
   if (merged.capabilities?.length) next.capabilities = merged.capabilities;
   if (merged.probedAt?.trim()) next.probedAt = merged.probedAt.trim();
   if (typeof merged.allowPeopleData === 'boolean') next.allowPeopleData = merged.allowPeopleData;
+  if (merged.jsonOverride === true) next.jsonOverride = true;
   return Object.keys(next).length ? next : undefined;
 }
 
@@ -621,6 +641,12 @@ export function updateAISettings(
           : undefined
         : current.routing,
     defaultMeta: patch.defaultMeta !== undefined ? mergeDefaultMeta(current.defaultMeta, patch.defaultMeta) : current.defaultMeta,
+    embeddingModel:
+      patch.embeddingModel !== undefined
+        ? patch.embeddingModel.trim()
+          ? patch.embeddingModel.trim()
+          : undefined
+        : current.embeddingModel,
     requestPath:
       patch.requestPath !== undefined
         ? patch.requestPath.trim()
@@ -649,7 +675,7 @@ export function updateAISettings(
   // An older version drops `aiSettings` when none of ITS known fields is set, and with it every
   // extra connection, the routing and the default's metadata. While any of those exist and no
   // older field is set, keep the (default) API format as a marker so they survive a downgrade.
-  const hasNewKeys = Boolean(next.connections?.length || next.routing || next.defaultMeta);
+  const hasNewKeys = Boolean(next.connections?.length || next.unreadConnections?.length || next.routing || next.defaultMeta);
   const hasOlderField = Boolean(
     next.provider || next.apiKey || next.model || next.baseUrl || next.gatewayFormat || next.authHeader ||
       next.authScheme || next.requestPath || next.maxTokensField || next.extraHeaders?.length ||
@@ -1661,6 +1687,72 @@ export function addDocumentTab(data: AppData, id: string): AppData {
   const tabs = data.utilityDocumentTabs ?? [];
   const tab = createDocumentTab(id, nextUntitledTitle(tabs));
   return { ...data, utilityDocumentTabs: [...tabs, tab], activeDocumentTabId: tab.id };
+}
+
+/**
+ * Append a Document tab that already holds content (for example an AI-structured copy of another
+ * tab) and make it active. Existing tabs are untouched; an id that is already used changes nothing.
+ */
+export function addDocumentTabWithContent(
+  data: AppData,
+  id: string,
+  input: { title: string; body: string; bodyFormat?: 'markdown' | 'prosemirror'; bodyPlainText?: string },
+): AppData {
+  const tabs = data.utilityDocumentTabs ?? [];
+  if (tabs.some((t) => t.id === id)) return data;
+  const title = input.title.trim().slice(0, 60) || nextUntitledTitle(tabs);
+  const tab: UtilityDocumentTab = {
+    id,
+    title,
+    body: input.body,
+    ...(input.bodyFormat ? { bodyFormat: input.bodyFormat } : {}),
+    ...(input.bodyPlainText ? { bodyPlainText: input.bodyPlainText } : {}),
+    updatedAt: nowIso(),
+  };
+  return { ...data, utilityDocumentTabs: [...tabs, tab], activeDocumentTabId: tab.id };
+}
+
+/** Same for a JSON / YAML tab. */
+export function addStructuredTabWithContent(
+  data: AppData,
+  id: string,
+  input: { title: string; content: string; language: 'json' | 'yaml' },
+): AppData {
+  const tabs = data.utilityStructuredTabs ?? [];
+  if (tabs.some((t) => t.id === id)) return data;
+  const tab: UtilityStructuredTab = {
+    ...createStructuredTab(id, input.title.trim().slice(0, 60) || nextUntitledTitle(tabs)),
+    content: input.content,
+    language: input.language,
+  };
+  return { ...data, utilityStructuredTabs: [...tabs, tab], activeStructuredTabId: tab.id };
+}
+
+/**
+ * A new note that already has its title and body, at the top of the list (in `groupId` when that
+ * list exists). Never replaces a note: an id that is already used changes nothing.
+ */
+export function createNoteWithContent(
+  data: AppData,
+  id: string,
+  input: { title: string; body: string; bodyFormat?: 'markdown' | 'prosemirror'; bodyPlainText?: string; groupId?: string },
+): AppData {
+  if (data.notes.some((n) => n.id === id)) return data;
+  const created = addNote(data, id, input.groupId);
+  return {
+    ...created,
+    notes: created.notes.map((n) =>
+      n.id === id
+        ? {
+            ...n,
+            title: input.title.trim().slice(0, 120),
+            body: input.body,
+            ...(input.bodyFormat ? { bodyFormat: input.bodyFormat } : {}),
+            ...(input.bodyPlainText ? { bodyPlainText: input.bodyPlainText } : {}),
+          }
+        : n,
+    ),
+  };
 }
 
 /** Close a tab. Closing the last one leaves a fresh empty tab so the page is never blank. */

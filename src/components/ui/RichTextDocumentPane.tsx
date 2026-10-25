@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { RichTextEditor } from './RichTextEditor';
+import type { AiEditorTarget } from '../../lib/ai/editorTarget';
 import type { RichTextPayload } from '../../lib/richText';
 import type { RichTextBodyFormat } from '../../lib/richText';
 import type { RichTextDoc } from '../../lib/richText';
@@ -26,7 +27,7 @@ export type RichTextDocumentPaneProps = {
   onCreateTaskFromSelection?: (title: string) => void;
   /** Opt-in AI actions in the slash menu and the selection bubble (notes only). */
   aiEnabled?: boolean;
-  onAiAction?: (actionId: string, text: string) => void;
+  onAiAction?: (actionId: string, text: string, target: AiEditorTarget) => void;
 };
 
 const EDITABLE_CHROME_HINT =

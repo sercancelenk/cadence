@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendChecklistToBodyFields,
   appendPlainTextToBodyFields,
   backfillBodyPlainText,
   canonicalDocSignature,
@@ -14,7 +15,7 @@ import {
   prepareStoredRichBodyForDisplay,
 } from './richTextBody';
 import { attachmentUri } from './richTextAttachmentUri';
-import { serializeRichDoc, EMPTY_RICH_DOC } from './richText';
+import { serializeRichDoc, parseRichDoc, EMPTY_RICH_DOC } from './richText';
 
 describe('plainTextFromBodyFields', () => {
   it('returns empty string for empty prosemirror doc, not raw JSON', () => {
@@ -480,3 +481,93 @@ describe('single canonical signature per editor flush', () => {
 function canonicalDocFromMarkdown(markdown: string) {
   return JSON.parse(canonicalDocSignature(markdown, 'markdown'));
 }
+
+describe('appendChecklistToBodyFields', () => {
+  const steps = ['Write the changelog', 'Tag the build'];
+  const item = (text: string) => ({
+    type: 'taskItem',
+    attrs: { checked: false },
+    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+  });
+  const taskList = { type: 'taskList', content: steps.map(item) };
+  const existingDoc = {
+    type: 'doc',
+    content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Already here' }] }],
+  };
+
+  it('turns an empty body into a document that holds only the checklist', () => {
+    for (const current of [{ body: '' }, { body: '   ', bodyFormat: 'markdown' as const }, {}]) {
+      const out = appendChecklistToBodyFields(current, steps);
+      expect(out.bodyFormat).toBe('prosemirror');
+      expect(parseRichDoc(out.body)?.content).toEqual([taskList]);
+      for (const step of steps) expect(out.bodyPlainText).toContain(step);
+    }
+  });
+
+  it('keeps a ProseMirror body as it was and adds a Steps label and the checklist after it', () => {
+    const out = appendChecklistToBodyFields(
+      { body: serializeRichDoc(existingDoc), bodyFormat: 'prosemirror', bodyPlainText: 'Already here' },
+      steps,
+    );
+    expect(out.bodyFormat).toBe('prosemirror');
+    expect(parseRichDoc(out.body)?.content).toEqual([
+      existingDoc.content[0],
+      { type: 'paragraph', content: [{ type: 'text', text: 'Steps', marks: [{ type: 'bold' }] }] },
+      taskList,
+    ]);
+    expect(out.bodyPlainText).toContain('Already here');
+    for (const step of steps) expect(out.bodyPlainText).toContain(step);
+  });
+
+  it('treats a ProseMirror body with only an empty paragraph as empty', () => {
+    const out = appendChecklistToBodyFields({ body: serializeRichDoc(EMPTY_RICH_DOC), bodyFormat: 'prosemirror' }, steps);
+    expect(parseRichDoc(out.body)?.content).toEqual([taskList]);
+  });
+
+  it('treats a legacy body (no format) that holds a ProseMirror document as a document, not as text', () => {
+    const out = appendChecklistToBodyFields({ body: serializeRichDoc(existingDoc) }, steps);
+    expect(out.bodyFormat).toBe('prosemirror');
+    expect(parseRichDoc(out.body)?.content).toEqual([
+      existingDoc.content[0],
+      { type: 'paragraph', content: [{ type: 'text', text: 'Steps', marks: [{ type: 'bold' }] }] },
+      taskList,
+    ]);
+  });
+
+  it('keeps a body that is marked ProseMirror but cannot be read, as text, and adds the checklist after it', () => {
+    const broken = '{"type":"doc","content":"oops"}';
+    const out = appendChecklistToBodyFields({ body: broken, bodyFormat: 'prosemirror' }, steps);
+    expect(out.body.startsWith(broken + '\n\n- [ ] Write the changelog')).toBe(true);
+    expect(out.bodyFormat).toBe('markdown');
+  });
+
+  it('keeps Markdown and plain bodies, in their own format, and adds a Markdown checklist', () => {
+    const md = appendChecklistToBodyFields({ body: 'Already here', bodyFormat: 'markdown', bodyPlainText: 'Already here' }, steps);
+    expect(md).toEqual({
+      body: 'Already here\n\n- [ ] Write the changelog\n- [ ] Tag the build',
+      bodyFormat: 'markdown',
+      bodyPlainText: 'Already here\n\n- [ ] Write the changelog\n- [ ] Tag the build',
+    });
+    const legacy = appendChecklistToBodyFields({ body: 'Old text without a format' }, steps);
+    expect(legacy.body.startsWith('Old text without a format\n\n- [ ] ')).toBe(true);
+    expect(legacy.bodyFormat).toBe('markdown');
+  });
+
+  it('changes nothing when there are no steps', () => {
+    const current = { body: 'Already here', bodyFormat: 'markdown' as const, bodyPlainText: 'Already here' };
+    expect(appendChecklistToBodyFields(current, [])).toEqual(current);
+    expect(appendChecklistToBodyFields(current, ['  ', ''])).toEqual(current);
+  });
+});
+
+describe('appendPlainTextToBodyFields with an unreadable ProseMirror body', () => {
+  it('keeps the existing text instead of replacing it with the new text alone', () => {
+    const out = appendPlainTextToBodyFields(
+      { body: 'my precious notes (not JSON)', bodyFormat: 'prosemirror' },
+      'AI reply',
+    );
+    expect(out.body).toContain('my precious notes (not JSON)');
+    expect(out.body).toContain('AI reply');
+    expect(out.bodyFormat).toBe('markdown');
+  });
+});

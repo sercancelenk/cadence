@@ -49,9 +49,11 @@ import {
   type ImportedNoteFields,
 } from '../features/notes/noteFileActions';
 import { hasUsableConnection } from '../lib/ai/connections';
+import type { AiEditorTarget } from '../lib/ai/editorTarget';
+import { notesAiRequest } from '../lib/ai/entryPoints';
 import { useFeatures } from '../lib/features';
 import { useNotesUnlock } from '../lib/NotesUnlockContext';
-import { purgeNoteRevisionHistory } from '../lib/noteRevision/noteRevisionStore';
+import { purgeNoteRevisionHistory, tryAppendNoteRevision } from '../lib/noteRevision/noteRevisionStore';
 import { runBeforeFlushHooks } from '../lib/pendingSaveFlush';
 import { movableGroups } from '../features/notes/noteGroupForest';
 import { useFlushOnNoteSwitch } from '../features/notes/useFlushOnNoteSwitch';
@@ -61,6 +63,12 @@ import { isNoteEffectivelyArchived } from '../model';
 
 const AITaskExtractorDialog = lazy(() =>
   import('../components/AITaskExtractorDialog').then((m) => ({ default: m.AITaskExtractorDialog })),
+);
+const AIVisualizeDialog = lazy(() =>
+  import('../components/AIVisualizeDialog').then((m) => ({ default: m.AIVisualizeDialog })),
+);
+const AIChallengeDialog = lazy(() =>
+  import('../components/AIChallengeDialog').then((m) => ({ default: m.AIChallengeDialog })),
 );
 
 /**
@@ -119,6 +127,7 @@ export function NotesPage() {
   const [extractorContext, setExtractorContext] = useState<{ noteId: string; notes: string } | null>(
     null,
   );
+  const [aiPanel, setAiPanel] = useState<{ kind: 'visualize' | 'challenge'; text: string; target: AiEditorTarget } | null>(null);
   const [listContextMenu, setListContextMenu] = useState<{
     x: number;
     y: number;
@@ -220,7 +229,6 @@ export function NotesPage() {
     error: (title: string, description?: string) => void toast.showError(title, description),
   };
   const fileActions = useNoteFileActions({
-    userId: user?.id ?? '',
     selectedId: selected?.id,
     getLatestSnapshot,
     flushPendingSave,
@@ -360,14 +368,34 @@ export function NotesPage() {
 
   const selectedNoteId = selected?.id;
 
-  /** Slash menu and selection bubble: open the task extractor on the selection, or the whole note. */
+  /**
+   * Before an AI result changes the note, keep a restore point of it in the note's version
+   * history (regular autosave revisions can be minutes apart). Best effort; never blocks the edit.
+   */
+  const saveRestorePoint = useCallback(() => {
+    // The snapshot is taken now, before the edit; it is written only if the dialog reports the edit went in.
+    const snapshot = editorState.getRevisionSnapshot?.();
+    if (!snapshot) return undefined;
+    return () => {
+      void tryAppendNoteRevision(null, snapshot, 'manual', { force: true, label: 'Before AI change' });
+    };
+  }, [editorState.getRevisionSnapshot]);
+
+  // An AI dialog belongs to the note it was started on. Switching notes (for example from ⌘K)
+  // closes it, so its result can never be applied to, or lost against, a different note.
+  const aiNoteId = selected?.id;
+  useEffect(() => {
+    setAiPanel(null);
+  }, [aiNoteId]);
+
+  /** Slash menu and selection bubble: open the dialog for the action, on the selection or the whole note. */
   const onAiAction = useCallback(
-    (actionId: string, text: string) => {
-      if (actionId !== 'extract-tasks' || !selected) return;
-      setExtractorContext({
-        noteId: selected.id,
-        notes: text.trim() ? text : notePlainText(selected, decryptedForSelected),
-      });
+    (actionId: string, text: string, target: AiEditorTarget) => {
+      if (!selected) return;
+      const request = notesAiRequest(actionId, text, () => notePlainText(selected, decryptedForSelected));
+      if (!request) return;
+      if (request.kind === 'extract') setExtractorContext({ noteId: selected.id, notes: request.text });
+      else setAiPanel({ kind: request.kind, text: request.text, target });
     },
     [selected, decryptedForSelected],
   );
@@ -675,8 +703,6 @@ export function NotesPage() {
               }}
               onOpenVersionHistory={() => versionHistory.setOpen(true)}
               versionHistoryAvailable={versionHistory.available}
-              exportFormat={fileActions.format}
-              onExportFormatChange={fileActions.setFormat}
               archivedViaList={
                 selected.archived !== true &&
                 isNoteEffectivelyArchived(selected, notesWorkspace.noteGroups)
@@ -734,6 +760,30 @@ export function NotesPage() {
             sourceNoteId={extractorContext.noteId}
             initialNotes={extractorContext.notes}
           />
+        </Suspense>
+      ) : null}
+
+      {aiPanel ? (
+        <Suspense fallback={null}>
+          {aiPanel.kind === 'visualize' ? (
+            <AIVisualizeDialog
+              open
+              onClose={() => setAiPanel(null)}
+              text={aiPanel.text}
+              target={aiPanel.target}
+              beforeApply={saveRestorePoint}
+              noteUnlocked={!!selected?.locked}
+            />
+          ) : (
+            <AIChallengeDialog
+              open
+              onClose={() => setAiPanel(null)}
+              text={aiPanel.text}
+              target={aiPanel.target}
+              beforeApply={saveRestorePoint}
+              noteUnlocked={!!selected?.locked}
+            />
+          )}
         </Suspense>
       ) : null}
 

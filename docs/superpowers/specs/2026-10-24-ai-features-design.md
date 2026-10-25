@@ -1,6 +1,6 @@
 # AI features: foundation and roadmap
 
-Status: Phase 0a implemented (foundation, connections and routing, people gate, policy flags, result panel, entry points, Extract tasks and Ask AI on the framework); Phase 0b (streaming, images) and Phases 1 to 3 follow. Approved by the product owner on 2026-10-24.
+Status: Phases 0a, 0b, 1, 2 and 3 implemented (foundation, connections and routing, people gate, policy flags, result panel, entry points; streaming, images and embeddings; Visualize, Challenge, Break down, Feedback → SBI; Eisenhower, document structure, mock data, ERD, sketch and screenshot to diagram; weekly digest, 1:1 prep, ask your workspace). Not built, on purpose: persisted embedding indexes, an evaluation script, Break down on a person's task, ⌘K entries for actions that need an open note or task. Approved by the product owner on 2026-10-24.
 Scope: how Cadence uses AI beyond the two existing features, and the
 foundation that must exist first. Connection setup (providers, gateways,
 formats) is already built and documented in [AI-INTEGRATION.md](../../AI-INTEGRATION.md).

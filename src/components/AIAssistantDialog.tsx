@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppData } from '../AppDataContext';
 import type { AIMessage } from '../lib/ai';
 import { hasUsableConnection } from '../lib/ai/connections';
 import { coachTask } from '../lib/ai/prompts/coach';
 import { runAiTask } from '../lib/ai/runTask';
 import { useFeatures } from '../lib/features';
+import { PATH_SETTINGS } from '../lib/routes';
 import { Button } from './ui/Button';
 import { AppModal } from './ui/AppModal';
 import { MarkdownView } from './ui/MarkdownEditor';
@@ -24,7 +26,7 @@ type Props = {
   /** Extra context the model gets and the user sees as chips. */
   context?: { listName?: string; dueAt?: string; priority?: string; linkedNoteTitle?: string };
   /** Optional callback when the user clicks "Save to task". */
-  onAppendToBody?: (markdown: string) => void;
+  onAppendToBody?: (markdown: string) => boolean | void;
 };
 
 type Lens = 'plan' | 'risks' | 'first15';
@@ -63,14 +65,16 @@ type Turn = {
 export function AIAssistantDialog({ open, onClose, task, dataClass, context, onAppendToBody }: Props) {
   const { data } = useAppData();
   const { features } = useFeatures();
+  const navigate = useNavigate();
   const aiSettings = data.aiSettings;
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [lens, setLens] = useState<Lens>('plan');
   const [followup, setFollowup] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<{ message: string; diagnostic?: string } | null>(null);
+  const [error, setError] = useState<{ message: string; diagnostic?: string; settings?: boolean } | null>(null);
   const [connectionLabel, setConnectionLabel] = useState('');
+  const [modelLabel, setModelLabel] = useState('');
   const [fellBack, setFellBack] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const turnIdRef = useRef(0);
@@ -85,6 +89,7 @@ export function AIAssistantDialog({ open, onClose, task, dataClass, context, onA
     setError(null);
     setBusy(false);
     setConnectionLabel('');
+    setModelLabel('');
     setFellBack(false);
     abortRef.current?.abort();
     abortRef.current = null;
@@ -113,7 +118,7 @@ export function AIAssistantDialog({ open, onClose, task, dataClass, context, onA
    * Runs the opening request (`pending` empty) or a follow-up (`pending` = the conversation so
    * far, ending with the user's new message). The opening request is never part of `pending`.
    */
-  const send = async (pending: Turn[], withLens: Lens) => {
+  const send = async (pending: Turn[], withLens: Lens, userTurn?: Turn) => {
     setBusy(true);
     setError(null);
     abortRef.current?.abort();
@@ -133,18 +138,32 @@ export function AIAssistantDialog({ open, onClose, task, dataClass, context, onA
         signal: ctrl.signal,
       });
       if (!result.ok) {
-        if (result.reason !== 'cancelled') setError({ message: result.message, diagnostic: result.diagnostic });
+        // The question did not get an answer: take it back out of the conversation (so a retry cannot
+        // leave two user turns in a row) and hand its text back to the input.
+        if (userTurn) {
+          setTurns((cur) => cur.filter((t) => t.id !== userTurn.id));
+          if (!userTurn.hidden) setFollowup((cur) => cur || userTurn.content);
+        }
+        if (result.reason !== 'cancelled') {
+          // These are fixed in Settings; a policy block is not something the user can change.
+          const settings =
+            result.reason === 'not-configured' || result.reason === 'capability' || result.reason === 'blocked-people';
+          setError({ message: result.message, diagnostic: result.diagnostic, settings });
+        }
         return;
       }
       setConnectionLabel(result.connectionName);
+      setModelLabel(result.model);
       setFellBack(result.fellBack);
       setTurns((cur) => [
         ...cur,
         { id: ++turnIdRef.current, role: 'assistant', content: result.value, stopReason: result.stopReason },
       ]);
     } finally {
-      setBusy(false);
-      abortRef.current = null;
+      if (abortRef.current === ctrl) {
+        setBusy(false);
+        abortRef.current = null;
+      }
     }
   };
 
@@ -165,7 +184,7 @@ export function AIAssistantDialog({ open, onClose, task, dataClass, context, onA
     const turn: Turn = { id: ++turnIdRef.current, role: 'user', content: text, hidden };
     const next = [...turns, turn];
     setTurns(next);
-    void send(next, lens);
+    void send(next, lens, turn);
   };
 
   const submitFollowup = (e: FormEvent) => {
@@ -191,6 +210,18 @@ export function AIAssistantDialog({ open, onClose, task, dataClass, context, onA
     sendFollowup(CONTINUE_MESSAGE, true);
   };
 
+  const openSettings = () => {
+    onClose();
+    navigate(`${PATH_SETTINGS}#ai`);
+  };
+
+  const saveToTask = () => {
+    if (!lastAssistant) return;
+    if (onAppendToBody?.(lastAssistant.content) === false) {
+      setError({ message: 'The answer could not be saved to the task (saving is blocked or the task is gone). It is still here, so you can copy it.' });
+    }
+  };
+
   const bodyText = task.body?.trim() ?? '';
   const chips: AiContextChip[] = [
     {
@@ -202,6 +233,9 @@ export function AIAssistantDialog({ open, onClose, task, dataClass, context, onA
     ...(context?.dueAt ? [{ label: 'Due', detail: context.dueAt }] : []),
     ...(context?.priority ? [{ label: 'Priority', detail: context.priority }] : []),
     ...(context?.linkedNoteTitle ? [{ label: 'Linked note', detail: context.linkedNoteTitle }] : []),
+    ...(dataClass === 'people'
+      ? [{ label: 'People data', detail: 'this person\u2019s task or goal, sent only to a connection you allowed for it' }]
+      : []),
   ];
 
   const followupFooter =
@@ -248,10 +282,7 @@ export function AIAssistantDialog({ open, onClose, task, dataClass, context, onA
             <Button
               type="button"
               variant="secondary"
-              onClick={() => {
-                if (!lastAssistant) return;
-                onAppendToBody?.(lastAssistant.content);
-              }}
+              onClick={saveToTask}
             >
               Save to task
             </Button>
@@ -295,6 +326,9 @@ export function AIAssistantDialog({ open, onClose, task, dataClass, context, onA
             Open <strong>Settings → AI Assistant</strong> to choose a provider (Claude, ChatGPT, Gemini) or your own
             gateway. Keys live only on this device.
           </p>
+          <Button type="button" variant="primary" onClick={openSettings}>
+            Open AI settings
+          </Button>
         </div>
       ) : (
         <>
@@ -336,16 +370,24 @@ export function AIAssistantDialog({ open, onClose, task, dataClass, context, onA
                   </li>
                 ))}
                 {busy ? (
-                  <li className="ai-turn ai-turn--assistant ai-turn--busy">
+                  <li className="ai-turn ai-turn--assistant ai-turn--busy" role="status" aria-live="polite">
                     <div className="ai-turn__role">Assistant</div>
                     <p className="ai-turn__text muted">
                       <IcRefresh size={14} className="ai-spin" /> Thinking…
                     </p>
+                    {turns.length === 0 ? (
+                      <Button type="button" variant="ghost" onClick={() => abortRef.current?.abort()}>
+                        Stop
+                      </Button>
+                    ) : null}
                   </li>
                 ) : null}
               </ul>
               {connectionLabel && !busy && lastAssistant ? (
-                <p className="muted small ai-dialog__via">via {connectionLabel}</p>
+                <p className="muted small ai-dialog__via">
+                  via {connectionLabel}
+                  {modelLabel ? ` · ${modelLabel}` : ''}
+                </p>
               ) : null}
             </>
           )}
@@ -359,6 +401,11 @@ export function AIAssistantDialog({ open, onClose, task, dataClass, context, onA
                   <summary>Diagnostic details</summary>
                   <pre>{error.diagnostic}</pre>
                 </details>
+              ) : null}
+              {error.settings ? (
+                <Button type="button" variant="primary" onClick={openSettings}>
+                  Open AI settings
+                </Button>
               ) : null}
             </>
           ) : null}

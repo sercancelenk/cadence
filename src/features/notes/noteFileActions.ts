@@ -1,25 +1,14 @@
 import type { Note } from '../../model';
-import {
-  exportFileName,
-  exportNoteContent,
-  type NoteExportFormat,
-} from '../../lib/noteExport';
+import { documentTabFile, type ToolFilePayload } from '../../lib/toolFileExport';
 import type { RichTextBodyFields } from '../../lib/richTextBody';
 import { richPayloadFromDoc } from '../../lib/richText';
 import { richBodyFieldsFromPayload } from '../../lib/richTextBody';
-import { resolveRichTextContent } from '../../lib/richTextImport';
 import {
   NOTE_IMPORT_MAX_BYTES,
   importFileToDoc,
   noteImportExtension,
   titleFromFileName,
 } from '../../lib/noteImport';
-
-export type SaveNotePayload = {
-  suggestedName: string;
-  format: NoteExportFormat;
-  content: string;
-};
 
 export type SaveNoteResult = { ok: boolean; path?: string; canceled?: boolean; error?: string };
 
@@ -31,8 +20,7 @@ export type SaveNoteDeps = {
   /** Drains the editor buffer and pending AppData save. */
   flush: () => Promise<void>;
   /** Desktop bridge; undefined in the plain web build. */
-  saveFile: ((payload: SaveNotePayload) => Promise<SaveNoteResult>) | undefined;
-  format: NoteExportFormat;
+  saveFile: ((payload: ToolFilePayload) => Promise<SaveNoteResult>) | undefined;
   notify: {
     success: (title: string, description?: string) => void;
     error: (title: string, description?: string) => void;
@@ -90,12 +78,8 @@ export async function saveNoteToDisk(deps: SaveNoteDeps): Promise<SaveNoteOutcom
     return 'error';
   }
 
-  const doc = resolveRichTextContent(fields.body, fields.bodyFormat);
-  const result = await deps.saveFile({
-    suggestedName: exportFileName(note.title, deps.format),
-    format: deps.format,
-    content: exportNoteContent(doc, note.title, deps.format),
-  });
+  // Every format is prepared; the extension typed in the save dialog picks which one is written.
+  const result = await deps.saveFile(documentTabFile({ title: note.title, body: fields.body, bodyFormat: fields.bodyFormat }));
 
   if (result.ok) {
     deps.notify.success('Note saved', result.path);

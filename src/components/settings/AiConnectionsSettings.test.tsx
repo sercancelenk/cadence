@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AISettings } from '../../model';
 
 const updateAISettings = vi.fn();
+const setAIRoute = vi.fn();
 const upsertAIConnection = vi.fn();
 const patchAIConnection = vi.fn();
 const removeAIConnection = vi.fn();
@@ -12,7 +13,7 @@ let aiSettings: AISettings | undefined;
 let flags = { ai: true, aiPeople: true, aiFocusNote: true };
 
 vi.mock('../../AppDataContext', () => ({
-  useAppData: () => ({ data: { aiSettings }, updateAISettings, upsertAIConnection, patchAIConnection, removeAIConnection }),
+  useAppData: () => ({ data: { aiSettings }, updateAISettings, upsertAIConnection, patchAIConnection, removeAIConnection, setAIRoute }),
 }));
 vi.mock('../../lib/ai', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../lib/ai')>()), askAI }));
 vi.mock('../ui/ConfirmProvider', () => ({ useConfirm: () => ({ confirm }) }));
@@ -46,6 +47,7 @@ const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: 
 
 beforeEach(() => {
   updateAISettings.mockClear();
+  setAIRoute.mockClear();
   upsertAIConnection.mockClear();
   patchAIConnection.mockClear();
   removeAIConnection.mockClear();
@@ -109,6 +111,20 @@ describe('people data switch', () => {
     const sw = within(row('Ollama')).getByRole('checkbox', { name: 'Allow people data on Ollama' }) as HTMLInputElement;
     expect(sw.disabled).toBe(true);
     expect(screen.getByText(/organization turned off AI for 1:1/i)).toBeTruthy();
+  });
+});
+
+describe('embedding model on an extra connection', () => {
+  it('is stored with the connection', () => {
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    type(screen.getByLabelText('Connection name'), 'Local');
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'gateway' } });
+    type(screen.getByLabelText(/^Base URL/), 'http://localhost:11434/v1');
+    type(screen.getByLabelText(/^Model/), 'llama3');
+    type(screen.getByLabelText(/^Embedding model/), 'nomic-embed-text');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(upsertAIConnection.mock.calls.at(-1)?.[0]).toMatchObject({ embeddingModel: 'nomic-embed-text' });
   });
 });
 
@@ -252,6 +268,50 @@ describe('adding, editing and removing connections', () => {
   });
 });
 
+describe('capability chips', () => {
+  it('shows Images and Live only for a connection that was checked for them', () => {
+    mount({ ...base, connections: [{ ...company, capabilities: ['json', 'vision', 'streaming'] }, ollama] });
+    expect(within(row('Company gateway')).getByText('Images: ok')).toBeTruthy();
+    expect(within(row('Company gateway')).getByText('Live: ok')).toBeTruthy();
+    expect(within(row('Ollama')).queryByText('Images: ok')).toBeNull();
+    expect(within(row('Ollama')).queryByText('Live: ok')).toBeNull();
+  });
+});
+
+describe('editing one connection at a time', () => {
+  it('while a connection is being edited, the other Edit buttons are off, so unsaved edits are never swapped away', () => {
+    mount({ ...base, connections: [company, ollama] });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Company gateway' }));
+    expect((screen.getByRole('button', { name: 'Edit Ollama' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect((screen.getByRole('button', { name: 'Edit Ollama' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe('JSON override', () => {
+  const probed = '2026-10-24T09:00:00.000Z';
+  const unreliable = { ...ollama, probedAt: probed };
+
+  it('is offered only for a connection the JSON check found unreliable, and writes through the right action', () => {
+    mount({ ...base, defaultMeta: { probedAt: probed }, connections: [unreliable, { ...company, capabilities: ['json'], probedAt: probed }] });
+    expect(within(row('Company gateway')).queryByRole('checkbox', { name: /Use .* for JSON tasks anyway/ })).toBeNull();
+    const forDefault = within(row('OpenAI ChatGPT')).getByRole('checkbox', { name: /Use OpenAI ChatGPT for JSON tasks anyway/ });
+    fireEvent.click(forDefault);
+    expect(lastPatch().defaultMeta).toEqual({ jsonOverride: true });
+    fireEvent.click(within(row('Ollama')).getByRole('checkbox', { name: /Use Ollama for JSON tasks anyway/ }));
+    expect(patchAIConnection).toHaveBeenCalledWith('c-ollama', { jsonOverride: true });
+  });
+
+  it('is not offered before any check ran, and the chip says when the user allowed it', () => {
+    mount({ ...base, connections: [ollama] });
+    expect(screen.queryByRole('checkbox', { name: /for JSON tasks anyway/ })).toBeNull();
+    cleanup();
+    mount({ ...base, connections: [{ ...unreliable, jsonOverride: true }] });
+    expect(within(row('Ollama')).getByText('JSON: allowed by you')).toBeTruthy();
+    expect((within(row('Ollama')).getByRole('checkbox', { name: /for JSON tasks anyway/ }) as HTMLInputElement).checked).toBe(true);
+  });
+});
+
 describe('feature routing', () => {
   const content = () => screen.getByLabelText('Notes and tasks') as HTMLSelectElement;
   const people = () => screen.getByLabelText(/^People data/) as HTMLSelectElement;
@@ -261,15 +321,15 @@ describe('feature routing', () => {
     expect(Array.from(content().options).map((o) => o.textContent)).toEqual(['Default (OpenAI ChatGPT)', 'Company gateway', 'Ollama']);
     expect(content().value).toBe('default');
     fireEvent.change(people(), { target: { value: 'c-ollama' } });
-    expect(lastPatch().routing).toEqual({ people: 'c-ollama' });
+    expect(setAIRoute).toHaveBeenLastCalledWith('people', 'c-ollama');
     fireEvent.change(content(), { target: { value: 'c-company' } });
-    expect(lastPatch().routing).toEqual({ content: 'c-company' });
+    expect(setAIRoute).toHaveBeenLastCalledWith('content', 'c-company');
   });
 
-  it('choosing Default removes the entry and keeps the others', () => {
+  it('choosing Default asks for that route to be cleared (the action keeps the others)', () => {
     mount({ ...base, connections: [company], routing: { content: 'c-company', people: 'c-company' } });
     fireEvent.change(content(), { target: { value: 'default' } });
-    expect(lastPatch().routing).toEqual({ people: 'c-company' });
+    expect(setAIRoute).toHaveBeenLastCalledWith('content', 'default');
   });
 
   it('shows the default and says so when the routed connection no longer exists', () => {
@@ -303,14 +363,30 @@ describe('privacy and previous instructions', () => {
     expect(screen.getByText(/still applied as a short focus note/i)).toBeTruthy();
   });
 
-  it('copies one and removes one without touching the other', () => {
-    const writeText = vi.fn();
+  it('copies one (and says so) and removes one without touching the other', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
     Object.assign(navigator, { clipboard: { writeText } });
     mount({ ...base, systemPrompt: 'Always answer in Turkish', extractionGuidance: 'Only this week' });
     fireEvent.click(screen.getByRole('button', { name: 'Copy system instructions' }));
     expect(writeText).toHaveBeenCalledWith('Always answer in Turkish');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Copy system instructions' }).textContent).toBe('Copied'));
     fireEvent.click(screen.getByRole('button', { name: 'Remove extraction instructions' }));
-    expect(lastPatch()).toEqual({ extractionGuidance: '' });
+    await waitFor(() => expect(lastPatch()).toEqual({ extractionGuidance: '' }));
+  });
+
+  it('asks before removing text the user wrote, and keeps it when they decline', async () => {
+    mount({ ...base, extractionGuidance: 'Only this week' });
+    confirm.mockResolvedValueOnce(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove extraction instructions' }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    expect(updateAISettings).not.toHaveBeenCalled();
+  });
+
+  it('says when copying did not work', async () => {
+    Object.assign(navigator, { clipboard: { writeText: () => Promise.reject(new Error('denied')) } });
+    mount({ ...base, systemPrompt: 'Always answer in Turkish' });
+    fireEvent.click(screen.getByRole('button', { name: 'Copy system instructions' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Copy system instructions' }).textContent).toBe('Could not copy'));
   });
 
   it('says they are not applied when the organization turned focus notes off', () => {

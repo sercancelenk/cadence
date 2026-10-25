@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { openAiTool } from '../../lib/ai/launcher';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { SketchCanvas, type SketchCanvasHandle } from '../../features/sketch/SketchCanvas';
 import { UtilitySavedDocsPanel } from '../../features/utilities/UtilitySavedDocsPanel';
 import { useConfirm } from '../../components/ui/ConfirmProvider';
 import { useAppData } from '../../AppDataContext';
+import { IcSparkles } from '../../components/icons';
+import { hasUsableConnection } from '../../lib/ai/connections';
+import { useFeatures } from '../../lib/features';
+
+const AISketchDialog = lazy(() => import('../../components/AISketchDialog').then((m) => ({ default: m.AISketchDialog })));
 
 export function UtilitiesToolsSketchPage() {
   const { confirm, prompt } = useConfirm();
@@ -11,7 +17,11 @@ export function UtilitiesToolsSketchPage() {
     upsertUtilitySketchDocument,
     renameUtilitySketchDocument,
     removeUtilitySketchDocument,
+    createNoteWithContent,
   } = useAppData();
+  const { features } = useFeatures();
+  const aiEnabled = features.ai && hasUsableConnection(data.aiSettings);
+  const [aiScene, setAiScene] = useState<string | null>(null);
   const docs = data.utilitySketchDocuments ?? [];
   const canvasRef = useRef<SketchCanvasHandle>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -162,7 +172,42 @@ export function UtilitiesToolsSketchPage() {
             Freehand boards for system design and meetings. Save a named copy to your workspace, or
             Export for a file. Unsaved work stays on this screen until you Save.
           </p>
+          {aiEnabled ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--small"
+              title="Describe a diagram in words and get it as a new sketch board"
+              onClick={() => openAiTool('draw-from-description', { format: 'sketch' })}
+            >
+              <IcSparkles size={14} aria-hidden />
+              Draw with AI
+            </button>
+          ) : null}
+          {aiEnabled ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--small"
+              title="Turn this sketch into a Mermaid diagram you can edit as text"
+              onClick={() => {
+                const scene = canvasRef.current?.getSceneJson();
+                if (scene) setAiScene(scene);
+              }}
+            >
+              <IcSparkles size={14} aria-hidden />
+              Convert to Mermaid
+            </button>
+          ) : null}
         </header>
+        {aiScene ? (
+          <Suspense fallback={null}>
+            <AISketchDialog
+              open
+              onClose={() => setAiScene(null)}
+              sceneJson={aiScene}
+              onApply={(title, fields) => createNoteWithContent({ title, ...fields })}
+            />
+          </Suspense>
+        ) : null}
         <UtilitySavedDocsPanel
           libraryId="sketch"
           kindLabel="sketches"

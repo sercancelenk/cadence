@@ -34,7 +34,10 @@ export type AiTask<In, Out> = {
   promptVersion: number;
   dataClass: DataClass;
   needsJson: boolean;
+  /** The task works on images the user supplies; the connection must be confirmed for images. */
+  needsVision?: boolean;
   allowsFocusNote: boolean;
   build(input: In, ctx: PromptContext): PromptParts;
-  parse(reply: string): ParseResult<Out>;
+  /** `ctx` is the context the prompt was built with, for output that depends on an option. */
+  parse(reply: string, ctx?: PromptContext): ParseResult<Out>;
 };

@@ -10,6 +10,7 @@ import { ToastProvider } from './components/ui/Toast';
 import { ConfirmProvider } from './components/ui/ConfirmProvider';
 import { PATH_TEAMS } from './lib/routes';
 import { CommandPalette } from './components/CommandPalette';
+import { AiLauncher } from './components/AiLauncher';
 import { NotesUnlockProvider } from './providers/NotesUnlockContext';
 import { WelcomeTour } from './components/WelcomeTour';
 import { useAppDeepLink } from './hooks/useAppDeepLink';
@@ -221,6 +222,7 @@ function AppRoutes() {
   return (
     <>
       <CommandPalette />
+      <AiLauncher />
       <WelcomeTour />
       <Suspense fallback={<BootLoading label="Loading…" />}>
         <Routes>

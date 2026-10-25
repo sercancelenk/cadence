@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { ErdCanvas, type ErdCanvasHandle } from '../../features/erd/ErdCanvas';
 import { UtilitySavedDocsPanel } from '../../features/utilities/UtilitySavedDocsPanel';
 import { useConfirm } from '../../components/ui/ConfirmProvider';
 import { useAppData } from '../../AppDataContext';
-import { parseErdDocument } from '../../lib/erd/erdModel';
+import { IcSparkles } from '../../components/icons';
+import { hasUsableConnection } from '../../lib/ai/connections';
+import { parseErdDocument, type ErdDocument } from '../../lib/erd/erdModel';
+import { useFeatures } from '../../lib/features';
+
+const AIErdDialog = lazy(() => import('../../components/AIErdDialog').then((m) => ({ default: m.AIErdDialog })));
 
 export function UtilitiesToolsErdPage() {
   const { confirm, prompt } = useConfirm();
@@ -14,6 +19,9 @@ export function UtilitiesToolsErdPage() {
     removeUtilityErdDocument,
   } = useAppData();
   const docs = data.utilityErdDocuments ?? [];
+  const { features } = useFeatures();
+  const aiEnabled = features.ai && hasUsableConnection(data.aiSettings);
+  const [aiDoc, setAiDoc] = useState<ErdDocument | null>(null);
   const canvasRef = useRef<ErdCanvasHandle>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -157,7 +165,31 @@ export function UtilitiesToolsErdPage() {
             Tables and foreign keys on a canvas. Save a named copy to your workspace, or Export JSON /
             PNG for a file. Unsaved work stays on this screen until you Save.
           </p>
+          {aiEnabled ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--small"
+              title="Describe tables and relations in words; you choose what to add"
+              onClick={() => {
+                const doc = canvasRef.current?.getDocument();
+                if (doc) setAiDoc(doc);
+              }}
+            >
+              <IcSparkles size={14} aria-hidden />
+              Design with AI
+            </button>
+          ) : null}
         </header>
+        {aiDoc ? (
+          <Suspense fallback={null}>
+            <AIErdDialog
+              open
+              onClose={() => setAiDoc(null)}
+              current={aiDoc}
+              onApply={(next) => canvasRef.current?.applyDocument(next)}
+            />
+          </Suspense>
+        ) : null}
         <UtilitySavedDocsPanel
           libraryId="erd"
           kindLabel="ERDs"

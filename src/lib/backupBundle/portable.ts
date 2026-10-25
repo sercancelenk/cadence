@@ -6,6 +6,7 @@ import {
   revokeAttachmentBlobUrls,
 } from '../richTextAttachmentStore';
 import { appDataToPersistJson, normalizeData, type AppData } from '../../model';
+import { stripAiSecrets } from '../ai/secrets';
 import { parseRemoteSnapshot, snapshotParseErrorMessage } from '../syncSnapshotGuard';
 import { parseBundleEntries } from './parse';
 import {
@@ -63,7 +64,8 @@ export async function exportPortableBackupZip(
   const files: Record<string, Uint8Array> = {};
   const enc = new TextEncoder();
 
-  files[BACKUP_DATA_FILE] = enc.encode(appDataToPersistJson(normalized));
+  // Exports leave the encrypted data file, so they carry no AI keys (see lib/ai/secrets).
+  files[BACKUP_DATA_FILE] = enc.encode(appDataToPersistJson(stripAiSecrets(normalized)));
 
   let attachmentCount = 0;
   let attachmentMissing = 0;

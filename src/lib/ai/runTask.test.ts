@@ -85,6 +85,86 @@ describe('gates that stop a run before any request', () => {
     const withJson: AISettings = { ...local, defaultMeta: { probedAt: '2026-10-24T10:00:00.000Z', capabilities: ['json'] } };
     expect((await runAiTask({ task: extractTask, input: extractInput, settings: withJson, features, now })).ok).toBe(true);
   });
+
+  it('capability: the user can allow JSON tasks on a connection the probe found unreliable', async () => {
+    const overridden: AISettings = { ...local, defaultMeta: { probedAt: '2026-10-24T10:00:00.000Z', jsonOverride: true } };
+    askAI.mockResolvedValueOnce(reply(goodJson));
+    expect((await runAiTask({ task: extractTask, input: extractInput, settings: overridden, features, now })).ok).toBe(true);
+    // The same switch on an extra connection.
+    const extra: AISettings = {
+      ...cloud,
+      connections: [{ id: 'c1', name: 'Local', provider: 'gateway', baseUrl: 'http://localhost:11434/v1', model: 'm', probedAt: '2026-10-24T10:00:00.000Z', jsonOverride: true }],
+      routing: { content: 'c1' },
+    };
+    askAI.mockResolvedValueOnce(reply(goodJson));
+    expect((await runAiTask({ task: extractTask, input: extractInput, settings: extra, features, now })).ok).toBe(true);
+    const notAllowed: AISettings = { ...local, defaultMeta: { probedAt: '2026-10-24T10:00:00.000Z', jsonOverride: false } };
+    expect(await runAiTask({ task: extractTask, input: extractInput, settings: notAllowed, features, now })).toMatchObject({ ok: false, reason: 'capability' });
+  });
+});
+
+describe('a reply that cannot be used', () => {
+  it('after the repair attempt it says what to try: another model or another connection', async () => {
+    askAI.mockResolvedValue(reply('not json at all'));
+    const r = await runAiTask({ task: extractTask, input: extractInput, settings: local, features, now });
+    expect(r).toMatchObject({ ok: false, reason: 'invalid-output' });
+    expect((r as { message: string }).message).toMatch(/larger model or another connection/i);
+    expect(askAI).toHaveBeenCalledTimes(2);
+    askAI.mockReset();
+  });
+});
+
+describe('images', () => {
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGO4IyJCEmIY1TCqYfhqAAACcQQQFwFJQgAAAABJRU5ErkJggg==';
+  const images = [{ mediaType: 'image/png' as const, base64: PNG }];
+  const visionTask = { ...coachTask, id: 'ai.vision-test', needsVision: true };
+
+  it('a vision task is refused on a connection that has not been confirmed for images, and nothing is sent', async () => {
+    const r = await runAiTask({ task: visionTask, input: { title: 't' }, settings: local, features, now, images });
+    expect(r).toMatchObject({ ok: false, reason: 'capability' });
+    expect((r as { message: string }).message).toMatch(/Check images/i);
+    expect(askAI).not.toHaveBeenCalled();
+  });
+
+  it('on a confirmed connection the images go with the first message', async () => {
+    askAI.mockResolvedValueOnce(reply('seen'));
+    const withVision: AISettings = { ...local, defaultMeta: { capabilities: ['vision'], probedAt: '2026-10-24T10:00:00.000Z' } };
+    const r = await runAiTask({ task: visionTask, input: { title: 't' }, settings: withVision, features, now, images });
+    expect(r.ok).toBe(true);
+    const sent = askAI.mock.calls[0][0].messages[0];
+    expect(sent.role).toBe('user');
+    expect(sent.images).toEqual(images);
+  });
+
+  it('a vision task without images is not sent', async () => {
+    const withVision: AISettings = { ...local, defaultMeta: { capabilities: ['vision'] } };
+    const r = await runAiTask({ task: visionTask, input: { title: 't' }, settings: withVision, features, now });
+    expect(r).toMatchObject({ ok: false });
+    expect(askAI).not.toHaveBeenCalled();
+  });
+
+  it('a task that does not use images never sends them, even if given', async () => {
+    askAI.mockResolvedValueOnce(reply('plain'));
+    await runAiTask({ task: coachTask, input: { title: 't' }, settings: local, features, now, images });
+    expect(askAI.mock.calls[0][0].messages[0].images).toBeUndefined();
+  });
+});
+
+describe('streaming', () => {
+  it('passes onText to the first request only, never to the repair request, and returns the final value', async () => {
+    askAI.mockResolvedValueOnce(reply('not json')).mockResolvedValueOnce(reply(goodJson));
+    const onText = vi.fn();
+    const r = await runAiTask({ task: extractTask, input: extractInput, settings: local, features, now, onText });
+    expect(r.ok).toBe(true);
+    expect(askAI.mock.calls[0][0].onText).toBe(onText);
+    expect(askAI.mock.calls[1][0].onText).toBeUndefined();
+  });
+
+  it('asks for no stream when no onText was given', async () => {
+    askAI.mockResolvedValueOnce(reply('plain'));
+    await runAiTask({ task: coachTask, input: { title: 't' }, settings: local, features, now });
+    expect(askAI.mock.calls[0][0].onText).toBeUndefined();
+  });
 });
 
 describe('routing', () => {
@@ -266,5 +346,27 @@ describe('the caller can raise the data class (Ask AI on a person\'s task or goa
     const r = await runAiTask({ task: peopleTask, input: 'x', dataClass: 'content', settings: cloud, features, now });
     expect(r).toMatchObject({ ok: false, reason: 'blocked-people' });
     expect(askAI).not.toHaveBeenCalled();
+  });
+});
+
+describe('parse sees the options the prompt was built with (for tasks whose output depends on a choice)', () => {
+  it('passes the same options to build and to parse, on the first reply and on the repair', async () => {
+    const seen: Array<Record<string, string>> = [];
+    const task: AiTask<string, string> = {
+      id: 'ai.options-probe',
+      promptVersion: 1,
+      dataClass: 'content',
+      needsJson: false,
+      allowsFocusNote: false,
+      build: () => ({ system: 's', user: 'u', json: false, maxOutputTokens: 100 }),
+      parse: (text, ctx) => {
+        seen.push({ ...(ctx?.options ?? {}) });
+        return text === 'good' ? { ok: true, value: text } : { ok: false, error: 'bad' };
+      },
+    };
+    askAI.mockReset().mockResolvedValueOnce(reply('nope')).mockResolvedValueOnce(reply('good'));
+    const r = await runAiTask({ task, input: 'x', options: { target: 'html' }, settings: cloud, features, now });
+    expect(r.ok).toBe(true);
+    expect(seen).toEqual([{ target: 'html' }, { target: 'html' }]);
   });
 });

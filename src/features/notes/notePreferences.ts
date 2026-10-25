@@ -67,12 +67,6 @@ export function noteSortModeKey(userId: string) {
   return `${LS_NOTE_SORT}:${userId}`;
 }
 
-const LS_NOTE_EXPORT_FORMAT = 'cadence.notes.exportFormat.v1';
-
-export function noteExportFormatKey(userId: string) {
-  return `${LS_NOTE_EXPORT_FORMAT}:${userId}`;
-}
-
 export function noteSidebarCollapsedKey(userId: string) {
   return `${LS_SIDEBAR_COLLAPSED}:${userId}`;
 }

@@ -347,5 +347,17 @@ describe('buildCommands', () => {
       cmd?.run();
       expect(nav).toHaveBeenCalledWith('/todos?ai=extract');
     });
+
+    it('adds the tools that open from anywhere, from the registry, and opens them through the launcher', async () => {
+      const { subscribeAiTool } = await import('../lib/ai/launcher');
+      const opened = vi.fn();
+      const off = subscribeAiTool(opened);
+      const commands = buildCommands(paletteData(), vi.fn(), { aiEnabled: true });
+      const cmd = commands.find((c) => c.id === 'ai-weekly-digest');
+      expect(cmd).toMatchObject({ group: 'AI', label: 'AI: Weekly digest' });
+      cmd?.run();
+      expect(opened).toHaveBeenCalledWith('weekly-digest');
+      off();
+    });
   });
 });

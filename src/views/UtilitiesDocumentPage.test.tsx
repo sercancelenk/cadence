@@ -7,9 +7,11 @@ const state = vi.hoisted(() => ({
   active: undefined as string | undefined,
   confirmResult: true,
   paneProps: null as null | Record<string, unknown>,
+  ai: undefined as undefined | Record<string, unknown>,
 }));
 const actions = vi.hoisted(() => ({
   addDocumentTab: vi.fn(() => 'new-tab'),
+  addDocumentTabWithContent: vi.fn(() => 'structured-tab'),
   closeDocumentTab: vi.fn(),
   renameDocumentTab: vi.fn(),
   setActiveDocumentTab: vi.fn(),
@@ -21,11 +23,18 @@ const actions = vi.hoisted(() => ({
 
 vi.mock('../AppDataContext', () => ({
   useAppData: () => ({
-    data: { utilityDocumentTabs: state.tabs, activeDocumentTabId: state.active },
+    data: { utilityDocumentTabs: state.tabs, activeDocumentTabId: state.active, aiSettings: state.ai },
     flushPendingSave: vi.fn(async () => undefined),
     getLatestSnapshot: () => ({ utilityDocumentTabs: state.tabs, activeDocumentTabId: state.active }),
     ...actions,
   }),
+}));
+vi.mock('../components/AIStructureDialog', () => ({
+  AIStructureDialog: (props: { text: string; tabTitle: string; onApply: (t: string, f: { body: string }) => unknown; onClose: () => void }) => (
+    <div data-testid="structure-dialog" data-text={props.text} data-title={props.tabTitle}>
+      <button type="button" onClick={() => props.onApply('Structured: x', { body: 'b' })}>apply</button>
+    </div>
+  ),
 }));
 vi.mock('../AccountContext', () => ({ useAccount: () => ({ user: { id: 'user-1' } }) }));
 vi.mock('../components/ui/ConfirmProvider', () => ({ useConfirm: () => ({ confirm: actions.confirm }) }));
@@ -51,6 +60,7 @@ describe('UtilitiesDocumentPage', () => {
   beforeEach(() => {
     state.tabs = [tab('a', { body: 'alpha text' }), tab('b')];
     state.active = 'a';
+    state.ai = undefined;
     state.confirmResult = true;
     Object.values(actions).forEach((f) => f.mockClear());
   });
@@ -126,6 +136,39 @@ describe('UtilitiesDocumentPage', () => {
     render(<UtilitiesDocumentPage />);
     fireEvent.click(screen.getByRole('button', { name: /Move to Notes/ }));
     expect(actions.moveRequest).toHaveBeenCalledWith('a');
+  });
+
+  describe('Structure with AI', () => {
+    const configured = { provider: 'openai', apiKey: 'sk-test-key-12345', model: 'm' };
+
+    it('is not offered without a connected provider', () => {
+      render(<UtilitiesDocumentPage />);
+      expect(screen.queryByRole('button', { name: /Structure with AI/ })).toBeNull();
+    });
+
+    it('is offered for a document with text, and opens the dialog on that text', async () => {
+      state.ai = configured;
+      render(<UtilitiesDocumentPage />);
+      fireEvent.click(screen.getByRole('button', { name: /Structure with AI/ }));
+      const dialog = await screen.findByTestId('structure-dialog');
+      expect(dialog.getAttribute('data-text')).toBe('alpha text');
+      expect(dialog.getAttribute('data-title')).toBe('a');
+    });
+
+    it('is not offered for an empty document', () => {
+      state.ai = configured;
+      state.active = 'b';
+      render(<UtilitiesDocumentPage />);
+      expect(screen.queryByRole('button', { name: /Structure with AI/ })).toBeNull();
+    });
+
+    it('adds the structured copy as a new tab through the provider', async () => {
+      state.ai = configured;
+      render(<UtilitiesDocumentPage />);
+      fireEvent.click(screen.getByRole('button', { name: /Structure with AI/ }));
+      fireEvent.click(await screen.findByRole('button', { name: 'apply' }));
+      expect(actions.addDocumentTabWithContent).toHaveBeenCalledWith({ title: 'Structured: x', body: 'b' });
+    });
   });
 
   it('hands the latest active tab to the save-to-file shortcut as Markdown by default', () => {

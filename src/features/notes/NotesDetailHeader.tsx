@@ -15,7 +15,6 @@ import {
 } from '../../components/icons';
 import type { ReactNode } from 'react';
 import type { Note } from '../../model';
-import { NOTE_EXPORT_FORMATS, type NoteExportFormat } from '../../lib/noteExport';
 import { Tooltip } from '../../components/ui/Tooltip';
 import { NotesIconButton } from './NotesIconButton';
 import type { PendingIntent } from './noteLockTypes';
@@ -36,8 +35,6 @@ export type NotesDetailHeaderProps = {
   onConfirmRemove: () => void;
   onOpenVersionHistory?: () => void;
   versionHistoryAvailable?: boolean;
-  exportFormat?: NoteExportFormat;
-  onExportFormatChange?: (format: NoteExportFormat) => void;
   /** Archived only because its list is archived: restore the list instead. */
   archivedViaList?: boolean;
   /** Omit to hide the save controls (e.g. no desktop bridge). */
@@ -62,8 +59,6 @@ export function NotesDetailHeader({
   onConfirmRemove,
   onOpenVersionHistory,
   versionHistoryAvailable = false,
-  exportFormat = 'md',
-  onExportFormatChange,
   onSaveToFile,
   archivedViaList = false,
   saveFlash,
@@ -155,19 +150,6 @@ export function NotesDetailHeader({
 
         {onSaveToFile ? (
           <>
-            <select
-              className="select select--compact notes-page__export-format"
-              value={exportFormat}
-              onChange={(e) => onExportFormatChange?.(e.target.value as NoteExportFormat)}
-              aria-label="File format for saving"
-              title="File format used when saving this note to your computer"
-            >
-              {NOTE_EXPORT_FORMATS.map((f) => (
-                <option key={f.value} value={f.value}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
             <NotesIconButton
               onClick={onSaveToFile}
               disabled={extractBlocked}
@@ -175,7 +157,7 @@ export function NotesDetailHeader({
               tooltip={
                 extractBlocked
                   ? 'Unlock this note first — it must be readable to save'
-                  : 'Save this note to your computer (⇧⌘S / Ctrl+Shift+S)'
+                  : 'Save this note to your computer (⇧⌘S / Ctrl+Shift+S) — end the file name with .md, .txt or .html to choose the format'
               }
             >
               <IcSave size={16} />

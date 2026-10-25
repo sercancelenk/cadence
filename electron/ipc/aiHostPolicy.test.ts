@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { parseAllowedHosts, isAiHostAllowed, requireAiHost, parseAiPolicyFlags, resolveAiSubFlag } = require('./aiHostPolicy.cjs');
+const { parseAllowedHosts, isAiHostAllowed, requireAiHost, parseAiPolicyFlags, resolveAiSubFlag, guardAiGatewayRequest } = require('./aiHostPolicy.cjs');
 
 describe('parseAllowedHosts', () => {
   it('lower-cases and trims valid entries and drops the rest', () => {
@@ -91,5 +91,30 @@ describe('resolveAiSubFlag', () => {
     expect(resolveAiSubFlag(false, true)).toBe(false);
     expect(resolveAiSubFlag(undefined, true)).toBe(true);
     expect(resolveAiSubFlag(undefined, false)).toBe(false);
+  });
+});
+
+describe('guardAiGatewayRequest (used by the chat and the stream handler alike)', () => {
+  const allowAll = () => true;
+  const req = { baseUrl: 'https://api.openai.com/v1', dataClass: 'content' };
+
+  it('lets an allowed request through', () => {
+    expect(guardAiGatewayRequest(req, { isFeatureAllowed: allowAll, allowedHosts: undefined })).toBeNull();
+  });
+
+  it('blocks when AI is off, before looking at anything else', () => {
+    const r = guardAiGatewayRequest({}, { isFeatureAllowed: (f: string) => f !== 'ai', allowedHosts: [] });
+    expect(r).toMatchObject({ ok: false, reason: 'policy-disabled' });
+  });
+
+  it('blocks a host that is not on the organization list', () => {
+    const r = guardAiGatewayRequest(req, { isFeatureAllowed: allowAll, allowedHosts: ['*.corp.example.com'] });
+    expect(r).toMatchObject({ ok: false });
+  });
+
+  it('blocks people data when the people flag is off, and a missing data class always', () => {
+    const noPeople = (f: string) => f !== 'aiPeople';
+    expect(guardAiGatewayRequest({ ...req, dataClass: 'people' }, { isFeatureAllowed: noPeople, allowedHosts: undefined })).toMatchObject({ ok: false });
+    expect(guardAiGatewayRequest({ baseUrl: req.baseUrl }, { isFeatureAllowed: allowAll, allowedHosts: undefined })).toMatchObject({ ok: false, reason: 'invalid-request' });
   });
 });

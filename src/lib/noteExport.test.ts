@@ -5,7 +5,6 @@ import {
   exportNoteContent,
   exportFileName,
   NOTE_EXPORT_FORMATS,
-  parseNoteExportFormat,
 } from './noteExport';
 
 const p = (text: string, marks?: { type: string; attrs?: Record<string, unknown> }[]): RichTextDoc => ({
@@ -123,12 +122,6 @@ describe('format helpers', () => {
   it('lists md first as the default and gives each format an extension', () => {
     expect(NOTE_EXPORT_FORMATS.map((f) => f.value)).toEqual(['md', 'txt', 'html']);
     expect(NOTE_EXPORT_FORMATS.map((f) => f.ext)).toEqual(['md', 'txt', 'html']);
-  });
-
-  it('parses stored preference and falls back to md', () => {
-    expect(parseNoteExportFormat('html')).toBe('html');
-    expect(parseNoteExportFormat('pdf')).toBe('md');
-    expect(parseNoteExportFormat(null)).toBe('md');
   });
 
   it('builds a safe file name from the note title', () => {

@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   tabs: [] as UtilityStructuredTab[],
   active: undefined as string | undefined,
   confirmResult: true,
+  ai: undefined as undefined | Record<string, unknown>,
 }));
 const actions = vi.hoisted(() => ({
   addStructuredTab: vi.fn(() => 'new'),
@@ -13,6 +14,7 @@ const actions = vi.hoisted(() => ({
   renameStructuredTab: vi.fn(),
   setActiveStructuredTab: vi.fn(),
   patchStructuredTab: vi.fn(),
+  addStructuredTabWithContent: vi.fn(() => 'mock-tab'),
   confirm: vi.fn(async () => state.confirmResult),
   moveRequest: vi.fn(),
   fileSave: vi.fn(),
@@ -20,7 +22,7 @@ const actions = vi.hoisted(() => ({
 
 vi.mock('../AppDataContext', () => ({
   useAppData: () => ({
-    data: { utilityStructuredTabs: state.tabs, activeStructuredTabId: state.active },
+    data: { utilityStructuredTabs: state.tabs, activeStructuredTabId: state.active, aiSettings: state.ai },
     flushPendingSave: vi.fn(async () => undefined),
     getLatestSnapshot: () => ({ utilityStructuredTabs: state.tabs, activeStructuredTabId: state.active }),
     addStructuredTab: actions.addStructuredTab,
@@ -28,7 +30,15 @@ vi.mock('../AppDataContext', () => ({
     renameStructuredTab: actions.renameStructuredTab,
     setActiveStructuredTab: actions.setActiveStructuredTab,
     patchStructuredTab: actions.patchStructuredTab,
+    addStructuredTabWithContent: actions.addStructuredTabWithContent,
   }),
+}));
+vi.mock('../components/AIMockDataDialog', () => ({
+  AIMockDataDialog: (props: { sampleText: string; tabTitle: string; onApply: (t: string, c: string) => unknown }) => (
+    <div data-testid="mock-dialog" data-sample={props.sampleText} data-title={props.tabTitle}>
+      <button type="button" onClick={() => props.onApply('Mock: x', '[{"a":1}]')}>apply</button>
+    </div>
+  ),
 }));
 vi.mock('../components/ui/ConfirmProvider', () => ({ useConfirm: () => ({ confirm: actions.confirm }) }));
 vi.mock('../components/ui/Toast', () => ({ useToast: () => ({ showSuccess: vi.fn(), showError: vi.fn() }) }));
@@ -64,6 +74,7 @@ describe('UtilitiesStructuredPage', () => {
   beforeEach(() => {
     state.tabs = [tab('a', { content: '{"a":1}' }), tab('b', { language: 'yaml', content: 'k: v' })];
     state.active = 'a';
+    state.ai = undefined;
     state.confirmResult = true;
     Object.values(actions).forEach((f) => f.mockClear());
   });
@@ -122,5 +133,43 @@ describe('UtilitiesStructuredPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close a' }));
     await waitFor(() => expect(actions.confirm).toHaveBeenCalledTimes(1));
     expect(actions.closeStructuredTab).toHaveBeenCalledTimes(1);
+  });
+
+  describe('Generate mock data', () => {
+    const configured = { provider: 'openai', apiKey: 'sk-test-key-12345', model: 'm' };
+
+    it('is not offered without a connected provider', () => {
+      render(<UtilitiesStructuredPage />);
+      expect(screen.queryByRole('button', { name: /Mock data with AI/ })).toBeNull();
+    });
+
+    it('is offered for a JSON tab with content and opens the dialog on that JSON', async () => {
+      state.ai = configured;
+      render(<UtilitiesStructuredPage />);
+      fireEvent.click(screen.getByRole('button', { name: /Mock data with AI/ }));
+      const dialog = await screen.findByTestId('mock-dialog');
+      expect(dialog.getAttribute('data-sample')).toBe('{"a":1}');
+      expect(dialog.getAttribute('data-title')).toBe('a');
+    });
+
+    it('is not offered for a YAML tab or an empty JSON tab', () => {
+      state.ai = configured;
+      state.active = 'b';
+      render(<UtilitiesStructuredPage />);
+      expect(screen.queryByRole('button', { name: /Mock data with AI/ })).toBeNull();
+      cleanup();
+      state.active = 'a';
+      state.tabs = [tab('a', { content: '{}' })];
+      render(<UtilitiesStructuredPage />);
+      expect(screen.queryByRole('button', { name: /Mock data with AI/ })).toBeNull();
+    });
+
+    it('adds the records as a new JSON tab through the provider', async () => {
+      state.ai = configured;
+      render(<UtilitiesStructuredPage />);
+      fireEvent.click(screen.getByRole('button', { name: /Mock data with AI/ }));
+      fireEvent.click(await screen.findByRole('button', { name: 'apply' }));
+      expect(actions.addStructuredTabWithContent).toHaveBeenCalledWith({ title: 'Mock: x', content: '[{"a":1}]', language: 'json' });
+    });
   });
 });

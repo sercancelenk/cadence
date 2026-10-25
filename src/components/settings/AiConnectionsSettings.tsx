@@ -1,9 +1,10 @@
 import { useState } from 'react';
+import { useCopy } from '../../lib/clipboard';
 import { useAppData } from '../../AppDataContext';
 import { useFeatures } from '../../lib/features';
 import { listConnections, type ConnectionView } from '../../lib/ai/connections';
 import { AI_PROVIDER_OPTIONS, DEFAULT_CONNECTION_ID, MAX_AI_CONNECTIONS } from '../../model';
-import type { AIConnection, AIRouting } from '../../model';
+import type { AIConnection } from '../../model';
 import type { AISettingsPatch } from '../../core/actions';
 import { Button } from '../ui/Button';
 import { IcTrash } from '../icons';
@@ -36,6 +37,7 @@ function connectionFromPatch(
     provider: patch.provider || existing?.provider || 'gateway',
     apiKey: patch.apiKey?.trim() || undefined,
     model: patch.model?.trim() || undefined,
+    embeddingModel: patch.embeddingModel?.trim() || undefined,
   };
   // Gateway fields are only in the patch when a gateway is selected; otherwise they stay as they were.
   for (const key of GATEWAY_KEYS) {
@@ -58,6 +60,8 @@ function connectionFromPatch(
   if (changed) {
     next.capabilities = undefined;
     next.probedAt = undefined;
+    // The user vouched for the connection as it was; a different model or address is a new question.
+    next.jsonOverride = undefined;
   }
   // Permission to receive people data was given to a specific destination. If the provider or
   // the address changes, it is a different destination and the user is asked again (the switch).
@@ -69,7 +73,8 @@ function connectionFromPatch(
 
 function jsonChip(view: ConnectionView): string {
   if (!view.probed) return 'JSON: untested';
-  return view.capabilities.includes('json') ? 'JSON: ok' : 'JSON: unreliable';
+  if (view.capabilities.includes('json')) return 'JSON: ok';
+  return view.jsonOverride ? 'JSON: allowed by you' : 'JSON: unreliable';
 }
 
 /**
@@ -77,9 +82,10 @@ function jsonChip(view: ConnectionView): string {
  * The default connection itself is edited in the form above this component.
  */
 export function AiConnectionsSettings() {
-  const { data, updateAISettings, upsertAIConnection, patchAIConnection, removeAIConnection } = useAppData();
+  const { data, updateAISettings, upsertAIConnection, patchAIConnection, removeAIConnection, setAIRoute } = useAppData();
   const { features } = useFeatures();
   const { confirm } = useConfirm();
+  const { copy, statusOf } = useCopy();
   const ai = data.aiSettings;
   const views = listConnections(ai);
   const extras = ai?.connections ?? [];
@@ -107,6 +113,21 @@ export function AiConnectionsSettings() {
     else patchAIConnection(view.id, { allowPeopleData: allowed });
   };
 
+  const setJsonOverride = (view: ConnectionView, allowed: boolean) => {
+    if (view.isDefault) updateAISettings({ defaultMeta: { jsonOverride: allowed || undefined } });
+    else patchAIConnection(view.id, { jsonOverride: allowed || undefined });
+  };
+
+  const removeInstructions = async (key: 'systemPrompt' | 'extractionGuidance', label: string) => {
+    const ok = await confirm({
+      title: 'Remove these instructions?',
+      description: `Your ${label.toLowerCase()} will be deleted from this device. Copy them first if you want to keep them.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (ok) updateAISettings({ [key]: '' });
+  };
+
   const removeConnection = async (view: ConnectionView) => {
     const ok = await confirm({
       title: 'Remove connection?',
@@ -120,12 +141,7 @@ export function AiConnectionsSettings() {
     if (editing === view.id) setEditing(null);
   };
 
-  const setRoute = (key: 'content' | 'people', id: string) => {
-    const next: AIRouting = { ...(ai?.routing ?? {}) };
-    if (id === DEFAULT_CONNECTION_ID) delete next[key];
-    else next[key] = id;
-    updateAISettings({ routing: next });
-  };
+  const setRoute = (key: 'content' | 'people', id: string) => setAIRoute(key, id);
 
   const routeSelect = (key: 'content' | 'people', label: string, disabled: boolean) => {
     const routed = ai?.routing?.[key];
@@ -182,6 +198,19 @@ export function AiConnectionsSettings() {
                 </span>
               </div>
               <span className="ai-conn__chip">{jsonChip(view)}</span>
+              {view.capabilities.includes('vision') ? <span className="ai-conn__chip">Images: ok</span> : null}
+              {view.capabilities.includes('streaming') ? <span className="ai-conn__chip">Live: ok</span> : null}
+              {view.probed && !view.capabilities.includes('json') ? (
+                <label className="ai-conn__switch">
+                  <input
+                    type="checkbox"
+                    aria-label={`Use ${view.name} for JSON tasks anyway`}
+                    checked={view.jsonOverride}
+                    onChange={(e) => setJsonOverride(view, e.target.checked)}
+                  />
+                  <span className="small">Use for JSON tasks anyway</span>
+                </label>
+              ) : null}
               <label className="ai-conn__switch">
                 <input
                   type="checkbox"
@@ -194,7 +223,13 @@ export function AiConnectionsSettings() {
               </label>
               {!view.isDefault ? (
                 <div className="ai-conn__actions">
-                  <Button type="button" variant="ghost" aria-label={`Edit ${view.name}`} onClick={() => startEdit(view.id)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    aria-label={`Edit ${view.name}`}
+                    disabled={!!editing}
+                    onClick={() => startEdit(view.id)}
+                  >
                     Edit
                   </Button>
                   <Button
@@ -263,7 +298,7 @@ export function AiConnectionsSettings() {
       <h4 className="ai-section-title">Privacy</h4>
       <p className="muted small">
         AI only sees what you start it on, and each result shows what was read and what was sent. 1:1 notes and
-        feedback only go to connections you allow; a model running on this computer is allowed by default.
+        feedback only go to connections you allow; a model running on this computer is allowed by default. If that address is a router that forwards to another provider, switch the permission off for it.
       </p>
       {!features.aiPeople ? (
         <p className="small">Your organization turned off AI for 1:1 notes and feedback.</p>
@@ -284,17 +319,11 @@ export function AiConnectionsSettings() {
                 type="button"
                 variant="ghost"
                 aria-label={l.copy}
-                onClick={() => {
-                  try {
-                    void navigator.clipboard.writeText(l.text ?? '');
-                  } catch {
-                    // Clipboard unavailable; the text above can be selected by hand.
-                  }
-                }}
+                onClick={() => void copy(l.key, l.text ?? '')}
               >
-                Copy
+                {statusOf(l.key) === 'copied' ? 'Copied' : statusOf(l.key) === 'failed' ? 'Could not copy' : 'Copy'}
               </Button>
-              <Button type="button" variant="ghost" aria-label={l.remove} onClick={() => updateAISettings({ [l.key]: '' })}>
+              <Button type="button" variant="ghost" aria-label={l.remove} onClick={() => void removeInstructions(l.key, l.label)}>
                 Remove
               </Button>
             </div>

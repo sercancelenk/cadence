@@ -374,12 +374,16 @@ export interface AIConnection {
   authScheme?: GatewayAuthScheme;
   requestPath?: string;
   maxTokensField?: GatewayTokenField;
+  /** Model used for embeddings (search by meaning); optional, hosted providers have a default. */
+  embeddingModel?: string;
   extraHeaders?: GatewayHeader[];
   capabilities?: AICapability[];
   /** When a capability probe last ran (whatever it found). Absent: never probed. */
   probedAt?: string;
   /** Explicit switch for `people` data; absent means "only if the address is loopback". */
   allowPeopleData?: boolean;
+  /** The user allows JSON tasks even though the JSON check found this connection unreliable. */
+  jsonOverride?: boolean;
 }
 
 /** Which connection each class of AI task uses. Values are connection ids (`'default'` is allowed). */
@@ -396,6 +400,7 @@ export interface AIDefaultMeta {
   capabilities?: AICapability[];
   probedAt?: string;
   allowPeopleData?: boolean;
+  jsonOverride?: boolean;
 }
 
 export interface AISettings {
@@ -420,6 +425,8 @@ export interface AISettings {
    * deprecated `max_tokens` and its reasoning models accept only `max_completion_tokens`.
    */
   maxTokensField?: GatewayTokenField;
+  /** Model used for embeddings (search by meaning); optional, hosted providers have a default. */
+  embeddingModel?: string;
   /** Extra headers sent with every gateway request. */
   extraHeaders?: GatewayHeader[];
   /**
@@ -429,6 +436,12 @@ export interface AISettings {
    * edits to the fields above are edits to the default connection.
    */
   connections?: AIConnection[];
+  /**
+   * Connection entries this version cannot read (a provider it does not know, a duplicate or
+   * reserved id, more than the limit). They are kept as they are and written back, so opening
+   * the workspace here never costs a newer version its connections or their keys. At most 20.
+   */
+  unreadConnections?: Record<string, unknown>[];
   routing?: AIRouting;
   defaultMeta?: AIDefaultMeta;
   /**
@@ -1506,7 +1519,8 @@ function parseAISettings(raw: unknown): AISettings | undefined {
   const maxTokensField: GatewayTokenField | undefined =
     o.maxTokensField === 'max_tokens' || o.maxTokensField === 'max_completion_tokens' ? o.maxTokensField : undefined;
   const extraHeaders = parseGatewayHeaders(o.extraHeaders);
-  const connections = parseAIConnections(o.connections);
+  const embeddingModel = typeof o.embeddingModel === 'string' && o.embeddingModel.trim() ? o.embeddingModel.trim() : undefined;
+  const { connections, unread: unreadConnections } = parseAIConnections(o.connections, o.unreadConnections);
   const routing = parseAIRouting(o.routing);
   const defaultMeta = parseAIDefaultMeta(o.defaultMeta);
   const systemPrompt = typeof o.systemPrompt === 'string' ? o.systemPrompt : undefined;
@@ -1514,14 +1528,14 @@ function parseAISettings(raw: unknown): AISettings | undefined {
     typeof o.extractionGuidance === 'string' ? o.extractionGuidance : undefined;
   if (
     !provider && !apiKey && !model && !baseUrl && !gatewayFormat && !authHeader && !authScheme &&
-    !requestPath && !maxTokensField && !extraHeaders && !connections && !routing && !defaultMeta &&
+    !requestPath && !maxTokensField && !embeddingModel && !extraHeaders && !connections && !unreadConnections && !routing && !defaultMeta &&
     !systemPrompt && !extractionGuidance
   ) {
     return undefined;
   }
   return withExtras(o, {
-    provider, apiKey, model, baseUrl, gatewayFormat, authHeader, authScheme, requestPath, maxTokensField,
-    extraHeaders, connections, routing, defaultMeta, systemPrompt, extractionGuidance,
+    provider, apiKey, model, baseUrl, gatewayFormat, authHeader, authScheme, requestPath, maxTokensField, embeddingModel,
+    extraHeaders, connections, unreadConnections, routing, defaultMeta, systemPrompt, extractionGuidance,
   });
 }
 
@@ -1538,20 +1552,36 @@ function trimmed(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
-/** Valid entries only (id, name, provider required); unknown keys inside an entry are kept. */
-function parseAIConnections(raw: unknown): AIConnection[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
+/**
+ * Valid entries (id, name, provider required); unknown keys inside an entry are kept. Entries
+ * that cannot be read are returned in `unread` (objects only, at most 20) so they can be written
+ * back instead of being lost. Entries kept aside earlier are tried again each time.
+ */
+function parseAIConnections(
+  raw: unknown,
+  previouslyUnread: unknown,
+): { connections: AIConnection[] | undefined; unread: Record<string, unknown>[] | undefined } {
+  const list = [
+    ...(Array.isArray(raw) ? raw : []),
+    ...(Array.isArray(previouslyUnread) ? previouslyUnread : []),
+  ];
   const providers: AIProvider[] = ['anthropic', 'openai', 'gemini', 'gateway'];
   const seen = new Set<string>([DEFAULT_CONNECTION_ID]);
   const out: AIConnection[] = [];
-  for (const item of raw) {
-    if (out.length >= MAX_AI_CONNECTIONS) break;
-    if (!item || typeof item !== 'object') continue;
+  const unread: Record<string, unknown>[] = [];
+  const setAside = (o: Record<string, unknown>) => {
+    if (unread.length < MAX_AI_CONNECTIONS) unread.push(o);
+  };
+  for (const item of list) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const o = item as Record<string, unknown>;
     const id = trimmed(o.id);
     const name = trimmed(o.name);
     const provider = providers.find((p) => p === o.provider);
-    if (!id || !name || !provider || seen.has(id)) continue;
+    if (out.length >= MAX_AI_CONNECTIONS || !id || !name || !provider || seen.has(id)) {
+      setAside(o);
+      continue;
+    }
     seen.add(id);
     const parsed: AIConnection = {
       id,
@@ -1567,13 +1597,15 @@ function parseAIConnections(raw: unknown): AIConnection[] | undefined {
       maxTokensField:
         o.maxTokensField === 'max_tokens' || o.maxTokensField === 'max_completion_tokens' ? o.maxTokensField : undefined,
       extraHeaders: parseGatewayHeaders(o.extraHeaders),
+      embeddingModel: trimmed(o.embeddingModel),
       capabilities: parseCapabilities(o.capabilities),
       probedAt: trimmed(o.probedAt),
       allowPeopleData: typeof o.allowPeopleData === 'boolean' ? o.allowPeopleData : undefined,
+      jsonOverride: o.jsonOverride === true ? true : undefined,
     };
     out.push(withExtras(o, parsed));
   }
-  return out.length ? out : undefined;
+  return { connections: out.length ? out : undefined, unread: unread.length ? unread : undefined };
 }
 
 function parseAIRouting(raw: unknown): AIRouting | undefined {
@@ -1606,6 +1638,7 @@ function parseAIDefaultMeta(raw: unknown): AIDefaultMeta | undefined {
   const probedAt = trimmed(o.probedAt);
   if (probedAt) meta.probedAt = probedAt;
   if (typeof o.allowPeopleData === 'boolean') meta.allowPeopleData = o.allowPeopleData;
+  if (o.jsonOverride === true) meta.jsonOverride = true;
   return Object.keys(meta).length ? meta : undefined;
 }
 

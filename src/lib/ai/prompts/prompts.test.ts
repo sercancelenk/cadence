@@ -180,6 +180,17 @@ describe('extractTask', () => {
       expect(extractTask.parse('[]')).toEqual({ ok: true, value: [] });
     });
 
+    it('bounds notes and list, and keeps a title on one line', () => {
+      const r = extractTask.parse(
+        JSON.stringify({ tasks: [{ title: 'Send\nthe  brief\r\nnow', notes: 'n'.repeat(5000), list: 'L'.repeat(500) }] }),
+      );
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.value[0]!.title).toBe('Send the brief now');
+      expect(Array.from(r.value[0]!.notes ?? '').length).toBe(160);
+      expect(Array.from(r.value[0]!.list ?? '').length).toBe(80);
+    });
+
     it('keeps due only as YYYY-MM-DD and ignores unknown priorities', () => {
       const r = extractTask.parse(JSON.stringify({ tasks: [{ title: 'a', due: 'next Friday', priority: 'asap' }, { title: 'b', due: '2026-01-02' }] }));
       expect(r).toEqual({ ok: true, value: [{ title: 'a' }, { title: 'b', due: '2026-01-02' }] });

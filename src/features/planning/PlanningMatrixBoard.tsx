@@ -1,4 +1,7 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { IcSparkles } from '../../components/icons';
+import { PATH_SETTINGS } from '../../lib/routes';
 import type { TodoGroup, TodoItem, TodoStatus } from '../../model';
 import {
   PLANNING_FOCUS_MAX,
@@ -20,6 +23,10 @@ export type PlanningMatrixBoardProps = {
   onToggleComplete: (id: string) => void;
   onStatusChange: (id: string, status: TodoStatus) => void;
   onPreview: (id: string) => void;
+  /** Set when AI is available: shows "Classify with AI" (disabled while nothing is unsorted). */
+  onClassifyWithAi?: () => void;
+  /** AI is switched on but no connection is set up yet: shows a link to the AI settings instead. */
+  aiNeedsSetup?: boolean;
 };
 
 export function PlanningMatrixBoard({
@@ -32,6 +39,8 @@ export function PlanningMatrixBoard({
   onToggleComplete,
   onStatusChange,
   onPreview,
+  onClassifyWithAi,
+  aiNeedsSetup = false,
 }: PlanningMatrixBoardProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
@@ -55,6 +64,28 @@ export function PlanningMatrixBoard({
           {hubItems.length}/{PLANNING_HUB_MAX_ITEMS} in hub · drag or tap “Move” to classify · today
           focus up to {PLANNING_FOCUS_MAX}
         </p>
+        {!onClassifyWithAi && aiNeedsSetup ? (
+          <Link to={`${PATH_SETTINGS}#ai`} className="btn btn--ghost planning-matrix__ai" title="Connect an AI provider to sort tasks with AI">
+            <IcSparkles size={16} /> Set up AI
+          </Link>
+        ) : null}
+        {onClassifyWithAi ? (
+          <button
+            type="button"
+            className="btn btn--ghost planning-matrix__ai"
+            onClick={onClassifyWithAi}
+            disabled={byQuadrant.unsorted.length === 0}
+            title={
+              hubItems.length === 0
+                ? 'Add tasks to the hub first, then AI can sort them'
+                : byQuadrant.unsorted.length === 0
+                  ? 'Every task is already sorted'
+                  : 'Let AI suggest importance and urgency for the unsorted tasks'
+            }
+          >
+            <IcSparkles size={16} /> Classify with AI
+          </button>
+        ) : null}
       </div>
       <div className="planning-matrix__grid">
         {PLANNING_QUADRANT_META.map((meta) => (

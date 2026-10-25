@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { IcChevronDown, IcMoreVertical, IcSearch } from '../../components/icons';
 import { formatShort } from '../../lib/datetime';
 import {
@@ -33,6 +34,23 @@ export type UtilitySavedDocsPanelProps = {
   onDelete: (id: string) => void;
 };
 
+/** Two items plus padding; used only to decide whether the menu fits below the button. */
+const MENU_HEIGHT = 92;
+const MENU_GAP = 2;
+
+/**
+ * The menu is drawn in the page body at a fixed position next to its button. Inside the scrolling
+ * list it was clipped by the list edge and covered by the header above it, so Delete could not be reached.
+ */
+function menuPlacement(button: HTMLElement): CSSProperties {
+  const r = button.getBoundingClientRect();
+  const right = Math.max(8, window.innerWidth - r.right);
+  const fitsBelow = window.innerHeight - r.bottom >= MENU_HEIGHT + 8;
+  return fitsBelow
+    ? { position: 'fixed', right, top: r.bottom + MENU_GAP }
+    : { position: 'fixed', right, bottom: window.innerHeight - r.top + MENU_GAP };
+}
+
 function RowMenu({
   title,
   onRename,
@@ -42,64 +60,98 @@ function RowMenu({
   onRename: () => void;
   onDelete: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [style, setStyle] = useState<CSSProperties | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const open = style !== null;
+
+  // Opening moves focus to the first item, so the keyboard can reach Rename and Delete.
+  useEffect(() => {
+    if (open) menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
+    const close = () => setStyle(null);
     const onPointerDown = (e: PointerEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!btnRef.current?.contains(t) && !menuRef.current?.contains(t)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key !== 'Escape') return;
+      close();
+      btnRef.current?.focus();
     };
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKey);
+    // A fixed menu would drift away from its row, so any scroll or resize just closes it.
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
     return () => {
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
     };
   }, [open]);
 
+  const choose = (action: () => void) => () => {
+    setStyle(null);
+    btnRef.current?.focus();
+    action();
+  };
+
+  /** Arrow keys, Home and End cycle through the items; Tab leaves the menu and closes it. */
+  const onMenuKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Tab') {
+      setStyle(null);
+      return;
+    }
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    if (items.length === 0) return;
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    let next: number | null = null;
+    if (e.key === 'ArrowDown') next = (at + 1) % items.length;
+    else if (e.key === 'ArrowUp') next = (at - 1 + items.length) % items.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = items.length - 1;
+    if (next === null) return;
+    e.preventDefault();
+    items[next]!.focus();
+  };
+
   return (
-    <div className="utility-saved__menu-wrap" ref={wrapRef}>
+    <div className="utility-saved__menu-wrap">
       <button
+        ref={btnRef}
         type="button"
         className="utility-saved__menu-btn"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Actions for ${title}`}
         title="More actions"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setStyle(open || !btnRef.current ? null : menuPlacement(btnRef.current))}
       >
         <IcMoreVertical size={16} />
       </button>
-      {open ? (
-        <div className="utility-saved__menu" role="menu">
-          <button
-            type="button"
-            role="menuitem"
-            className="utility-saved__menu-item"
-            onClick={() => {
-              setOpen(false);
-              onRename();
-            }}
-          >
-            Rename
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="utility-saved__menu-item utility-saved__menu-item--danger"
-            onClick={() => {
-              setOpen(false);
-              onDelete();
-            }}
-          >
-            Delete
-          </button>
-        </div>
-      ) : null}
+      {open
+        ? createPortal(
+            <div className="utility-saved__menu" role="menu" ref={menuRef} style={style} onKeyDown={onMenuKeyDown}>
+              <button type="button" role="menuitem" className="utility-saved__menu-item" onClick={choose(onRename)}>
+                Rename
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="utility-saved__menu-item utility-saved__menu-item--danger"
+                onClick={choose(onDelete)}
+              >
+                Delete
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

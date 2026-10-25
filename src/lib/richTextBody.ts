@@ -194,8 +194,9 @@ export function appendPlainTextToBodyFields(
     };
   }
 
-  if (current.bodyFormat === 'prosemirror' && current.body?.trim()) {
-    const doc = parseRichDoc(current.body) ?? EMPTY_RICH_DOC;
+  const readable = current.bodyFormat === 'prosemirror' && current.body?.trim() ? parseRichDoc(current.body) : null;
+  if (readable) {
+    const doc = readable;
     const content = [...(doc.content ?? [])];
     if (content.length > 0) {
       content.push({ type: 'horizontalRule' });
@@ -215,11 +216,66 @@ export function appendPlainTextToBodyFields(
 
   const existing = (current.body ?? '').trim();
   const body = existing ? `${existing}\n\n---\n\n${incoming}` : incoming;
+  // A body flagged ProseMirror that cannot be read stays as the text it is; the flag would hide it.
+  const format = current.bodyFormat === 'prosemirror' ? 'markdown' : (current.bodyFormat ?? 'markdown');
   return {
     body,
-    bodyFormat: current.bodyFormat ?? 'markdown',
+    bodyFormat: format,
     bodyPlainText: body,
   };
+}
+
+/**
+ * Append a checklist of steps to a task body without touching what is already there.
+ * ProseMirror bodies (and empty ones) gain a "Steps" label and a task list; Markdown and
+ * plain bodies gain a `- [ ]` list in their own format.
+ */
+export function appendChecklistToBodyFields(
+  current: {
+    body?: string;
+    bodyFormat?: RichTextBodyFormat;
+    bodyPlainText?: string;
+  },
+  steps: string[],
+): RichTextBodyFields {
+  const items = steps.map((s) => s.trim()).filter(Boolean);
+  if (items.length === 0) {
+    return { body: current.body ?? '', bodyFormat: current.bodyFormat, bodyPlainText: current.bodyPlainText };
+  }
+  const existing = (current.body ?? '').trim();
+
+  // A body that holds a ProseMirror document is a document whatever its format flag says (legacy
+  // bodies have no flag), the same detection the readers use. Anything else is kept as text.
+  const asDoc = existing && current.bodyFormat !== 'markdown' ? parseRichDoc(current.body ?? '') : null;
+  if (!existing || asDoc) {
+    const doc = asDoc ?? EMPTY_RICH_DOC;
+    const content = [...(doc.content ?? [])];
+    // A document that only holds an empty paragraph is "empty": the checklist replaces it.
+    const hasContent = content.some((n) => n.type !== 'paragraph' || (n.content ?? []).length > 0);
+    const kept = hasContent ? content : [];
+    if (kept.length > 0) {
+      kept.push({ type: 'paragraph', content: [{ type: 'text', text: 'Steps', marks: [{ type: 'bold' }] }] });
+    }
+    kept.push({
+      type: 'taskList',
+      content: items.map((text) => ({
+        type: 'taskItem',
+        attrs: { checked: false },
+        content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+      })),
+    });
+    const nextDoc: RichTextDoc = { type: 'doc', content: kept };
+    return {
+      body: serializeRichDoc(nextDoc),
+      bodyFormat: 'prosemirror',
+      bodyPlainText: extractPlainText(nextDoc) || undefined,
+    };
+  }
+
+  const body = `${existing}\n\n${items.map((s) => `- [ ] ${s}`).join('\n')}`;
+  // A body flagged ProseMirror that cannot be read stays as the text it is; the flag would hide it.
+  const format = current.bodyFormat === 'prosemirror' ? 'markdown' : (current.bodyFormat ?? 'markdown');
+  return { body, bodyFormat: format, bodyPlainText: body };
 }
 
 export function parseBodyFormat(raw: unknown): RichTextBodyFormat | undefined {

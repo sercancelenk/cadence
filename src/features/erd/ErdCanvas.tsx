@@ -48,6 +48,8 @@ const nodeTypes = { erdTable: ErdTableNodeView };
 export type ErdCanvasHandle = {
   getDocument: () => ErdDocument;
   loadDocument: (doc: ErdDocument) => void;
+  /** Shows a document the user asked for (for example an AI suggestion they accepted) and marks the canvas as edited. */
+  applyDocument: (doc: ErdDocument) => void;
   newBlank: () => void;
 };
 
@@ -184,6 +186,10 @@ const ErdCanvasInner = forwardRef<ErdCanvasHandle, ErdCanvasProps>(function ErdC
     () => ({
       getDocument: () => flowToDoc(getNodes(), getEdges()),
       loadDocument: (doc) => applyDoc(doc),
+      applyDocument: (doc) => {
+        applyDoc(doc);
+        onDirtyRef.current?.();
+      },
       newBlank: () => applyDoc(emptyErdDocument()),
     }),
     [applyDoc, getNodes, getEdges],

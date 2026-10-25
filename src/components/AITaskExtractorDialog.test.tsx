@@ -314,3 +314,55 @@ describe('when it does not work', () => {
     expect(screen.queryByText('Extract tasks from notes')).toBeNull();
   });
 });
+
+describe('a locked note that was unlocked', () => {
+  it('says its text is part of what is sent', async () => {
+    notes = [{ id: 'n1', title: 'Secret', body: '', createdAt: AT, updatedAt: AT, locked: true } as never];
+    mount({ sourceNoteId: 'n1' });
+    expect(screen.getByText(/unlocked this session/i)).toBeTruthy();
+  });
+});
+
+describe('honest results (from the review)', () => {
+  it('does not claim a task was added when saving was blocked', async () => {
+    mount();
+    await run([{ title: 'Send the brief' }, { title: 'Book a table' }]);
+    addTodoItem.mockReturnValueOnce(false);
+    fireEvent.click(within(document.querySelector('.ai-extract-list') as HTMLElement).getAllByRole('button', { name: 'Add' })[0]);
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/could not be saved/i));
+    expect(screen.queryByText('Added')).toBeNull();
+    expect(screen.getByRole('button', { name: /Add all \(2\)/ })).toBeTruthy();
+  });
+
+  it('Add all stops at the first task that could not be saved and marks only the ones that were', async () => {
+    mount();
+    await run([{ title: 'One' }, { title: 'Two' }, { title: 'Three' }]);
+    addTodoItem.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    fireEvent.click(screen.getByRole('button', { name: /Add all \(3\)/ }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/could not be saved/i));
+    expect(addTodoItem).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByText('Added')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Add all \(2\)/ })).toBeTruthy();
+  });
+
+  it('falls back to the first list that is not archived, in the lists\u2019 own order', async () => {
+    groups = [
+      { id: 'old', name: 'Old', sortOrder: 0, createdAt: AT, archived: true },
+      { id: 'work', name: 'Work', sortOrder: 2, createdAt: AT },
+      { id: 'inbox', name: 'Inbox', sortOrder: 1, createdAt: AT },
+    ];
+    mount();
+    await run([{ title: 'x' }]);
+    expect((screen.getByLabelText('Target list') as HTMLSelectElement).value).toBe('inbox');
+  });
+
+  it('a reply cut off at the token limit can be read but not added', async () => {
+    mount();
+    runAiTask.mockResolvedValueOnce(ok([{ title: 'Half a list' }], { stopReason: 'length' }));
+    fireEvent.click(extractBtn());
+    await waitFor(() => expect(screen.getByText(/cut off/i)).toBeTruthy());
+    expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /Add all/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(addTodoItem).not.toHaveBeenCalled();
+  });
+});

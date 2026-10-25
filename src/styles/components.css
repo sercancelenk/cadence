@@ -251,6 +251,19 @@
   box-shadow: none;
 }
 
+.ui-ic--ai {
+  filter: drop-shadow(0 0 2.5px color-mix(in srgb, var(--ai-ic-b) 65%, transparent));
+}
+
+.btn--primary .ui-ic--ai {
+  filter: none;
+}
+
+.btn--primary .ui-ic--ai path {
+  stroke: currentColor;
+  fill: currentColor;
+}
+
 .btn--primary:hover:not(:disabled) {
   border-color: var(--accent);
   background: var(--accent);
@@ -748,4 +761,37 @@
   .ui-tooltip__bubble {
     transition: none;
   }
+}
+
+/* One colour per kind of destination; menu and Home tile icons read it as --tone. */
+[data-tone='amber'] {
+  --tone: var(--tone-amber);
+}
+[data-tone='coral'] {
+  --tone: var(--tone-coral);
+}
+[data-tone='orange'] {
+  --tone: var(--tone-orange);
+}
+[data-tone='green'] {
+  --tone: var(--tone-green);
+}
+[data-tone='blue'] {
+  --tone: var(--tone-blue);
+}
+[data-tone='pink'] {
+  --tone: var(--tone-pink);
+}
+[data-tone='violet'] {
+  --tone: var(--tone-violet);
+}
+[data-tone='teal'] {
+  --tone: var(--tone-teal);
+}
+[data-tone='slate'] {
+  --tone: var(--tone-slate);
+}
+[data-tone='ai'] {
+  /* The sparkles icon draws its own gradient; its tile takes the middle colour. */
+  --tone: var(--ai-ic-b);
 }

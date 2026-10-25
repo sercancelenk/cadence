@@ -14,7 +14,7 @@ const note = (over: Partial<Note> = {}): Note => ({
   ...over,
 });
 
-function renderHeader(selected: Note, extra: { archivedViaList?: boolean } = {}) {
+function renderHeader(selected: Note, extra: { archivedViaList?: boolean; onSaveToFile?: () => void } = {}) {
   const onToggleArchive = vi.fn();
   render(
     <NotesDetailHeader
@@ -56,5 +56,16 @@ describe('NotesDetailHeader archive control', () => {
     const { onToggleArchive } = renderHeader(note({ archived: true }));
     fireEvent.click(screen.getByRole('button', { name: 'Unarchive' }));
     expect(onToggleArchive).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('NotesDetailHeader save to file', () => {
+  it('offers one Save to file button and no file-format dropdown: the extension is typed in the save dialog', () => {
+    const onSaveToFile = vi.fn();
+    renderHeader(note(), { onSaveToFile });
+    expect(screen.queryByLabelText('File format for saving')).toBeNull();
+    expect(document.querySelector('select')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save to file' }));
+    expect(onSaveToFile).toHaveBeenCalledTimes(1);
   });
 });

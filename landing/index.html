@@ -341,7 +341,7 @@
             </p>
             <ul class="checklist">
               <li>Linked to your existing to-do lists</li>
-              <li>Drag between quadrants</li>
+              <li>Drag between quadrants, or let AI suggest them (optional)</li>
               <li>100% local — no sync required to plan</li>
             </ul>
           </div>
@@ -445,7 +445,7 @@
               text helpers, time/cron, codegen, a lite ER diagram, and an
               Excalidraw-style sketch board. Built for the moments between
               tickets — paste a curl, decode a JWT, sketch a box diagram —
-              then leave. Nothing here is written into your workspace file.
+              then leave. Tool inputs are not saved; only what you choose to keep (Document and JSON / YAML tabs, and the diagrams you save to a Library) is stored in your encrypted workspace.
             </p>
             <ul class="checklist">
               <li>Encode · Base64 / URL / JWT (display only, no verify)</li>
@@ -453,7 +453,7 @@
               <li>Text · UUIDs, case convert, live regex tester</li>
               <li>Time · Unix epoch + 5-field cron explainer</li>
               <li>Codegen · JSON → TS / Java / Go · curl → fetch / axios / Python / Java / Spring / Go</li>
-              <li>ERD + Sketch · session-only canvases; export PNG / JSON yourself</li>
+              <li>ERD + Sketch · save named diagrams to a Library (explicit Save), or export PNG / JSON</li>
             </ul>
             <p class="feature__footnote">
               Reload clears tool inputs. That is intentional — your encrypted
@@ -515,6 +515,111 @@ ERD / Sketch → Export PNG or JSON
                 the same conversation, then save the answer to the task.
               </p>
               <p class="ai-card__hint">Plan · Risks · First 15 minutes</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Visualize</h3>
+              <p>
+                Select text and turn it into a Mermaid flowchart, sequence or
+                state diagram. You see the picture first, its syntax is
+                checked before it is offered, and it is inserted as a new
+                block after your selection.
+              </p>
+              <p class="ai-card__hint">Flowchart · Sequence · State</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Challenge my idea</h3>
+              <p>
+                A critical read of a note: assumptions, risks, alternatives and
+                open questions, grounded in what you wrote. Added as a
+                separate block at the end, only when you say so.
+              </p>
+              <p class="ai-card__hint">Never rewrites your note</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Break down a task</h3>
+              <p>
+                Split a task into small steps you can edit, then keep them as a
+                checklist in the task's details or create them as separate
+                tasks in the same list.
+              </p>
+              <p class="ai-card__hint">Checklist or new tasks</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Feedback: SBI, Radical Candor, review</h3>
+              <p>
+                Restate feedback as Situation, Behavior and Impact, as Radical
+                Candor, or as a review draft, using only what you wrote. It is people data, so it only goes to a
+                connection you allowed, and ⌘Z brings your text back.
+              </p>
+              <p class="ai-card__hint">SBI · Radical Candor · Review draft</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Classify the matrix</h3>
+              <p>
+                Suggests whether unsorted tasks are important and urgent on the Planning matrix, reading each task's title, details, due date and the notes it is linked to. Every suggestion comes with a reason; you keep the rows you want, hand an urgent-but-not-important one to a teammate, and one click undoes it.
+              </p>
+              <p class="ai-card__hint">Do first · Schedule · Delegate · Eliminate</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Tidy a document, invent sample data</h3>
+              <p>
+                Turn a rough document into an outline, an RFC, a meeting summary or a table, then draw it as a Mermaid note or a Sketch board. Or generate records shaped like your sample JSON. Everything lands as something new; your original stays.
+              </p>
+              <p class="ai-card__hint">New tab, never a replacement</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Design tables, convert a sketch</h3>
+              <p>
+                Describe tables in words and tick what to add to your ER diagram, or turn a whiteboard sketch into a Mermaid diagram as a new note. Existing work is never changed.
+              </p>
+              <p class="ai-card__hint">Additive only</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Draw from a description</h3>
+              <p>
+                Say what the diagram should show and get a Mermaid note or a Sketch board with boxes and arrows, then ask for changes ("add a cache"). It is added as something new; nothing existing is touched.
+              </p>
+              <p class="ai-card__hint">Mermaid or Sketch · Follow-up changes</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Diagram from a screenshot</h3>
+              <p>
+                Pick or paste a picture and get Mermaid or an HTML mock-up as a new note. You see the picture before it is sent, and HTML is shown in a frame without scripts.
+              </p>
+              <p class="ai-card__hint">Needs an image-capable model</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Weekly digest</h3>
+              <p>
+                A retrospective, or a status update to send upward, written from the titles and counts of your week. It streams in as it is written; locked notes and people records are never read.
+              </p>
+              <p class="ai-card__hint">Retro · Upward</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Prepare a 1:1</h3>
+              <p>
+                Follow-ups, open goals, feedback to give and questions from one person's records, without sending their name. Saved as a note on the person only when you say so.
+              </p>
+              <p class="ai-card__hint">People data, gated</p>
+            </article>
+
+            <article class="ai-card">
+              <h3>Ask your workspace</h3>
+              <p>
+                Ask a question and get an answer that cites your own notes and tasks, each a link. The best matches are found on your computer and only short excerpts are sent.
+              </p>
+              <p class="ai-card__hint">Citations · Optional search by meaning</p>
             </article>
 
             <article class="ai-card">
@@ -600,6 +705,7 @@ ERD / Sketch → Export PNG or JSON
               <ul class="sync-option__list">
                 <li>Version history alongside attachments</li>
                 <li>Same recovery UI as rolling snapshots</li>
+                <li>Your AI keys are never written into an export</li>
                 <li>Ideal for archival / machine migration</li>
               </ul>
               <p class="sync-option__hint">Best for: desktop restore &amp; archives</p>

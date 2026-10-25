@@ -82,9 +82,19 @@ connection** is the default; extra ones are added under **Connections**.
 - **JSON replies**: *Test connection* also checks whether the connection returns reliable JSON.
   Tasks that need JSON (task extraction) are refused on a connection that was tested and found
   unreliable, with the reason and a pointer to Settings; an untested connection may try.
+- **Images and live replies**: *Check images* and *Check live replies* on a connection send one tiny test
+  request each. Diagram from a screenshot is refused on a connection that was not confirmed for images, with a
+  pointer to Settings. Live replies are used by Weekly digest and Ask your workspace; a connection that does not
+  stream still works, the answer just arrives at once. Like the JSON check, a result is stored only if the
+  connection was not edited meanwhile.
+- **Embedding model** (optional, OpenAI and Gemini formats): when set, Ask your workspace re-orders its
+  keyword matches by meaning. It then sends your question and the title and excerpt of up to 24 matches to that
+  connection's embeddings endpoint (`/embeddings` for OpenAI formats, `batchEmbedContents` for Gemini). Nothing is
+  stored; if the request fails, the keyword order is used. Anthropic has no embeddings API.
 - **People data** (1:1 notes, feedback, and Ask AI on a person's own tasks and goals) only goes to a connection you allowed with the *Allow
   people data* switch. A model on this computer (`localhost`, `127.x`, `::1`) is allowed by
-  default; a LAN host, a company gateway and the hosted providers are not. There is no
+  default (if that address is a router that forwards to another provider, switch the permission
+  off for it); a LAN host, a company gateway and the hosted providers are not. There is no
   per-use pop-up. An organization can turn this class off (`features.aiPeople`).
 - Extra connections are stored inside `aiSettings`, so an older build keeps them untouched. When
   no other AI setting exists, Cadence keeps a default API format as a marker so the older version
@@ -94,7 +104,12 @@ connection** is the default; extra ones are added under **Connections**.
 - Permission to receive people data and a JSON check belong to a destination: changing a
   connection's provider or address clears the permission (you are asked again), and changing the
   provider, address, model or API format clears the JSON check.
-- You can keep up to 20 connections.
+- You can keep up to 20 connections. Entries a version cannot read (an unknown provider, a
+  duplicate or reserved id, more than 20) are kept aside as they are (`unreadConnections`) and
+  written back, so opening the workspace in this version never costs a newer one its connections.
+- When the JSON check finds a connection unreliable, tasks that need structured replies are
+  blocked on it. *Use for JSON tasks anyway* lets you override that for a connection you trust;
+  the override is cleared if its provider, address, model or API format changes.
 
 ## Prompts
 
@@ -111,17 +126,47 @@ Ask AI and Extract tasks, unless the organization turned focus notes off (`featu
 
 ## Where AI starts
 
-AI is a verb, not a place. It is reached from the slash menu in a note (`/extract`), the ✨ menu
-that appears with a text selection, ⌘K ("AI: Extract tasks from notes"), and the *Ask AI* button on
-a task. None of these appear unless AI is configured and allowed.
+AI is a verb, not a place. It is reached from the slash menu in a note, the ✨ menu that appears
+with a text selection, ⌘K, and the buttons on a task. None of these appear unless AI is configured
+and allowed. Every result is shown first; nothing is written until you press the button, and a
+change to a note or feedback text is one undo step (⌘Z).
+
+| Feature | Start it from | Reads | Writes (only when you press the button) |
+|---|---|---|---|
+| Extract tasks | `/extract`, ✨ menu, ⌘K | the selection or the note | new tasks you pick |
+| Ask AI | a task's ✨ button | the task and its context | the answer, appended to the task's details |
+| Visualize | `/visualize`, ✨ menu | the selection or the note | a new Mermaid diagram block after the selection (its syntax is checked with Mermaid first, with one repair attempt) |
+| Challenge my idea | `/challenge`, ✨ menu | the selection or the note | a separate block at the end of the note: assumptions, risks, alternatives, open questions |
+| Break down | the list button on a task | the task and its context | a checklist in the task's details, or new tasks in the same list |
+| Rewrite as SBI (also Radical Candor, Review draft) | ✨ menu on selected text in a *feedback* item (a person's page); pick the framework in the dialog | the selected feedback text and its type | replaces the selection with Situation / Behavior / Impact lines, or Care / Challenge lines, or a Summary / Strengths / Growth draft, if the text is unchanged |
+| Classify with AI | *Classify with AI* on the Planning matrix (always shown when AI is on; disabled while nothing is unsorted) | titles, details (first 500 characters), due dates (with the days left or overdue), priority, list names and, for each task, the title and first 400 characters of up to 2 linked notes (locked and archived notes are never read), for up to 40 unsorted tasks; names of people are never sent | the important / urgent settings of the rows you keep ticked, with an **Undo** button. For a task that lands in Delegate you can pick a team member and *Add as a task for…*: one new task with the title only is added to that person; the original task is untouched |
+| Structure this document | *Structure with AI* on Utilities → Document; choose Outline, RFC, Meeting summary or Table | the document text | a structured copy as a **new tab**; the original is untouched. Afterwards *Draw as Mermaid* (a new note) and *Draw as Sketch* (a new board in Utilities → Sketch) turn the structured copy into a diagram; they send that copy, not the original |
+| Mock data | *Mock data with AI* on Utilities → JSON / YAML (a JSON tab with content) | your sample records | up to 50 invented records with the same keys, as a **new JSON tab** |
+| Design with AI | *Design with AI* on Utilities → ER diagram | your request and the tables on the canvas | only **additions** (new tables, columns, relations) you tick; nothing existing changes |
+| Draw from a description | ⌘K, the **AI** group in the left menu, *Draw with AI* on Utilities → Sketch, a card on Utilities → Tools | the description you type; for a change, also the current diagram (as Mermaid text, or as numbered boxes and arrows) and your change request | a Mermaid note, or a Sketch board (simple boxes and arrows), added as **new**; nothing existing is touched |
+| Convert to Mermaid | *Convert to Mermaid* on Utilities → Sketch | the labels of the sketch's shapes and the arrows between them (read on your computer; the drawing itself is not sent) | a new note with a Mermaid block; the sketch is untouched |
+| Diagram from a screenshot | ⌘K, Utilities → Tools | one picture you choose or paste, and an optional note | a new note with a Mermaid or HTML code block (HTML is cleaned and previewed in a frame without scripts) |
+| Weekly digest | ⌘K, the left menu, a tile on Home (it suggests itself at the end of the week), *Prepare an update* on My leader and Skip-level pages | counts and titles of tasks done, created, in progress and overdue, and titles of notes edited in the last 7, 14 or 30 days; the text of a note only if you tick it (up to 5) | a new note with the summary (retrospective or status update) |
+| Prepare a 1:1 | *Prepare with AI* in a person's 1:1 area | that person's open tasks and goals and what they touched in the last 4, 8 or 12 weeks; never their name | one new note item on the person (follow-ups, open goals, feedback to give, questions) |
+| Ask your workspace | ⌘K | the best-matching excerpts of your notes and tasks (found on your computer), plus your question | nothing; the answer cites its sources as [1], [2] with links |
+
+Rewrite as SBI and Prepare a 1:1 work on people data, so they only use a connection you allowed for
+it and are off when your organization turns `features.aiPeople` off. Ask your workspace includes
+people records only if you tick *Include people records*, which makes that request people data. If a note changed while a dialog was open, a
+diagram or challenge is added at the end of the note instead, and an SBI rewrite replaces nothing
+(you can copy it).
 
 ## What is sent
 
-The text you ask about (a task, or the note you extract tasks from) and the conversation so far.
+The text you ask about (a task, the selection or note you work on) and the conversation so far.
 Alongside it Cadence adds context so answers fit your data: today's date and your time zone
-(Ask AI and Extract tasks), the names of your lists that are not archived (Extract tasks), and the
-task's list name, due date, priority and linked note title (Ask AI). *What was sent* in the dialog
-shows exactly what left the app. Notes that are locked and not unlocked are never sent. The API
+(Ask AI, Extract tasks and Break down), the names of your lists that are not archived (Extract
+tasks), and the task's list name, due date, priority and linked note title (Ask AI and Break down).
+Rewrite as SBI (and its Radical Candor and Review draft options) sends only the selected text and the feedback type, never a person's name. Prepare a 1:1 sends
+that person's items without their name. Weekly digest sends counts and titles (and note text only when you tick it);
+people records and locked notes are never read. Ask your workspace sends your question and up to 8 excerpts of at
+most 600 characters; locked and archived notes are never read. Convert to Mermaid sends labels and arrows, not the
+drawing. *What was sent* in the dialog shows exactly what left the app. Notes that are locked and not unlocked are never sent. The API
 key is sent only to the address you configured.
 
 ## Structured output (JSON)
@@ -143,12 +188,15 @@ against the task's schema and discards anything that does not fit.
 
 ## Limits
 
-- Text in, text out. No images, files, tool calls or streaming.
+- Text in, text out, plus one picture for Diagram from a screenshot (PNG, JPEG, WebP or GIF, up to 5 MB, and 5 MB in total per request). No files or tool calls. Streaming is used only by Weekly digest and Ask your workspace.
 - Replies are capped at 4,000 tokens; the system prompt at 4,000 characters; the task extractor reads at most 16,000 characters of notes.
 - A request times out after 120 seconds (desktop and web). On desktop a reply over about 4 MB is refused.
 - Redirects are refused on both: the address must be the final one.
 - Plain `http://` works only for `localhost` (and `*.localhost`), `127.x`, `10.x`, `172.16-31.x`, `192.168.x`, `*.local` and `::1`.
-- A header Cadence sets itself (`Host`, `Content-Type`, `Content-Length`, `Cookie`, …) cannot be overridden; at most 20 headers of up to 4,096 characters.
+- A header Cadence sets itself (`Host`, `Content-Type`, `Content-Length`, `Cookie`, …) cannot be overridden; at most 20 headers of up to 4,096 characters, values in plain visible ASCII.
+- Weekly digest lists at most 60 done, 40 created, 30 in-progress, 30 overdue tasks and 30 notes; Prepare a 1:1 at most 40 items of 300 characters; Convert to Mermaid at most 40 shapes; Mock data at most 50 records; Classify with AI at most 40 tasks per run.
+- Visualize checks the diagram with Mermaid's parser and may ask once more, so one Generate can make up to four requests.
+- On desktop a request body over 8 million characters is refused, a request id cannot be reused while it is running, and running requests are cancelled when the window closes. The web build also stops reading a reply over 4 million characters.
 
 ## Organization policy
 
@@ -159,12 +207,19 @@ app's main process for every request, and `features.aiPeople` for every request 
 people data (the main process sees that label, not the text itself). `features.aiFocusNote` is
 applied by the app. The web build enforces none of them in a main process.
 
+Boundary to know: the renderer asks the main process to make the request and states the address, so
+these checks protect against a mistake or a restricted policy, not against code that already runs
+inside the app window. Pin `features.aiAllowedHosts` to your gateway if that matters to you.
+
 ## Where settings are stored
 
 Provider, key, model, address, headers and path are part of your workspace data:
 inside the encrypted data file on desktop, in this browser's `localStorage`
 (not encrypted) in the web app. Header values may contain tokens; treat them
-like the API key.
+like the API key. JSON, portable ZIP and full backup folders leave out API keys and extra headers (restoring
+keeps the ones already on this device, only for the same provider and address). The Gemini preset
+sends the key in the request address, as Google's reference examples do; a proxy that inspects
+HTTPS can see it there. To send it as a header instead, use *Custom gateway* with the Gemini format.
 
 ## Diagnostics
 

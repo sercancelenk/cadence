@@ -48,6 +48,9 @@ import {
   setActiveStructuredTab as setActiveStructuredTabFn,
   patchStructuredTab as patchStructuredTabFn,
   addDocumentTab as addDocumentTabFn,
+  addDocumentTabWithContent as addDocumentTabWithContentFn,
+  addStructuredTabWithContent as addStructuredTabWithContentFn,
+  createNoteWithContent as createNoteWithContentFn,
   closeDocumentTab as closeDocumentTabFn,
   renameDocumentTab as renameDocumentTabFn,
   setActiveDocumentTab as setActiveDocumentTabFn,
@@ -86,6 +89,7 @@ import {
   upsertAIConnection as upsertAIConnectionFn,
   patchAIConnection as patchAIConnectionFn,
   removeAIConnection as removeAIConnectionFn,
+  setAIRoute as setAIRouteFn,
   type AISettingsPatch,
   updateTodoItem as updateTodoItemFn,
   updateUserProfile as updateUserProfileFn,
@@ -236,6 +240,7 @@ type Api = {
   upsertAIConnection: (connection: AIConnection) => void;
   patchAIConnection: (id: string, patch: Parameters<typeof patchAIConnectionFn>[2]) => void;
   removeAIConnection: (id: string) => void;
+  setAIRoute: (key: 'content' | 'people', id: string) => void;
   addItem: (
     personId: string,
     kind: ItemKind,
@@ -256,7 +261,7 @@ type Api = {
         | 'feedbackKind'
       >
     >,
-  ) => void;
+  ) => boolean;
   updateItem: (
     id: string,
     patch: Partial<
@@ -277,7 +282,7 @@ type Api = {
         | 'feedbackKind'
       >
     >,
-  ) => void;
+  ) => boolean;
   toggleItemDone: (id: string) => void;
   removeItem: (id: string) => void;
   addTodoGroup: (name: string) => string;
@@ -301,7 +306,7 @@ type Api = {
       bodyPlainText?: string;
       sourceNoteId?: string;
     },
-  ) => void;
+  ) => boolean;
   updateTodoItem: (
     id: string,
     patch: Partial<
@@ -323,7 +328,7 @@ type Api = {
         | 'archived'
       >
     >,
-  ) => void;
+  ) => boolean;
   reorderTodoItem: (itemId: string, targetGroupId: string, beforeItemId: string | null) => void;
   updateTodoGroupPriority: (groupId: string, priority: Priority | undefined) => void;
   toggleTodoItem: (id: string) => void;
@@ -371,6 +376,12 @@ type Api = {
   ) => void;
   /** Create a new empty Document tab and activate it; returns its id. */
   addDocumentTab: () => string;
+  /** A new active Document tab that already holds content; the id, or null when saving is blocked. */
+  addDocumentTabWithContent: (input: { title: string; body: string; bodyFormat?: 'markdown' | 'prosemirror'; bodyPlainText?: string }) => string | null;
+  /** A new active JSON / YAML tab that already holds content; the id, or null when saving is blocked. */
+  addStructuredTabWithContent: (input: { title: string; content: string; language: 'json' | 'yaml' }) => string | null;
+  /** A new note with its title and body; the id, or null when saving is blocked. */
+  createNoteWithContent: (input: { title: string; body: string; bodyFormat?: 'markdown' | 'prosemirror'; bodyPlainText?: string; groupId?: string }) => string | null;
   closeDocumentTab: (id: string) => void;
   renameDocumentTab: (id: string, title: string) => void;
   setActiveDocumentTab: (id: string) => void;
@@ -1460,6 +1471,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       upsertAIConnection: (connection) => update((x) => upsertAIConnectionFn(x, connection)),
       patchAIConnection: (id, patch) => update((x) => patchAIConnectionFn(x, id, patch)),
       removeAIConnection: (id) => update((x) => removeAIConnectionFn(x, id)),
+      setAIRoute: (key, id) => update((x) => setAIRouteFn(x, key, id)),
       addItem: (personId, kind, fields) => update((x) => addItemFn(x, personId, kind, fields ?? {})),
       updateItem: (id, patch) => update((x) => updateItemFn(x, id, patch)),
       toggleItemDone: (id) => update((x) => toggleItemDoneFn(x, id)),
@@ -1522,6 +1534,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         const id = uuid();
         update((x) => addDocumentTabFn(x, id));
         return id;
+      },
+      addDocumentTabWithContent: (input) => {
+        const id = uuid();
+        return update((x) => addDocumentTabWithContentFn(x, id, input)) ? id : null;
+      },
+      addStructuredTabWithContent: (input) => {
+        const id = uuid();
+        return update((x) => addStructuredTabWithContentFn(x, id, input)) ? id : null;
+      },
+      createNoteWithContent: (input) => {
+        const id = uuid();
+        return update((x) => createNoteWithContentFn(x, id, input)) ? id : null;
       },
       closeDocumentTab: (id) => update((x) => closeDocumentTabFn(x, id)),
       renameDocumentTab: (id, title) => update((x) => renameDocumentTabFn(x, id, title)),
@@ -1640,6 +1664,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       patchAIConnection: (id: string, patch: Parameters<Api['patchAIConnection']>[1]) =>
         actionsBridgeRef.current.patchAIConnection(id, patch),
       removeAIConnection: (id: string) => actionsBridgeRef.current.removeAIConnection(id),
+      setAIRoute: (key: 'content' | 'people', id: string) => actionsBridgeRef.current.setAIRoute(key, id),
       addItem: (
         personId: string,
         kind: Parameters<Api['addItem']>[1],
@@ -1696,6 +1721,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       patchUtilityStructuredText: (patch: Parameters<Api['patchUtilityStructuredText']>[0]) =>
         actionsBridgeRef.current.patchUtilityStructuredText(patch),
       addDocumentTab: () => actionsBridgeRef.current.addDocumentTab(),
+      addDocumentTabWithContent: (input: Parameters<Api['addDocumentTabWithContent']>[0]) =>
+        actionsBridgeRef.current.addDocumentTabWithContent(input),
+      addStructuredTabWithContent: (input: Parameters<Api['addStructuredTabWithContent']>[0]) =>
+        actionsBridgeRef.current.addStructuredTabWithContent(input),
+      createNoteWithContent: (input: Parameters<Api['createNoteWithContent']>[0]) =>
+        actionsBridgeRef.current.createNoteWithContent(input),
       closeDocumentTab: (id: string) => actionsBridgeRef.current.closeDocumentTab(id),
       renameDocumentTab: (id: string, title: string) =>
         actionsBridgeRef.current.renameDocumentTab(id, title),

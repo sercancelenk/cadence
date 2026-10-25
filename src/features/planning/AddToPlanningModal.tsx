@@ -7,14 +7,12 @@ import {
   planningHubSlotsRemaining,
   sortPlanningCandidates,
 } from '../../lib/planningMatrix';
-import { formatDateShort } from '../../lib/datetime';
+import { plainTextFromBodyFields } from '../../lib/richTextBody';
 import { PATH_TODOS } from '../../lib/routes';
-import type { TodoGroup, TodoItem } from '../../model';
-import { PlanningTaskMeta } from './PlanningTaskMeta';
+import type { TodoItem } from '../../model';
 
 export type AddToPlanningModalProps = {
   candidates: TodoItem[];
-  groups: TodoGroup[];
   hubCount: number;
   atCapacity: boolean;
   onAddMany: (ids: string[]) => void;
@@ -23,7 +21,6 @@ export type AddToPlanningModalProps = {
 
 export function AddToPlanningModal({
   candidates,
-  groups,
   hubCount,
   atCapacity,
   onAddMany,
@@ -32,7 +29,6 @@ export function AddToPlanningModal({
   const [query, setQuery] = useState('');
   const [dueSoonOnly, setDueSoonOnly] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
   const slotsLeft = planningHubSlotsRemaining(hubCount);
 
   const filtered = useMemo(() => {
@@ -40,12 +36,11 @@ export function AddToPlanningModal({
     const q = query.trim().toLowerCase();
     const searched = !q
       ? base
-      : base.filter((item) => {
-          const list = groupById.get(item.groupId)?.name.toLowerCase() ?? '';
-          return item.title.toLowerCase().includes(q) || list.includes(q);
-        });
+      : base.filter(
+          (item) => item.title.toLowerCase().includes(q) || plainTextFromBodyFields(item).toLowerCase().includes(q),
+        );
     return sortPlanningCandidates(searched);
-  }, [candidates, dueSoonOnly, groupById, query]);
+  }, [candidates, dueSoonOnly, query]);
 
   const allVisibleSelected =
     filtered.length > 0 && filtered.every((item) => selected.has(item.id));
@@ -119,7 +114,7 @@ export function AddToPlanningModal({
         <IcSearch size={16} aria-hidden />
         <input
           type="search"
-          placeholder="Search tasks or lists…"
+          placeholder="Search title or details…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           autoFocus
@@ -172,7 +167,6 @@ export function AddToPlanningModal({
         <ul className="planning-add-dialog__list">
           {filtered.map((item) => {
             const checked = selected.has(item.id);
-            const listName = groupById.get(item.groupId)?.name ?? 'List';
             return (
               <li key={item.id}>
                 <label
@@ -186,14 +180,7 @@ export function AddToPlanningModal({
                     disabled={atCapacity}
                     onChange={() => toggle(item.id)}
                   />
-                  <span className="planning-add-dialog__row-main">
-                    <span className="planning-add-dialog__title">{item.title}</span>
-                    <span className="planning-add-dialog__list muted small">
-                      {listName}
-                      {item.dueAt ? ` · ${formatDateShort(item.dueAt)}` : ''}
-                    </span>
-                    <PlanningTaskMeta item={item} />
-                  </span>
+                  <span className="planning-add-dialog__title">{item.title}</span>
                 </label>
               </li>
             );

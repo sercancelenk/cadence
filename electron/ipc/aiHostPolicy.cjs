@@ -102,7 +102,22 @@ function resolveAiSubFlag(explicit, aiAllowed) {
   return typeof explicit === 'boolean' ? explicit : aiAllowed;
 }
 
+/**
+ * The checks every AI request from the renderer passes before it is made: AI allowed, host
+ * allowed, and the data class declared and allowed. `null` means go ahead; anything else is
+ * the answer to return to the renderer.
+ */
+function guardAiGatewayRequest(req, { isFeatureAllowed, allowedHosts }) {
+  const { requirePolicyFeature, requireDataClassPolicy } = require('./policyGuard.cjs');
+  return (
+    requirePolicyFeature('ai', isFeatureAllowed) ||
+    requireAiHost(req?.baseUrl, allowedHosts) ||
+    requireDataClassPolicy(req?.dataClass, isFeatureAllowed)
+  );
+}
+
 module.exports = {
+  guardAiGatewayRequest,
   parseAllowedHosts,
   isAiHostAllowed,
   requireAiHost,

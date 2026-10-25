@@ -39,6 +39,8 @@ type ToastInput = {
   description?: string;
   /** Milliseconds before auto-dismiss. Pass `0` to make the toast sticky. Default 4500. */
   durationMs?: number;
+  /** One optional button (for example Undo). Pressing it runs `onClick` and dismisses the toast. */
+  action?: { label: string; onClick: () => void };
 };
 
 type Toast = ToastInput & {
@@ -72,6 +74,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // Track active dismiss timers so we can cancel them on manual dismiss
   // (prevents leaked timers from setting state on an unmounted toast).
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const durationsRef = useRef<Map<string, number>>(new Map());
 
   const dismiss = useCallback((id: string) => {
     const t = timersRef.current.get(id);
@@ -79,6 +82,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       clearTimeout(t);
       timersRef.current.delete(id);
     }
+    durationsRef.current.delete(id);
     setToasts((prev) => prev.filter((x) => x.id !== id));
   }, []);
 
@@ -98,11 +102,30 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         return next.length > MAX_TOASTS ? next.slice(next.length - MAX_TOASTS) : next;
       });
       const ms = input.durationMs ?? DEFAULT_DURATION_MS;
+      durationsRef.current.set(id, ms);
       if (ms > 0) {
         const timer = setTimeout(() => dismiss(id), ms);
         timersRef.current.set(id, timer);
       }
       return id;
+    },
+    [dismiss],
+  );
+
+  // A toast with a button (Undo) waits while the pointer or keyboard focus is on it, then counts
+  // down again, so it can be reached by someone who is slower than the timer.
+  const pause = useCallback((id: string) => {
+    const timer = timersRef.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      timersRef.current.delete(id);
+    }
+  }, []);
+  const resume = useCallback(
+    (id: string) => {
+      const ms = durationsRef.current.get(id) ?? 0;
+      if (ms <= 0 || timersRef.current.has(id)) return;
+      timersRef.current.set(id, setTimeout(() => dismiss(id), ms));
     },
     [dismiss],
   );
@@ -134,7 +157,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={value}>
       {children}
-      <ToastContainer toasts={toasts} dismiss={dismiss} />
+      <ToastContainer toasts={toasts} dismiss={dismiss} pause={pause} resume={resume} />
     </ToastCtx.Provider>
   );
 }
@@ -145,12 +168,22 @@ export function useToast(): Ctx {
   return ctx;
 }
 
-function ToastContainer({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: string) => void }) {
-  if (toasts.length === 0) return null;
+function ToastContainer({
+  toasts,
+  dismiss,
+  pause,
+  resume,
+}: {
+  toasts: Toast[];
+  dismiss: (id: string) => void;
+  pause: (id: string) => void;
+  resume: (id: string) => void;
+}) {
+  // Always mounted: a live region that appears together with its first message is often not announced.
   return (
     <div className="toast-stack" role="region" aria-label="Notifications" aria-live="polite">
       {toasts.map((t) => (
-        <ToastItem key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
+        <ToastItem key={t.id} toast={t} onDismiss={() => dismiss(t.id)} onPause={() => pause(t.id)} onResume={() => resume(t.id)} />
       ))}
     </div>
   );
@@ -179,7 +212,17 @@ function IcInfo({ size = 18 }: { size?: number }) {
   );
 }
 
-function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
+function ToastItem({
+  toast,
+  onDismiss,
+  onPause,
+  onResume,
+}: {
+  toast: Toast;
+  onDismiss: () => void;
+  onPause: () => void;
+  onResume: () => void;
+}) {
   const icon = (() => {
     switch (toast.kind) {
       case 'success':
@@ -192,13 +235,30 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
     }
   })();
   return (
-    <div className={`toast toast--${toast.kind}`} role="status">
+    <div
+      className={`toast toast--${toast.kind}`}
+      {...(toast.action
+        ? { onMouseEnter: onPause, onMouseLeave: onResume, onFocus: onPause, onBlur: onResume }
+        : {})}
+    >
       <span className="toast__icon" aria-hidden>
         {icon}
       </span>
       <div className="toast__body">
         <div className="toast__title">{toast.title}</div>
         {toast.description ? <div className="toast__desc">{toast.description}</div> : null}
+        {toast.action ? (
+          <button
+            type="button"
+            className="toast__action"
+            onClick={() => {
+              toast.action?.onClick();
+              onDismiss();
+            }}
+          >
+            {toast.action.label}
+          </button>
+        ) : null}
       </div>
       <button
         type="button"

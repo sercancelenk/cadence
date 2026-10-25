@@ -143,3 +143,60 @@ describe('AiResultPanel', () => {
     expect(h.onClose).toHaveBeenCalled();
   });
 });
+
+describe('footer', () => {
+  it('names the connection and, when known, the model', () => {
+    setup({ modelLabel: 'team/model-x' });
+    expect(screen.getByText('via Company gateway · team/model-x')).toBeTruthy();
+  });
+
+  it('names just the connection when the model is not known', () => {
+    setup();
+    expect(screen.getByText('via Company gateway')).toBeTruthy();
+  });
+});
+
+describe('AiResultPanel live text', () => {
+  it('shows text as it arrives while running, in place of the placeholder lines', () => {
+    setup({ status: 'running', streamText: '## Partial text' });
+    expect(screen.getByText('## Partial text')).toBeTruthy();
+    expect(document.querySelector('.ai-skeleton')).toBeNull();
+  });
+
+  it('keeps the placeholder lines until the first text arrives', () => {
+    setup({ status: 'running', streamText: '' });
+    expect(document.querySelector('.ai-skeleton')).not.toBeNull();
+  });
+
+  it('a click on the dimmed backdrop does not close the panel, so edited rows are not lost', () => {
+    const h = setup();
+    const backdrop = document.querySelector('.app-modal-backdrop, .modal-backdrop, [class*="backdrop"]') as HTMLElement | null;
+    expect(backdrop).not.toBeNull();
+    fireEvent.click(backdrop!);
+    expect(h.onClose).not.toHaveBeenCalled();
+  });
+
+  it('does not put the streaming text in a live region, so it is not re-read on every update', () => {
+    setup({ status: 'running', streamText: '## Partial text' });
+    const pre = screen.getByText('## Partial text');
+    expect(pre.closest('[aria-live], [role="status"], [role="alert"]')).toBeNull();
+    expect(screen.getByRole('status').textContent).toMatch(/working/i);
+  });
+
+  it('announces once when the result is ready, through the same live region', () => {
+    const base = { open: true, title: 'T', chips: [] as AiContextChip[], onClose: () => {} };
+    const { rerender } = render(<AiResultPanel {...base} status="running" />);
+    const region = screen.getByRole('status');
+    rerender(<AiResultPanel {...base} status="ready"><p>BODY</p></AiResultPanel>);
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region.textContent).toMatch(/ready/i);
+  });
+
+  it('keeps focus inside the panel when the focused Cancel button is replaced by the result actions', () => {
+    const base = { open: true, title: 'T', chips: [] as AiContextChip[], onClose: () => {} };
+    const { rerender } = render(<AiResultPanel {...base} status="running" />);
+    screen.getByRole('button', { name: 'Cancel' }).focus();
+    rerender(<AiResultPanel {...base} status="ready"><p>BODY</p></AiResultPanel>);
+    expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
+  });
+});

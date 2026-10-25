@@ -15,7 +15,8 @@ import { AiConnectionsSettings } from '../components/settings/AiConnectionsSetti
 import { APP_SLUG } from '../lib/appBranding';
 import { formatAppVersion } from '../lib/appVersionLabel';
 import { resolveAppProfileLabel } from '../lib/appProfileLabel';
-import { appDataToPersistJson, compactAppDataForPersist, normalizeData } from '../model';
+import { AI_PROVIDER_OPTIONS, appDataToPersistJson, compactAppDataForPersist, normalizeData } from '../model';
+import { restoreAiSecrets, stripAiSecrets } from '../lib/ai/secrets';
 import {
   describeMergeSummary,
   mergeAppendWorkspace,
@@ -218,8 +219,9 @@ export function Settings() {
     }
     // Normalize defensively so the backup file is always a complete, canonical
     // (current-version) schema — even if the in-memory snapshot predates a
-    // migration — which keeps round-trip restores forward-compatible.
-    const blob = new Blob([appDataToPersistJson(normalizeData(data))], {
+    // migration — which keeps round-trip restores forward-compatible. Read the freshest
+    // snapshot (post-flush), not the render closure, and leave AI keys out of the file.
+    const blob = new Blob([appDataToPersistJson(stripAiSecrets(normalizeData(getLatestSnapshot())))], {
       type: 'application/json',
     });
     const url = URL.createObjectURL(blob);
@@ -245,7 +247,8 @@ export function Settings() {
       );
       return;
     }
-    const r = await window.cadence.exportDataBundle(compactAppDataForPersist(data));
+    // Leaves the encrypted data file like the other exports, so no AI keys go with it.
+    const r = await window.cadence.exportDataBundle(compactAppDataForPersist(stripAiSecrets(getLatestSnapshot())));
     if (r?.canceled) return;
     if (r?.ok && r.path) {
       toast.showSuccess('Full backup saved', `Folder: ${r.path}`);
@@ -299,7 +302,8 @@ export function Settings() {
       const r = await importPortableBackupFile(file, {
         userId: user.id,
         importWorkspace: async (next) => {
-          const imported = await importWorkspace(next);
+          // Exports carry no AI keys: keep the ones this device already has (same address only).
+          const imported = await importWorkspace(restoreAiSecrets(next, getLatestSnapshot()));
           if (!imported.ok) return imported;
           return { ok: true as const };
         },
@@ -406,10 +410,20 @@ export function Settings() {
     }
     setImportBusy(true);
     try {
+      const keysBefore = getLatestSnapshot();
       const r = await window.cadence.importDataBundle();
       if (r?.canceled) return;
       if (r?.ok) {
         await syncFromDisk();
+        // The backup carries no AI keys: put back the ones this device had (same address only).
+        const loaded = getLatestSnapshot();
+        const withKeys = restoreAiSecrets(loaded, keysBefore);
+        if (JSON.stringify(withKeys.aiSettings) !== JSON.stringify(loaded.aiSettings)) {
+          const kept = await importWorkspace(withKeys);
+          if (!kept.ok) {
+            toast.showWarning('AI keys not restored', 'The backup was restored, but your AI keys could not be put back. Enter them again in Settings → AI Assistant.');
+          }
+        }
         const att = typeof r.attachmentsRestored === 'number' ? r.attachmentsRestored : null;
         const skipped = typeof r.attachmentsSkipped === 'number' && r.attachmentsSkipped > 0 ? r.attachmentsSkipped : 0;
         let detail = r.importedFrom ? `Restored from ${r.importedFrom}.` : 'Workspace restored.';
@@ -994,17 +1008,18 @@ export function AISettingsSection() {
       defaultOpen={false}
       badge={
         isAIConfigured(ai)
-          ? `Configured · ${ai.provider}`
+          ? `Configured · ${AI_PROVIDER_OPTIONS.find((o) => o.value === ai.provider)?.label ?? ai.provider}`
           : hasUsableConnection(ai)
             ? 'Configured · extra connections'
             : 'Not configured'
       }
     >
       <p className="muted">
-        Each task gets an "Ask AI" button when you connect a provider here. The assistant uses your API key to suggest
-        next steps for whatever you're working on. We never proxy these requests — they go straight from this device
-        to the provider you choose. To use your own router or proxy, pick "Custom gateway" and
-        enter its base URL.
+        Connect a provider here and AI shows up where you work: Ask AI and Break down on a task, Extract tasks,
+        Visualize and Challenge my idea in a note, and a feedback rewrite in a person's feedback log. Each one uses your
+        own API key, shows what it will read, and changes nothing until you press its button. We never proxy these
+        requests — they go straight from this device to the provider you choose. To use your own router or proxy,
+        pick "Custom gateway" and enter its base URL.
       </p>
       <p className="muted small">
         {isDesktop
@@ -1033,6 +1048,7 @@ export function AISettingsSection() {
                     ...(destinationChanged ? { allowPeopleData: undefined } : {}),
                     capabilities: [],
                     probedAt: undefined,
+                    jsonOverride: undefined,
                   },
                 }
               : {}),
@@ -1045,7 +1061,7 @@ export function AISettingsSection() {
             // every extra connection. While extras exist, keep the (default) API format as a marker.
             ...(ai?.connections?.length ? { gatewayFormat: 'openai-chat' as const } : {}),
             // The default connection's own metadata goes with it; extra connections stay.
-            defaultMeta: { name: undefined, capabilities: [], probedAt: undefined, allowPeopleData: undefined },
+            defaultMeta: { name: undefined, capabilities: [], probedAt: undefined, allowPeopleData: undefined, jsonOverride: undefined },
           })
         }
         onProbed={(meta) => updateAISettings({ defaultMeta: meta })}
@@ -1236,6 +1252,10 @@ function BackupsRecoverySection({
     >
       {canExport ? (
         <>
+          <p className="muted small">
+            Exports (JSON, portable ZIP and the full backup folder) do not contain your AI API keys or extra connection headers. Restoring on this
+            device keeps the keys it already has; on a new device, enter them again in Settings → AI Assistant.
+          </p>
           <div className="backup-platform">
             <span className="backup-platform__badge">{backupPlatformLabel(platform)}</span>
             {platform === 'desktop' ? (

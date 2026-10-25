@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import { useConfirm } from '../components/ui/ConfirmProvider';
@@ -14,12 +14,22 @@ import { useMoveTabToNote } from '../features/tools/useMoveTabToNote';
 import { useToolFileSave } from '../features/tools/useToolFileSave';
 import { useToast } from '../components/ui/Toast';
 import { documentTabFile } from '../lib/toolFileExport';
-import { IcFileText } from '../components/icons';
+import { IcFileText, IcSparkles } from '../components/icons';
+import { hasUsableConnection } from '../lib/ai/connections';
+import { useFeatures } from '../lib/features';
+import { plainTextFromBodyFields } from '../lib/richTextBody';
+
+const AIStructureDialog = lazy(() =>
+  import('../components/AIStructureDialog').then((m) => ({ default: m.AIStructureDialog })),
+);
 
 export function UtilitiesDocumentPage() {
   const {
     data,
     addDocumentTab,
+    addDocumentTabWithContent,
+    createNoteWithContent,
+    upsertUtilitySketchDocument,
     closeDocumentTab,
     renameDocumentTab,
     setActiveDocumentTab,
@@ -30,6 +40,9 @@ export function UtilitiesDocumentPage() {
   const { user } = useAccount();
   const { confirm } = useConfirm();
   const move = useMoveTabToNote('document');
+  const { features } = useFeatures();
+  const aiEnabled = features.ai && hasUsableConnection(data.aiSettings);
+  const [structureOpen, setStructureOpen] = useState(false);
 
   const tabs = useMemo(() => data.utilityDocumentTabs ?? [], [data.utilityDocumentTabs]);
   const activeTab = tabs.find((t) => t.id === data.activeDocumentTabId) ?? tabs[0] ?? null;
@@ -135,9 +148,33 @@ export function UtilitiesDocumentPage() {
             <IcFileText size={14} aria-hidden />
             Move to Notes
           </button>
+          {aiEnabled && plainTextFromBodyFields(activeTab).trim() ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--small"
+              title="Make a tidy, structured copy of this document as a new tab"
+              onClick={() => setStructureOpen(true)}
+            >
+              <IcSparkles size={14} aria-hidden />
+              Structure with AI
+            </button>
+          ) : null}
         </div>
       </header>
       {move.dialog}
+      {structureOpen ? (
+        <Suspense fallback={null}>
+          <AIStructureDialog
+            open
+            onClose={() => setStructureOpen(false)}
+            tabTitle={activeTab.title}
+            text={plainTextFromBodyFields(activeTab)}
+            onApply={(title, fields) => addDocumentTabWithContent({ title, ...fields })}
+            onAddNote={(title, fields) => createNoteWithContent({ title, ...fields })}
+            onAddSketch={(title, sceneJson) => upsertUtilitySketchDocument({ title, sceneJson })}
+          />
+        </Suspense>
+      ) : null}
 
       <UtilityTabStrip
         tabs={tabs.map((t) => ({ id: t.id, title: t.title }))}

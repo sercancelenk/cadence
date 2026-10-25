@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 const {
   NOTE_FILE_MAX_BYTES,
-  validateNoteSavePayload,
   checkOpenableNoteFile,
   decodeNoteFileText,
   checkSaveTargetFree,
@@ -12,27 +11,30 @@ const {
   pickSaveVariant,
 } = require('./noteFileIo.cjs');
 
-describe('validateNoteSavePayload', () => {
-  it('accepts a well-formed payload', () => {
-    const r = validateNoteSavePayload({ suggestedName: 'a.md', format: 'md', content: '# hi' });
-    expect(r).toEqual({ ok: true, suggestedName: 'a.md', format: 'md', content: '# hi' });
+describe('validateToolSavePayload as used for notes', () => {
+  const note = (over: Record<string, unknown> = {}) => ({
+    suggestedName: 'Plan.md',
+    defaultExt: 'md',
+    extensions: ['md', 'txt', 'html'],
+    variants: { md: '# hi', txt: 'hi', html: '<p>hi</p>' },
+    ...over,
   });
 
-  it('rejects unknown formats, non-string content and missing payloads', () => {
-    expect(validateNoteSavePayload({ suggestedName: 'a', format: 'pdf', content: 'x' }).ok).toBe(false);
-    expect(validateNoteSavePayload({ suggestedName: 'a', format: 'md', content: 5 }).ok).toBe(false);
-    expect(validateNoteSavePayload(null).ok).toBe(false);
-  });
-
-  it('rejects content larger than the size cap', () => {
-    const big = 'x'.repeat(NOTE_FILE_MAX_BYTES + 1);
-    expect(validateNoteSavePayload({ suggestedName: 'a', format: 'txt', content: big }).ok).toBe(false);
+  it('accepts a note sent in all three formats', () => {
+    const r = validateToolSavePayload(note());
+    expect(r.ok).toBe(true);
+    expect(r.variants).toEqual({ md: '# hi', txt: 'hi', html: '<p>hi</p>' });
   });
 
   it('strips directory parts and control characters from the suggested name', () => {
-    const r = validateNoteSavePayload({ suggestedName: '../../etc/pass\u0000wd.md', format: 'md', content: '' });
+    const r = validateToolSavePayload(note({ suggestedName: '../../etc/pass\u0000wd.md' }));
     expect(r.ok).toBe(true);
     expect(r.suggestedName).toBe('pass-wd.md');
+  });
+
+  it('rejects a note whose any format is larger than the size cap', () => {
+    const big = 'x'.repeat(NOTE_FILE_MAX_BYTES + 1);
+    expect(validateToolSavePayload(note({ variants: { md: '# hi', txt: big } })).ok).toBe(false);
   });
 });
 

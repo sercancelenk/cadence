@@ -13,8 +13,8 @@ export function AiContextChips({ chips }: { chips: AiContextChip[] }) {
   if (chips.length === 0) return null;
   return (
     <ul className="ai-chips" aria-label="What the AI read">
-      {chips.map((chip) => (
-        <li key={`${chip.label}:${chip.detail ?? ''}`} className="ai-chips__item">
+      {chips.map((chip, i) => (
+        <li key={`${i}:${chip.label}:${chip.detail ?? ''}`} className="ai-chips__item">
           {chip.sent ? (
             <details className="ai-chip ai-chip--expandable">
               <summary>

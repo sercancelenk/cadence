@@ -42,6 +42,8 @@ import { teamBase, teamPeople, teamPersonWorkspacePath, withItemFocus } from '..
 import type { AppData, Item, Note, NoteGroup, Person, Team, TodoItem } from '../model';
 import { isNoteEffectivelyArchived, isTodoItemArchived } from '../model';
 import { openQuickAdd, openQuickAddMenu } from '../lib/quickAddEvents';
+import { availableAiActions } from '../lib/ai/entryPoints';
+import { isAiToolId, openAiTool, type AiToolId } from '../lib/ai/launcher';
 import {
   IcArrowRight,
   IcBraces,
@@ -364,6 +366,17 @@ export function buildCommands(
             icon: <IcSparkles size={16} />,
             run: () => navigate(`${PATH_TODOS}?ai=extract`),
           },
+          ...availableAiActions('palette', { aiEnabled: true })
+            .filter((a) => isAiToolId(a.id))
+            .map((a) => ({
+              id: `ai-${a.id}`,
+              group: 'AI' as const,
+              label: `AI: ${a.label}`,
+              hint: a.hint,
+              searchText: a.keywords,
+              icon: <IcSparkles size={16} />,
+              run: () => openAiTool(a.id as AiToolId),
+            })),
         ]
       : []),
     {

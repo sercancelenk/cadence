@@ -243,6 +243,55 @@ function parseDateKey(key) {
 }
 
 /**
+ * The mirror folder usually sits in a synced cloud folder, so it carries no API keys or
+ * extra-header values (they can hold tokens). Mirrors `stripAiSecrets` in src/lib/ai/secrets.ts;
+ * the encrypted data file is untouched and keeps its keys.
+ */
+const AI_SECRET_FIELDS = ['apiKey', 'extraHeaders'];
+const SECRET_PARAM = /key|token|secret|auth|sig|pass|credential/i;
+
+function scrubRequestPath(p) {
+  const q = p.indexOf('?');
+  if (q === -1) return p;
+  const kept = p
+    .slice(q + 1)
+    .split('&')
+    .filter((pair) => {
+      const eq = pair.indexOf('=');
+      const name = eq === -1 ? pair : pair.slice(0, eq);
+      const value = eq === -1 ? '' : pair.slice(eq + 1);
+      return !(SECRET_PARAM.test(name) && value !== '' && value !== '{apiKey}');
+    });
+  return kept.length ? `${p.slice(0, q)}?${kept.join('&')}` : p.slice(0, q);
+}
+
+function scrubBaseUrl(url) {
+  const m = /^([a-z][a-z0-9+.-]*:\/\/)([^/?#]*)(.*)$/i.exec(url);
+  if (!m) return scrubRequestPath(url);
+  const authority = m[2];
+  const at = authority.lastIndexOf('@');
+  return `${m[1]}${at === -1 ? authority : authority.slice(at + 1)}${scrubRequestPath(m[3])}`;
+}
+
+function withoutAiSecrets(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+  const copy = { ...entry };
+  for (const key of AI_SECRET_FIELDS) delete copy[key];
+  if (typeof copy.baseUrl === 'string') copy.baseUrl = scrubBaseUrl(copy.baseUrl);
+  if (typeof copy.requestPath === 'string') copy.requestPath = scrubRequestPath(copy.requestPath);
+  return copy;
+}
+
+function stripAiSecretsForMirror(payload) {
+  const ai = payload && payload.aiSettings;
+  if (!ai || typeof ai !== 'object') return payload;
+  const next = withoutAiSecrets(ai);
+  if (Array.isArray(ai.connections)) next.connections = ai.connections.map(withoutAiSecrets);
+  if (Array.isArray(ai.unreadConnections)) next.unreadConnections = ai.unreadConnections.map(withoutAiSecrets);
+  return { ...payload, aiSettings: next };
+}
+
+/**
  * Write one daily full-export folder (same shape as Settings → Export full backup).
  *
  * @param {{
@@ -331,7 +380,7 @@ function writeDailyFullExport(opts) {
 
     const dataWrite = writeJsonText(
       path.join(partialPath, 'data.json'),
-      JSON.stringify(workspacePayload, null, 2),
+      JSON.stringify(stripAiSecretsForMirror(workspacePayload), null, 2),
     );
     if (!dataWrite.ok) {
       cleanupPartial();
@@ -512,5 +561,6 @@ module.exports = {
   planDailyMirrorTrim,
   pruneDailyMirrorFolders,
   writeDailyFullExport,
+  stripAiSecretsForMirror,
   maybeRunDailyBackupMirror,
 };

@@ -76,6 +76,21 @@
   color: color-mix(in srgb, var(--text) 72%, transparent);
   word-wrap: break-word;
 }
+.toast__action {
+  all: unset;
+  margin-top: 6px;
+  padding: 2px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.toast__action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 .toast__close {
   all: unset;
   display: inline-flex;

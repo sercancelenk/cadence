@@ -117,6 +117,17 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 |---|---|
 | 🪶 **Task extractor** | Drop a wall of meeting notes / brain dump → get a clean ordered task list back, ready to file into any project group. |
 | 🧭 **Coaching on a task** | One-line reframing + three concrete next actions ordered by leverage + one risk to avoid. Always under 200 words. |
+| 🗺️ **Visualize** | Select text → a Mermaid flowchart, sequence or state diagram, checked with Mermaid's own parser before it is offered, inserted as a new block. |
+| 🔍 **Challenge my idea** | Assumptions, risks, alternatives and open questions about a note, added as a separate block at the end. |
+| 🪜 **Break down** | Split a task into editable steps: a checklist in its details, or new tasks in the same list. |
+| 🧮 **Classify with AI** | Suggest important / urgent for unsorted tasks on the Planning matrix; undoable. |
+| 🧩 **Document, mock data and ER diagram** | A structured copy of a document (outline, RFC, meeting summary or table, then drawn as Mermaid or Sketch), invented records shaped like your sample, and additive table suggestions; each lands as a new tab or only adds. |
+| ✏️ **Sketch and screenshot → Mermaid** | Convert a sketch's labels and arrows, or a picture of a diagram, into Mermaid (or an HTML mock-up) as a new note. |
+| ✏️ **Draw from a description** | Describe a diagram in words; get a Mermaid note or a Sketch board, then ask for changes. Added as new; nothing existing is touched. |
+| 📅 **Weekly digest** | A retrospective or an upward status update from titles and counts of your week; streams in as it is written. |
+| 🤝 **Prepare a 1:1** | Follow-ups, open goals, feedback and questions from one person's records; people data. |
+| 🔎 **Ask your workspace** | Answers from your own notes and tasks with [n] citations and links; optional search by meaning. |
+| 🧱 **Feedback → SBI** | Rewrite feedback as Situation / Behavior / Impact using only what you wrote; people data, so only to connections you allow. |
 | 🎛️ **Three providers, one switch** | Anthropic Claude, OpenAI ChatGPT, Google Gemini. One dropdown to swap. |
 | 🛑 **Off completely** | No provider configured, no AI — the rest of the app behaves identically. AI is gated behind "is a provider configured?", so an offline workspace is the default, not a degraded mode. |
 
@@ -389,7 +400,9 @@ Every task row has an **Ask AI** button as soon as you connect a provider in *Se
   - **Desktop**: inside your encrypted data file (`cadence-data-<userId>.json`, AES-256-GCM, keyed by your account password).
   - **PWA**: in this browser's `localStorage` only (not encrypted) — use a low-budget key with usage limits.
 
-The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts). Connection details and limits: [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md). Where AI is going next (diagrams from text, task breakdown, 1:1 and feedback help, digests) and the design behind it: [AI features: foundation and roadmap](docs/superpowers/specs/2026-10-24-ai-features-design.md).
+Beyond Ask AI and Extract tasks there are **Visualize** (text → Mermaid diagram), **Challenge my idea**, **Break down** (a task into steps), **Feedback → SBI**, **Classify with AI**, document / mock-data / ER-diagram helpers, **Convert to Mermaid** (sketch), **Diagram from a screenshot**, **Weekly digest**, **Prepare a 1:1** and **Ask your workspace**; each previews its result and writes nothing until you press its button (see [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md)). JSON, ZIP and full-backup exports leave out your AI keys.
+
+The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts). Connection details and limits: [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md). The design behind these features and what was left out on purpose: [AI features: foundation and roadmap](docs/superpowers/specs/2026-10-24-ai-features-design.md).
 
 ### Backups & recovery
 

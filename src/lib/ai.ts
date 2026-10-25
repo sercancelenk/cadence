@@ -1,8 +1,12 @@
 import type { AIProvider, AISettings, GatewayFormat } from '../model';
 import { AI_PROVIDER_OPTIONS } from '../model';
-import { normalizeGatewayBaseUrl, resolveGatewayRequest } from './aiGatewayUrl';
+import { gatewayFormatDefaults, normalizeGatewayBaseUrl, resolveGatewayRequest } from './aiGatewayUrl';
 import { HOSTED_CONNECTIONS, type GatewayConnection, type HostedProvider } from './aiPresets';
 import type { DataClass } from './ai/types';
+import { clip } from './ai/prompts/shared';
+import { createSseParser } from './ai/sse';
+import { validateAiImages, type AiImage } from './ai/images';
+import { createStreamDecoder, type StreamResult } from './ai/streams';
 
 /**
  * Tiny provider abstraction for the BYO-key AI assistant. We keep this
@@ -18,7 +22,7 @@ import type { DataClass } from './ai/types';
  */
 
 export type AIMessage =
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: string; /** Images shown to the model with this message (see ai/images.ts). */ images?: AiImage[] }
   | { role: 'assistant'; content: string };
 
 export type AskAIInput = {
@@ -39,6 +43,12 @@ export type AskAIInput = {
   dataClass?: DataClass;
   /** Cancellation hook (browser AbortController). */
   signal?: AbortSignal;
+  /**
+   * Ask for a streamed reply and call this with the text so far as it grows. The returned value is
+   * still the complete, final result. A server that does not stream is read as a normal reply (this
+   * is then called once with the whole text).
+   */
+  onText?: (textSoFar: string) => void;
 };
 
 /**
@@ -112,12 +122,18 @@ export async function askAI(input: AskAIInput): Promise<AskAIResult> {
   if (messages.length === 0) {
     throw new AIError('Nothing to ask — the conversation is empty.', { provider: settings.provider });
   }
+  for (const m of messages) {
+    if ('images' in m && m.images?.length) {
+      const checked = validateAiImages(m.images);
+      if (!checked.ok) throw new AIError(checked.error, { provider: settings.provider });
+    }
+  }
   const { provider } = settings;
   const apiKey = settings.apiKey ?? '';
   const model = settings.model?.trim() || defaultModel(provider);
   // The system text always comes from the caller's task prompt (`src/lib/ai/prompts`); a stored
   // `settings.systemPrompt` is never used here (the task runner offers it as a focus note instead).
-  const system = (input.fallbackSystem?.trim() || NEUTRAL_SYSTEM).slice(0, 4000);
+  const system = clip(input.fallbackSystem?.trim() || NEUTRAL_SYSTEM, 4000);
   const maxTokens = Math.min(Math.max(input.maxOutputTokens ?? 800, 64), 4000);
 
   const args: ProviderArgs = {
@@ -129,9 +145,10 @@ export async function askAI(input: AskAIInput): Promise<AskAIResult> {
     signal: input.signal,
     responseFormat: input.responseFormat,
     dataClass: input.dataClass,
+    onText: input.onText,
   };
   if (provider === 'gateway') return callGateway(args, settings, 'gateway');
-  if (provider in HOSTED_CONNECTIONS) {
+  if (Object.hasOwn(HOSTED_CONNECTIONS, provider)) {
     return callGateway(args, HOSTED_CONNECTIONS[provider as HostedProvider], provider);
   }
   throw new AIError(`Unknown AI provider: ${String(provider)}`);
@@ -146,6 +163,9 @@ type ProviderArgs = {
   signal?: AbortSignal;
   responseFormat?: 'json';
   dataClass?: DataClass;
+  onText?: (textSoFar: string) => void;
+  /** Set by the engine when this request is sent as a stream. */
+  stream?: boolean;
 };
 
 // ---------- wire formats -------------------------------------------------------
@@ -160,11 +180,22 @@ function chatBody(a: ProviderArgs, conn: GatewayConnection): string {
     // OpenAI deprecated `max_tokens` and its reasoning models reject it, but most
     // gateways and local servers only know it: the connection decides.
     [conn.maxTokensField ?? 'max_tokens']: a.maxTokens,
+    ...(a.stream ? { stream: true } : {}),
     // The older JSON mode (valid for every OpenAI chat model); the prompt must also ask for JSON.
     ...(a.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
     messages: [
       { role: 'system', content: a.system },
-      ...a.messages.map((m) => ({ role: m.role, content: m.content })),
+      ...a.messages.map((m) =>
+        'images' in m && m.images?.length
+          ? {
+              role: m.role,
+              content: [
+                { type: 'text', text: m.content },
+                ...m.images.map((i) => ({ type: 'image_url', image_url: { url: `data:${i.mediaType};base64,${i.base64}` } })),
+              ],
+            }
+          : { role: m.role, content: m.content },
+      ),
     ],
   });
 }
@@ -173,8 +204,19 @@ function responsesBody(a: ProviderArgs, _conn?: GatewayConnection): string {
   return JSON.stringify({
     model: a.model,
     instructions: a.system,
-    input: a.messages.map((m) => ({ role: m.role, content: m.content })),
+    input: a.messages.map((m) =>
+      'images' in m && m.images?.length
+        ? {
+            role: m.role,
+            content: [
+              { type: 'input_text', text: m.content },
+              ...m.images.map((i) => ({ type: 'input_image', image_url: `data:${i.mediaType};base64,${i.base64}` })),
+            ],
+          }
+        : { role: m.role, content: m.content },
+    ),
     max_output_tokens: a.maxTokens,
+    ...(a.stream ? { stream: true } : {}),
     ...(a.responseFormat === 'json' ? { text: { format: { type: 'json_object' } } } : {}),
   });
 }
@@ -184,7 +226,18 @@ function anthropicBody(a: ProviderArgs, _conn?: GatewayConnection): string {
     model: a.model,
     system: a.system,
     max_tokens: a.maxTokens,
-    messages: a.messages.map((m) => ({ role: m.role, content: m.content })),
+    ...(a.stream ? { stream: true } : {}),
+    messages: a.messages.map((m) =>
+      'images' in m && m.images?.length
+        ? {
+            role: m.role,
+            content: [
+              ...m.images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.mediaType, data: i.base64 } })),
+              { type: 'text', text: m.content },
+            ],
+          }
+        : { role: m.role, content: m.content },
+    ),
   });
 }
 
@@ -200,7 +253,10 @@ function geminiBody(a: ProviderArgs, _conn?: GatewayConnection): string {
     },
     contents: a.messages.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
+      parts:
+        'images' in m && m.images?.length
+          ? [...m.images.map((i) => ({ inline_data: { mime_type: i.mediaType, data: i.base64 } })), { text: m.content }]
+          : [{ text: m.content }],
     })),
   });
 }
@@ -239,6 +295,66 @@ function tokenLimitBeforeAnswer(provider: AIProvider): AIError {
   );
 }
 
+/** The model answered with a refusal instead of text. */
+function declined(provider: AIProvider, words?: string): AIError {
+  return new AIError(
+    `${providerName(provider)} declined to answer${words ? `: ${words}` : '. Rephrase the text or try another model.'}`,
+    { provider },
+  );
+}
+
+/** Same cap the desktop path applies (characters), so a runaway reply cannot fill memory. */
+const MAX_RESPONSE_CHARS = 4_000_000;
+
+/**
+ * Reads a body as text, stopping as soon as it exceeds `maxChars`; `null` when it is too large.
+ * `onChunk` sees each decoded piece as it arrives (for streamed replies).
+ */
+async function readCappedText(res: Response, maxChars: number, onChunk?: (piece: string) => void): Promise<string | null> {
+  const reader = res.body?.getReader?.();
+  if (!reader) {
+    const whole = await res.text();
+    if (whole.length > maxChars) return null;
+    if (whole) onChunk?.(whole);
+    return whole;
+  }
+  const decoder = new TextDecoder();
+  let out = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const piece = decoder.decode(value, { stream: true });
+    out += piece;
+    if (out.length > maxChars) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    if (piece) onChunk?.(piece);
+  }
+  const tail = decoder.decode();
+  if (tail) {
+    out += tail;
+    onChunk?.(tail);
+  }
+  return out;
+}
+
+/** The refusal/empty/limit errors for a streamed reply that carried no text. */
+function emptyStreamError(d: StreamResult, provider: AIProvider): AIError {
+  if (d.refusal !== undefined) return declined(provider, d.refusal || undefined);
+  if (d.stopReason === 'length') return tokenLimitBeforeAnswer(provider);
+  return emptyResponse(provider);
+}
+
+/** The connection with a path that streams, or null when this connection cannot be streamed. */
+function streamingConnection(format: GatewayFormat, conn: GatewayConnection): GatewayConnection | null {
+  if (format !== 'gemini') return conn;
+  const template = conn.requestPath?.trim() || gatewayFormatDefaults('gemini').path;
+  if (!template.includes(':generateContent')) return null;
+  const streamed = template.replace(':generateContent', ':streamGenerateContent');
+  return { ...conn, requestPath: `${streamed}${streamed.includes('?') ? '&' : '?'}alt=sse` };
+}
+
 function emptyResponse(provider: AIProvider): AIError {
   return new AIError(`${providerName(provider)} returned an empty response.`, { provider });
 }
@@ -246,7 +362,7 @@ function emptyResponse(provider: AIProvider): AIError {
 /** Parses an OpenAI `chat/completions` body. */
 function parseChatCompletion(raw: string, provider: AIProvider): AskAIResult {
   const json = parseJsonBody<{
-    choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>;
+    choices?: Array<{ message?: { content?: unknown; refusal?: unknown }; finish_reason?: string }>;
   }>(raw, provider);
   const first = Array.isArray(json.choices) ? json.choices[0] : undefined;
   const text = chatContentText(first?.message?.content);
@@ -256,7 +372,11 @@ function parseChatCompletion(raw: string, provider: AIProvider): AskAIResult {
     // (typical of reasoning models that spend tokens thinking first).
     throw tokenLimitBeforeAnswer(provider);
   }
-  if (!text) throw emptyResponse(provider);
+  if (!text) {
+    const refusal = typeof first?.message?.refusal === 'string' ? first.message.refusal.trim() : '';
+    if (refusal) throw declined(provider, refusal);
+    throw emptyResponse(provider);
+  }
   // OpenAI finish reasons: 'stop' | 'length' | 'content_filter' |
   // 'tool_calls' | 'function_call'. Anything that isn't an explicit
   // clean stop becomes 'other' — only 'length' lights up the
@@ -309,7 +429,10 @@ function parseAnthropic(raw: string, provider: AIProvider): AskAIResult {
     .map((b) => b.text!)
     .join('\n')
     .trim();
-  if (!text) throw emptyResponse(provider);
+  if (!text) {
+    if (json.stop_reason === 'refusal') throw declined(provider);
+    throw emptyResponse(provider);
+  }
   // Anthropic stop reasons: 'end_turn' | 'max_tokens' | 'stop_sequence' |
   // 'tool_use'. We only map 'max_tokens' to 'length'; 'stop_sequence' is
   // a clean stop driven by user-supplied stop strings.
@@ -329,6 +452,7 @@ function parseGemini(raw: string, provider: AIProvider): AskAIResult {
       content?: { parts?: Array<{ text?: string }> };
       finishReason?: string;
     }>;
+    promptFeedback?: { blockReason?: string };
   }>(raw, provider);
   const candidate = Array.isArray(json.candidates) ? json.candidates[0] : undefined;
   const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
@@ -338,7 +462,16 @@ function parseGemini(raw: string, provider: AIProvider): AskAIResult {
     .trim();
   const finishReason = candidate?.finishReason;
   if (!text && finishReason === 'MAX_TOKENS') throw tokenLimitBeforeAnswer(provider);
-  if (!text) throw emptyResponse(provider);
+  if (!text) {
+    const blocked = typeof json.promptFeedback?.blockReason === 'string' ? json.promptFeedback.blockReason : '';
+    if (blocked) {
+      throw new AIError(`${providerName(provider)} blocked the request (${blocked}). Rephrase the text or try another model.`, { provider });
+    }
+    if (finishReason && finishReason !== 'STOP') {
+      throw new AIError(`${providerName(provider)} stopped without an answer (${finishReason}).`, { provider });
+    }
+    throw emptyResponse(provider);
+  }
   // Gemini finish reasons: 'STOP' | 'MAX_TOKENS' | 'SAFETY' | 'RECITATION'
   // | 'OTHER' (and a few newer ones that we lump into 'other').
   const stopReason: AIStopReason =
@@ -421,7 +554,7 @@ function exchangeDiagnostic(opts: {
   if (opts.error) lines.push(`-> ${maskSecrets(opts.error, secrets)}`);
   if (opts.body !== undefined) {
     const flat = maskSecrets(opts.body, secrets).replace(/\s+/g, ' ').trim();
-    lines.push(`body: ${flat.length > 300 ? `${flat.slice(0, 299)}…` : flat || '(empty)'}`);
+    lines.push(`body: ${flat.length > 300 ? `${clip(flat, 299)}…` : flat || '(empty)'}`);
   }
   return lines.join('\n');
 }
@@ -440,37 +573,54 @@ async function callGateway(
   provider: AIProvider,
 ): Promise<AskAIResult> {
   const format: GatewayFormat = conn.gatewayFormat ?? 'openai-chat';
-  const target = resolveGatewayRequest(conn, a.model, a.apiKey);
-  if (!target.ok) throw new AIError(target.error, { provider });
-  const body = GATEWAY_FORMATS[format].body(a, conn);
   const bridge = typeof window !== 'undefined' ? window.cadence : undefined;
+  // Streaming is used when the caller wants the text as it grows, the connection can be streamed,
+  // and (on desktop) the main process supports it; otherwise the reply is read in one piece.
+  const streamConn = a.onText && (!bridge?.aiGatewayChat || bridge.aiGatewayStream) ? streamingConnection(format, conn) : null;
+  const streaming = !!streamConn;
+  const target = resolveGatewayRequest(streamConn ?? conn, a.model, a.apiKey);
+  if (!target.ok) throw new AIError(target.error, { provider });
+  const body = GATEWAY_FORMATS[format].body(streaming ? { ...a, stream: true } : a, conn);
   const via = bridge?.aiGatewayChat ? 'desktop' : 'browser';
+  const decoder = streaming ? createStreamDecoder(format, a.onText!) : null;
+  const sse = decoder ? createSseParser((e) => decoder.feed(e)) : null;
   const secrets = collectSecrets(a.apiKey, target.headers);
   const diag = (extra: { status?: number; body?: string; error?: string } = {}) =>
     exchangeDiagnostic({ format, url: target.url, headers: target.headers, secrets, via, ...extra });
 
   let status: number;
   let text: string;
+  let rawStream = '';
+  const onChunk = (piece: string) => {
+    rawStream += piece;
+    sse?.push(piece);
+  };
   if (bridge?.aiGatewayChat) {
     const requestId = globalThis.crypto.randomUUID();
     const onAbort = () => void bridge.aiGatewayAbort?.(requestId);
     if (a.signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
     a.signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      const r = await bridge.aiGatewayChat({
+      const request = {
         requestId,
         baseUrl: target.baseUrl,
         path: target.path,
         headers: target.headers,
         body,
-        dataClass: a.dataClass ?? 'content',
-      });
+        // Never defaulted: the main process rejects a request without a class.
+        dataClass: a.dataClass,
+      };
+      const r =
+        streaming && bridge.aiGatewayStream
+          ? await bridge.aiGatewayStream(request, onChunk)
+          : await bridge.aiGatewayChat(request);
       if (!r.ok) {
         if ('aborted' in r && r.aborted) throw new DOMException('Request cancelled.', 'AbortError');
         throw new AIError(maskSecrets(r.error, secrets), { provider, diagnostic: diag({ error: r.error }) });
       }
       status = r.status;
-      text = r.text;
+      // A streamed reply arrived as chunks; an error status carries its body here.
+      text = streaming && rawStream ? rawStream : r.text;
     } finally {
       a.signal?.removeEventListener('abort', onAbort);
     }
@@ -478,7 +628,12 @@ async function callGateway(
     // Like the desktop path: refuse redirects (a cross-origin redirect would otherwise carry
     // custom auth headers to another host) and give up after the same two minutes.
     const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(), WEB_REQUEST_TIMEOUT_MS);
+    let timer = setTimeout(() => timeout.abort(), WEB_REQUEST_TIMEOUT_MS);
+    // A stream is given 120 seconds of silence, not 120 seconds in total.
+    const restartTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => timeout.abort(), WEB_REQUEST_TIMEOUT_MS);
+    };
     const onUserAbort = () => timeout.abort();
     a.signal?.addEventListener('abort', onUserAbort, { once: true });
     if (a.signal?.aborted) timeout.abort();
@@ -491,8 +646,26 @@ async function callGateway(
         body,
       });
       status = res.status;
-      text = await res.text();
+      const ok2xx = status >= 200 && status < 300;
+      const capped = await readCappedText(
+        res,
+        MAX_RESPONSE_CHARS,
+        streaming && ok2xx
+          ? (piece) => {
+              restartTimer();
+              onChunk(piece);
+            }
+          : undefined,
+      );
+      if (capped === null) {
+        throw new AIError(`${provider === 'gateway' ? 'The gateway' : providerName(provider)} sent a reply that was too large to read.`, {
+          provider,
+          diagnostic: diag({ error: 'response too large' }),
+        });
+      }
+      text = capped;
     } catch (err) {
+      if (err instanceof AIError) throw err;
       if (a.signal?.aborted) throw err;
       if (timeout.signal.aborted) {
         throw new AIError(`${provider === 'gateway' ? 'The gateway' : providerName(provider)} did not answer within ${WEB_REQUEST_TIMEOUT_MS / 1000} seconds.`, {
@@ -526,8 +699,21 @@ async function callGateway(
     }
     throw statusError(provider, status, maskSecrets(text, secrets), diag({ status, body: text }));
   }
+  if (decoder && sse) {
+    sse.end();
+    const d = decoder.result();
+    if (d.saw) {
+      if (d.error) throw new AIError(maskSecrets(d.error, secrets), { provider, diagnostic: diag({ status, body: text }) });
+      if (!d.text) throw emptyStreamError(d, provider);
+      return { text: d.text, stopReason: d.stopReason };
+    }
+    // The server answered with a normal reply: read it as one, and report the whole text once.
+  }
   try {
-    return GATEWAY_FORMATS[format].parse(text, provider);
+    const parsed = GATEWAY_FORMATS[format].parse(text, provider);
+    // Asked to stream but read as one piece (no streaming here, or the server did not stream).
+    a.onText?.(parsed.text);
+    return parsed;
   } catch (err) {
     const failure =
       err instanceof AIError
@@ -537,6 +723,102 @@ async function callGateway(
     throw failure;
   }
 }
+
+/**
+ * One non-streaming JSON POST to a connection, for endpoints other than chat (embeddings). Same
+ * transport rules as a chat request: the desktop main process makes the call under the same
+ * policy checks, redirects are refused, the wait and the reply size are limited, and the key is
+ * masked in anything shown.
+ */
+export async function postConnectionJson(opts: {
+  conn: GatewayConnection;
+  provider: AIProvider;
+  apiKey: string;
+  model: string;
+  /** Overrides the connection's request path (`{model}` and `{apiKey}` are filled in). */
+  requestPath: string;
+  body: unknown;
+  dataClass?: DataClass;
+  signal?: AbortSignal;
+}): Promise<{ status: number; text: string; secrets: string[]; diagnostic: (extra?: { error?: string }) => string }> {
+  const { conn, provider, apiKey, model, signal } = opts;
+  const format: GatewayFormat = conn.gatewayFormat ?? 'openai-chat';
+  const target = resolveGatewayRequest({ ...conn, requestPath: opts.requestPath }, model, apiKey);
+  if (!target.ok) throw new AIError(target.error, { provider });
+  const body = JSON.stringify(opts.body);
+  const bridge = typeof window !== 'undefined' ? window.cadence : undefined;
+  const via = bridge?.aiGatewayChat ? 'desktop' : 'browser';
+  const secrets = collectSecrets(apiKey, target.headers);
+  const diagnostic = (extra: { status?: number; body?: string; error?: string } = {}) =>
+    exchangeDiagnostic({ format, url: target.url, headers: target.headers, secrets, via, ...extra });
+  const name = provider === 'gateway' ? 'The gateway' : providerName(provider);
+
+  if (signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
+  if (bridge?.aiGatewayChat) {
+    const requestId = globalThis.crypto.randomUUID();
+    const onAbort = () => void bridge.aiGatewayAbort?.(requestId);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      const r = await bridge.aiGatewayChat({
+        requestId,
+        baseUrl: target.baseUrl,
+        path: target.path,
+        headers: target.headers,
+        body,
+        dataClass: opts.dataClass,
+      });
+      if (!r.ok) {
+        if ('aborted' in r && r.aborted) throw new DOMException('Request cancelled.', 'AbortError');
+        throw new AIError(maskSecrets(r.error, secrets), { provider, diagnostic: diagnostic({ error: r.error }) });
+      }
+      return { status: r.status, text: r.text, secrets, diagnostic: (e) => diagnostic({ status: r.status, body: r.text, ...e }) };
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+    }
+  }
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), WEB_REQUEST_TIMEOUT_MS);
+  const onUserAbort = () => timeout.abort();
+  signal?.addEventListener('abort', onUserAbort, { once: true });
+  try {
+    const res = await fetch(target.url, {
+      method: 'POST',
+      signal: timeout.signal,
+      redirect: 'error',
+      headers: { 'content-type': 'application/json', ...target.headers },
+      body,
+    });
+    const text = await readCappedText(res, MAX_RESPONSE_CHARS);
+    if (text === null) {
+      throw new AIError(`${name} sent a reply that was too large to read.`, { provider, diagnostic: diagnostic({ error: 'response too large' }) });
+    }
+    return { status: res.status, text, secrets, diagnostic: (e) => diagnostic({ status: res.status, body: text, ...e }) };
+  } catch (err) {
+    if (err instanceof AIError) throw err;
+    if (signal?.aborted) throw err;
+    if (timeout.signal.aborted) {
+      throw new AIError(`${name} did not answer within ${WEB_REQUEST_TIMEOUT_MS / 1000} seconds.`, { provider, diagnostic: diagnostic({ error: 'timeout' }) });
+    }
+    if ((err as DOMException)?.name === 'AbortError') throw err;
+    throw new AIError(`Could not reach ${name}. Check the address and your connection.`, {
+      provider,
+      cause: err,
+      diagnostic: diagnostic({ error: (err as Error)?.message ?? String(err) }),
+    });
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onUserAbort);
+  }
+}
+
+/** The connection (preset or custom gateway) a settings object stands for. */
+export function connectionOf(settings: AISettings & { provider: AIProvider }): { conn: GatewayConnection; provider: AIProvider } {
+  return settings.provider === 'gateway'
+    ? { conn: settings, provider: 'gateway' }
+    : { conn: HOSTED_CONNECTIONS[settings.provider as HostedProvider], provider: settings.provider };
+}
+
+export { maskSecrets as maskConnectionSecrets, statusError as connectionStatusError };
 
 function statusError(provider: AIProvider, status: number, raw: string, diagnostic?: string): AIError {
   let detail = raw;
@@ -587,5 +869,5 @@ function friendlyStatus(status: number, provider: AIProvider): string {
 }
 
 function truncate(s: string, n: number): string {
-  return s.length <= n ? s : `${s.slice(0, n - 1)}…`;
+  return s.length <= n ? s : `${clip(s, n - 1)}…`;
 }

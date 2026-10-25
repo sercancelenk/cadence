@@ -1,4 +1,4 @@
-let initialized = false;
+let initializedTheme: 'dark' | 'neutral' | null = null;
 let renderSeq = 0;
 type MermaidApi = typeof import('mermaid').default;
 let mermaidApi: MermaidApi | null = null;
@@ -16,17 +16,18 @@ async function loadMermaid(): Promise<MermaidApi> {
   return mermaidApi;
 }
 
-/** Idempotent Mermaid bootstrap — never auto-scan the DOM. */
+/** Mermaid bootstrap; runs again when the app theme changed so previews match light and dark. */
 async function ensureMermaidInitialized(): Promise<MermaidApi> {
   const mermaid = await loadMermaid();
-  if (!initialized) {
+  const theme = resolveMermaidTheme();
+  if (initializedTheme !== theme) {
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: 'strict',
-      theme: resolveMermaidTheme(),
+      theme,
       fontFamily: 'inherit',
     });
-    initialized = true;
+    initializedTheme = theme;
   }
   return mermaid;
 }
@@ -58,5 +59,22 @@ export async function renderMermaidSvg(
     }
     const message = err instanceof Error ? err.message : 'Invalid Mermaid diagram';
     return { ok: false, error: message };
+  }
+}
+
+/**
+ * Checks Mermaid source with Mermaid's own parser, without drawing it. Used before AI-written
+ * diagrams are offered, so a diagram that cannot render is never inserted into a note.
+ */
+export async function validateMermaid(source: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const trimmed = source.trim();
+  if (!trimmed) return { ok: false, error: 'Empty diagram' };
+  try {
+    const mermaid = await ensureMermaidInitialized();
+    // Without `suppressErrors` Mermaid throws on bad syntax; `false` is also handled in case it does not.
+    const parsed: unknown = await mermaid.parse(trimmed);
+    return parsed === false ? { ok: false, error: 'Invalid Mermaid diagram' } : { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error && err.message ? err.message : 'Invalid Mermaid diagram' };
   }
 }

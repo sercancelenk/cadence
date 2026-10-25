@@ -645,17 +645,34 @@ export function IcWifi(p: IconProps) {
   );
 }
 
+/**
+ * The AI icon. Its three sparkles are outlined and filled with a vivid gradient taken from the
+ * `--ai-ic-*` theme tokens, so AI entry points stand out in both themes. Each instance owns its
+ * gradient id (a shared id would break when the first copy is hidden). On a filled primary button
+ * the stylesheet falls back to the text colour, where a gradient would disappear.
+ */
 export function IcSparkles(p: IconProps) {
   const { s, cn, sw, rest } = split(p);
+  const gradientId = `ai-sparkles-${useId().replace(/[^A-Za-z0-9_-]/g, '')}`;
+  const paint = {
+    stroke: `url(#${gradientId})`,
+    fill: `url(#${gradientId})`,
+    fillOpacity: 0.38,
+    strokeWidth: sw,
+    strokeLinejoin: 'round' as const,
+  };
   return (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
-      <path
-        d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"
-        strokeWidth={sw}
-        strokeLinejoin="round"
-      />
-      <path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z" strokeWidth={sw} strokeLinejoin="round" />
-      <path d="M5 16l.6 1.6L7.2 18l-1.6.6L5 20l-.6-1.4L3 18l1.4-.4L5 16z" strokeWidth={sw} strokeLinejoin="round" />
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" aria-hidden className={`${cn} ui-ic--ai`} {...rest}>
+      <defs>
+        <linearGradient id={gradientId} x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+          <stop offset="0" style={{ stopColor: 'var(--ai-ic-a)' }} />
+          <stop offset="0.55" style={{ stopColor: 'var(--ai-ic-b)' }} />
+          <stop offset="1" style={{ stopColor: 'var(--ai-ic-c)' }} />
+        </linearGradient>
+      </defs>
+      <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" {...paint} />
+      <path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z" {...paint} />
+      <path d="M5 16l.6 1.6L7.2 18l-1.6.6L5 20l-.6-1.4L3 18l1.4-.4L5 16z" {...paint} />
     </svg>
   );
 }

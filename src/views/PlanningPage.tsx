@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppDataActions, useAppDataSelector } from '../AppDataContext';
+import { axesRestorePatches } from '../features/planning/axesUndo';
+import { hasUsableConnection } from '../lib/ai/connections';
+import { addTaskForPerson, delegateOptions } from '../lib/ai/delegates';
+import { linkedNotesFor } from '../lib/ai/linkedNotes';
+import { useFeatures } from '../lib/features';
 import { useToast } from '../components/ui/Toast';
 import {
   setTodoStatus as setTodoStatusFn,
@@ -25,17 +30,31 @@ import {
   planningPatchForAddToHub,
   planningPatchForRemoveFromHub,
   pickIdsToAddToPlanningHub,
+  planningQuadrantFromItem,
   type PlanningQuadrant,
 } from '../lib/planningMatrix';
 import { isTodoOpen, type TodoStatus } from '../model';
 
+const AIEisenhowerDialog = lazy(() =>
+  import('../components/AIEisenhowerDialog').then((m) => ({ default: m.AIEisenhowerDialog })),
+);
+
 export function PlanningPage() {
   const toast = useToast();
-  const { update, updateTodoItem } = useAppDataActions();
+  const { update, updateTodoItem, getLatestSnapshot, addItem } = useAppDataActions();
+  const { features } = useFeatures();
+  const aiSettings = useAppDataSelector((d) => d.aiSettings);
+  const aiEnabled = features.ai && hasUsableConnection(aiSettings);
+  const [classifyOpen, setClassifyOpen] = useState(false);
   const { todoItems, todoGroups } = useAppDataSelector(
     (d) => ({ todoItems: d.todoItems, todoGroups: d.todoGroups }),
     (a, b) => a.todoItems === b.todoItems && a.todoGroups === b.todoGroups,
   );
+  const { people, teams } = useAppDataSelector(
+    (d) => ({ people: d.people, teams: d.teams }),
+    (a, b) => a.people === b.people && a.teams === b.teams,
+  );
+  const delegates = useMemo(() => delegateOptions(people, teams), [people, teams]);
   const [addOpen, setAddOpen] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const previewItem = useMemo(
@@ -53,6 +72,7 @@ export function PlanningPage() {
   const focusItems = useMemo(() => filterFocusTodayItems(todoItems), [todoItems]);
   const candidates = useMemo(() => filterPlanningCandidates(todoItems), [todoItems]);
   const focusIds = useMemo(() => new Set(focusItems.map((x) => x.id)), [focusItems]);
+  const unsortedItems = useMemo(() => hubItems.filter((i) => planningQuadrantFromItem(i) === 'unsorted'), [hubItems]);
   const atCapacity = !canAddToPlanningHub(hubItems.length);
 
   const moveToQuadrant = useCallback(
@@ -152,6 +172,50 @@ export function PlanningPage() {
     [todoItems, update],
   );
 
+  /**
+   * Writes the importance and urgency of the accepted rows in one update, then offers Undo for a
+   * while. Only those two settings change; Undo puts them back only for tasks not moved since.
+   */
+  const applyClassification = useCallback(
+    (assign: Array<{ id: string; important: boolean; urgent: boolean }>): boolean => {
+      const previous: Record<string, { planImportant?: boolean; planUrgent?: boolean }> = {};
+      for (const a of assign) {
+        const t = todoItems.find((x) => x.id === a.id);
+        if (t) previous[a.id] = { planImportant: t.planImportant, planUrgent: t.planUrgent };
+      }
+      const applied = update((data) => {
+        let next = data;
+        for (const a of assign) next = updateTodoItemFn(next, a.id, { planImportant: a.important, planUrgent: a.urgent });
+        return next;
+      });
+      if (!applied) return false;
+      toast.show({
+        kind: 'success',
+        title: `${assign.length} ${assign.length === 1 ? 'task' : 'tasks'} classified`,
+        description: 'Only importance and urgency were set.',
+        durationMs: 10_000,
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            const { restore, skipped } = axesRestorePatches(getLatestSnapshot().todoItems, assign, previous);
+            if (restore.length > 0) {
+              update((data) => {
+                let next = data;
+                for (const r of restore) next = updateTodoItemFn(next, r.id, r.patch);
+                return next;
+              });
+            }
+            if (skipped > 0) {
+              toast.showWarning('Some tasks were left as they are', `${skipped} moved since, so Undo did not touch them.`);
+            }
+          },
+        },
+      });
+      return true;
+    },
+    [getLatestSnapshot, toast, todoItems, update],
+  );
+
   const setItemStatus = useCallback(
     (itemId: string, status: TodoStatus) => {
       update((data) => {
@@ -220,13 +284,29 @@ export function PlanningPage() {
           onToggleComplete={toggleComplete}
           onStatusChange={setItemStatus}
           onPreview={setPreviewId}
+          onClassifyWithAi={aiEnabled ? () => setClassifyOpen(true) : undefined}
+          aiNeedsSetup={features.ai && !aiEnabled}
         />
       </div>
+
+      {classifyOpen ? (
+        <Suspense fallback={null}>
+          <AIEisenhowerDialog
+            open
+            onClose={() => setClassifyOpen(false)}
+            tasks={unsortedItems}
+            groups={todoGroups}
+            onApply={applyClassification}
+            delegates={delegates}
+            notesFor={(taskId) => linkedNotesFor(getLatestSnapshot(), taskId)}
+            onDelegate={(personId, title) => addTaskForPerson(getLatestSnapshot(), addItem, personId, title)}
+          />
+        </Suspense>
+      ) : null}
 
       {addOpen ? (
         <AddToPlanningModal
           candidates={candidates}
-          groups={todoGroups}
           hubCount={hubItems.length}
           atCapacity={atCapacity}
           onAddMany={addManyToHub}

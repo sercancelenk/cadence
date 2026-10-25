@@ -1,4 +1,8 @@
 import { Link } from 'react-router-dom';
+import { useAppData } from '../../AppDataContext';
+import { hasUsableConnection } from '../../lib/ai/connections';
+import { openAiTool } from '../../lib/ai/launcher';
+import { useFeatures } from '../../lib/features';
 import {
   PATH_UTILITIES_STRUCTURED,
   PATH_UTILITIES_TOOLS_CODEGEN,
@@ -49,6 +53,9 @@ const CARDS: Array<{ to: string; title: string; blurb: string }> = [
 ];
 
 export function UtilitiesToolsHubPage() {
+  const { data } = useAppData();
+  const { features } = useFeatures();
+  const aiEnabled = features.ai && hasUsableConnection(data.aiSettings);
   return (
     <div className="utilities-tools-hub">
       <p className="muted utilities-tools-hub__intro">
@@ -65,6 +72,22 @@ export function UtilitiesToolsHubPage() {
             </Link>
           </li>
         ))}
+        {aiEnabled ? (
+          <li>
+            <button type="button" className="utilities-tools-hub__card" onClick={() => openAiTool('draw-from-description')}>
+              <h2 className="utilities-tools-hub__card-title">Draw from a description</h2>
+              <p className="muted small">Describe a system or a flow in words and get a Mermaid note or a Sketch board (AI).</p>
+            </button>
+          </li>
+        ) : null}
+        {aiEnabled ? (
+          <li>
+            <button type="button" className="utilities-tools-hub__card" onClick={() => openAiTool('screenshot-to-diagram')}>
+              <h2 className="utilities-tools-hub__card-title">Diagram from a screenshot</h2>
+              <p className="muted small">Turn a picture of a diagram or a screen into Mermaid or an HTML mock-up (AI).</p>
+            </button>
+          </li>
+        ) : null}
       </ul>
     </div>
   );

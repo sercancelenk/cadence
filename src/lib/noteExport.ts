@@ -23,10 +23,6 @@ export const NOTE_EXPORT_FORMATS: { value: NoteExportFormat; label: string; ext:
 const UNTITLED = 'New note';
 const MAX_FILE_STEM = 120;
 
-export function parseNoteExportFormat(raw: unknown): NoteExportFormat {
-  return raw === 'txt' || raw === 'html' || raw === 'md' ? raw : 'md';
-}
-
 /** File name without extension: unsafe characters replaced, length capped. */
 export function exportFileStem(title: string): string {
   const stem = title.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-') || UNTITLED;
