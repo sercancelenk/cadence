@@ -34,6 +34,17 @@ PNG files here are copied to `dist/screenshots/` when you run `npm run build:pag
 | `profile.png` | `/profile` | Avatar + profile fields |
 | `recover.png` | `/recover` | Recovery codes + new password form (no real codes in frame) |
 
+## Added with the AI release (used on the landing page)
+
+| File | What it shows |
+|------|----------------|
+| `analytics.png` | Overview charts (window, 1440×1100) |
+| `ai-classify.png` | *Classify with AI* dialog on Planning (cropped to the dialog) |
+| `ai-ask.png` | *Ask your workspace* answer with its numbered, clickable sources (cropped) |
+| `sketch-ai.png` | A board made by *Draw from a description* (cropped to the canvas) |
+
+These were captured from the web build in a headless browser with the demo workspace; the AI replies were canned, so the pictures show the real interface, not live model output.
+
 ## After adding files
 
 ```bash

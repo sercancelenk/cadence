@@ -4,7 +4,7 @@ const convert = vi.hoisted(() => vi.fn((els: Array<Record<string, unknown>>) => 
 vi.mock('@excalidraw/excalidraw', () => ({ convertToExcalidrawElements: convert }));
 
 import { validateSketchSceneForSave } from '../utilityDiagrams';
-import { buildSceneJson, graphToSceneJson, layoutBoxes, type BoxArrow, type BoxRect } from './sketchScene';
+import { buildSceneJson, graphToSceneJson, layoutBoxes, type BoxArrow, type BoxRect, type BoxText } from './sketchScene';
 
 const g = (labels: string[], edges: Array<[number, number, string?]>) => ({
   nodes: labels.map((label) => ({ label })),
@@ -12,6 +12,7 @@ const g = (labels: string[], edges: Array<[number, number, string?]>) => ({
 });
 const rects = (els: ReturnType<typeof layoutBoxes>) => els.filter((e): e is BoxRect => e.type === 'rectangle');
 const arrows = (els: ReturnType<typeof layoutBoxes>) => els.filter((e): e is BoxArrow => e.type === 'arrow');
+const texts = (els: ReturnType<typeof layoutBoxes>) => els.filter((e): e is BoxText => e.type === 'text');
 
 describe('layoutBoxes', () => {
   it('stacks a chain top to bottom in one column', () => {
@@ -37,7 +38,7 @@ describe('layoutBoxes', () => {
     expect(new Set(loose.map((x) => `${x.x},${x.y}`)).size).toBe(3);
   });
 
-  it('draws one arrow per edge, bound to existing boxes, with its label', () => {
+  it('draws one arrow per edge, bound to existing boxes', () => {
     const els = layoutBoxes(g(['A', 'B'], [[0, 1, 'calls']]));
     const ids = new Set(rects(els).map((x) => x.id));
     const a = arrows(els);
@@ -45,7 +46,19 @@ describe('layoutBoxes', () => {
     expect(ids.has(a[0].start.id)).toBe(true);
     expect(ids.has(a[0].end.id)).toBe(true);
     expect(a[0].start.id).not.toBe(a[0].end.id);
-    expect(a[0].label?.text).toBe('calls');
+    expect('label' in a[0]).toBe(false);
+  });
+
+  it('writes an arrow label as its own text beside the arrow, because a label bound to a short arrow is cut off', () => {
+    const els = layoutBoxes(g(['A', 'B', 'C'], [[0, 1, 'validate token'], [0, 2]]));
+    const [withLabel] = arrows(els);
+    const t = texts(els);
+    expect(t).toHaveLength(1);
+    expect(t[0]!.text).toBe('validate token');
+    const midX = withLabel!.x + (withLabel!.width ?? 0) / 2;
+    const midY = withLabel!.y + (withLabel!.height ?? 0) / 2;
+    expect(Math.abs(t[0]!.x - midX)).toBeLessThan(160);
+    expect(Math.abs(t[0]!.y - midY)).toBeLessThan(40);
   });
 
   it('gives every arrow the size that reaches its target box, so it is drawn between the boxes', () => {
@@ -65,6 +78,33 @@ describe('layoutBoxes', () => {
       expect(endY).toBeLessThanOrEqual(to.y + to.height + 1);
       expect(Math.abs(a.width ?? 0) + Math.abs(a.height ?? 0)).toBeGreaterThan(20);
     }
+  });
+
+  it('keeps every arrow label clear of its arrow: straight down, sloping either way, up, and side by side', () => {
+    const els = layoutBoxes(
+      g(['Root', 'Left', 'Right', 'Deep', 'Back', 'Peer A', 'Peer B'], [[0, 1, 'validate token'], [0, 2, 'publish events'], [1, 3, 'read / write'], [3, 0, 'feedback loop'], [5, 6, 'sync']]),
+    );
+    const arrowList = arrows(els);
+    const labelList = texts(els);
+    expect(labelList).toHaveLength(5);
+    arrowList.forEach((a, i) => {
+      const t = labelList[i]!;
+      const w = t.text.length * 8.5;
+      const h = 20;
+      for (let k = 0; k <= 100; k += 1) {
+        const px = a.x + ((a.width ?? 0) * k) / 100;
+        const py = a.y + ((a.height ?? 0) * k) / 100;
+        const inside = px > t.x - 2 && px < t.x + w + 2 && py > t.y - 2 && py < t.y + h + 2;
+        expect(inside, `label "${t.text}" at step ${k}`).toBe(false);
+      }
+    });
+  });
+
+  it('sets every label in a system font, which needs no loading, so its size is measured right', () => {
+    const els = layoutBoxes(g(['A', 'B'], [[0, 1, 'calls']]));
+    for (const r of rects(els)) expect(r.label.fontFamily).toBe(2);
+    for (const t of texts(els)) expect(t.fontFamily).toBe(2);
+    expect(texts(els)).toHaveLength(1);
   });
 
   it('gives an empty graph no elements', () => {

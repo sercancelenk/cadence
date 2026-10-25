@@ -8,7 +8,7 @@ export type BoxRect = {
   y: number;
   width: number;
   height: number;
-  label: { text: string };
+  label: { text: string; fontFamily: number };
 };
 export type BoxArrow = {
   type: 'arrow';
@@ -21,13 +21,28 @@ export type BoxArrow = {
   points: [[number, number], [number, number]];
   start: { id: string };
   end: { id: string };
-  label?: { text: string };
+};
+/** An arrow's label, drawn beside it as free text: a label bound to a short arrow gets cut off. */
+export type BoxText = {
+  type: 'text';
+  x: number;
+  y: number;
+  text: string;
+  fontSize: number;
+  fontFamily: number;
 };
 
 const WIDTH = 180;
 const HEIGHT = 64;
 const GAP_X = 60;
 const GAP_Y = 90;
+/**
+ * Excalidraw's "Helvetica" family. It is a system font, so its width is known the moment a label is
+ * created; the hand-drawn fonts load later, and a label sized before then comes out too narrow and is cut off.
+ */
+const SYSTEM_FONT = 2;
+const LABEL_FONT = 16;
+const LABEL_CHAR_WIDTH = 8.5;
 
 /** How many steps each node is from a start, reading the arrows; safe on cycles and loose nodes. */
 function depths(count: number, edges: SketchEdge[]): number[] {
@@ -63,7 +78,7 @@ function depths(count: number, edges: SketchEdge[]): number[] {
  * Boxes in rows by how far they are from a start (top to bottom, each row centred), and one arrow
  * per edge. The result is Excalidraw's "skeleton" form: `convertToExcalidrawElements` fills in the rest.
  */
-export function layoutBoxes(graph: { nodes: SketchNode[]; edges: SketchEdge[] }): Array<BoxRect | BoxArrow> {
+export function layoutBoxes(graph: { nodes: SketchNode[]; edges: SketchEdge[] }): Array<BoxRect | BoxArrow | BoxText> {
   const { nodes, edges } = graph;
   if (nodes.length === 0) return [];
   const depth = depths(nodes.length, edges);
@@ -78,7 +93,7 @@ export function layoutBoxes(graph: { nodes: SketchNode[]; edges: SketchEdge[] })
     y: depth[i]! * (HEIGHT + GAP_Y),
     width: WIDTH,
     height: HEIGHT,
-    label: { text: n.label },
+    label: { text: n.label, fontFamily: SYSTEM_FONT },
   }));
   for (const row of rows.values()) {
     const offset = ((widest - row.length) * (WIDTH + GAP_X)) / 2;
@@ -86,7 +101,9 @@ export function layoutBoxes(graph: { nodes: SketchNode[]; edges: SketchEdge[] })
       rects[nodeIndex]!.x = offset + k * (WIDTH + GAP_X);
     });
   }
-  const arrows: BoxArrow[] = edges.map((e) => {
+  const arrows: BoxArrow[] = [];
+  const labels: BoxText[] = [];
+  for (const e of edges) {
     const from = rects[e.from]!;
     const to = rects[e.to]!;
     // The converter binds an arrow but does not stretch it to its target, so the line is laid out
@@ -104,7 +121,7 @@ export function layoutBoxes(graph: { nodes: SketchNode[]; edges: SketchEdge[] })
     } else {
       [sx, sy, ex, ey] = [from.x, from.y + HEIGHT / 2, to.x + WIDTH, to.y + HEIGHT / 2];
     }
-    return {
+    arrows.push({
       type: 'arrow',
       x: sx,
       y: sy,
@@ -113,10 +130,32 @@ export function layoutBoxes(graph: { nodes: SketchNode[]; edges: SketchEdge[] })
       points: [[0, 0], [ex - sx, ey - sy]],
       start: { id: from.id },
       end: { id: to.id },
-      ...(e.label ? { label: { text: e.label } } : {}),
-    };
-  });
-  return [...rects, ...arrows];
+    });
+    if (e.label) {
+      const midX = (sx + ex) / 2;
+      const midY = (sy + ey) / 2;
+      const textWidth = e.label.length * LABEL_CHAR_WIDTH;
+      const dx = ex - sx;
+      const dy = ey - sy;
+      let x: number;
+      let y: number;
+      if (Math.abs(dx) < 1) {
+        // Straight up or down: beside the line, at its middle.
+        x = midX + 10;
+        y = midY - LABEL_FONT / 2;
+      } else if (Math.abs(dy) < 1) {
+        // Side by side: above the line, centred.
+        x = midX - textWidth / 2;
+        y = midY - LABEL_FONT - 10;
+      } else {
+        // Sloping: above the middle, on the side the line leans away from, so it never crosses the text.
+        x = dx * dy > 0 ? midX + 10 : midX - textWidth - 10;
+        y = midY - LABEL_FONT * 1.25 - 6;
+      }
+      labels.push({ type: 'text', x, y, text: e.label, fontSize: LABEL_FONT, fontFamily: SYSTEM_FONT });
+    }
+  }
+  return [...rects, ...arrows, ...labels];
 }
 
 /** The scene file Utilities → Sketch saves and opens. */
