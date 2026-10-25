@@ -63,9 +63,10 @@ function linkOrCopyFileSync(fs, src, dest) {
  * @param {typeof import('path')} path
  * @param {string} srcDir
  * @param {string} destDir
+ * @param {(name: string) => boolean} [skip] files to leave out (staged copies and half-written temp files)
  * @returns {{ files: number; linked: number; copied: number }}
  */
-function cloneTreeSync(fs, path, srcDir, destDir) {
+function cloneTreeSync(fs, path, srcDir, destDir, skip) {
   const stats = { files: 0, linked: 0, copied: 0 };
   fs.mkdirSync(destDir, { recursive: true });
 
@@ -73,11 +74,11 @@ function cloneTreeSync(fs, path, srcDir, destDir) {
     const from = path.join(srcDir, entry.name);
     const to = path.join(destDir, entry.name);
     if (entry.isDirectory()) {
-      const nested = cloneTreeSync(fs, path, from, to);
+      const nested = cloneTreeSync(fs, path, from, to, skip);
       stats.files += nested.files;
       stats.linked += nested.linked;
       stats.copied += nested.copied;
-    } else if (entry.isFile()) {
+    } else if (entry.isFile() && !(skip && skip(entry.name))) {
       const how = linkOrCopyFileSync(fs, from, to);
       stats.files += 1;
       if (how === 'link') stats.linked += 1;

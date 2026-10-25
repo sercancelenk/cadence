@@ -1070,6 +1070,48 @@ describe('auth guesses', () => {
     expect(Object.keys(stored).length).toBeLessThanOrEqual(256);
   });
 
+  it('keeps the count of an account being guessed at when a flood of made-up emails fills the file', () => {
+    signUp();
+    const now = Date.now();
+    const map: Record<string, unknown> = {
+      'acct:victim@example.com': { fails: 5, lockedUntil: 0, lastAttempt: now - 5 * 60 * 1000 },
+    };
+    for (let i = 0; i < 300; i += 1) map[`acct:flood${i}@example.com`] = { fails: 1, lockedUntil: 0, lastAttempt: now - 60 * 1000 + i };
+    fs.writeFileSync(path.join(userDataDir, 'auth-throttle.json'), JSON.stringify(map));
+
+    call('account:login', { email: 'another-made-up@example.com', password: 'whatever-password' });
+
+    const stored = JSON.parse(fs.readFileSync(path.join(userDataDir, 'auth-throttle.json'), 'utf8')) as Record<string, { fails: number }>;
+    expect(stored['acct:victim@example.com']?.fails).toBe(5);
+    expect(Object.keys(stored).length).toBeLessThanOrEqual(256);
+  });
+
+  it('drops locks that have long expired instead of keeping them for ever, so the file cannot grow without bound', () => {
+    signUp();
+    const now = Date.now();
+    const map: Record<string, unknown> = {};
+    for (let i = 0; i < 400; i += 1) {
+      map[`acct:old${i}@example.com`] = { fails: 9, lockedUntil: now - 3 * 60 * 60 * 1000, lastAttempt: now - 3 * 60 * 60 * 1000 };
+    }
+    fs.writeFileSync(path.join(userDataDir, 'auth-throttle.json'), JSON.stringify(map));
+    call('account:login', { email: 'another-made-up@example.com', password: 'whatever-password' });
+    const stored = JSON.parse(fs.readFileSync(path.join(userDataDir, 'auth-throttle.json'), 'utf8')) as Record<string, unknown>;
+    expect(Object.keys(stored).length).toBeLessThanOrEqual(5);
+  });
+
+  it('rate-limits asking whether an email has recovery set up, not only guessing the codes', () => {
+    signUp();
+    const ask = () =>
+      call<Reply & { lockedOut?: boolean }>('account:recoverWithCodes', {
+        email: 'nobody@example.com',
+        codes: Array.from({ length: 8 }, () => 'AAAA-BBBB-CCCC'),
+        newPassword: 'a-new-password-1',
+      });
+    // Five free tries, the sixth starts the lock, the seventh is refused.
+    for (let i = 0; i < 6; i += 1) expect(ask().lockedOut).toBeFalsy();
+    expect(ask().lockedOut).toBe(true);
+  });
+
   it('forgets a failure record dated in the future so it can cool down', () => {
     signUp();
     call('auth:setPin', { pin: '1234' });
@@ -2456,6 +2498,21 @@ describe('backupArchive:open and backupArchive:apply', () => {
       expect(r.ok).toBe(false);
     });
 
+    it('takes one history snapshot that belongs to the safety copy, not a second one that nothing can pair', async () => {
+      const uid = signUp('onehist@example.com');
+      addHistory('X');
+      await (handlers.get('data:save') as Handler)({}, workspace([note('n1', 'One'), note('n2', 'Two')]), uid, undefined);
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      expect((await apply(p.token, p.workspace)).ok).toBe(true);
+      const names = fs.readdirSync(path.join(userDataDir, 'backups', uid));
+      const dataSets = names.filter((n) => /^data-pre-import-.*\.json$/.test(n) && !n.includes('-shard-'));
+      const historySets = names.filter((n) => n.startsWith('note-history-pre-import-'));
+      expect(dataSets).toHaveLength(1);
+      expect(historySets.map((n) => n.replace('note-history-', ''))).toEqual(dataSets.map((n) => n.replace('data-', '').replace('.json', '')));
+    });
+
     it('leaves no scratch folder behind', async () => {
       signUp('tidy@example.com');
       addHistory('X');
@@ -2465,5 +2522,94 @@ describe('backupArchive:open and backupArchive:apply', () => {
       await apply(p.token, p.workspace);
       expect(fs.readdirSync(userDataDir).filter((n) => n.startsWith('tmp-backup-'))).toEqual([]);
     });
+  });
+});
+
+describe('a password change that cannot be completed', () => {
+  function call<T>(channel: string, payload?: unknown): T {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+
+  async function signedUpWithNotes(email: string) {
+    expect(call<{ ok: boolean }>('account:register', { email, password: 'old-password-1' }).ok).toBe(true);
+    const uid = JSON.parse(fs.readFileSync(path.join(userDataDir, 'cadence-session.json'), 'utf8')).userId as string;
+    const handler = handlers.get('data:save') as Handler;
+    const saved = (await handler({}, workspace([note('n1', 'One'), note('n2', 'Two')]), uid, undefined)) as SaveResult;
+    expect(saved.ok).toBe(true);
+    return uid;
+  }
+  const change = () => call<{ ok: boolean; error?: string }>('account:changePassword', { oldPassword: 'old-password-1', newPassword: 'new-password-2' });
+  const notes = () => (call<{ notes: { id: string }[] } | null>('data:load')?.notes ?? []).map((n) => n.id).sort();
+
+  function whileFailing<T>(fail: (op: string, target: string) => boolean, run: () => T): T {
+    const realCopy = fs.copyFileSync;
+    const realRename = fs.renameSync;
+    const realRead = fs.readFileSync;
+    fs.copyFileSync = ((src: fs.PathLike, dest: fs.PathLike, ...rest: unknown[]) => {
+      if (fail('copy', String(dest))) throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+      return (realCopy as (...a: unknown[]) => void)(src, dest, ...rest);
+    }) as typeof fs.copyFileSync;
+    fs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+      if (fail('rename', String(to))) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+      return realRename(from, to);
+    }) as typeof fs.renameSync;
+    fs.readFileSync = ((target: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (typeof target === 'string' && fail('read', target)) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+      return (realRead as (...a: unknown[]) => unknown)(target, ...rest);
+    }) as typeof fs.readFileSync;
+    try {
+      return run();
+    } finally {
+      fs.copyFileSync = realCopy;
+      fs.renameSync = realRename;
+      fs.readFileSync = realRead;
+    }
+  }
+
+  it('does not start without a safety copy of the current data, and changes nothing', async () => {
+    await signedUpWithNotes('pw1@example.com');
+    const r = whileFailing((op, t) => op === 'copy' && t.includes(`${path.sep}backups${path.sep}`), change);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/safety copy/i);
+    expect(notes()).toEqual(['n1', 'n2']);
+    // Nothing was half-done: the same change goes through once the disk works.
+    expect(change().ok).toBe(true);
+    expect(notes()).toEqual(['n1', 'n2']);
+  });
+
+  it('does not start a reset with recovery codes without a safety copy either', async () => {
+    const reg = call<{ ok: boolean; recoveryCodes?: string[] }>('account:register', { email: 'pw4@example.com', password: 'old-password-1' });
+    const uid = JSON.parse(fs.readFileSync(path.join(userDataDir, 'cadence-session.json'), 'utf8')).userId as string;
+    await (handlers.get('data:save') as Handler)({}, workspace([note('n1', 'One'), note('n2', 'Two')]), uid, undefined);
+    const reset = () => call<{ ok: boolean; error?: string }>('account:recoverWithCodes', { email: 'pw4@example.com', codes: reg.recoveryCodes, newPassword: 'brand-new-pass-3' });
+    const r = whileFailing((op, t) => op === 'copy' && t.includes(`${path.sep}backups${path.sep}`), reset);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/safety copy/i);
+    expect(reset().ok).toBe(true);
+    expect(notes()).toEqual(['n1', 'n2']);
+  });
+
+  it('keeps the workspace readable under the old password when the new password cannot be saved', async () => {
+    await signedUpWithNotes('pw2@example.com');
+    const r = whileFailing((op, t) => op === 'rename' && t.endsWith('cadence-accounts.json'), change);
+    expect(r.ok).toBe(false);
+    expect(notes()).toEqual(['n1', 'n2']);
+    expect(change().ok).toBe(true);
+  });
+
+  it('puts the workspace back from memory when the new password cannot be saved and the safety copy cannot be read back either', async () => {
+    await signedUpWithNotes('pw3@example.com');
+    const r = whileFailing(
+      (op, t) =>
+        (op === 'rename' && t.endsWith('cadence-accounts.json')) ||
+        (op === 'read' && t.includes(`${path.sep}backups${path.sep}`)),
+      change,
+    );
+    expect(r.ok).toBe(false);
+    expect(notes()).toEqual(['n1', 'n2']);
+    expect(change().ok).toBe(true);
+    expect(notes()).toEqual(['n1', 'n2']);
   });
 });

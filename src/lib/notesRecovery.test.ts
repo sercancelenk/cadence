@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { NotesLock } from '../model';
 import { createNotesLock, unwrapPassphraseFromRecovery, wrapPassphraseForRecovery } from './notesCrypto';
-import { notesRecoveryIsForeign, notesRecoveryNeedsRenewal, rewrapNotesRecovery } from './notesRecovery';
+import { notesRecoveryIsForeign, notesRecoveryNeedsRenewal, notesRecoveryRenewalStep, rewrapNotesRecovery } from './notesRecovery';
 
 const base: NotesLock = { saltB64: 's', verifierIvB64: 'iv', verifierCipherB64: 'c' };
 const withRecovery = (accountId?: string): NotesLock => ({
@@ -80,5 +80,20 @@ describe('rewrapNotesRecovery', () => {
     const r = await rewrapNotesRecovery(lock, 'old', 'new', 'acct-1');
     expect(r.rewrapped).toBe(false);
     expect(r.lock).toBe(lock);
+  });
+});
+
+describe('notesRecoveryRenewalStep', () => {
+  it('has nothing to do for a recovery that belongs to this account, or when there is none', () => {
+    expect(notesRecoveryRenewalStep(withRecovery('acct-1'), 'acct-1')).toBe('none');
+    expect(notesRecoveryRenewalStep(undefined, 'acct-1')).toBe('none');
+  });
+
+  it('asks for the current password straight away when the recovery says it is another account\'s, without testing the password that just opened it', () => {
+    expect(notesRecoveryRenewalStep(withRecovery('acct-1'), 'acct-2')).toBe('ask');
+  });
+
+  it('checks the password that opened a recovery which does not say whose it is, since it is most likely this account\'s own', () => {
+    expect(notesRecoveryRenewalStep(withRecovery(undefined), 'acct-2')).toBe('check-own');
   });
 });

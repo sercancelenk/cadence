@@ -32,7 +32,7 @@ import { AppearanceSettingsSection } from '../components/settings/AppearanceSett
 import { PreferencesShell } from '../components/settings/PreferencesShell';
 import { SaveDiagnosticsSection } from '../components/settings/SaveDiagnosticsSection';
 import { BackupRetentionSettings } from '../components/settings/BackupRetentionSettings';
-import { snapshotSafetyNetText } from '../lib/backupRetentionText';
+import { BACKUP_RETENTION_CHANGED_EVENT, snapshotSafetyNetText } from '../lib/backupRetentionText';
 import { RecoveryCodesPanel } from '../components/RecoveryCodesPanel';
 import { prepareForRemoteApply } from '../lib/syncApplyGuard';
 import { estimateWorkspaceStorage } from '../lib/workspaceStorageStats';
@@ -190,14 +190,20 @@ function useSnapshotKeep(): number | null {
   useEffect(() => {
     if (!window.cadence?.backupRetentionGet) return;
     let alive = true;
-    void window.cadence
-      .backupRetentionGet()
-      .then((r) => {
-        if (alive && r.ok) setKeep(r.state.snapshotRoutineKeep);
-      })
-      .catch(() => undefined);
+    const load = () => {
+      void window.cadence
+        ?.backupRetentionGet?.()
+        .then((r) => {
+          if (alive && r.ok) setKeep(r.state.snapshotRoutineKeep);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    // The size is changed in a sibling card on this page; it announces the change.
+    window.addEventListener(BACKUP_RETENTION_CHANGED_EVENT, load);
     return () => {
       alive = false;
+      window.removeEventListener(BACKUP_RETENTION_CHANGED_EVENT, load);
     };
   }, []);
   return keep;
@@ -507,6 +513,7 @@ export function Settings() {
                 <BackupImportDialog
                   preview={transfer.dialog.preview}
                   current={transfer.dialog.current}
+                  hasSafetyCopy={transfer.dialog.hasSafetyCopy}
                   busy={transfer.busy}
                   onConfirm={(mode) => void transfer.confirmImport(mode)}
                   onCancel={transfer.cancelImport}

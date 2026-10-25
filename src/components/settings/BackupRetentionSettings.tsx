@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from '../ui/ConfirmProvider';
 import { useToast } from '../ui/Toast';
-import { describeRetentionLoss, mirrorKeepLabel, snapshotKeepLabel } from '../../lib/backupRetentionText';
+import {
+  BACKUP_RETENTION_CHANGED_EVENT,
+  describeRetentionLoss,
+  mirrorKeepLabel,
+  snapshotKeepLabel,
+} from '../../lib/backupRetentionText';
 import type { BackupRetentionRequest, BackupRetentionState } from '../../vite-env';
 
 const DEFAULT_MIRROR_KEEP = 30;
@@ -58,6 +63,7 @@ export function BackupRetentionSettings() {
         return;
       }
       setState(r.state);
+      window.dispatchEvent(new Event(BACKUP_RETENTION_CHANGED_EVENT));
       const removed = r.deleted.mirrorFolders + r.deleted.snapshotSets;
       toast.showSuccess(
         'Backup retention saved',

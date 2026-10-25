@@ -28,6 +28,8 @@ type OpenedBackup = {
 export type BackupImportDialogState = {
   preview: BackupPreview;
   current: { notes: number; todoItems: number };
+  /** Replacing first saves a copy of the current data (desktop app only). */
+  hasSafetyCopy: boolean;
 };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -43,6 +45,8 @@ export function useBackupTransfer({ onReplaced }: { onReplaced?: () => void } = 
   const { user } = useAccount();
   const { importWorkspace, syncFromDisk, flushPendingSave, getLatestSnapshot } = useAppData();
   const [busy, setBusy] = useState(false);
+  // State is read through a closure, so two calls in the same instant would both see `false`.
+  const busyRef = useRef(false);
   const [opened, setOpened] = useState<(OpenedBackup & { current: BackupImportDialogState['current'] }) | null>(null);
   const openedRef = useRef(opened);
   openedRef.current = opened;
@@ -113,11 +117,12 @@ export function useBackupTransfer({ onReplaced }: { onReplaced?: () => void } = 
   /** Step one. On the desktop app the file is chosen in a native dialog; in a browser `file` comes from the input. */
   const startImport = useCallback(
     async (file?: File) => {
-      if (busy) return;
+      if (busyRef.current) return;
       if (!user) {
         toast.showError('Not signed in', 'Sign in before importing a backup.');
         return;
       }
+      busyRef.current = true;
       setBusy(true);
       try {
         await flush();
@@ -177,7 +182,8 @@ export function useBackupTransfer({ onReplaced }: { onReplaced?: () => void } = 
               ok: true,
               counts: {
                 attachmentsRestored: r.attachmentsImported,
-                attachmentsSkipped: r.attachmentsSkipped + (r.attachmentsEncryptedSkipped ?? 0),
+                attachmentsSkipped: r.attachmentsSkipped,
+                attachmentsEncryptedSkipped: r.attachmentsEncryptedSkipped,
               },
             };
           },
@@ -185,10 +191,11 @@ export function useBackupTransfer({ onReplaced }: { onReplaced?: () => void } = 
       } catch (err) {
         toast.showError('Import failed', err instanceof Error ? err.message : 'Could not read the backup.');
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },
-    [busy, flush, importWorkspace, remember, toast, user],
+    [flush, importWorkspace, remember, toast, user],
   );
 
   /**
@@ -212,7 +219,8 @@ export function useBackupTransfer({ onReplaced }: { onReplaced?: () => void } = 
   const confirmImport = useCallback(
     async (mode: BackupImportMode) => {
       const current = openedRef.current;
-      if (!current || busy) return;
+      if (!current || busyRef.current) return;
+      busyRef.current = true;
       setBusy(true);
       try {
         await flush();
@@ -241,7 +249,7 @@ export function useBackupTransfer({ onReplaced }: { onReplaced?: () => void } = 
         }
         // From here the import has happened. A problem refreshing the screen is not a failed import.
         setOpened(null);
-        const outcome = describeRestoreOutcome(r.counts);
+        const outcome = describeRestoreOutcome(r.counts, 'import');
         const lead = summary ? describeMergeSummary(summary) : 'Your workspace now matches the backup.';
         const detail = `${lead} ${outcome.detail}`.trim();
         try {
@@ -259,14 +267,17 @@ export function useBackupTransfer({ onReplaced }: { onReplaced?: () => void } = 
       } catch (err) {
         toast.showError('Import failed', err instanceof Error ? err.message : 'Could not import the backup.');
       } finally {
+        busyRef.current = false;
         setBusy(false);
       }
     },
-    [busy, flush, onReplaced, readCurrent, syncFromDisk, toast],
+    [flush, onReplaced, readCurrent, syncFromDisk, toast],
   );
 
   const cancelImport = useCallback(() => setOpened(null), []);
 
-  const dialog: BackupImportDialogState | null = opened ? { preview: opened.preview, current: opened.current } : null;
+  const dialog: BackupImportDialogState | null = opened
+    ? { preview: opened.preview, current: opened.current, hasSafetyCopy: !!window.cadence?.backupArchiveApply }
+    : null;
   return { busy, dialog, exportBackup, startImport, confirmImport, cancelImport };
 }

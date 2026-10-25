@@ -1300,7 +1300,9 @@ function writeThrottle(map) {
     keys
       .sort((a, b) => {
         const byKind = Number(isEmailBucket(b)) - Number(isEmailBucket(a));
-        return byKind || (map[a].lastAttempt || 0) - (map[b].lastAttempt || 0);
+        // Within a kind, the buckets with the fewest failures go first: made-up emails each fail once, an
+        // account being guessed at has several, and a flood must not be able to wipe that count.
+        return byKind || (map[a].fails || 0) - (map[b].fails || 0) || (map[a].lastAttempt || 0) - (map[b].lastAttempt || 0);
       })
       .slice(0, keys.length - THROTTLE_MAX_BUCKETS)
       .forEach((k) => {
@@ -1771,7 +1773,25 @@ function snapshotBeforeReplace(userId, label, contentBytes = null, options = {})
       error: 'Could not save a safety copy of your current data first, so nothing was changed. Free some disk space and try again.',
     };
   }
-  return { ok: true };
+  return { ok: true, path: made };
+}
+
+/**
+ * Put the workspace back under the key it had, after a key change that could not be completed (the new
+ * password could not be saved). Prefers the safety copy; if that cannot be read back, the workspace the
+ * caller read at the start is written again. Either way the key in `dataKeys` must already be the old one.
+ *
+ * @returns {boolean} whether the workspace is readable again
+ */
+function restoreWorkspaceAfterFailedKeyChange(userId, snapshotPath, inMemoryWorkspace) {
+  if (snapshotPath) {
+    const restored = loadWorkspaceFromBackupSet(userId, snapshotPath);
+    if (restored.ok && commitUserData(userId, restored.workspace, { allowOverwriteUnreadable: true })?.ok) return true;
+  }
+  if (inMemoryWorkspace != null) {
+    return !!commitUserData(userId, inMemoryWorkspace, { allowOverwriteUnreadable: true })?.ok;
+  }
+  return false;
 }
 
 /**
@@ -4365,7 +4385,6 @@ ipcMain.handle('backupArchive:apply', async (_evt, { token, workspace: payload, 
   }
   const safety = snapshotBeforeReplace(uid, 'pre-import');
   if (!safety.ok) return safety;
-  snapshotNoteHistoryForUser(uid, 'pre-import', Date.now());
   workspaceImportLockUid = uid;
   try {
     const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
@@ -4490,7 +4509,6 @@ ipcMain.handle('data:importBundle', async () => {
   }
   const safety = snapshotBeforeReplace(uid, 'pre-import');
   if (!safety.ok) return safety;
-  snapshotNoteHistoryForUser(uid, 'pre-import', Date.now());
   workspaceImportLockUid = uid;
   try {
     // Commit the workspace FIRST (version-preflighted + atomic). Only after it
@@ -5527,7 +5545,10 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
   const newEncSalt = crypto.randomBytes(16).toString('hex');
   const newKey = deriveDataKey(newPassword, newEncSalt);
 
-  const preChangeSnapshot = snapshotCurrentDataFile(uid, 'pre-pwchange');
+  // The workspace is about to be re-sealed. Without a safety copy a failure halfway could leave it unreadable.
+  const safetyBeforeChange = snapshotBeforeReplace(uid, 'pre-pwchange');
+  if (!safetyBeforeChange.ok) return { ok: false, error: safetyBeforeChange.error };
+  const preChangeSnapshot = safetyBeforeChange.path;
   // Images and note history are carried to the new key as copies first; the live files are not
   // touched until the new password is safely on disk.
   if (previousKey) {
@@ -5576,14 +5597,7 @@ ipcMain.handle('account:changePassword', (_evt, { oldPassword, newPassword } = {
     discardKeyHistory(uid);
     if (previousKey) dataKeys.set(uid, previousKey);
     else dataKeys.delete(uid);
-    let restoredOk = false;
-    if (preChangeSnapshot) {
-      const restored = loadWorkspaceFromBackupSet(uid, preChangeSnapshot);
-      if (restored.ok) {
-        const rollbackCommit = commitUserData(uid, restored.workspace, { allowOverwriteUnreadable: true });
-        restoredOk = !!rollbackCommit?.ok;
-      }
-    }
+    const restoredOk = restoreWorkspaceAfterFailedKeyChange(uid, preChangeSnapshot, workspacePayload);
     return {
       ok: false,
       error: restoredOk
@@ -5669,6 +5683,8 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
   const accounts = readAccounts();
   const u = accounts.users.find((x) => x.email === em);
   if (!u || !isRecoveryEnvelope(u.recoveryEnvelope)) {
+    // Counted like a wrong guess, so asking which emails have recovery set up is limited the same way.
+    recordAuthFailure(recoverBucket(em));
     return { ok: false, error: 'Recovery is not available for this account on this device.' };
   }
 
@@ -5706,7 +5722,13 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
   const newEncSalt = crypto.randomBytes(16).toString('hex');
   const newKey = deriveDataKey(newPassword, newEncSalt);
 
-  const preRecoverySnapshot = snapshotCurrentDataFile(u.id, 'pre-recovery');
+  const safetyBeforeRecovery = snapshotBeforeReplace(u.id, 'pre-recovery');
+  if (!safetyBeforeRecovery.ok) {
+    dataKeys.delete(u.id);
+    lastCommittedByUser.delete(u.id);
+    return { ok: false, error: safetyBeforeRecovery.error };
+  }
+  const preRecoverySnapshot = safetyBeforeRecovery.path;
   const stagedForRecovery = stageUserSidecars(u.id, dataKey, newKey);
   if (!stagedForRecovery.ok) {
     discardUserSidecars(u.id);
@@ -5751,14 +5773,7 @@ ipcMain.handle('account:recoverWithCodes', (_evt, { email, codes, newPassword } 
     discardUserSidecars(u.id);
     discardKeyHistory(u.id);
     dataKeys.set(u.id, dataKey);
-    let restoredOk = false;
-    if (preRecoverySnapshot) {
-      const restored = loadWorkspaceFromBackupSet(u.id, preRecoverySnapshot);
-      if (restored.ok) {
-        const rollbackCommit = commitUserData(u.id, restored.workspace, { allowOverwriteUnreadable: true });
-        restoredOk = !!rollbackCommit?.ok;
-      }
-    }
+    const restoredOk = restoreWorkspaceAfterFailedKeyChange(u.id, preRecoverySnapshot, workspacePayload);
     return {
       ok: false,
       error: restoredOk

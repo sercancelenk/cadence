@@ -81,6 +81,20 @@ describe('stageRekey', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(foreign);
   });
 
+  it('carries on from a copy a cut-short earlier change left behind, when another change follows before any sign-in', () => {
+    const k0 = crypto.randomBytes(32);
+    const k1 = crypto.randomBytes(32);
+    const k2 = crypto.randomBytes(32);
+    fs.writeFileSync(file, encryptBuffer(PNG, k0));
+    stageRekey([file], k0, k1, binaryCodec, write); // change 1: staged, the swap never happened
+
+    const r = stageRekey([file], k1, k2, binaryCodec, write); // change 2: the live file is still under k0
+
+    expect(r).toMatchObject({ ok: true, staged: 1, unreadable: 0 });
+    expect(commitStaged([file], k2, binaryCodec)).toMatchObject({ ok: true, committed: 1 });
+    expect(decryptBuffer(fs.readFileSync(file, 'utf8'), k2)?.equals(PNG)).toBe(true);
+  });
+
   it('seals plaintext history when the codec allows it', () => {
     const hist = path.join(dir, 'rev.json');
     fs.writeFileSync(hist, '{"body":"hello"}');

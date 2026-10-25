@@ -94,8 +94,14 @@ Enforced by: `persistence/zipReader.test.ts`, `mainSavePath.test.ts` › "never 
 
 ## Known limits (accepted, documented)
 
-- Running an older build against a data folder a newer build already sealed loses note history there and may delete
-  images only that history used. History was judged expendable; the main files stay recoverable.
+- Running an older build against a data folder a newer build already sealed hides that note history, replaces a sealed
+  history index with a new one on its next history write (the sealed revision files stay on disk, unlisted), and its
+  cleanup deletes images only that history used. History was judged expendable; notes, tasks and the images they use
+  stay recoverable. Verified against the previous release in a throwaway harness.
+- The daily backup folder keeps two folders by default for a new setup. If data is lost and two more daily backups run
+  before it is noticed, no folder from before the loss is left there; the in-app snapshots (50 by default) still are.
+- The attempt limiter depends on the system clock and on `auth-throttle.json`: moving the clock back, or deleting the
+  file, resets a lock. The PIN is a screen lock, not encryption (the app says so).
 - Password change and the first-login history upgrade block the main process for a moment on very large libraries.
 - A user who changed their password on a build before key history existed has older snapshots sealed under a key that
   can no longer be derived; those snapshots cannot be opened.

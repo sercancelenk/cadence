@@ -49,6 +49,16 @@ describe('backup & recovery standard (static guards)', () => {
     },
   );
 
+  it.each(['account:changePassword', 'account:recoverWithCodes'])(
+    'B1: %s needs a safety copy first and can put the workspace back even if that copy cannot be read',
+    (channel) => {
+      const body = handlerBody(channel);
+      expect(body).toMatch(/snapshotBeforeReplace\(/);
+      expect(body).toMatch(/restoreWorkspaceAfterFailedKeyChange\(/);
+      expect(body).not.toMatch(/snapshotCurrentDataFile\(/);
+    },
+  );
+
   it('B2: reading a backup set tries the earlier keys', () => {
     const fn = main.slice(main.indexOf('function loadWorkspaceFromBackupSet'));
     expect(fn.slice(0, 2500)).toMatch(/tryPreviousKeys:\s*true/);

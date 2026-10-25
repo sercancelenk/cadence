@@ -23,6 +23,18 @@ export function notesRecoveryIsForeign(lock: NotesLock | undefined, accountId: s
 }
 
 /**
+ * What to do after a recovery opened the Notes with an account password:
+ *  - `none`       the envelope is this account's own, or there is none;
+ *  - `ask`        it says outright it was made for another account: the password that opened it is that
+ *                 account's, so testing it here would only count as a wrong guess against this account;
+ *  - `check-own`  it does not say whose it is: the password may be this account's own, so test it once.
+ */
+export function notesRecoveryRenewalStep(lock: NotesLock | undefined, accountId: string): 'none' | 'ask' | 'check-own' {
+  if (!notesRecoveryNeedsRenewal(lock, accountId)) return 'none';
+  return notesRecoveryIsForeign(lock, accountId) ? 'ask' : 'check-own';
+}
+
+/**
  * When the account password changes, the Notes recovery (wrapped with the old password) can be moved
  * to the new one: the old password opens it, which yields the Notes passphrase, which is wrapped
  * again. If the old password does not open it, the lock is returned untouched.

@@ -66,6 +66,18 @@ function stageRekey(files, fromKey, toKey, codec, writeFile) {
       }
       plain = codec.open(text, fromKey);
       if (plain == null) {
+        // A change that was cut short before another one began leaves the live file under an older key and a
+        // staged copy under the key that is `fromKey` now. That copy still holds the bytes.
+        const leftover = readText(stagedPath(file));
+        if (leftover != null && isEncryptedEnvelope(leftover)) {
+          if (codec.open(leftover, toKey) != null) {
+            result.unchanged += 1;
+            continue;
+          }
+          plain = codec.open(leftover, fromKey);
+        }
+      }
+      if (plain == null) {
         result.unreadable += 1;
         continue;
       }

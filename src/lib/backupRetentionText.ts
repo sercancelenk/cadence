@@ -42,3 +42,6 @@ export function snapshotSafetyNetText(keep: number | null | undefined): string {
   const n = typeof keep === 'number' && keep > 0 ? keep : 50;
   return `routine copies, newest ${n} kept`;
 }
+
+/** Fired on `window` after the retention setting was saved, so text elsewhere on the page shows the new size. */
+export const BACKUP_RETENTION_CHANGED_EVENT = 'cadence:backup-retention-changed';

@@ -8,6 +8,8 @@ type Props = {
   preview: BackupPreview;
   /** What is on this device now, for the "replace" decision. */
   current: { notes: number; todoItems: number };
+  /** True where replacing first saves a copy of the current data (the desktop app); a browser does not. */
+  hasSafetyCopy: boolean;
   busy: boolean;
   onConfirm: (mode: BackupImportMode) => void;
   onCancel: () => void;
@@ -25,7 +27,7 @@ function madeAt(iso: string | undefined): string | null {
  * The one import step: look at what is inside the file, then choose between adding it to what is here
  * (nothing is overwritten or deleted) and replacing what is here (a safety copy is made first).
  */
-export function BackupImportDialog({ preview, current, busy, onConfirm, onCancel }: Props) {
+export function BackupImportDialog({ preview, current, hasSafetyCopy, busy, onConfirm, onCancel }: Props) {
   const [mode, setMode] = useState<BackupImportMode>('merge');
   const made = madeAt(preview.exportedAt);
   const warnings = backupWarnings(preview);
@@ -33,6 +35,7 @@ export function BackupImportDialog({ preview, current, busy, onConfirm, onCancel
   return (
     <AppModal
       title="Import backup"
+      description="Choose what should happen to your notes and tasks."
       size="md"
       onClose={busy ? () => undefined : onCancel}
       closeOnBackdrop={false}
@@ -54,7 +57,7 @@ export function BackupImportDialog({ preview, current, busy, onConfirm, onCancel
         ))}
       </ul>
       {warnings.map((w) => (
-        <p key={w} className="small" style={{ margin: '0 0 6px', color: '#b45309' }}>
+        <p key={w} className="small" style={{ margin: '0 0 6px', color: 'var(--warn, #b45309)' }}>
           {w}
         </p>
       ))}
@@ -87,7 +90,9 @@ export function BackupImportDialog({ preview, current, busy, onConfirm, onCancel
       </fieldset>
       {mode === 'replace' ? (
         <p className="small" style={{ margin: '12px 0 0' }}>
-          A safety copy of your current data is saved first. You can bring it back from Automatic snapshots below.
+          {hasSafetyCopy
+            ? 'A safety copy of your current data is saved first. You can bring it back from Automatic snapshots below.'
+            : 'There is no automatic safety copy in a browser. If you might want to go back, export a backup first.'}
         </p>
       ) : null}
     </AppModal>

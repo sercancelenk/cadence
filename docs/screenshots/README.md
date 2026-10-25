@@ -8,7 +8,7 @@ PNG files here are copied to `dist/screenshots/` when you run `npm run build:pag
    ```bash
    node scripts/generate-screenshot-demo.mjs
    ```
-2. **Settings → Data & backup → Import portable backup** (or Import JSON) → choose `docs/demo/cadence-screenshot-demo.json`
+2. **Settings → Data & backup → Import backup** → choose `docs/demo/cadence-screenshot-demo.json`, then **Replace what's here**
 3. Use a **throwaway test account** — import replaces the whole workspace.
 4. **Dark theme** (`data-theme="dark"`) matches the landing page.
 5. Desktop window ~1280×800 or wider; avoid devtools in frame.
@@ -22,7 +22,7 @@ PNG files here are copied to `dist/screenshots/` when you run `npm run build:pag
 | `todos.png` | `/todos` | Mixed statuses; one task with details open |
 | `agenda.png` | `/agenda` | Overdue + today + upcoming |
 | `planning.png` | `/planning` | Eisenhower matrix + today focus strip |
-| `settings.png` | `/settings` | Scroll to show **Account & security** + **Data & backup** (portable ZIP + full backup buttons) |
+| `settings.png` | `/settings` | Scroll to show **Account & security** + **Data & backup** (Export backup / Import backup) |
 
 ## Recommended — docs & future landing sections
 

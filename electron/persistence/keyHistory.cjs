@@ -79,11 +79,13 @@ function stagePreviousKey(file, previous, current) {
   const next = `${file}${NEXT}`;
   let existing = [];
   let setAsideUnreadable = false;
+  // A change that was never swapped in leaves its list in `.next`, sealed under the key that is `previous` now.
+  const fromNext = fs.existsSync(next) ? openList(next, previous) || openList(next, current) : null;
   if (fs.existsSync(file)) {
-    const opened = openList(file, previous) || openList(file, current) || openList(next, previous);
+    const opened = openList(file, previous) || openList(file, current);
     if (opened) {
       existing = opened;
-    } else {
+    } else if (!fromNext) {
       try {
         fs.copyFileSync(file, `${file}.unreadable`);
         setAsideUnreadable = true;
@@ -92,6 +94,7 @@ function stagePreviousKey(file, previous, current) {
       }
     }
   }
+  for (const hex of fromNext || []) if (!existing.includes(hex)) existing.push(hex);
   const hex = previous.toString('hex');
   const keys = [hex, ...existing.filter((x) => x !== hex)].slice(0, MAX_PREVIOUS_KEYS);
   const written = atomicWrite(next, encryptPayload(JSON.stringify({ version: 1, keys }), current));

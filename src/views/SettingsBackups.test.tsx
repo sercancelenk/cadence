@@ -158,6 +158,28 @@ describe('Settings → Backup & recovery', () => {
       expect(screen.queryByText(/newest 50 kept/)).toBeNull();
     });
 
+    it('follows the setting when it is changed on the same page, without a reload', async () => {
+      mount();
+      expect(await screen.findByText(/newest 20 kept/)).toBeTruthy();
+      cadence.backupRetentionGet!.mockResolvedValue({
+        ok: true,
+        state: {
+          mirrorKeep: 2,
+          mirrorKeepChoices: [2, 7],
+          snapshotRoutineKeep: 10,
+          snapshotRoutineKeepChoices: [10, 20, 50],
+          snapshotLifecycleKeep: 50,
+          mirrorDirConfigured: false,
+          mirrorDirAvailable: true,
+        },
+      });
+      act(() => {
+        window.dispatchEvent(new Event('cadence:backup-retention-changed'));
+      });
+      expect(await screen.findByText(/newest 10 kept/)).toBeTruthy();
+      expect(screen.queryByText(/newest 20 kept/)).toBeNull();
+    });
+
     it('does not restore when the user cancels the confirmation', async () => {
       ui.confirm.mockResolvedValue(false);
       mount();

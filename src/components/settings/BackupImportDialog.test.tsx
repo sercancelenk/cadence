@@ -21,6 +21,7 @@ function mount(over: Partial<React.ComponentProps<typeof BackupImportDialog>> = 
     <BackupImportDialog
       preview={PREVIEW}
       current={{ notes: 2, todoItems: 0 }}
+      hasSafetyCopy
       busy={false}
       onConfirm={onConfirm}
       onCancel={onCancel}
@@ -64,6 +65,19 @@ describe('BackupImportDialog', () => {
     expect(screen.getByText(/safety copy of your current data/i)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Replace and import' }));
     expect(onConfirm).toHaveBeenCalledWith('replace');
+  });
+
+  it('does not promise a safety copy where none is made (a browser), and says to export first', () => {
+    mount({ hasSafetyCopy: false });
+    fireEvent.click(screen.getByLabelText(/Replace what's here/));
+    expect(screen.queryByText(/safety copy of your current data/i)).toBeNull();
+    expect(screen.queryByText(/Automatic snapshots/i)).toBeNull();
+    expect(screen.getByText(/no automatic safety copy.*export a backup first/i)).toBeTruthy();
+  });
+
+  it('describes itself to assistive technology', () => {
+    mount();
+    expect(screen.getByRole('dialog').getAttribute('aria-describedby')).toBeTruthy();
   });
 
   it('warns about images that were already missing when the backup was made', () => {

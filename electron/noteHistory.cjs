@@ -3,8 +3,11 @@
  *
  * Lives outside workspace JSON. Files are sealed with the account's data key. Builds from
  * before that cannot read sealed files (they see no history there) and must not be run against
- * a data folder that a newer build has sealed: an older build's attachment cleanup does not
- * know the sealed revisions, so it can delete images only those revisions use.
+ * a data folder that a newer build has sealed. Verified against the previous release: its
+ * attachment cleanup does not know the sealed revisions, so it deletes images only those
+ * revisions use, and its next history write replaces a sealed `index.json` with a new plaintext
+ * one (the sealed revision files stay on disk but are no longer listed). Notes, tasks and
+ * images the notes use are not affected.
  * Full backup / rolling snapshots copy this tree alongside attachments/.
  */
 
@@ -430,7 +433,8 @@ function snapshotNoteHistoryForUser(userId, label, ts) {
     const targetDir = path.join(backupsRoot, `note-history-${label}-${ts}`);
     // Hardlinked, not copied: revisions are only ever written via
     // `writeTextAtomic` (tmp + rename), so links never see later edits.
-    cloneTreeSync(fs, path, srcDir, targetDir);
+    // A staged copy (`.rekey`) or a half-written temp file is not history; it must not outlive its operation inside a snapshot.
+    cloneTreeSync(fs, path, srcDir, targetDir, isHistoryLeftover);
     return targetDir;
   } catch (err) {
     console.warn('[cadence] note-history snapshot failed (continuing)', err);

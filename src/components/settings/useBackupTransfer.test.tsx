@@ -150,6 +150,45 @@ describe('importing on the desktop app', () => {
     expect(h.sync).not.toHaveBeenCalled();
   });
 
+  it('shows the main process\'s reason when the workspace changed meanwhile, and lets the user try again', async () => {
+    cad.backupArchiveOpen!.mockResolvedValue(openedOk());
+    cad.backupArchiveApply!.mockResolvedValueOnce({ ok: false, reason: 'write-conflict', error: 'Your workspace changed while this import was open. Nothing was changed — try again.' });
+    const { result } = setup();
+    await act(() => result.current.startImport());
+    await act(() => result.current.confirmImport('merge'));
+    expect(h.toast.showError).toHaveBeenCalledWith('Import failed', expect.stringMatching(/workspace changed.*try again/));
+    expect(result.current.dialog).not.toBeNull();
+    // A second try builds the merge again from what is on disk now.
+    await act(() => result.current.confirmImport('merge'));
+    expect(cad.backupArchiveApply).toHaveBeenCalledTimes(2);
+    expect(result.current.dialog).toBeNull();
+  });
+
+  it('opens only one file dialog when started twice in the same instant', async () => {
+    let release: (v: unknown) => void = () => undefined;
+    cad.backupArchiveOpen!.mockReturnValue(new Promise((r) => (release = r)));
+    const { result } = setup();
+    let first: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = result.current.startImport();
+      void result.current.startImport();
+      release({ ok: false, canceled: true });
+      await first;
+    });
+    expect(cad.backupArchiveOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirms only once when clicked twice in the same instant', async () => {
+    cad.backupArchiveOpen!.mockResolvedValue(openedOk());
+    const { result } = setup();
+    await act(() => result.current.startImport());
+    await act(async () => {
+      void result.current.confirmImport('merge');
+      await result.current.confirmImport('merge');
+    });
+    expect(cad.backupArchiveApply).toHaveBeenCalledTimes(1);
+  });
+
   it('warns that the import is incomplete, and still reloads, when some images or history were missed', async () => {
     cad.backupArchiveOpen!.mockResolvedValue(openedOk());
     cad.backupArchiveApply!.mockResolvedValueOnce({ ok: true, attachmentsRestored: 0, attachmentsFailed: 2, attachmentsSkipped: 0, historyIncomplete: true });
@@ -313,6 +352,62 @@ describe('in a browser', () => {
     expect(h.sync).toHaveBeenCalled();
     expect(h.toast.showSuccess).toHaveBeenCalledWith('Backup imported', expect.stringMatching(/2 images restored/));
     await waitFor(() => expect(result.current.dialog).toBeNull());
+  });
+
+  it('adds the backup to this browser\'s workspace and hands the merged result to the app', async () => {
+    const backupWs = normalizeData({ notes: [note('theirs', 'Theirs')] });
+    h.latest.current = normalizeData({ notes: [note('mine', 'Mine')], aiSettings: { provider: 'openai', apiKey: 'sk-local-secret' } });
+    let handedOver: AppData | null = null;
+    h.openFile.mockResolvedValue({
+      ok: true,
+      workspace: backupWs,
+      preview: { fileName: 'b.zip', kind: 'zip', counts: { notes: 1, todoItems: 0, teams: 0 }, images: 0, imagesSkippedAtExport: 0, historyNotes: 0, historyVersions: 0 },
+      apply: async (w: AppData, imp: (x: AppData) => Promise<{ ok: true }>) => {
+        handedOver = w;
+        await imp(w);
+        return { ok: true as const, attachmentsImported: 0, attachmentsSkipped: 0 };
+      },
+    });
+    const { result } = setup();
+    await act(() => result.current.startImport(new File(['x'], 'b.zip')));
+    await act(() => result.current.confirmImport('merge'));
+    expect((handedOver as AppData | null)?.notes.map((n) => n.id).sort()).toEqual(['mine', 'theirs']);
+    expect((handedOver as AppData | null)?.aiSettings?.apiKey).toBe('sk-local-secret');
+    expect(h.importWorkspace).toHaveBeenCalledWith(handedOver);
+  });
+
+  it('replaces this browser\'s workspace with the backup and keeps its own AI key', async () => {
+    const backupWs = normalizeData({ notes: [note('theirs', 'Theirs')], aiSettings: { provider: 'openai', apiKey: '' } });
+    h.latest.current = normalizeData({ notes: [note('mine', 'Mine')], aiSettings: { provider: 'openai', apiKey: 'sk-local-secret' } });
+    let handedOver: AppData | null = null;
+    h.openFile.mockResolvedValue({
+      ok: true,
+      workspace: backupWs,
+      preview: { fileName: 'b.zip', kind: 'zip', counts: null, images: 0, imagesSkippedAtExport: 0, historyNotes: 0, historyVersions: 0 },
+      apply: async (w: AppData) => {
+        handedOver = w;
+        return { ok: true as const, attachmentsImported: 0, attachmentsSkipped: 0 };
+      },
+    });
+    const { result, onReplaced } = setup();
+    await act(() => result.current.startImport(new File(['x'], 'b.zip')));
+    await act(() => result.current.confirmImport('replace'));
+    expect((handedOver as AppData | null)?.notes.map((n) => n.id)).toEqual(['theirs']);
+    expect((handedOver as AppData | null)?.aiSettings?.apiKey).toBe('sk-local-secret');
+    expect(onReplaced).toHaveBeenCalledTimes(1);
+  });
+
+  it('says which images need the desktop app instead of asking for a re-export', async () => {
+    h.openFile.mockResolvedValue({
+      ok: true,
+      workspace: normalizeData({ notes: [note('theirs', 'Theirs')] }),
+      preview: { fileName: 'b.zip', kind: 'zip', counts: null, images: 2, imagesSkippedAtExport: 0, historyNotes: 0, historyVersions: 0 },
+      apply: async () => ({ ok: true as const, attachmentsImported: 0, attachmentsSkipped: 0, attachmentsEncryptedSkipped: 2 }),
+    });
+    const { result } = setup();
+    await act(() => result.current.startImport(new File(['x'], 'b.zip')));
+    await act(() => result.current.confirmImport('merge'));
+    expect(h.toast.showWarning).toHaveBeenCalledWith('Backup imported, but incomplete', expect.stringMatching(/2 encrypted images need the desktop app/));
   });
 
   it('explains a file the browser cannot read', async () => {

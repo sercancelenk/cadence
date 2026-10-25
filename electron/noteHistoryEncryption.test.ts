@@ -295,6 +295,19 @@ describe('moving history between folders', () => {
     expect(readNoteRevision(userId, VICTIM, revId).revision.body).toBe('VICTIM-ORIGINAL');
   });
 
+  it('leaves staged copies and half-written files out of a snapshot of the history', () => {
+    appendNoteRevision(userId, unlockedRevision());
+    const noteDir = path.join(root, 'note-history', userId, noteId);
+    fs.writeFileSync(path.join(noteDir, 'rev-1.json.rekey'), 'staged copy');
+    fs.writeFileSync(path.join(noteDir, 'index.json.123.tmp'), 'half written');
+
+    const snapshot = history.snapshotNoteHistoryForUser(userId, 'pre-save', '2026-01-01T00-00-00-000Z') as string;
+
+    const names = allFiles(snapshot).map((f) => path.basename(f));
+    expect(names.some((n) => n.endsWith('.rekey') || n.endsWith('.tmp'))).toBe(false);
+    expect(names).toContain('index.json');
+  });
+
   it('reports no skipped notes when everything was brought back', () => {
     appendNoteRevision(userId, unlockedRevision());
     const staged = path.join(root, 'staged');

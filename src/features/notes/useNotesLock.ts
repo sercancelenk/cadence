@@ -18,7 +18,7 @@ import type { RichTextBodyFields } from '../../lib/richTextBody';
 import type { NoteRevisionCapture } from './useNotesEditor';
 import { FORCE_RESET_PHRASE, MIN_NOTES_PASSPHRASE_LENGTH, type PendingIntent } from './noteLockTypes';
 import { prepareForRemoteApply } from '../../lib/syncApplyGuard';
-import { notesRecoveryNeedsRenewal } from '../../lib/notesRecovery';
+import { notesRecoveryRenewalStep } from '../../lib/notesRecovery';
 import { runBeforeFlushHooks } from '../../lib/pendingSaveFlush';
 import { patchNoteLockState } from '../../core/actions';
 import { PLACEHOLDER_TITLE } from './notePreferences';
@@ -419,11 +419,13 @@ export function useNotesLock({
       setUnlockPw('');
       // The recovery was made for another account (a restored backup): offer to tie it to this account now,
       // with the Notes passphrase we just recovered filled in, so the user only types the current account password.
-      if (account.user && notesRecoveryNeedsRenewal(data.notesLock, account.user.id)) {
-        // If the password that just opened it is this account's own, the envelope was fine all along (made
-        // before the account was recorded): stamp it quietly. Otherwise it came from another account's backup:
-        // offer to tie it to this one, with the passphrase filled in so only the current password is typed.
-        const own = await account.verifyPassword(accountPw);
+      const renewal = account.user ? notesRecoveryRenewalStep(data.notesLock, account.user.id) : 'none';
+      if (account.user && renewal !== 'none') {
+        // An envelope that does not say whose it is may be this account's own (made before the account was
+        // recorded): if the password that opened it is this account's, stamp it quietly. One that says it is
+        // another account's is never tested against this account (that would count as a wrong guess here);
+        // either way, when it is not this account's, offer to tie it to this one with the passphrase filled in.
+        const own = renewal === 'check-own' ? await account.verifyPassword(accountPw) : { ok: false as const };
         if (own.ok) {
           const recovery = await wrapPassphraseForRecovery(passphrase, accountPw, account.user.id);
           setNotesLock({ ...data.notesLock, recovery });

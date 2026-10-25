@@ -36,4 +36,18 @@ describe('describeRestoreOutcome', () => {
   it('always tells the user their notes and tasks were restored when something is missing', () => {
     expect(describeRestoreOutcome({ attachmentsFailed: 1 }).detail).toMatch(/notes and tasks were restored/i);
   });
+
+  it('does not talk about a snapshot when an import (not a restore) was incomplete', () => {
+    const o = describeRestoreOutcome({ attachmentsFailed: 1 }, 'import');
+    expect(o.detail).toMatch(/notes and tasks were imported/i);
+    expect(o.detail).not.toMatch(/snapshot|restored/i);
+    expect(o.detail).toMatch(/backup file is unchanged/i);
+  });
+
+  it('tells a browser user which images need the desktop app', () => {
+    const o = describeRestoreOutcome({ attachmentsEncryptedSkipped: 2 }, 'import');
+    expect(o.incomplete).toBe(true);
+    expect(o.detail).toContain('2 encrypted images need the desktop app to import');
+    expect(o.detail).not.toMatch(/re-export/i);
+  });
 });

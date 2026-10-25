@@ -96,6 +96,14 @@ describe('a change that is cut short', () => {
     expect(hex(readPreviousKeys(file, c))).toEqual(hex([a, b]));
   });
 
+  it('keeps the earliest key when a first change was never swapped in and a second one follows', () => {
+    const [k0, k1, k2] = [k(), k(), k()];
+    stagePreviousKey(file, k0, k1); // change 1: account saved, but the swap never happened (no live file yet)
+    expect(fs.existsSync(file)).toBe(false);
+    change(k1, k2); // change 2, same session
+    expect(hex(readPreviousKeys(file, k2))).toEqual(hex([k0, k1]));
+  });
+
   it('ignores a stale staged copy sealed under a key that never became current', () => {
     const [a, b, never] = [k(), k(), k()];
     change(a, b);
