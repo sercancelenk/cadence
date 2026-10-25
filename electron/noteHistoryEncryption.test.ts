@@ -238,6 +238,63 @@ describe('moving history between folders', () => {
     expect(allFiles(staged).map((f) => fs.readFileSync(f, 'utf8'))).toEqual(before);
   });
 
+  it('does not let a backup\'s revision ids reach into another note\'s history', () => {
+    const VICTIM = 'note-victim-0001';
+    const victim = appendNoteRevision(userId, unlockedRevision({ noteId: VICTIM, body: 'VICTIM-ORIGINAL' }));
+    expect(victim.ok).toBe(true);
+    const revId = victim.revisionId as string;
+    const victimDir = path.join(root, 'note-history', userId, VICTIM);
+    const before = allFiles(victimDir).map((f) => [f, fs.readFileSync(f, 'utf8')]);
+
+    // A doctored backup: another note's index names revisions with ../ so the files land in the victim's folder.
+    const staged = path.join(root, 'staged');
+    fs.mkdirSync(path.join(staged, 'note-attacker-001'), { recursive: true });
+    fs.mkdirSync(path.join(staged, VICTIM), { recursive: true });
+    const evil = JSON.stringify({ id: revId, noteId: VICTIM, title: 'EVIL', summary: 'EVIL', body: 'EVIL-BODY', bodyFormat: 'markdown' });
+    fs.writeFileSync(path.join(staged, VICTIM, `${revId}.json`), evil);
+    fs.writeFileSync(
+      path.join(staged, 'note-attacker-001', 'index.json'),
+      JSON.stringify({
+        version: 1,
+        noteId: 'note-attacker-001',
+        revisions: [
+          { id: `../${VICTIM}/${revId}`, createdAt: new Date().toISOString() },
+          { id: `..\\${VICTIM}\\${revId}`, createdAt: new Date().toISOString() },
+          { id: `${VICTIM}/${revId}`, createdAt: new Date().toISOString() },
+          { id: 'x'.repeat(300), createdAt: new Date().toISOString() },
+        ],
+      }),
+    );
+
+    importNoteHistoryFromDir(userId, staged);
+
+    expect(allFiles(victimDir).map((f) => [f, fs.readFileSync(f, 'utf8')])).toEqual(before);
+    expect(readNoteRevision(userId, VICTIM, revId).revision.body).toBe('VICTIM-ORIGINAL');
+    expect(diskText()).not.toContain('EVIL');
+  });
+
+  it('does not delete another note\'s revision when a pruned id points out of its folder', () => {
+    const VICTIM = 'note-victim-0001';
+    const victim = appendNoteRevision(userId, unlockedRevision({ noteId: VICTIM, body: 'VICTIM-ORIGINAL' }));
+    const revId = victim.revisionId as string;
+    const staged = path.join(root, 'staged');
+    fs.mkdirSync(path.join(staged, 'note-attacker-001'), { recursive: true });
+    fs.mkdirSync(path.join(staged, VICTIM), { recursive: true });
+    // The file the doctored id points at exists, so the revision is accepted and then pruned for its age.
+    fs.writeFileSync(path.join(staged, VICTIM, `${revId}.json`), JSON.stringify({ id: revId, noteId: VICTIM, body: 'EVIL-BODY' }));
+    fs.writeFileSync(
+      path.join(staged, 'note-attacker-001', 'index.json'),
+      JSON.stringify({
+        version: 1,
+        noteId: 'note-attacker-001',
+        // Old enough to be pruned straight away.
+        revisions: [{ id: `../${VICTIM}/${revId}`, createdAt: '2001-01-01T00:00:00.000Z' }],
+      }),
+    );
+    importNoteHistoryFromDir(userId, staged);
+    expect(readNoteRevision(userId, VICTIM, revId).revision.body).toBe('VICTIM-ORIGINAL');
+  });
+
   it('reports no skipped notes when everything was brought back', () => {
     appendNoteRevision(userId, unlockedRevision());
     const staged = path.join(root, 'staged');

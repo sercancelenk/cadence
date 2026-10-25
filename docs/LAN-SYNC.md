@@ -12,15 +12,15 @@ gets your data when you carry a file across.
 
 ## Offline transfer with a portable backup
 
-1. On the source device: **Settings → Data & backup → Export portable backup (ZIP)**.
+1. On the source device: **Settings → Data & backup → Backup & recovery → Export backup**.
 2. Carry the file across (AirDrop, Files, USB, a private chat to yourself).
    The ZIP is **not encrypted** — it holds your notes and images in readable form, so move it only by ways you trust and delete it afterwards.
-3. On the target device: **Settings → Data & backup → Merge from another device**.
+3. On the target device: **Settings → Data & backup → Backup & recovery → Import backup**, check what is inside, and choose **Add to what's here**.
 
 ## Merge or replace
 
-- **Merge from another device** is additive. Everything already on the target stays; only items it does not have are added. Importing the same file twice changes nothing. Local settings (profile, AI settings, notes passphrase, active team) are never touched.
-- **Import (replace)** overwrites the target workspace with the file. Use it to restore a device. A snapshot of the current workspace is taken first.
+- **Add to what's here** is additive. Everything already on the target stays; only items it does not have are added. Importing the same file twice changes nothing. Local settings (profile, AI settings, notes passphrase, active team) are never touched.
+- **Replace what's here** overwrites the target workspace with the file. Use it to restore a device. A snapshot of the current workspace is taken first.
 
 ## What merge does not do
 

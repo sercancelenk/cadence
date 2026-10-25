@@ -77,7 +77,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 
 ![Settings page with account, backup and recovery codes](docs/screenshots/settings.png)
 
-> Cards are organised into named groups: **Account & security** (stay signed in, recovery codes, PIN), **Data & backup** (portable ZIP, full folder, merge from another device, rolling snapshots), **Integrations** (AI assistant and OS notifications) and **About** (user guide, version, auto-update).
+> Cards are organised into named groups: **Account & security** (stay signed in, recovery codes, PIN), **Data & backup** (one Export / Import backup, daily backup folder, rolling snapshots), **Integrations** (AI assistant and OS notifications) and **About** (user guide, version, auto-update).
 
 ---
 
@@ -103,7 +103,7 @@ A quick tour of the desktop app. Every page below is the **macOS Electron build*
 | 🔒 **Encrypted at rest** | AES-256-GCM data file keyed via `scrypt(password)`. Notes get an additional PBKDF2 → AES-256-GCM lockbox with a non-extractable `CryptoKey`. |
 | 🔑 **Stay signed in (opt-out)** | After your first login, Cadence wraps the data-encryption key with Electron's `safeStorage` and persists it in your OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret). Restarts skip the password prompt; **Logout** always purges the cached key, and Settings → *Stay signed in* gives you a one-click "ask on every launch" toggle. On Linux without libsecret we refuse to cache rather than fall back to a hardcoded-obfuscation key — same security promise on every platform. |
 | 🛟 **Durable saves** | Atomic `open → write → fsync → close → rename` cycle plus directory fsync. A power loss or kernel panic leaves either the old file or the new file — never a torn one. Worst case: ≤ 400 ms of unflushed typing. |
-| 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Each snapshot shows teams / lists / tasks / notes counts; **Reveal in Finder** for manual inspection. Refuse-to-overwrite guard if the live file is undecipherable. **Settings → Backup & recovery** merges manual export/import and snapshot restore in one place — **portable ZIP** (all platforms, with images), **full backup folder** (desktop, with note history), and JSON (text-only). |
+| 🗂️ **Auto-backups** | 50 rolling snapshots in `backups/<userId>/` (labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`) with a one-click in-app restore. Each snapshot shows teams / lists / tasks / notes counts; **Reveal in Finder** for manual inspection. Refuse-to-overwrite guard if the live file is undecipherable. **Settings → Backup & recovery** merges manual export/import and snapshot restore in one place — one **Export backup** and one **Import backup** (a single `.zip` with notes, tasks, images and — on desktop — note history; import shows what is inside and lets you *add* or *replace*), with folder and text-only JSON under Advanced. |
 | 🔐 **Recovery codes** | Optional MetaMask-style codes to reset your account password on this device without data loss. Generate at sign-up or in Settings; use `/recover` if you forget your password. Existing accounts without codes behave exactly as before. |
 | 📦 **Workspace storage** | Desktop app splits large workspaces into monthly files for efficiency while keeping a full copy in the base file for downgrade safety. **Settings → Storage & cache** shows a per-area size breakdown (notes, tasks, teams, archives). |
 | 🛡️ **Data-integrity guard** | After every successful save, a per-device fingerprint records how much content you had. On the next boot, if the loaded file is meaningfully smaller, an amber banner spells out the before/after counts and links straight to *Backups & recovery* — so "my data vanished" is caught before you panic. |
@@ -421,8 +421,8 @@ The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts
 - **Restore** is one click and reports what you got back (e.g. `Loaded: 1 team, 5 tasks, 2 notes`). The current state is itself snapshotted as `pre-restore` first, so the operation is reversible.
 - **Auto-migrate on login** — if you log in and your per-user data file doesn't exist yet, but the legacy single-user file (`leeadman-data.json` from pre-accounts builds) does, Cadence imports it into your account automatically. No more "I updated and my old data is gone" surprise.
 - **Open data folder** — jumps Finder straight to `~/Library/Application Support/Cadence/` if you want to copy a backup to iCloud / a USB stick.
-- **Portable ZIP** — on every platform; one file with workspace JSON and embedded images. Best for moving to another account or device.
-- **Full backup folder** — desktop only; includes note version history alongside attachments.
+- **Backup (`.zip`)** — one file on every platform: workspace, images and, on desktop, note version history. Import shows what is inside first and offers *Add to what's here* or *Replace what's here*.
+- **Folder** (Advanced, desktop) — the same content as separate files, for very large libraries and older backups.
 - **JSON only** — text and settings; no images (advanced). Legacy imports still supported.
 
 **Existing users:** recovery codes, ZIP backups, and note history are **optional add-ons**. Old JSON and folder backups import exactly as before; no forced migration.
@@ -487,9 +487,9 @@ This panel is purely diagnostic — you can ignore it forever and nothing degrad
 
 When you don't want any cloud service involved, Cadence moves a workspace between devices with a **portable backup file** (plain ZIP, not encrypted — keep it private) — no network connection between the devices is ever required:
 
-1. On the source device, open **Settings → Backup** and **Export** a portable backup (a `.zip` that bundles the workspace JSON plus image attachments, unencrypted, or a plain JSON export for text-only).
+1. On the source device, open **Settings → Data & backup** and choose **Export backup** (a `.zip` that bundles the workspace, image attachments and, on desktop, note version history; unencrypted).
 2. Carry the file across by whatever means you already trust — AirDrop, Files, a USB stick, a private chat to yourself.
-3. On the target device, open **Settings → Backup** and choose **Import / merge**.
+3. On the target device, open **Settings → Data & backup**, choose **Import backup**, look at what is inside, and pick **Add to what's here** (merge) or **Replace what's here**.
 
 There are two distinct import modes, and the difference matters for data safety:
 

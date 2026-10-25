@@ -445,6 +445,13 @@ function pairedNoteHistoryBackupDir(dataBackupPath) {
   return fs.existsSync(dir) ? dir : null;
 }
 
+const REVISION_ID_RE = /^[\w-]{1,128}$/;
+
+/** A revision id is a file name: letters, digits, `_` and `-` only. */
+function isSafeRevisionId(id) {
+  return typeof id === 'string' && REVISION_ID_RE.test(id);
+}
+
 function mergeNoteHistoryNoteDir(userId, destNoteDir, srcNoteDir) {
   fs.mkdirSync(destNoteDir, { recursive: true });
   const destIndexRaw = readStoredJson(userId, path.join(destNoteDir, 'index.json'));
@@ -463,7 +470,9 @@ function mergeNoteHistoryNoteDir(userId, destNoteDir, srcNoteDir) {
     (Array.isArray(destIndex.revisions) ? destIndex.revisions : []).map((r) => r.id),
   );
   for (const meta of srcIndex.revisions) {
-    if (!meta?.id || known.has(meta.id)) continue;
+    // The id becomes a file name on both sides. A backup is untrusted: an id that is not a plain name
+    // (`../other-note/rev`) must never reach another note's folder.
+    if (!isSafeRevisionId(meta?.id) || known.has(meta.id)) continue;
     const payload = readStoredJson(userId, path.join(srcNoteDir, `${meta.id}.json`));
     if (!payload || payload === UNREADABLE) continue;
     const destRev = path.join(destNoteDir, `${meta.id}.json`);
@@ -479,6 +488,7 @@ function mergeNoteHistoryNoteDir(userId, destNoteDir, srcNoteDir) {
   destIndex.revisions = kept;
   writeStoredJson(userId, path.join(destNoteDir, 'index.json'), destIndex);
   for (const oldId of prunedIds) {
+    if (!isSafeRevisionId(oldId)) continue;
     const p = path.join(destNoteDir, `${oldId}.json`);
     if (fs.existsSync(p)) {
       try {

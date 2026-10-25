@@ -9,6 +9,7 @@ import { appDataToPersistJson, normalizeData, type AppData } from '../../model';
 import { stripAiSecrets } from '../ai/secrets';
 import { parseRemoteSnapshot, snapshotParseErrorMessage } from '../syncSnapshotGuard';
 import { parseBundleEntries } from './parse';
+import type { BackupPreview } from '../backupPreview';
 import {
   BACKUP_ATTACHMENTS_DIR,
   BACKUP_BUNDLE_FORMAT,
@@ -16,6 +17,7 @@ import {
   BACKUP_MANIFEST_FILE,
   type BackupImportResult,
   type BackupManifest,
+  type ParsedBackupBundle,
 } from './types';
 import { zipStorePack, zipStoreUnpack } from './zipStore';
 
@@ -143,14 +145,16 @@ export type ImportPortableBackupDeps = {
   transformWorkspace?: (remote: AppData) => AppData;
 };
 
-/**
- * Import a portable ZIP or a legacy single-file JSON export.
- * ZIP replaces workspace + attachment sidecars; JSON-only keeps prior behaviour.
- */
-export async function importPortableBackupFile(
-  file: File,
-  deps: ImportPortableBackupDeps,
-): Promise<BackupImportResult | { ok: false; error: string }> {
+type ReadFailure = { ok: false; error: string };
+type ReadPortable = {
+  ok: true;
+  kind: 'zip' | 'json';
+  workspace: AppData;
+  bundle: ParsedBackupBundle | null;
+};
+
+/** Read and check a portable ZIP or JSON file. Changes nothing. */
+async function readPortableBackupFile(file: File): Promise<ReadPortable | ReadFailure> {
   const name = file.name.toLowerCase();
 
   if (name.endsWith('.json')) {
@@ -164,15 +168,11 @@ export async function importPortableBackupFile(
     if (parsed.kind !== 'ok') {
       return { ok: false, error: snapshotParseErrorMessage(parsed) };
     }
-    const toImport = deps.transformWorkspace ? deps.transformWorkspace(parsed.data) : parsed.data;
-    const r = await deps.importWorkspace(toImport);
-    if (!r.ok) return r;
-    revokeAttachmentBlobUrls();
-    return { ok: true, attachmentsImported: 0, attachmentsSkipped: 0, attachmentsEncryptedSkipped: 0 };
+    return { ok: true, kind: 'json', workspace: parsed.data, bundle: null };
   }
 
   if (!name.endsWith('.zip')) {
-    return { ok: false, error: 'Choose a .zip portable backup or a .json workspace file.' };
+    return { ok: false, error: 'Choose a .zip backup or a .json workspace file.' };
   }
 
   if (file.size > MAX_PORTABLE_ZIP_BYTES) {
@@ -193,7 +193,7 @@ export async function importPortableBackupFile(
     };
   }
 
-  let bundle;
+  let bundle: ParsedBackupBundle;
   try {
     bundle = parseBundleEntries(entries);
   } catch (err) {
@@ -220,6 +220,23 @@ export async function importPortableBackupFile(
       };
     }
   }
+  return { ok: true, kind: 'zip', workspace: parsed.data, bundle };
+}
+
+/** Bring the opened file's images (before the workspace: they are additive) and then replace the workspace. */
+async function applyReadPortable(
+  read: ReadPortable,
+  workspace: AppData,
+  userId: string,
+  importWorkspace: ImportPortableBackupDeps['importWorkspace'],
+): Promise<BackupImportResult | ReadFailure> {
+  if (!read.bundle) {
+    // A JSON file carries text only.
+    const r = await importWorkspace(workspace);
+    if (!r.ok) return r;
+    revokeAttachmentBlobUrls();
+    return { ok: true, attachmentsImported: 0, attachmentsSkipped: 0, attachmentsEncryptedSkipped: 0 };
+  }
 
   let attachmentsImported = 0;
   let attachmentsSkipped = 0;
@@ -231,19 +248,18 @@ export async function importPortableBackupFile(
   // whereas committing the workspace first and then hitting a catastrophic
   // attachment failure would leave a freshly-replaced workspace referencing
   // images that were never written, with no way back.
-  for (const [id, bytes] of bundle.attachments) {
+  for (const [id, bytes] of read.bundle.attachments) {
     if (!bytes.length) {
       attachmentsSkipped += 1;
       continue;
     }
-    const outcome = await importAttachmentBytes(deps.userId, id, bytes);
+    const outcome = await importAttachmentBytes(userId, id, bytes);
     if (outcome === 'imported') attachmentsImported += 1;
     else if (outcome === 'encrypted') attachmentsEncryptedSkipped += 1;
     else attachmentsSkipped += 1;
   }
 
-  const toImport = deps.transformWorkspace ? deps.transformWorkspace(parsed.data) : parsed.data;
-  const r = await deps.importWorkspace(toImport);
+  const r = await importWorkspace(workspace);
   if (!r.ok) return r;
 
   revokeAttachmentBlobUrls();
@@ -252,5 +268,57 @@ export async function importPortableBackupFile(
     attachmentsImported,
     attachmentsSkipped,
     ...(attachmentsEncryptedSkipped > 0 ? { attachmentsEncryptedSkipped } : {}),
+  };
+}
+
+/**
+ * Import a portable ZIP or a legacy single-file JSON export.
+ * ZIP replaces workspace + attachment sidecars; JSON-only keeps prior behaviour.
+ */
+export async function importPortableBackupFile(
+  file: File,
+  deps: ImportPortableBackupDeps,
+): Promise<BackupImportResult | { ok: false; error: string }> {
+  const read = await readPortableBackupFile(file);
+  if (!read.ok) return read;
+  const toImport = deps.transformWorkspace ? deps.transformWorkspace(read.workspace) : read.workspace;
+  return applyReadPortable(read, toImport, deps.userId, deps.importWorkspace);
+}
+
+/** What the import dialog needs from a file opened in the browser. */
+export type OpenedPortableBackup = {
+  ok: true;
+  preview: BackupPreview;
+  /** The backup's workspace, parsed; the caller decides what to import (as it is, or merged). */
+  workspace: AppData;
+  apply: (
+    workspace: AppData,
+    importWorkspace: ImportPortableBackupDeps['importWorkspace'],
+  ) => Promise<BackupImportResult | { ok: false; error: string }>;
+};
+
+/** Step one of a browser import: look inside the file and change nothing. */
+export async function openPortableBackupFile(
+  file: File,
+  userId: string,
+): Promise<OpenedPortableBackup | { ok: false; error: string }> {
+  const read = await readPortableBackupFile(file);
+  if (!read.ok) return read;
+  const d = read.workspace;
+  const manifest = read.bundle?.manifest ?? null;
+  return {
+    ok: true,
+    workspace: d,
+    preview: {
+      fileName: file.name,
+      kind: read.kind,
+      exportedAt: manifest?.exportedAt,
+      counts: { notes: d.notes.length, todoItems: d.todoItems.length, teams: d.teams.length },
+      images: read.bundle?.attachments.size ?? 0,
+      imagesSkippedAtExport: manifest?.attachmentMissing ?? 0,
+      historyNotes: 0,
+      historyVersions: 0,
+    },
+    apply: (workspace, importWorkspace) => applyReadPortable(read, workspace, userId, importWorkspace),
   };
 }

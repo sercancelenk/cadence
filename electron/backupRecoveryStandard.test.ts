@@ -16,7 +16,7 @@ function handlerBody(channel: string): string {
 }
 
 describe('backup & recovery standard (static guards)', () => {
-  it.each(['data:restoreFromSource', 'data:importBundle', 'data:importWorkspace'])(
+  it.each(['data:restoreFromSource', 'data:importBundle', 'data:importWorkspace', 'backupArchive:apply'])(
     'B1: %s makes its safety copy through snapshotBeforeReplace and stops when it fails',
     (channel) => {
       const body = handlerBody(channel);
@@ -32,7 +32,7 @@ describe('backup & recovery standard (static guards)', () => {
       .filter((channel) => /allowOverwriteUnreadable:\s*true/.test(handlerBody(channel)))
       // Key changes re-commit the same workspace under a new key and take their own pre-change snapshot.
       .filter((channel) => !channel.startsWith('account:'));
-    expect(replacing.sort()).toEqual(['data:importBundle', 'data:importWorkspace', 'data:restoreFromSource']);
+    expect(replacing.sort()).toEqual(['backupArchive:apply', 'data:importBundle', 'data:importWorkspace', 'data:restoreFromSource']);
   });
 
   it.each(['account:changePassword', 'account:recoverWithCodes'])(
@@ -64,5 +64,50 @@ describe('backup & recovery standard (static guards)', () => {
     const body = handlerBody('data:exportBundle');
     expect(body).toMatch(/attachmentsSkipped/);
     expect(body.match(/attachmentsSkipped/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it.each(['backupArchive:export', 'backupArchive:open', 'backupArchive:apply'])(
+    'B11: %s respects the data-export policy and needs a signed-in account',
+    (channel) => {
+      const body = handlerBody(channel);
+      expect(body).toMatch(/requirePolicyFeature\('dataExport'/);
+      expect(body).toMatch(/readSessionUserId\(\)/);
+    },
+  );
+
+  it('B11: apply only accepts a file that open() saw, for the same account, unchanged, and only once', () => {
+    const body = handlerBody('backupArchive:apply');
+    expect(body).toMatch(/opened\.uid !== uid/);
+    expect(body).toMatch(/opened\.expiresAt/);
+    expect(body).toMatch(/stat\.size !== opened\.size \|\| stat\.mtimeMs !== opened\.mtimeMs/);
+    expect(body).toMatch(/openedBackups\.delete\(token\)/);
+  });
+
+  it('B11: the renderer never supplies a path: open() takes no argument and chooses the file in a native dialog', () => {
+    const body = handlerBody('backupArchive:open');
+    expect(body).toMatch(/ipcMain\.handle\('backupArchive:open', async \(\) =>/);
+    expect(body).toMatch(/dialog\.showOpenDialog/);
+    const apply = handlerBody('backupArchive:apply');
+    expect(apply).toMatch(/\{ token, workspace: payload, mode, expectedGeneration \} = \{\}/);
+  });
+
+  it('B11: apply checks the generation and the readability of current data inside the same synchronous stretch as the commit', () => {
+    const body = handlerBody('backupArchive:apply');
+    const check = body.indexOf('currentWriteGeneration(uid)');
+    const unreadable = body.indexOf('readUserDataResult(uid).ok');
+    const commit = body.indexOf('commitUserData(');
+    expect(check).toBeGreaterThan(-1);
+    expect(unreadable).toBeGreaterThan(-1);
+    expect(commit).toBeGreaterThan(Math.max(check, unreadable));
+    // No await between the checks and the commit.
+    expect(body.slice(check, commit)).not.toMatch(/\bawait\b/);
+    expect(body).toMatch(/mode === 'merge' && typeof expectedGeneration !== 'number'/);
+  });
+
+  it('B12: the ZIP reader treats an archive as untrusted input', () => {
+    const reader = fs.readFileSync(path.join(__dirname, 'persistence', 'zipReader.cjs'), 'utf8');
+    for (const guard of [/duplicate entry/, /checksum/, /maxOutputLength/, /isSafeEntryName/, /ZIP64/, /password-protected/, /overlap/, /MAX_DEFLATE_RATIO/, /maxTotalBytes/]) {
+      expect(reader).toMatch(guard);
+    }
   });
 });

@@ -457,3 +457,76 @@ describe('portable backup', () => {
     expect(result).toEqual({ ok: false, error: 'Workspace busy' });
   });
 });
+
+describe('opening a portable backup before importing it', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete (window as { cadence?: unknown }).cadence;
+  });
+
+  it('describes the file and changes nothing', async () => {
+    const { openPortableBackupFile } = await import('./portable');
+    const file = buildPortableZip({
+      [`${BACKUP_ATTACHMENTS_DIR}/note-abc123456789.bin`]: new Uint8Array([1, 2, 3]),
+    });
+    const opened = await openPortableBackupFile(file, 'u1');
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    expect(opened.preview).toMatchObject({
+      fileName: 'cadence-backup.zip',
+      kind: 'zip',
+      exportedAt: TS,
+      images: 1,
+      imagesSkippedAtExport: 0,
+      historyNotes: 0,
+      counts: { notes: 1, teams: 1, todoItems: 0 },
+    });
+    expect(attachmentMocks.importAttachmentBlob).not.toHaveBeenCalled();
+  });
+
+  it('reports images that were already missing when the backup was made', async () => {
+    const { openPortableBackupFile } = await import('./portable');
+    const enc = new TextEncoder();
+    const file = zipAsFile(
+      zipStorePack({
+        [BACKUP_DATA_FILE]: enc.encode(JSON.stringify(minimalWorkspace())),
+        [BACKUP_MANIFEST_FILE]: enc.encode(
+          JSON.stringify({ format: BACKUP_BUNDLE_FORMAT, exportedAt: TS, attachmentsPortable: true, attachmentCount: 0, attachmentMissing: 3 }),
+        ),
+      }),
+    );
+    const opened = await openPortableBackupFile(file, 'u1');
+    expect(opened.ok && opened.preview.imagesSkippedAtExport).toBe(3);
+  });
+
+  it('imports the images and the workspace the caller chose, not the backup\'s own', async () => {
+    const { openPortableBackupFile } = await import('./portable');
+    const file = buildPortableZip({
+      [`${BACKUP_ATTACHMENTS_DIR}/note-abc123456789.bin`]: new Uint8Array([1, 2, 3]),
+    });
+    const opened = await openPortableBackupFile(file, 'u1');
+    if (!opened.ok) throw new Error(opened.error);
+    const chosen = normalizeData({ notes: [{ id: 'mine', title: 'Merged', body: '', createdAt: TS, updatedAt: TS }] });
+    const seen: AppData[] = [];
+    const result = await opened.apply(chosen, async (w) => {
+      seen.push(w);
+      return { ok: true };
+    });
+    expect(result).toEqual({ ok: true, attachmentsImported: 1, attachmentsSkipped: 0 });
+    expect(seen).toEqual([chosen]);
+    expect(attachmentMocks.importAttachmentBlob).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens a JSON file as text only', async () => {
+    const { openPortableBackupFile } = await import('./portable');
+    const file = new File([JSON.stringify(minimalWorkspace())], 'w.json', { type: 'application/json' });
+    const opened = await openPortableBackupFile(file, 'u1');
+    expect(opened.ok && opened.preview).toMatchObject({ kind: 'json', images: 0 });
+  });
+
+  it('explains a file it cannot read', async () => {
+    const { openPortableBackupFile } = await import('./portable');
+    const opened = await openPortableBackupFile(new File(['x'], 'notes.txt'), 'u1');
+    expect(opened).toEqual({ ok: false, error: 'Choose a .zip backup or a .json workspace file.' });
+  });
+});

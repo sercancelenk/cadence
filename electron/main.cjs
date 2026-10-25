@@ -128,6 +128,13 @@ const {
   finalizePreviousKeys,
 } = require('./persistence/keyHistory.cjs');
 const { createInspectCache } = require('./persistence/inspectCache.cjs');
+const {
+  writeBackupArchive,
+  inspectBackupFile,
+  applyArchiveSidecars,
+  looksLikeWorkspace,
+  sweepStaleScratch,
+} = require('./backupArchive.cjs');
 const { unwrapStoredWorkspace, wrapCommitEnvelope } = require('./persistence/commitEnvelope.cjs');
 const {
   splitWorkspaceForMonthlyShards,
@@ -1081,29 +1088,41 @@ function importAttachmentsPortableFromDir(userId, srcDir) {
     if (!m) continue;
     const id = sanitizeAttachmentId(m[1]);
     if (!id) continue;
-    const filePath = path.join(srcDir, name);
-    let plain = null;
+    let raw = null;
     try {
-      const raw = fs.readFileSync(filePath);
-      const asText = raw.toString('utf8');
-      if (isEncryptedEnvelope(asText)) {
-        const key = dataKeys.get(userId);
-        plain = key ? decryptBuffer(asText, key) : null;
-      } else {
-        plain = raw;
-      }
+      raw = fs.readFileSync(path.join(srcDir, name));
     } catch {
-      plain = null;
+      raw = null;
     }
-    if (!plain?.length) {
-      skipped += 1;
-      continue;
-    }
-    const w = writeAttachmentBytes(userId, id, plain, detectAttachmentMime(plain));
-    if (w.ok) restored += 1;
+    if (raw && importPortableAttachmentBytes(userId, id, raw) === 'restored') restored += 1;
     else skipped += 1;
   }
   return { ok: true, restored, skipped };
+}
+
+/**
+ * One image from a portable backup: plain bytes, or a sealed file from an older export that the signed-in
+ * account's key can open. Written sealed under the account's own key.
+ *
+ * @returns {'restored' | 'skipped'}
+ */
+function importPortableAttachmentBytes(userId, attachmentId, raw) {
+  const id = sanitizeAttachmentId(attachmentId);
+  if (!id || !raw?.length) return 'skipped';
+  let plain = null;
+  try {
+    const asText = raw.toString('utf8');
+    if (isEncryptedEnvelope(asText)) {
+      const key = dataKeys.get(userId);
+      plain = key ? decryptBuffer(asText, key) : null;
+    } else {
+      plain = raw;
+    }
+  } catch {
+    plain = null;
+  }
+  if (!plain?.length) return 'skipped';
+  return writeAttachmentBytes(userId, id, plain, detectAttachmentMime(plain)).ok ? 'restored' : 'skipped';
 }
 
 /** Note history from a backup folder, after the workspace was replaced: a failure is reported, never thrown. */
@@ -4217,6 +4236,156 @@ ipcMain.handle('data:exportBundle', async (_evt, { data: payload } = {}) => {
 });
 
 /**
+ * The single-file backup: one `.zip` with the workspace, every image on disk, note history and a manifest.
+ * The destination is chosen here, never by the renderer.
+ */
+ipcMain.handle('backupArchive:export', async (_evt, { data: payload } = {}) => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  if (!payload || typeof payload !== 'object') return { ok: false, error: 'data required' };
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const stamp = new Date().toISOString().slice(0, 10);
+  const pick = await dialog.showSaveDialog(win, {
+    title: 'Save backup',
+    defaultPath: path.join(app.getPath('documents'), `${APP_SLUG}-backup-${stamp}.zip`),
+    filters: [{ name: 'Cadence backup', extensions: ['zip'] }],
+  });
+  if (pick.canceled || !pick.filePath) return { ok: false, canceled: true };
+  const account = readAccounts().users.find((x) => x.id === uid);
+  const sealed = !!account && typeof account.encSalt === 'string' && !!account.encSalt;
+  return writeBackupArchive({
+    filePath: pick.filePath.toLowerCase().endsWith('.zip') ? pick.filePath : `${pick.filePath}.zip`,
+    payload,
+    tmpRoot: app.getPath('userData'),
+    listAttachmentIds: () => listAttachmentIdsOnDisk(uid),
+    readAttachmentBytes: (id) => readAttachmentBytes(uid, id),
+    exportNoteHistory: (dest) => exportNoteHistoryToDirAsync(uid, dest),
+    countNoteHistoryRevisions: () => countNoteHistoryRevisions(uid),
+    assertStillSignedIn: () => {
+      if (sealed && !dataKeys.has(uid)) throw new Error('Signed out during the backup.');
+    },
+  });
+});
+
+/**
+ * Opened backups waiting to be applied. The user picked the file in a native dialog; the renderer only ever
+ * holds a token. An opening is good for one apply, for the account that made it, while the file is unchanged.
+ */
+const openedBackups = new Map();
+const OPENED_BACKUP_TTL_MS = 30 * 60 * 1000;
+
+function rememberOpenedBackup(entry) {
+  const now = Date.now();
+  for (const [token, e] of openedBackups) if (e.expiresAt < now) openedBackups.delete(token);
+  while (openedBackups.size >= 4) openedBackups.delete(openedBackups.keys().next().value);
+  const token = crypto.randomUUID();
+  openedBackups.set(token, { ...entry, expiresAt: now + OPENED_BACKUP_TTL_MS });
+  return token;
+}
+
+/** Step one of an import: pick a file, look inside, change nothing. */
+ipcMain.handle('backupArchive:open', async () => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  const win = BrowserWindow.getFocusedWindow() || mainWindow;
+  const pick = await dialog.showOpenDialog(win, {
+    title: 'Choose a backup to import',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Cadence backup', extensions: ['zip', 'json'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (pick.canceled || !pick.filePaths?.[0]) return { ok: false, canceled: true };
+  const filePath = pick.filePaths[0];
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+    if (!stat.isFile()) return { ok: false, error: 'Not a file.' };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+  const inspected = await inspectBackupFile({ filePath, summarize: summarizeAppData });
+  if (!inspected.ok) return inspected;
+  const token = rememberOpenedBackup({ uid, filePath, size: stat.size, mtimeMs: stat.mtimeMs, kind: inspected.kind });
+  return { ...inspected, token };
+});
+
+/**
+ * Step two: replace the workspace with `workspace` (which the renderer built: the backup as it is, or merged
+ * with what is here) and bring the images and note history of the opened file.
+ */
+ipcMain.handle('backupArchive:apply', async (_evt, { token, workspace: payload, mode, expectedGeneration } = {}) => {
+  const blocked = requirePolicyFeature('dataExport', isFeatureAllowed);
+  if (blocked) return blocked;
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'Not signed in.' };
+  const opened = typeof token === 'string' ? openedBackups.get(token) : undefined;
+  if (!opened || opened.uid !== uid || opened.expiresAt < Date.now()) {
+    return { ok: false, error: 'This backup was not opened (or the page was open too long). Choose the file again.' };
+  }
+  try {
+    const stat = fs.statSync(opened.filePath);
+    if (stat.size !== opened.size || stat.mtimeMs !== opened.mtimeMs) {
+      return { ok: false, error: 'The backup file changed after it was opened. Choose it again.' };
+    }
+  } catch {
+    return { ok: false, error: 'The backup file is no longer there.' };
+  }
+  if (mode !== 'merge' && mode !== 'replace') return { ok: false, error: 'Unknown import mode.' };
+  // "Add" is built from the workspace as the renderer saw it. It is only safe if nothing was written since,
+  // so the generation it was built on must be given, and must still be the current one (checked below).
+  if (mode === 'merge' && typeof expectedGeneration !== 'number') {
+    return { ok: false, error: 'The workspace changed or could not be checked while the import was open. Nothing was changed — try again.' };
+  }
+  if (!looksLikeWorkspace(payload)) {
+    return { ok: false, error: 'The workspace to import does not look like a Cadence workspace (no recognised collections).' };
+  }
+  if (measurePayloadBytes(payload) > MAX_SAVE_PAYLOAD_BYTES) {
+    return { ok: false, error: 'Workspace exceeds 25 MB. Compact attachments or archive old items before importing.' };
+  }
+  // From here to the commit nothing awaits, so no other save can slip in between the checks and the write.
+  if (typeof expectedGeneration === 'number' && expectedGeneration !== currentWriteGeneration(uid)) {
+    return {
+      ok: false,
+      reason: 'write-conflict',
+      error: 'Your workspace changed while this import was open. Nothing was changed — try again.',
+    };
+  }
+  // Adding to data that cannot be read would replace it with the backup plus an empty scaffold.
+  if (mode === 'merge' && !readUserDataResult(uid).ok) {
+    return {
+      ok: false,
+      error: 'Your current data could not be read, so the backup cannot be added to it. Nothing was changed. Choose Replace, or restore a snapshot first.',
+    };
+  }
+  const safety = snapshotBeforeReplace(uid, 'pre-import');
+  if (!safety.ok) return safety;
+  snapshotNoteHistoryForUser(uid, 'pre-import', Date.now());
+  workspaceImportLockUid = uid;
+  try {
+    const w = commitUserData(uid, payload, { allowOverwriteUnreadable: true });
+    if (!w.ok) return w;
+    openedBackups.delete(token);
+    // The workspace is in; a problem past here is a gap to report, not a failure.
+    const sidecars = await applyArchiveSidecars({
+      filePath: opened.filePath,
+      tmpRoot: app.getPath('userData'),
+      expectFile: { size: opened.size, mtimeMs: opened.mtimeMs },
+      importImage: (id, bytes) => importPortableAttachmentBytes(uid, id, bytes),
+      mergeHistory: (src) => mergeNoteHistorySafely(uid, src),
+    });
+    return { ok: true, writeGeneration: w.writeGeneration, ...sidecars };
+  } finally {
+    workspaceImportLockUid = null;
+  }
+});
+
+/**
  * Save a Tools document (Document tab or JSON / YAML tab) or a note to a file. The
  * renderer sends every format it can produce and the extension the user types in
  * the system dialog decides which one is written.
@@ -5998,6 +6167,7 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.whenReady().then(() => {
   initCrashReporting(app.getPath('userData'));
+  void sweepStaleScratch(app.getPath('userData'));
   // Daily backup: besides sign-in and every save, check again when the window comes back, after the
   // computer wakes, and every half hour while the app (or its tray icon) is running.
   app.on('browser-window-focus', () => ensureDailyBackupToday());

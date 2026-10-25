@@ -17,11 +17,6 @@ import { formatAppVersion } from '../lib/appVersionLabel';
 import { resolveAppProfileLabel } from '../lib/appProfileLabel';
 import { AI_PROVIDER_OPTIONS, appDataToPersistJson, compactAppDataForPersist, normalizeData } from '../model';
 import { restoreAiSecrets, stripAiSecrets } from '../lib/ai/secrets';
-import {
-  describeMergeSummary,
-  mergeAppendWorkspace,
-  type MergeAppendSummary,
-} from '../core/model/mergeWorkspace';
 import type {
   CacheBreakdownEntry,
   CacheStats,
@@ -31,6 +26,8 @@ import type {
   SaveError,
 } from '../vite-env';
 import { CollapsibleCard } from '../components/ui/CollapsibleCard';
+import { BackupImportDialog } from '../components/settings/BackupImportDialog';
+import { useBackupTransfer } from '../components/settings/useBackupTransfer';
 import { AppearanceSettingsSection } from '../components/settings/AppearanceSettingsSection';
 import { PreferencesShell } from '../components/settings/PreferencesShell';
 import { SaveDiagnosticsSection } from '../components/settings/SaveDiagnosticsSection';
@@ -40,7 +37,6 @@ import { RecoveryCodesPanel } from '../components/RecoveryCodesPanel';
 import { prepareForRemoteApply } from '../lib/syncApplyGuard';
 import { estimateWorkspaceStorage } from '../lib/workspaceStorageStats';
 import { isElectronApp, backupPlatform, backupPlatformLabel } from '../lib/runtime';
-import { exportPortableBackupZip, importPortableBackupFile } from '../lib/backupBundle';
 import { useAppData } from '../AppDataContext';
 import { notesRecoveryIsForeign } from '../lib/notesRecovery';
 import { describeRestoreOutcome } from '../lib/backupOutcome';
@@ -231,7 +227,7 @@ export function Settings() {
   const [clearPin, setClearPin] = useState('');
   const [updaterOpen, setUpdaterOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const mergeFileRef = useRef<HTMLInputElement>(null);
+  const transfer = useBackupTransfer({ onReplaced: noteIfNotesRecoveryForeign });
   const [importBusy, setImportBusy] = useState(false);
   const isElectron = isElectronApp();
 
@@ -290,139 +286,6 @@ export function Settings() {
       return;
     }
     toast.showError('Export failed', r?.error ?? 'Could not write backup folder.');
-  };
-
-  const exportPortableZip = async () => {
-    if (!user) {
-      toast.showError('Not signed in', 'Sign in before exporting a backup.');
-      return;
-    }
-    try {
-      await flushPendingSave();
-      await prepareForRemoteApply();
-      const r = await exportPortableBackupZip(user.id, data);
-      let detail = `${r.attachmentCount} image${r.attachmentCount === 1 ? '' : 's'} included.`;
-      if (r.attachmentMissing > 0) {
-        detail += ` ${r.attachmentMissing} referenced image${r.attachmentMissing === 1 ? '' : 's'} were missing on this device.`;
-      }
-      toast.showSuccess('Portable backup saved', backupSavedDetail(detail));
-    } catch (err) {
-      toast.showError('Export failed', err instanceof Error ? err.message : 'Could not build ZIP backup.');
-    }
-  };
-
-  const importBackupFile = async (file: File) => {
-    if (importBusy) return;
-    if (!user) {
-      toast.showError('Not signed in', 'Sign in before importing a backup.');
-      return;
-    }
-    const isZip = file.name.toLowerCase().endsWith('.zip');
-    const description = isZip
-      ? 'Your current workspace and images on this device will be replaced. Export first if you are unsure.'
-      : 'Your workspace will be replaced. JSON does not include images — use a .zip portable backup for pictures.';
-    if (
-      !(await confirm({
-        title: isZip ? 'Import portable backup?' : 'Import JSON backup?',
-        description,
-        confirmLabel: 'Import',
-        danger: true,
-      }))
-    ) {
-      return;
-    }
-
-    setImportBusy(true);
-    try {
-      const r = await importPortableBackupFile(file, {
-        userId: user.id,
-        importWorkspace: async (next) => {
-          // Exports carry no AI keys: keep the ones this device already has (same address only).
-          const imported = await importWorkspace(restoreAiSecrets(next, getLatestSnapshot()));
-          if (!imported.ok) return imported;
-          return { ok: true as const };
-        },
-      });
-      if (!r.ok) {
-        toast.showError('Import failed', r.error);
-        return;
-      }
-      await syncFromDisk();
-      noteIfNotesRecoveryForeign();
-      if (isZip) {
-        let detail = `${r.attachmentsImported} image${r.attachmentsImported === 1 ? '' : 's'} restored.`;
-        if (r.attachmentsSkipped > 0) {
-          detail += ` ${r.attachmentsSkipped} could not be imported.`;
-        }
-        if (r.attachmentsEncryptedSkipped && r.attachmentsEncryptedSkipped > 0) {
-          detail += ` ${r.attachmentsEncryptedSkipped} encrypted image${r.attachmentsEncryptedSkipped === 1 ? '' : 's'} need the desktop app to import.`;
-        }
-        toast.showSuccess('Portable backup imported', detail);
-      } else {
-        toast.showSuccess(
-          'Workspace imported',
-          'JSON loaded. If images are missing, import a .zip portable backup exported from desktop or web.',
-        );
-      }
-    } catch (err) {
-      toast.showError('Import failed', err instanceof Error ? err.message : 'Could not read backup file.');
-    } finally {
-      setImportBusy(false);
-    }
-  };
-
-  // Additive "bring items from another device" import. Unlike `importBackupFile`
-  // (a full replace, used to restore a backup), this folds the incoming
-  // workspace into the current one with `mergeAppendWorkspace`: every local
-  // item is kept verbatim and only entities this device doesn't already have
-  // are appended. Idempotent and lossless — re-importing the same file is a
-  // no-op. This is the primary desktop→phone transfer path (export a portable
-  // ZIP on desktop, AirDrop / Files it across, merge here) and never needs a
-  // network connection between the devices.
-  const mergeImportFile = async (file: File) => {
-    if (importBusy) return;
-    if (!user) {
-      toast.showError('Not signed in', 'Sign in before importing.');
-      return;
-    }
-    setImportBusy(true);
-    let mergeSummary: MergeAppendSummary | null = null;
-    try {
-      // Flush debounced editor / locked-note buffers into the in-memory
-      // snapshot BEFORE we read the merge base, otherwise unsaved local edits
-      // are excluded from the merge and then lost when the merged result is
-      // imported (replace). `flushPendingSave` runs the before-flush hooks and
-      // commits them synchronously to the snapshot store.
-      await flushPendingSave();
-      const r = await importPortableBackupFile(file, {
-        userId: user.id,
-        importWorkspace: async (next) => {
-          const imported = await importWorkspace(next);
-          if (!imported.ok) return imported;
-          return { ok: true as const };
-        },
-        transformWorkspace: (remote) => {
-          // Read the freshest local snapshot (post-flush) rather than the stale
-          // render closure `data`.
-          const merged = mergeAppendWorkspace(getLatestSnapshot(), remote);
-          mergeSummary = merged.summary;
-          return merged.data;
-        },
-      });
-      if (!r.ok) {
-        toast.showError('Merge failed', r.error);
-        return;
-      }
-      await syncFromDisk();
-      const summaryText = mergeSummary
-        ? describeMergeSummary(mergeSummary)
-        : 'Already up to date — nothing new to import.';
-      toast.showSuccess('Items merged', summaryText);
-    } catch (err) {
-      toast.showError('Merge failed', err instanceof Error ? err.message : 'Could not read the file.');
-    } finally {
-      setImportBusy(false);
-    }
   };
 
   const importFullBundle = async () => {
@@ -614,43 +477,41 @@ export function Settings() {
             <>
               <BackupsRecoverySection
                 canExport={features.dataExport}
-                importBusy={importBusy}
+                importBusy={importBusy || transfer.busy}
                 onSetImportBusy={setImportBusy}
+                onExportBackup={() => void transfer.exportBackup()}
+                onImportBackup={() => {
+                  // The desktop app opens its own file dialog; a browser needs the file input.
+                  if (window.cadence?.backupArchiveOpen) void transfer.startImport();
+                  else fileRef.current?.click();
+                }}
                 onExportJson={() => void exportJson()}
-                onExportPortableZip={() => void exportPortableZip()}
-                onExportFullBundle={() => void exportFullBundle()}
-                onImportBackup={() => fileRef.current?.click()}
-                onMergeImport={() => mergeFileRef.current?.click()}
+                onExportFolder={() => void exportFullBundle()}
                 onImportFolder={() => void importFullBundle()}
                 fileInput={
-                  <>
-                    <input
-                      ref={fileRef}
-                      type="file"
-                      accept="application/json,.json,application/zip,.zip"
-                      hidden
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0];
-                        e.target.value = '';
-                        if (!f) return;
-                        await importBackupFile(f);
-                      }}
-                    />
-                    <input
-                      ref={mergeFileRef}
-                      type="file"
-                      accept="application/json,.json,application/zip,.zip"
-                      hidden
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0];
-                        e.target.value = '';
-                        if (!f) return;
-                        await mergeImportFile(f);
-                      }}
-                    />
-                  </>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="application/json,.json,application/zip,.zip"
+                    hidden
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!f) return;
+                      await transfer.startImport(f);
+                    }}
+                  />
                 }
               />
+              {transfer.dialog ? (
+                <BackupImportDialog
+                  preview={transfer.dialog.preview}
+                  current={transfer.dialog.current}
+                  busy={transfer.busy}
+                  onConfirm={(mode) => void transfer.confirmImport(mode)}
+                  onCancel={transfer.cancelImport}
+                />
+              ) : null}
               <StorageCacheSection />
               <SaveDiagnosticsSection />
             </>
@@ -1119,22 +980,20 @@ export function BackupsRecoverySection({
   canExport,
   importBusy,
   onSetImportBusy,
-  onExportJson,
-  onExportPortableZip,
-  onExportFullBundle,
+  onExportBackup,
   onImportBackup,
-  onMergeImport,
+  onExportJson,
+  onExportFolder,
   onImportFolder,
   fileInput,
 }: {
   canExport: boolean;
   importBusy?: boolean;
   onSetImportBusy?: (busy: boolean) => void;
-  onExportJson: () => void;
-  onExportPortableZip: () => void;
-  onExportFullBundle: () => void;
+  onExportBackup: () => void;
   onImportBackup: () => void;
-  onMergeImport: () => void;
+  onExportJson: () => void;
+  onExportFolder: () => void;
   onImportFolder: () => void;
   fileInput: ReactNode;
 }) {
@@ -1299,177 +1158,77 @@ export function BackupsRecoverySection({
     >
       {canExport ? (
         <>
-          <p className="muted small">
-            Exports (JSON, portable ZIP and the full backup folder) do not contain your AI API keys or extra connection headers. Restoring on this
-            device keeps the keys it already has; on a new device, enter them again in Settings → AI Assistant.
-          </p>
-          <p className="muted small">{BACKUP_NOT_ENCRYPTED_NOTE}</p>
           <div className="backup-platform">
             <span className="backup-platform__badge">{backupPlatformLabel(platform)}</span>
-            {platform === 'desktop' ? (
-              <>
-                <p className="muted small backup-platform__lead">
-                  On desktop, use a <strong>full backup folder</strong> for note version history and local restores.
-                  Use a <strong>portable ZIP</strong> to move workspace and images to web, mobile, or another account.
-                  Import always replaces data on this device — export first if you are unsure.
-                </p>
-                <div className="backup-platform__actions">
-                  <Button
-                    type="button"
-                    variant="primary"
-                    icon={<IcDownload size={17} />}
-                    title="Save data.json, images, and note version history into a folder"
-                    onClick={onExportFullBundle}
-                  >
-                    Export full backup
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    icon={<IcUpload size={17} />}
-                    title="Replace workspace and images from a backup folder"
-                    onClick={onImportFolder}
-                    disabled={importBusy}
-                  >
-                    Import backup folder
-                  </Button>
-                </div>
-                <div className="backup-platform__actions" style={{ marginTop: 8 }}>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    icon={<IcDownload size={17} />}
-                    title="Cross-platform ZIP with workspace and images (no note history)"
-                    onClick={onExportPortableZip}
-                  >
-                    Export portable ZIP
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    icon={<IcUpload size={17} />}
-                    title="Import a .zip or .json portable backup"
-                    onClick={onImportBackup}
-                    disabled={importBusy}
-                  >
-                    Import portable backup
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    icon={<IcUpload size={17} />}
-                    title="Add new items from another device's backup without replacing what's here"
-                    onClick={onMergeImport}
-                    disabled={importBusy}
-                  >
-                    Merge from another device
-                  </Button>
-                  {fileInput}
-                </div>
-                <details className="backup-platform__advanced">
-                  <summary className="small">Text-only JSON (advanced)</summary>
+            <p className="muted small backup-platform__lead">
+              {isElectron ? (
+                <>
+                  One file with <strong>everything</strong>: notes, tasks, teams, settings, all images and note version
+                  history. Use it as a safety copy, to move to a new computer, or to bring your data into another account.
+                </>
+              ) : (
+                <>
+                  One file with your <strong>notes, tasks, settings and images</strong>. Use it as a safety copy or to move
+                  to another device. Note version history is only kept in the desktop app.
+                </>
+              )}
+            </p>
+            <div className="backup-platform__actions">
+              <Button
+                type="button"
+                variant="primary"
+                icon={<IcDownload size={17} />}
+                title="Save everything into one .zip file"
+                onClick={onExportBackup}
+                disabled={importBusy}
+              >
+                {platform === 'mobile' ? 'Download backup' : 'Export backup'}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                icon={<IcUpload size={17} />}
+                title="Choose a backup file, then decide to add it or replace what is here"
+                onClick={onImportBackup}
+                disabled={importBusy}
+              >
+                Import backup
+              </Button>
+              {fileInput}
+            </div>
+            <p className="muted small">
+              Importing shows what is inside first, then asks whether to <strong>add</strong> it to what is here or{' '}
+              <strong>replace</strong> what is here.
+            </p>
+            <p className="muted small">{BACKUP_NOT_ENCRYPTED_NOTE} AI API keys are never included; importing keeps the keys this device already has.</p>
+            <details className="backup-platform__advanced">
+              <summary className="small">Advanced</summary>
+              {isElectron ? (
+                <>
                   <p className="muted small">
-                    Exports workspace text and settings only — <strong>not</strong> embedded images. Useful for a
-                    quick copy or debugging; prefer full backup or ZIP for real restores.
+                    A <strong>folder</strong> backup holds the same things as separate files. Use it for very large libraries
+                    that do not fit in one .zip, or to import a folder made by an older version.
                   </p>
                   <div className="backup-platform__actions">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      icon={<IcDownload size={17} />}
-                      onClick={onExportJson}
-                    >
-                      Export JSON
+                    <Button type="button" variant="secondary" icon={<IcDownload size={17} />} onClick={onExportFolder} disabled={importBusy}>
+                      Export as a folder
+                    </Button>
+                    <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={onImportFolder} disabled={importBusy}>
+                      Import a backup folder
                     </Button>
                   </div>
-                </details>
-              </>
-            ) : platform === 'mobile' ? (
-              <>
-                <p className="muted small backup-platform__lead">
-                  Download a <strong>portable ZIP</strong> to back up text and images on this phone, or import a backup
-                  from desktop or another device. JSON-only exports skip photos.
-                </p>
-                <div className="backup-platform__actions">
-                  <Button
-                    type="button"
-                    variant="primary"
-                    icon={<IcDownload size={17} />}
-                    onClick={onExportPortableZip}
-                  >
-                    Download portable ZIP
-                  </Button>
-                  <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={onImportBackup} disabled={importBusy}>
-                    Import portable backup
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    icon={<IcUpload size={17} />}
-                    title="Add new items from another device's backup without replacing what's here"
-                    onClick={onMergeImport}
-                    disabled={importBusy}
-                  >
-                    Merge from another device
-                  </Button>
-                  {fileInput}
-                </div>
-                <details className="backup-platform__advanced">
-                  <summary className="small">Text-only JSON (advanced)</summary>
-                  <p className="muted small backup-platform__footnote">
-                    JSON includes text and settings, not photos pasted into notes. Clearing browser data can erase local
-                    copies.
-                  </p>
-                  <div className="backup-platform__actions">
-                    <Button type="button" variant="secondary" icon={<IcDownload size={17} />} onClick={onExportJson}>
-                      Download JSON
-                    </Button>
-                  </div>
-                </details>
-              </>
-            ) : (
-              <>
-                <p className="muted small backup-platform__lead">
-                  Export a <strong>portable ZIP</strong> to keep notes and images in one file, or import a backup from
-                  desktop or another browser. JSON-only exports skip embedded images.
-                </p>
-                <div className="backup-platform__actions">
-                  <Button
-                    type="button"
-                    variant="primary"
-                    icon={<IcDownload size={17} />}
-                    onClick={onExportPortableZip}
-                  >
-                    Export portable ZIP
-                  </Button>
-                  <Button type="button" variant="secondary" icon={<IcUpload size={17} />} onClick={onImportBackup} disabled={importBusy}>
-                    Import portable backup
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    icon={<IcUpload size={17} />}
-                    title="Add new items from another device's backup without replacing what's here"
-                    onClick={onMergeImport}
-                    disabled={importBusy}
-                  >
-                    Merge from another device
-                  </Button>
-                  {fileInput}
-                </div>
-                <details className="backup-platform__advanced">
-                  <summary className="small">Text-only JSON (advanced)</summary>
-                  <p className="muted small backup-platform__footnote">
-                    JSON does not include embedded images — only pointers stored on the device that created them.
-                  </p>
-                  <div className="backup-platform__actions">
-                    <Button type="button" variant="secondary" icon={<IcDownload size={17} />} onClick={onExportJson}>
-                      Export JSON
-                    </Button>
-                  </div>
-                </details>
-              </>
-            )}
+                </>
+              ) : null}
+              <p className="muted small">
+                <strong>Text-only JSON</strong> has notes and tasks but no images and no version history. Useful for a quick
+                copy or debugging.
+              </p>
+              <div className="backup-platform__actions">
+                <Button type="button" variant="secondary" icon={<IcDownload size={17} />} onClick={onExportJson}>
+                  Export JSON
+                </Button>
+              </div>
+            </details>
           </div>
         </>
       ) : null}

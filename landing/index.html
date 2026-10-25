@@ -397,14 +397,14 @@
               Everything about your workspace lives on your device. Settings
               are organised into <strong>Account &amp; security</strong> (optional
               recovery codes),
-              <strong>Data &amp; backup</strong> (portable ZIP on every platform,
-              full folders on desktop, 50 rolling snapshots),
+              <strong>Data &amp; backup</strong> (one export and import backup
+              on every platform, a daily backup folder, rolling snapshots),
               <strong>Integrations</strong> (AI and reminders) and
               <strong>About</strong> (in-app user guide).
             </p>
             <ul class="checklist">
               <li>Recovery codes for local password reset (optional)</li>
-              <li>Portable ZIP — workspace + images across devices</li>
+              <li>One backup file — notes, images and history across devices</li>
               <li>One-click backup &amp; recovery with snapshot counts</li>
               <li>Workspace storage breakdown on desktop</li>
               <li>Portable backup export / additive merge — no cloud account</li>
@@ -736,26 +736,26 @@ ERD / Sketch → Export PNG or JSON
 
           <div class="sync-options" aria-label="Backup options at a glance">
             <article class="sync-option">
-              <h3>Portable ZIP</h3>
-              <p class="sync-option__lede">Workspace + images · All platforms</p>
+              <h3>One backup file</h3>
+              <p class="sync-option__lede">Everything · All platforms</p>
               <ul class="sync-option__list">
-                <li>One file you can AirDrop or copy to USB</li>
-                <li>Includes note attachments when present</li>
-                <li>Works in the desktop app and the PWA</li>
+                <li>One <code>.zip</code> you can AirDrop or copy to USB</li>
+                <li>Notes, tasks, settings and all images</li>
+                <li>Note version history too, on the desktop app</li>
+                <li>Your AI keys are never written into an export</li>
               </ul>
-              <p class="sync-option__hint">Best for: day-to-day device moves</p>
+              <p class="sync-option__hint">Best for: safety copies and device moves</p>
             </article>
 
             <article class="sync-option">
-              <h3>Full backup folder</h3>
-              <p class="sync-option__lede">Desktop · Includes note history</p>
+              <h3>Add or replace</h3>
+              <p class="sync-option__lede">You choose, after seeing what is inside</p>
               <ul class="sync-option__list">
-                <li>Version history alongside attachments</li>
-                <li>Same recovery UI as rolling snapshots</li>
-                <li>Your AI keys are never written into an export</li>
-                <li>Ideal for archival / machine migration</li>
+                <li>Import shows notes, tasks, images and history first</li>
+                <li><strong>Add</strong> keeps everything you have and adds what is missing</li>
+                <li><strong>Replace</strong> makes this device match the backup, after a safety copy</li>
               </ul>
-              <p class="sync-option__hint">Best for: desktop restore &amp; archives</p>
+              <p class="sync-option__hint">Nothing is deleted unless you choose Replace</p>
             </article>
           </div>
 
@@ -770,12 +770,12 @@ ERD / Sketch → Export PNG or JSON
               </div>
               <h3>Portable backup file</h3>
               <p>
-                Export a portable ZIP — your workspace JSON plus image
-                attachments. The file is <strong>not encrypted</strong>, so
+                Export one backup file — your workspace, image
+                attachments and note history. The file is <strong>not encrypted</strong>, so
                 move it only by ways you already trust: AirDrop, Files, a
                 USB stick. Nothing ever touches a Cadence server.
               </p>
-              <p class="sync-card__hint">Portable ZIP · workspace + images</p>
+              <p class="sync-card__hint">One .zip · notes + images + history</p>
             </article>
 
             <article class="sync-card">

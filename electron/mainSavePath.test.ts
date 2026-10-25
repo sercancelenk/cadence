@@ -5,7 +5,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { parseBundleEntries } from '../src/lib/backupBundle/parse';
+import { zipStoreUnpack } from '../src/lib/backupBundle/zipStore';
 
 /**
  * Loads the real `electron/main.cjs` against a stubbed Electron and drives its
@@ -61,6 +64,7 @@ class StubWorker extends EventEmitter {
 }
 
 let pickedFolder: { canceled: boolean; filePaths: string[] } = { canceled: true, filePaths: [] };
+let pickedSave: { canceled: boolean; filePath?: string } = { canceled: true };
 let crashWorkerAfterStaging = false;
 let holdWorkerReplies = false;
 let heldRequest: { id: number } | null = null;
@@ -109,7 +113,10 @@ const electronStub = {
     },
     { isSupported: () => false },
   ),
-  dialog: { showOpenDialog: async () => pickedFolder },
+  dialog: {
+    showOpenDialog: async () => pickedFolder,
+    showSaveDialog: async () => pickedSave,
+  },
   ipcMain: {
     handle: (channel: string, handler: Handler) => handlers.set(channel, handler),
     on: (channel: string, handler: Handler) => listeners.set(channel, handler),
@@ -179,6 +186,7 @@ afterEach(() => {
   holdWorkerReplies = false;
   heldRequest = null;
   pickedFolder = { canceled: true, filePaths: [] };
+  pickedSave = { canceled: true };
 });
 
 function workspace(notes: { id: string; title: string; updatedAt: string }[]) {
@@ -1893,5 +1901,569 @@ describe('data:listSources', () => {
     fs.writeFileSync(path.join(dir, target), JSON.stringify(workspace([note('only', 'Only')])));
     const after = listed().find((b) => b.name === target);
     expect(after?.counts?.notes).toBe(1);
+  });
+});
+
+describe('backupArchive:export', () => {
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const NOTE = 'note-arch-000001';
+
+  type ExportReply = {
+    ok: boolean;
+    canceled?: boolean;
+    path?: string;
+    error?: string;
+    attachmentCount?: number;
+    attachmentsSkipped?: number;
+    noteHistoryRevisionCount?: number;
+  };
+
+  function call<T>(channel: string, payload?: unknown): T | Promise<T> {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+
+  function signUp(email: string) {
+    expect((call('account:register', { email, password: 'old-password-1' }) as { ok: boolean }).ok).toBe(true);
+    return JSON.parse(fs.readFileSync(path.join(userDataDir, 'cadence-session.json'), 'utf8')).userId as string;
+  }
+
+  function writeImage(id: string) {
+    expect((call('attachment:write', { attachmentId: id, dataBase64: PNG.toString('base64') }) as { ok: boolean }).ok).toBe(true);
+  }
+
+  function addHistory(body: string) {
+    expect(
+      (call('noteHistory:append', { noteId: NOTE, trigger: 'manual', title: 'T', summary: 'S', locked: false, body, bodyFormat: 'markdown' }) as { ok: boolean }).ok,
+    ).toBe(true);
+  }
+
+  async function exportTo(target: string, payload = workspace([note('n1', 'One')])) {
+    pickedSave = { canceled: false, filePath: target };
+    return (await call('backupArchive:export', { data: payload })) as ExportReply;
+  }
+
+  let out: string;
+  beforeEach(() => {
+    out = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-archive-'));
+  });
+  afterEach(() => fs.rmSync(out, { recursive: true, force: true }));
+
+  it('does nothing when the save dialog is cancelled', async () => {
+    signUp('arch0@example.com');
+    pickedSave = { canceled: true };
+    const r = (await call('backupArchive:export', { data: workspace([note('n1', 'One')]) })) as ExportReply;
+    expect(r).toMatchObject({ ok: false, canceled: true });
+  });
+
+  it('puts the workspace, every image on disk, readable note history and a manifest into one ZIP', async () => {
+    signUp('arch1@example.com');
+    writeImage('attachment-new-0001');
+    writeImage('attachment-new-0002'); // not referenced by any note: still part of a full backup
+    addHistory('ARCHIVE-HISTORY-BODY');
+    const target = path.join(out, 'backup.zip');
+
+    const r = await exportTo(target, { ...workspace([note('n1', 'One')]), noteGroups: [] });
+
+    expect(r.ok, r.error).toBe(true);
+    expect(r.path).toBe(target);
+    expect(r).toMatchObject({ attachmentCount: 2, attachmentsSkipped: 0, noteHistoryRevisionCount: 1 });
+    const entries = zipStoreUnpack(new Uint8Array(fs.readFileSync(target)));
+    const names = Object.keys(entries);
+    expect(names).toContain('data.json');
+    expect(names).toContain('manifest.json');
+    expect(names.filter((n) => n.startsWith('attachments/')).sort()).toEqual([
+      'attachments/attachment-new-0001.bin',
+      'attachments/attachment-new-0002.bin',
+    ]);
+    expect(Buffer.from(entries['attachments/attachment-new-0001.bin']!).equals(PNG)).toBe(true);
+    const historyText = names
+      .filter((n) => n.startsWith(`note-history/${NOTE}/`))
+      .map((n) => new TextDecoder().decode(entries[n]))
+      .join('\n');
+    expect(historyText).toContain('ARCHIVE-HISTORY-BODY');
+    const manifest = JSON.parse(new TextDecoder().decode(entries['manifest.json']));
+    expect(manifest).toMatchObject({ format: 'cadence-bundle-v2', attachmentCount: 2, attachmentsSkipped: 0, noteHistoryRevisionCount: 1 });
+  });
+
+  it('is still read by the reader older builds use (extra folders are ignored)', async () => {
+    signUp('arch2@example.com');
+    writeImage('attachment-new-0001');
+    addHistory('X');
+    const target = path.join(out, 'backup.zip');
+    expect((await exportTo(target)).ok).toBe(true);
+
+    const bundle = parseBundleEntries(zipStoreUnpack(new Uint8Array(fs.readFileSync(target))));
+    expect([...bundle.attachments.keys()]).toEqual(['attachment-new-0001']);
+    expect(bundle.manifest?.format).toBe('cadence-bundle-v2');
+  });
+
+  it('carries no AI keys that the renderer left out, and does not add any', async () => {
+    signUp('arch3@example.com');
+    const target = path.join(out, 'backup.zip');
+    await exportTo(target, { ...workspace([note('n1', 'One')]), aiSettings: { provider: 'openai', apiKey: '' } } as never);
+    const text = new TextDecoder().decode(zipStoreUnpack(new Uint8Array(fs.readFileSync(target)))['data.json']);
+    expect(text).not.toMatch(/sk-/);
+  });
+
+  it('says how many images it could not read, records it, and still writes the rest', async () => {
+    const uid = signUp('arch4@example.com');
+    writeImage('attachment-new-0001');
+    writeImage('attachment-new-0002');
+    const dir = path.join(userDataDir, 'attachments', uid);
+    const victim = fs.readdirSync(dir).find((n) => n.startsWith('attachment-new-0002')) as string;
+    fs.writeFileSync(path.join(dir, victim), '{"magic":"CDNC1","iv":"x","ct":"y"}');
+    const target = path.join(out, 'backup.zip');
+
+    const r = await exportTo(target);
+
+    expect(r.ok, r.error).toBe(true);
+    expect(r).toMatchObject({ attachmentCount: 1, attachmentsSkipped: 1 });
+    const manifest = JSON.parse(new TextDecoder().decode(zipStoreUnpack(new Uint8Array(fs.readFileSync(target)))['manifest.json']));
+    expect(manifest).toMatchObject({ attachmentCount: 1, attachmentsSkipped: 1 });
+  });
+
+  it('leaves no half-written file or temporary folder when the destination cannot be written', async () => {
+    signUp('arch5@example.com');
+    writeImage('attachment-new-0001');
+    addHistory('X');
+    const blocker = path.join(out, 'not-a-folder');
+    fs.writeFileSync(blocker, 'file');
+    const r = await exportTo(path.join(blocker, 'backup.zip'));
+    expect(r.ok).toBe(false);
+    expect(typeof r.error).toBe('string');
+    expect(fs.readdirSync(userDataDir).filter((n) => n.startsWith('tmp-backup-'))).toEqual([]);
+    expect(fs.readdirSync(out)).toEqual(['not-a-folder']);
+  });
+
+  it('works for a workspace with no images and no history', async () => {
+    signUp('arch6@example.com');
+    const target = path.join(out, 'backup.zip');
+    const r = await exportTo(target);
+    expect(r).toMatchObject({ ok: true, attachmentCount: 0, attachmentsSkipped: 0, noteHistoryRevisionCount: 0 });
+    expect(Object.keys(zipStoreUnpack(new Uint8Array(fs.readFileSync(target)))).sort()).toEqual(['data.json', 'manifest.json']);
+  });
+
+  it('refuses when nobody is signed in', async () => {
+    fs.rmSync(path.join(userDataDir, 'cadence-session.json'), { force: true });
+    pickedSave = { canceled: false, filePath: path.join(out, 'backup.zip') };
+    const r = (await call('backupArchive:export', { data: workspace([note('n1', 'One')]) })) as ExportReply;
+    expect(r).toMatchObject({ ok: false, error: 'Not signed in.' });
+    expect(fs.existsSync(path.join(out, 'backup.zip'))).toBe(false);
+  });
+});
+
+describe('backupArchive:open and backupArchive:apply', () => {
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const NOTE = 'note-arch-000002';
+  const { createZipWriter } = require('./persistence/zipWriter.cjs') as {
+    createZipWriter: (f: string) => Promise<{ add: (n: string, b: Buffer) => Promise<void>; finish: () => Promise<unknown> }>;
+  };
+
+  type Preview = {
+    ok: boolean;
+    canceled?: boolean;
+    error?: string;
+    token?: string;
+    kind?: 'zip' | 'json';
+    fileName?: string;
+    workspace?: { notes?: { id: string; title: string }[] };
+    counts?: { notes: number; todoItems: number; teams: number };
+    attachments?: { count: number; skippedAtExport: number };
+    history?: { notes: number; revisions: number };
+    exportedAt?: string;
+  };
+  type Applied = {
+    ok: boolean;
+    error?: string;
+    attachmentsRestored?: number;
+    attachmentsSkipped?: number;
+    attachmentsFailed?: number;
+    historyIncomplete?: boolean;
+    writeGeneration?: number;
+  };
+
+  function call<T>(channel: string, payload?: unknown): T | Promise<T> {
+    const handler = handlers.get(channel);
+    if (!handler) throw new Error(`${channel} handler was never registered`);
+    return handler({}, payload) as T;
+  }
+  const open = async (file: string) => {
+    pickedFolder = { canceled: false, filePaths: [file] };
+    return (await call('backupArchive:open')) as Preview;
+  };
+  const diskGeneration = () => (call('data:loadResult') as { writeGeneration: number }).writeGeneration;
+  const apply = async (
+    token: string | undefined,
+    ws: unknown,
+    extra: { mode?: 'merge' | 'replace'; expectedGeneration?: number | null } = {},
+  ) => {
+    const expectedGeneration = extra.expectedGeneration === null ? undefined : (extra.expectedGeneration ?? diskGeneration());
+    return (await call('backupArchive:apply', { token, workspace: ws, mode: extra.mode ?? 'replace', expectedGeneration })) as Applied;
+  };
+
+  function signUp(email: string) {
+    expect((call('account:register', { email, password: 'old-password-1' }) as { ok: boolean }).ok).toBe(true);
+    return JSON.parse(fs.readFileSync(path.join(userDataDir, 'cadence-session.json'), 'utf8')).userId as string;
+  }
+  function writeImage(id: string) {
+    expect((call('attachment:write', { attachmentId: id, dataBase64: PNG.toString('base64') }) as { ok: boolean }).ok).toBe(true);
+  }
+  const readImage = (id: string) => {
+    const r = call('attachment:read', { attachmentId: id }) as { ok: boolean; dataBase64?: string };
+    return r.ok ? Buffer.from(r.dataBase64 as string, 'base64') : null;
+  };
+  function addHistory(body: string) {
+    const r = call('noteHistory:append', { noteId: NOTE, trigger: 'manual', title: 'T', summary: 'S', locked: false, body, bodyFormat: 'markdown' }) as { ok: boolean; revisionId?: string };
+    expect(r.ok).toBe(true);
+    return r.revisionId as string;
+  }
+  const readHistory = (revisionId: string) => {
+    const r = call('noteHistory:read', { noteId: NOTE, revisionId }) as { ok: boolean; revision?: { body?: string } };
+    return r.ok ? r.revision?.body : null;
+  };
+  async function makeBackup(target: string, payload = workspace([note('n1', 'One'), note('n2', 'Two')])) {
+    pickedSave = { canceled: false, filePath: target };
+    const r = (await call('backupArchive:export', { data: payload })) as { ok: boolean; error?: string };
+    expect(r.ok, r.error).toBe(true);
+  }
+
+  let out: string;
+  beforeEach(() => {
+    out = fs.mkdtempSync(path.join(os.tmpdir(), 'cadence-import-'));
+  });
+  afterEach(() => fs.rmSync(out, { recursive: true, force: true }));
+
+  describe('open', () => {
+    it('does nothing when the dialog is cancelled', async () => {
+      signUp('imp0@example.com');
+      pickedFolder = { canceled: true, filePaths: [] };
+      expect(await call('backupArchive:open')).toMatchObject({ ok: false, canceled: true });
+    });
+
+    it('tells what is inside a backup before anything is changed', async () => {
+      signUp('imp1@example.com');
+      writeImage('attachment-new-0001');
+      writeImage('attachment-new-0002');
+      addHistory('H1');
+      addHistory('H2');
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+
+      const p = await open(file);
+
+      expect(p.ok, p.error).toBe(true);
+      expect(p).toMatchObject({ kind: 'zip', fileName: 'b.zip' });
+      expect(p.counts?.notes).toBe(2);
+      expect(p.attachments).toEqual({ count: 2, skippedAtExport: 0 });
+      expect(p.history).toEqual({ notes: 1, revisions: 2 });
+      expect(typeof p.exportedAt).toBe('string');
+      expect(typeof p.token).toBe('string');
+      expect(p.workspace?.notes?.map((n) => n.id).sort()).toEqual(['n1', 'n2']);
+      // Looking is not importing.
+      expect((call('data:load') as { notes?: unknown[] } | null)?.notes ?? []).toHaveLength(0);
+    });
+
+    it('reads a backup folder that was compressed by the operating system, folder prefix and all', async () => {
+      signUp('imp2@example.com');
+      const body = Buffer.from(JSON.stringify(workspace([note('n1', 'One')])));
+      const entries = [
+        { name: 'cadence-backup-1/data.json', data: body },
+        { name: 'cadence-backup-1/._data.json', data: Buffer.from('mac metadata') },
+        { name: 'cadence-backup-1/attachments/attachment-new-0001.bin', data: PNG },
+        { name: 'cadence-backup-1/attachments/._attachment-new-0001.bin', data: Buffer.from('mac metadata') },
+        { name: '__MACOSX/cadence-backup-1/._data.json', data: Buffer.from('x') },
+      ];
+      // Deflated, like Finder's "Compress".
+      const { crc32 } = require('./persistence/zipWriter.cjs') as { crc32: (b: Buffer) => number };
+      const parts: Buffer[] = [];
+      const centrals: Buffer[] = [];
+      let offset = 0;
+      for (const e of entries) {
+        const comp = zlib.deflateRawSync(e.data);
+        const nameBytes = Buffer.from(e.name);
+        const local = Buffer.alloc(30 + nameBytes.length);
+        local.writeUInt32LE(0x04034b50, 0);
+        local.writeUInt16LE(20, 4);
+        local.writeUInt16LE(8, 8);
+        local.writeUInt32LE(crc32(e.data), 14);
+        local.writeUInt32LE(comp.length, 18);
+        local.writeUInt32LE(e.data.length, 22);
+        local.writeUInt16LE(nameBytes.length, 26);
+        nameBytes.copy(local, 30);
+        const central = Buffer.alloc(46 + nameBytes.length);
+        central.writeUInt32LE(0x02014b50, 0);
+        central.writeUInt16LE(8, 10);
+        central.writeUInt32LE(crc32(e.data), 16);
+        central.writeUInt32LE(comp.length, 20);
+        central.writeUInt32LE(e.data.length, 24);
+        central.writeUInt16LE(nameBytes.length, 28);
+        central.writeUInt32LE(offset, 42);
+        nameBytes.copy(central, 46);
+        parts.push(local, comp);
+        centrals.push(central);
+        offset += local.length + comp.length;
+      }
+      const cd = Buffer.concat(centrals);
+      const end = Buffer.alloc(22);
+      end.writeUInt32LE(0x06054b50, 0);
+      end.writeUInt16LE(entries.length, 8);
+      end.writeUInt16LE(entries.length, 10);
+      end.writeUInt32LE(cd.length, 12);
+      end.writeUInt32LE(offset, 16);
+      const file = path.join(out, 'Finder.zip');
+      fs.writeFileSync(file, Buffer.concat([...parts, cd, end]));
+
+      const p = await open(file);
+
+      expect(p.ok, p.error).toBe(true);
+      expect(p.counts?.notes).toBe(1);
+      expect(p.attachments?.count).toBe(1);
+    });
+
+    it('reads a plain JSON workspace file', async () => {
+      signUp('imp3@example.com');
+      const file = path.join(out, 'w.json');
+      fs.writeFileSync(file, JSON.stringify(workspace([note('n1', 'One')])));
+      const p = await open(file);
+      expect(p).toMatchObject({ ok: true, kind: 'json' });
+      expect(p.attachments?.count).toBe(0);
+      expect(p.history).toEqual({ notes: 0, revisions: 0 });
+    });
+
+    it.each([
+      ['a ZIP without data.json', async (f: string) => { const w = await createZipWriter(f); await w.add('readme.txt', Buffer.from('x')); await w.finish(); }, /missing data\.json/i],
+      ['a file that is not a ZIP', async (f: string) => fs.writeFileSync(f, 'plain text'), /not a valid zip/i],
+      ['JSON that is not a workspace', async (f: string) => fs.writeFileSync(f, JSON.stringify({ hello: 'world' })), /does not look like a cadence/i],
+      ['JSON that is not JSON', async (f: string) => fs.writeFileSync(f, '{oops'), /not valid json/i],
+    ])('explains %s without changing anything', async (_label, make, message) => {
+      signUp('imp4@example.com');
+      const file = path.join(out, /^JSON/.test(_label) ? 'x.json' : 'x.zip');
+      await make(file);
+      const p = await open(file);
+      expect(p.ok).toBe(false);
+      expect(p.error).toMatch(message as RegExp);
+    });
+
+    it('refuses when nobody is signed in', async () => {
+      fs.rmSync(path.join(userDataDir, 'cadence-session.json'), { force: true });
+      expect(await open(path.join(out, 'x.zip'))).toMatchObject({ ok: false, error: 'Not signed in.' });
+    });
+  });
+
+  describe('apply', () => {
+    it('brings the workspace, the images and the note history into a different account', async () => {
+      signUp('src@example.com');
+      writeImage('attachment-new-0001');
+      const rev = addHistory('FROM-ACCOUNT-A');
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+
+      signUp('dest@example.com');
+      expect(readImage('attachment-new-0001')).toBeNull();
+      const p = await open(file);
+      const applied = await apply(p.token, p.workspace);
+
+      expect(applied.ok, applied.error).toBe(true);
+      expect(applied).toMatchObject({ attachmentsRestored: 1, attachmentsSkipped: 0, attachmentsFailed: 0, historyIncomplete: false });
+      expect((call('data:load') as { notes: { id: string }[] }).notes.map((n) => n.id).sort()).toEqual(['n1', 'n2']);
+      expect(readImage('attachment-new-0001')?.equals(PNG)).toBe(true);
+      expect(readHistory(rev)).toBe('FROM-ACCOUNT-A');
+    });
+
+    it('takes a safety copy of what was there first', async () => {
+      const uid = signUp('safe@example.com');
+      const handler = handlers.get('data:save') as Handler;
+      await handler({}, workspace([note('mine', 'Mine'), note('mine2', 'Mine too')]), uid, undefined);
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      expect((await apply(p.token, p.workspace)).ok).toBe(true);
+      expect(fs.readdirSync(path.join(userDataDir, 'backups', uid)).some((n) => n.startsWith('data-pre-import-'))).toBe(true);
+    });
+
+    it('changes nothing, and keeps the file usable, when the safety copy cannot be made', async () => {
+      const uid = signUp('nosafe@example.com');
+      const handler = handlers.get('data:save') as Handler;
+      await handler({}, workspace([note('mine', 'Mine'), note('mine2', 'Mine too')]), uid, undefined);
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+
+      const realCopy = fs.copyFileSync;
+      fs.copyFileSync = ((src: fs.PathLike, dest: fs.PathLike, ...rest: unknown[]) => {
+        if (String(dest).includes(`${path.sep}backups${path.sep}`)) throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+        return (realCopy as (...a: unknown[]) => void)(src, dest, ...rest);
+      }) as typeof fs.copyFileSync;
+      let failed: Applied;
+      try {
+        failed = await apply(p.token, p.workspace);
+      } finally {
+        fs.copyFileSync = realCopy;
+      }
+      expect(failed.ok).toBe(false);
+      expect(failed.error).toMatch(/safety copy/i);
+      expect((call('data:load') as { notes: { id: string }[] }).notes.map((n) => n.id).sort()).toEqual(['mine', 'mine2']);
+
+      // Once the disk works again the same opened file can be applied.
+      expect((await apply(p.token, p.workspace)).ok).toBe(true);
+    });
+
+    it('can be applied once; a second use of the same opening is refused', async () => {
+      signUp('once@example.com');
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      expect((await apply(p.token, p.workspace)).ok).toBe(true);
+      expect(await apply(p.token, p.workspace)).toMatchObject({ ok: false });
+    });
+
+    it('refuses an opening it does not know, and one made by another account', async () => {
+      signUp('tok1@example.com');
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      expect(await apply('not-a-token', p.workspace)).toMatchObject({ ok: false });
+      expect(await apply(undefined, p.workspace)).toMatchObject({ ok: false });
+      signUp('tok2@example.com');
+      expect(await apply(p.token, p.workspace)).toMatchObject({ ok: false });
+    });
+
+    it('refuses a file that changed after it was opened', async () => {
+      signUp('chg@example.com');
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      fs.appendFileSync(file, 'tampered');
+      const r = await apply(p.token, p.workspace);
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/changed/i);
+    });
+
+    it('refuses a workspace that is not one', async () => {
+      signUp('bad@example.com');
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      expect(await apply(p.token, { hello: 'world' })).toMatchObject({ ok: false });
+    });
+
+    it('imports the rest and reports the gap when one image in the archive is damaged', async () => {
+      signUp('gap@example.com');
+      const w = await createZipWriter(path.join(out, 'g.zip'));
+      await w.add('data.json', Buffer.from(JSON.stringify(workspace([note('n1', 'One')]))));
+      await w.add('attachments/attachment-new-0001.bin', PNG);
+      await w.add('attachments/attachment-new-0002.bin', PNG);
+      await w.finish();
+      // Break the second image's bytes without touching its checksum record.
+      const buf = fs.readFileSync(path.join(out, 'g.zip'));
+      const at = buf.indexOf(PNG, buf.indexOf(PNG) + 1);
+      buf[at + 3] = buf[at + 3]! ^ 0xff;
+      fs.writeFileSync(path.join(out, 'g.zip'), buf);
+
+      const p = await open(path.join(out, 'g.zip'));
+      const r = await apply(p.token, p.workspace);
+
+      expect(r.ok, r.error).toBe(true);
+      expect(r).toMatchObject({ attachmentsRestored: 1, attachmentsFailed: 1 });
+      expect(readImage('attachment-new-0001')?.equals(PNG)).toBe(true);
+    });
+
+    it('never writes outside its own folders, whatever the archive calls its files', async () => {
+      const uid = signUp('evil@example.com');
+      const w = await createZipWriter(path.join(out, 'e.zip'));
+      await w.add('data.json', Buffer.from(JSON.stringify(workspace([note('n1', 'One')]))));
+      await w.add('attachments/..%2f..%2fevil.bin', PNG);
+      await w.add('note-history/..evil/index.json', Buffer.from('[]'));
+      await w.add(`note-history/${NOTE}/..%2f..%2f..%2fevil.json`, Buffer.from('{}'));
+      await w.finish();
+      const p = await open(path.join(out, 'e.zip'));
+      const r = await apply(p.token, p.workspace);
+      expect(r.ok, r.error).toBe(true);
+      expect(r.attachmentsRestored).toBe(0);
+      const strays = [];
+      const walk = (d: string) => {
+        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+          const f = path.join(d, e.name);
+          if (e.name.includes('evil')) strays.push(f);
+          if (e.isDirectory()) walk(f);
+        }
+      };
+      walk(userDataDir);
+      expect(strays).toEqual([]);
+      void uid;
+    });
+
+    it('refuses, and changes nothing, when the workspace changed after the merge was built', async () => {
+      const uid = signUp('race@example.com');
+      const handler = handlers.get('data:save') as Handler;
+      const first = (await handler({}, workspace([note('mine', 'Mine'), note('mine2', 'Mine too')]), uid, undefined)) as SaveResult;
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      const seen = diskGeneration();
+      // Another writer (a second window, a late autosave) moves the workspace on.
+      await handler({}, workspace([note('mine', 'Mine'), note('mine2', 'Mine too'), note('late', 'Written meanwhile')]), uid, first.writeGeneration);
+
+      const r = await apply(p.token, p.workspace, { mode: 'merge', expectedGeneration: seen });
+
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/changed/i);
+      expect((call('data:load') as { notes: { id: string }[] }).notes.map((n) => n.id).sort()).toEqual(['late', 'mine', 'mine2']);
+      // The opening is still good: building the merge again from what is on disk now works.
+      expect((await apply(p.token, p.workspace, { mode: 'merge' })).ok).toBe(true);
+    });
+
+    it('does not add to a workspace it cannot tell the generation of', async () => {
+      signUp('nogen@example.com');
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      const r = await apply(p.token, p.workspace, { mode: 'merge', expectedGeneration: null });
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/generation|changed|try again/i);
+    });
+
+    it('does not add to data it cannot read, but still lets that data be replaced from a backup', async () => {
+      const uid = signUp('unreadable@example.com');
+      const handler = handlers.get('data:save') as Handler;
+      await handler({}, workspace([note('mine', 'Mine'), note('mine2', 'Mine too')]), uid, undefined);
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      const seen = diskGeneration();
+      const live = path.join(userDataDir, fs.readdirSync(userDataDir).find((n) => n.startsWith('cadence-data-') && !n.includes('-20')) as string);
+      const good = fs.readFileSync(live, 'utf8');
+      const damaged = JSON.parse(good) as { ct: string };
+      damaged.ct = `${damaged.ct.slice(0, -6)}AAAAAA`;
+      fs.writeFileSync(live, JSON.stringify(damaged));
+
+      const added = await apply(p.token, p.workspace, { mode: 'merge', expectedGeneration: seen });
+      expect(added.ok).toBe(false);
+      expect(added.error).toMatch(/could not be read/i);
+      expect(fs.readFileSync(live, 'utf8')).toBe(JSON.stringify(damaged));
+
+      expect((await apply(p.token, p.workspace, { mode: 'replace', expectedGeneration: null })).ok).toBe(true);
+    });
+
+    it('refuses a mode it does not know', async () => {
+      signUp('mode@example.com');
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      const r = (await call('backupArchive:apply', { token: p.token, workspace: p.workspace, mode: 'wipe' })) as Applied;
+      expect(r.ok).toBe(false);
+    });
+
+    it('leaves no scratch folder behind', async () => {
+      signUp('tidy@example.com');
+      addHistory('X');
+      const file = path.join(out, 'b.zip');
+      await makeBackup(file);
+      const p = await open(file);
+      await apply(p.token, p.workspace);
+      expect(fs.readdirSync(userDataDir).filter((n) => n.startsWith('tmp-backup-'))).toEqual([]);
+    });
   });
 });

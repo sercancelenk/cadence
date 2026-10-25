@@ -70,6 +70,20 @@ history file is).
 Words like "encrypted", "safe", "restored" and "complete" are used only when true for that exact artifact.
 Errors say what happened to the user's data ("nothing was changed") before what to do.
 
+**B11. The single-file backup is two steps, and the renderer never names a path.**
+`backupArchive:open` shows a native file dialog, looks inside the file and changes nothing; it returns a token.
+`backupArchive:apply` replaces the workspace with the workspace the renderer built (the backup as it is, or merged
+with what is here) and imports the file's images and history. A token works once, for the account that opened it,
+while the file is unchanged (checked again before its images are read). Both follow B1 (safety copy) and B3 (counts, no throwing after the commit).
+"Add" is built from the workspace as it is on disk after a flush, never from a view held in memory, and `apply` refuses (changing nothing) if the workspace generation moved since, or if the current data cannot be read. The workspace content itself is the renderer's responsibility; main checks its shape, size and generation.
+Enforced by: `backupRecoveryStandard.test.ts`, `mainSavePath.test.ts` › "backupArchive:open and backupArchive:apply".
+
+**B12. A backup file is untrusted input.**
+Names that could leave the folder or are system metadata are ignored; a duplicate name, a wrong checksum, a size that
+lies, a compression method or encryption we do not handle, and ZIP64 are refused with a plain message; an entry is
+never inflated past the size it declares. Image ids, note ids and revision ids are checked before they become file names. Entries must not overlap or claim more than compression can produce, and the total is capped.
+Enforced by: `persistence/zipReader.test.ts`, `mainSavePath.test.ts` › "never writes outside its own folders".
+
 ## Checklist for a new persisted artifact (a new file kind next to the workspace)
 
 1. Is it sealed? If yes: add it to key re-staging (`sidecarRekey`) and give its backup reader the earlier-key fallback (B2).
@@ -86,4 +100,5 @@ Errors say what happened to the user's data ("nothing was changed") before what 
 - A user who changed their password on a build before key history existed has older snapshots sealed under a key that
   can no longer be derived; those snapshots cannot be opened.
 - Exports are readable files. Encrypted exports are not built.
+- A single-file backup is plain ZIP: a library with 65,534 files or more, or 4 GiB or more, cannot be exported as one file; the folder export (Advanced) covers it. Importing reads the whole `data.json` into memory (at most 64 MB) and one image at a time.
 - While the app is fully closed no backup runs; the first one runs when it is opened (B6).

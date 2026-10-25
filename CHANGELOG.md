@@ -12,6 +12,16 @@ rather than per build number.
 
 ## Unreleased
 
+### Changed (backup)
+
+- **One export and one import.** Settings → Backup & recovery now has a single **Export backup** (one `.zip` with notes, tasks, settings, all images and, on desktop, note version history) and a single **Import backup**. Import first shows what is inside the file (counts, images, history, when it was made), then asks whether to **add it to what is here** (nothing overwritten or deleted, the default) or **replace what is here** (a safety copy is saved first). The old Full backup, Portable ZIP and Merge buttons are gone from the main view; the folder formats and text-only JSON stay under **Advanced**, and every backup made by older versions imports as before.
+- **Backups compressed by the operating system can be imported.** A backup folder zipped with Finder's or Explorer's "Compress" was refused before (only uncompressed ZIPs were read); it now opens, including when the files sit inside a top-level folder.
+- **A backup file is read as untrusted input**: names that could leave the folder, duplicate names, wrong checksums, files that claim a smaller size than they have, password-protected entries and ZIP64 are refused with a plain message.
+- **Export no longer builds the whole file in memory** on the desktop app: it streams to disk one file at a time, so large image libraries are fine. A library too big for a plain ZIP (65,534 files or 4 GiB) is told to use *Export as a folder* under Advanced.
+- **Import cannot overwrite newer data or unreadable data.** "Add" is built from the workspace on disk (after your latest edits are saved), not from a view in memory, and the import is refused, changing nothing, if the workspace changed in the meantime or the current data cannot be read. If saving your latest edits fails first, the import does not start.
+- **Backup hardening.** A doctored backup can no longer write into or delete another note's version history through crafted revision ids; ZIP entries that overlap, or claim more than compression can produce, are refused (a 69 KB file could otherwise expand to gigabytes); the file is checked again before its images are read; folder names that differ only by case no longer overwrite each other; an oversized `data.json` is refused.
+- **Browser export now warns instead of reporting success** when referenced images could not be found.
+
 ### Fixed
 
 - **Backups made before a password change can be restored.** Automatic snapshots keep the key of their time, so after a password change or a reset with recovery codes they could not be opened ("belongs to a different account"). The earlier keys are now kept (sealed under the current one), and restoring such a snapshot brings back its workspace, images and note history under the current key.

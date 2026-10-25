@@ -94,6 +94,52 @@ export type BackupRetentionState = {
 
 export type BackupRetentionDeleteCounts = { mirrorFolders: number; snapshotSets: number };
 
+/** What the single-file backup wrote (desktop). */
+export type BackupArchiveExportResult = {
+  ok: boolean;
+  canceled?: boolean;
+  error?: string;
+  path?: string;
+  bytes?: number;
+  attachmentCount?: number;
+  /** Images that could not be read and are not in the file. */
+  attachmentsSkipped?: number;
+  noteHistoryRevisionCount?: number;
+};
+
+/** What is inside a backup the user picked, before anything is changed. */
+export type BackupArchiveOpenResult = {
+  ok: boolean;
+  canceled?: boolean;
+  error?: string;
+  token?: string;
+  kind?: 'zip' | 'json';
+  fileName?: string;
+  exportedAt?: string;
+  source?: string;
+  workspace?: unknown;
+  counts?: {
+    teams?: number;
+    people?: number;
+    items?: number;
+    todoItems?: number;
+    notes?: number;
+    notesLocked?: number;
+  } | null;
+  attachments?: { count: number; skippedAtExport: number };
+  history?: { notes: number; revisions: number };
+};
+
+export type BackupArchiveApplyResult = {
+  ok: boolean;
+  error?: string;
+  writeGeneration?: number;
+  attachmentsRestored?: number;
+  attachmentsSkipped?: number;
+  attachmentsFailed?: number;
+  historyIncomplete?: boolean;
+};
+
 export type BackupRetentionRequest = {
   mirrorKeep?: number;
   snapshotRoutineKeep?: number;
@@ -306,6 +352,14 @@ interface CadenceApi {
       exportDataBundle?: (
         data: unknown,
       ) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string; attachmentsSkipped?: number }>;
+      backupArchiveExport?: (data: unknown) => Promise<BackupArchiveExportResult>;
+      backupArchiveOpen?: () => Promise<BackupArchiveOpenResult>;
+      backupArchiveApply?: (payload: {
+        token: string;
+        workspace: unknown;
+        mode: 'merge' | 'replace';
+        expectedGeneration?: number;
+      }) => Promise<BackupArchiveApplyResult>;
       saveToolFile?: (payload: {
         suggestedName: string;
         defaultExt: string;

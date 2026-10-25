@@ -114,19 +114,25 @@ Cadence keeps up to **50 rolling snapshots** (default) at launch, sign-in and be
 
 ### Manual export & import
 
-| Format | Desktop | Web / mobile | Includes images? | Best for |
-|--------|---------|--------------|------------------|----------|
-| **Portable ZIP** | ✅ | ✅ | ✅ Yes | Moving to another account or device |
-| **Full backup folder** | ✅ | ❌ | ✅ Yes + note version history | Desktop-to-desktop, full restore |
-| **JSON only** | ✅ (advanced) | ✅ (advanced) | ❌ Text only | Quick copy, debugging, git |
+**Settings → Data & backup → Backup & recovery** has one **Export backup** and one **Import backup**.
 
-**Cross-account tip:** If you created a second account and imported JSON only, embedded images will look broken — that's expected. Export a **portable ZIP** (or full folder) from the first account and import that on the second.
+- **Export backup** saves a single `.zip` file. On the desktop app it holds everything: notes, tasks, teams, settings, **all images** and **note version history**. In a browser it holds notes, tasks, settings and images (version history only exists in the desktop app). AI keys are never included, and the file is **not encrypted**, so keep it private.
+- **Import backup** opens the file and **shows what is inside first** (how many notes, tasks, images, versions of history, and when it was made). Then you choose:
+  - **Add to what's here** (the default): keeps everything you have now and adds what is missing. Nothing is overwritten or deleted. Importing the same file twice changes nothing.
+  - **Replace what's here**: your notes, tasks and settings become exactly this backup. A safety copy of your current data is saved first and can be restored from *Automatic snapshots*.
+- After an import Cadence says what came back. If some images or history could not be brought back, it says so and tells you that your notes and tasks were restored.
+
+Under **Advanced** (desktop): *Export as a folder* and *Import a backup folder* for very large libraries or for folders made by older versions, and *Export JSON* (text only: no images, no history).
+
+Backups made by older versions (portable ZIP, full backup folder, JSON) import exactly as before. You can also zip a backup folder with your computer's own "Compress" command and import that.
+
+**Cross-account tip:** to move your data to a second account, export a backup from the first account and import it on the second.
 
 ### Browser (PWA)
 
-- **Portable ZIP** and JSON export/import work in the browser.
+- Backup export and import (a `.zip`, or text-only JSON) work in the browser.
 - No automatic on-disk snapshots — export regularly. Clearing site data erases your workspace.
-- Full folder backup and note version history require the desktop app.
+- Note version history is only kept (and backed up) in the desktop app.
 
 ### If data looks wrong after an update
 
@@ -164,7 +170,7 @@ Cadence is designed so **existing users are never forced to migrate**:
 
 Cadence has no sync service. Live LAN pairing and Google Drive sync were retired.
 
-- **Offline device transfer** — export a portable backup file (a plain ZIP, **not encrypted**, so keep it private), carry it across (AirDrop / Files / USB), and **merge it in** on the other device (*Settings → Data & backup → Merge from another device*). Additive and lossless; no cloud, no network link between devices.
+- **Offline device transfer** — export a portable backup file (a plain ZIP, **not encrypted**, so keep it private), carry it across (AirDrop / Files / USB), and import it on the other device (*Settings → Data & backup → Import backup → Add to what's here*). Additive and lossless; no cloud, no network link between devices.
 - Merge keeps what is on the target device. If the same item was edited on both devices, the copy already on the target stays. Deletions do not travel.
 
 ---
@@ -202,7 +208,7 @@ Cadence has no sync service. Live LAN pairing and Google Drive sync were retired
 - **Ask your workspace** — ⌘K: ask a question and get an answer that cites your own notes and tasks as [1], [2], each a link. The best matches are found on your computer and only short excerpts are sent. Tick *Include people records* to search 1:1 items too (this sends them as people data). If you set an *Embedding model* on the connection, matches are also re-ordered by meaning.
 - On a connection, **Check images** and **Check live replies** test those abilities; **Embedding model** (optional) is used only by Ask your workspace.
 - Nothing from these features is written until you press the button. A change to a note or to feedback text is a single undo step (⌘Z), and for a note Cadence first saves a restore point named *Before AI change* in its version history. On the To-dos page, *Break down* (checklist) and *Save to task* show an **Undo** button (it waits while you hover or focus it) that only undoes while the task has not been edited since; on a person's page *Save to task* has no Undo button. Created tasks are ordinary tasks you can delete. Every result also has **Copy**.
-- **Exports do not contain your AI keys.** JSON, portable ZIP and full backup folders leave out API keys and extra connection headers; restoring on this device keeps the keys it already has (for the same address), and on a new device you enter them again.
+- **Exports do not contain your AI keys.** Backup files (the `.zip`, JSON and folders) leave out API keys and extra connection headers; restoring on this device keeps the keys it already has (for the same address), and on a new device you enter them again.
 - Leave the key blank — the rest of Cadence works identically.
 
 ---

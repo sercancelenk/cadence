@@ -70,21 +70,17 @@ function install(overrides: Partial<Cadence> = {}) {
   window.cadence = cadence as unknown as typeof window.cadence;
 }
 
-function mount() {
+const handlers = {
+  onExportBackup: vi.fn(),
+  onImportBackup: vi.fn(),
+  onExportJson: vi.fn(),
+  onExportFolder: vi.fn(),
+  onImportFolder: vi.fn(),
+};
+
+function mount(over: { canExport?: boolean; importBusy?: boolean } = {}) {
   window.localStorage.setItem(`${STORAGE_PREFIX}:settings:section:backups`, '1');
-  const noop = vi.fn();
-  return render(
-    <BackupsRecoverySection
-      canExport
-      onExportJson={noop}
-      onExportPortableZip={noop}
-      onExportFullBundle={noop}
-      onImportBackup={noop}
-      onMergeImport={noop}
-      onImportFolder={noop}
-      fileInput={null}
-    />,
-  );
+  return render(<BackupsRecoverySection canExport importBusy={false} {...handlers} fileInput={null} {...over} />);
 }
 
 const restoreButton = () => screen.findByRole('button', { name: 'Restore' });
@@ -93,6 +89,7 @@ describe('Settings → Backup & recovery', () => {
   beforeEach(() => {
     install();
     Object.values(ui).forEach((f) => f.mockClear());
+    Object.values(handlers).forEach((f) => f.mockClear());
     ui.confirm.mockResolvedValue(true);
   });
   afterEach(() => {
@@ -100,6 +97,58 @@ describe('Settings → Backup & recovery', () => {
     window.cadence = undefined;
     window.localStorage.clear();
     vi.useRealTimers();
+  });
+
+  describe('export and import', () => {
+    it('offers one export and one import, not one button per file format', async () => {
+      mount();
+      expect(await screen.findByRole('button', { name: 'Export backup' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Import backup' })).toBeTruthy();
+      for (const gone of [/Export full backup/, /Export portable ZIP/, /Import portable backup/, /Merge from another device/]) {
+        expect(screen.queryByRole('button', { name: gone })).toBeNull();
+      }
+    });
+
+    it('starts the export and the import', async () => {
+      mount();
+      fireEvent.click(await screen.findByRole('button', { name: 'Export backup' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Import backup' }));
+      expect(handlers.onExportBackup).toHaveBeenCalledTimes(1);
+      expect(handlers.onImportBackup).toHaveBeenCalledTimes(1);
+    });
+
+    it('says the import asks whether to add or replace, and that the file is not encrypted', async () => {
+      mount();
+      await screen.findByRole('button', { name: 'Export backup' });
+      expect(screen.getByText(/whether to/i).textContent).toMatch(/add.*replace/s);
+      expect(screen.getByText(/not encrypted/i)).toBeTruthy();
+    });
+
+    it('keeps the folder formats under Advanced on the desktop app', async () => {
+      mount();
+      fireEvent.click(await screen.findByText('Advanced'));
+      fireEvent.click(screen.getByRole('button', { name: 'Export as a folder' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Import a backup folder' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Export JSON' }));
+      expect(handlers.onExportFolder).toHaveBeenCalledTimes(1);
+      expect(handlers.onImportFolder).toHaveBeenCalledTimes(1);
+      expect(handlers.onExportJson).toHaveBeenCalledTimes(1);
+    });
+
+    it('has no folder formats outside the desktop app', async () => {
+      window.cadence = undefined;
+      window.matchMedia = ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
+      mount();
+      fireEvent.click(await screen.findByText('Advanced'));
+      expect(screen.queryByRole('button', { name: 'Export as a folder' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Export JSON' })).toBeTruthy();
+    });
+
+    it('cannot start a second transfer while one is running', async () => {
+      mount({ importBusy: true });
+      expect((await screen.findByRole('button', { name: 'Export backup' }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole('button', { name: 'Import backup' }) as HTMLButtonElement).disabled).toBe(true);
+    });
   });
 
   describe('snapshots', () => {
